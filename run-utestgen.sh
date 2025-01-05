@@ -39,7 +39,7 @@ do
       inheritanceFlag=""
   fi
 
-  java -jar ../../utestgen-$javaVersion.jar -projectCP "$CP" -class $class -Dcriterion=BRANCH:LINE:OUTPUT:METHOD:CBRANCH $inheritanceFlag -Dtest_naming_strategy=llm_based -Dvariable_naming_strategy=HEURISTICS_BASED -Dassertion_timeout=100000 -Dsearch_budget=200 -Dminimization_timeout=100000 -Dwrite_junit_timeout=100000 -Dextra_timeout=10000 -Ddefuse_debug_mode=true -Dtest_format=JUNIT5LLM -Djunit_check_timeout=10000 ${flags} -Dbytecode_logging_mode=FILE_DUMP > $logDir/$class-$(date '+%Y-%m-%d-%H-%M').log
+  java -jar ../../utestgen-$javaVersion.old.jar -projectCP "$CP" -class $class -Dcriterion=BRANCH:LINE:OUTPUT:METHOD:CBRANCH $inheritanceFlag -Dtest_naming_strategy=llm_based -Dvariable_naming_strategy=HEURISTICS_BASED -Dassertion_timeout=100000 -Dsearch_budget=200 -Dminimization_timeout=100000 -Dwrite_junit_timeout=100000 -Dextra_timeout=10000 -Ddefuse_debug_mode=true -Dtest_format=JUNIT5LLM -Djunit_check_timeout=10000 ${flags} -Dbytecode_logging_mode=FILE_DUMP > $logDir/$class-$(date '+%Y-%m-%d-%H-%M').log
 
   cd ../
 done < <(tail -n +2 $fileDirectory.csv)
