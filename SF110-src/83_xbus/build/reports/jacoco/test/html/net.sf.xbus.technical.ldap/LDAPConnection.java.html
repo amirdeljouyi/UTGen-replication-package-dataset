@@ -1,0 +1,277 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LDAPConnection.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.technical.ldap</a> &gt; <span class="el_source">LDAPConnection.java</span></div><h1>LDAPConnection.java</h1><pre class="source lang-java linenums">package net.sf.xbus.technical.ldap;
+
+import java.util.Hashtable;
+import java.util.Vector;
+
+import javax.naming.Context;
+import javax.naming.NamingException;
+import javax.naming.directory.DirContext;
+import javax.naming.directory.InitialDirContext;
+import javax.naming.directory.SearchControls;
+
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.TAManager;
+import net.sf.xbus.base.core.TAResource;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.core.config.Configuration;
+import net.sf.xbus.base.core.trace.Trace;
+
+/**
+ * Manages connections to LDAP servers.
+ * &lt;p /&gt;
+ * LDAP connections are not transacted. &lt;code&gt;TAResource&lt;/code&gt; is just
+ * implemented to open and close the connections.
+ */
+public class LDAPConnection implements TAResource
+{
+	static final private String CHAPTER_LDAPCONNECTION = &quot;LDAPConnection&quot;;
+
+	/*
+	 * Variables used to implement the Singleton pattern
+	 */
+<span class="nc" id="L32">	private static Hashtable mLDAPConnections = new Hashtable();</span>
+<span class="nc" id="L33">	private static final Object classLock = LDAPConnection.class;</span>
+
+	/*
+	 * Other variables
+	 */
+<span class="nc" id="L38">	private String mName = null;</span>
+<span class="nc" id="L39">	private boolean mOpen = false;</span>
+<span class="nc" id="L40">	private DirContext mContext = null;</span>
+
+	/**
+	 * The constructor is private, instances of &lt;code&gt;LDAPConnection&lt;/code&gt;
+	 * can only be generated via the method &lt;code&gt;getInstance()&lt;/code&gt;. Each
+	 * instance is put in a &lt;code&gt;Hashtable&lt;/code&gt; with the concatenation of
+	 * the thread name and the connection name as the key.
+	 */
+	private LDAPConnection(String name)
+<span class="nc" id="L49">	{</span>
+<span class="nc" id="L50">		mName = name;</span>
+<span class="nc" id="L51">		mLDAPConnections.put(getFullName(name), this);</span>
+<span class="nc" id="L52">		TAManager.getInstance().registerResource(this);</span>
+<span class="nc" id="L53">	}</span>
+
+	/**
+	 * Delivers an open instance of &lt;code&gt;LDAPConnection&lt;/code&gt;.
+	 * &lt;p /&gt;
+	 * 
+	 * If it is the first call with this name for the actual thread, a new
+	 * &lt;code&gt;LDAPConnection&lt;/code&gt; object will be created. Subsequent calls in
+	 * this thread will deliver the object, that has been created by the first
+	 * call.
+	 * 
+	 * @param name name of the LDAPConnection
+	 * @return an open LDAPConnection
+	 * @throws XException if something goes wrong
+	 */
+	public static LDAPConnection getInstance(String name) throws XException
+	{
+<span class="nc" id="L70">		synchronized (classLock)</span>
+		{
+<span class="nc" id="L72">			LDAPConnection ldapConnection = (LDAPConnection) mLDAPConnections</span>
+<span class="nc" id="L73">					.get(getFullName(name));</span>
+
+<span class="nc bnc" id="L75" title="All 2 branches missed.">			if (ldapConnection == null)</span>
+			{
+<span class="nc" id="L77">				ldapConnection = new LDAPConnection(name);</span>
+			}
+
+<span class="nc" id="L80">			ldapConnection.open();</span>
+<span class="nc" id="L81">			return ldapConnection;</span>
+		}
+	}
+
+	/**
+	 * Opens a connection to a LDAP server.
+	 * 
+	 * @throws XException if something goes wrong
+	 */
+	public void open() throws XException
+	{
+<span class="nc bnc" id="L92" title="All 2 branches missed.">		if (!mOpen)</span>
+		{
+			/*
+			 * Connect to the FTP Server
+			 */
+<span class="nc" id="L97">			Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L98">			String host = config</span>
+<span class="nc" id="L99">					.getValue(CHAPTER_LDAPCONNECTION, mName, &quot;Host&quot;);</span>
+<span class="nc" id="L100">			int port = config.getValueAsIntOptional(CHAPTER_LDAPCONNECTION,</span>
+					mName, &quot;Port&quot;);
+<span class="nc" id="L102">			String baseDN = config.getValue(CHAPTER_LDAPCONNECTION, mName,</span>
+					&quot;BaseDN&quot;);
+<span class="nc" id="L104">			String rootDN = config.getValueOptional(CHAPTER_LDAPCONNECTION,</span>
+					mName, &quot;RootDN&quot;);
+<span class="nc" id="L106">			String password = config.getValueOptional(CHAPTER_LDAPCONNECTION,</span>
+					mName, &quot;Password&quot;);
+
+			/*
+			 * Set up the initial context
+			 */
+			try
+			{
+<span class="nc" id="L114">				Hashtable env = new Hashtable();</span>
+<span class="nc" id="L115">				env.put(Context.INITIAL_CONTEXT_FACTORY,</span>
+						&quot;com.sun.jndi.ldap.LdapCtxFactory&quot;);
+<span class="nc" id="L117">				env.put(Context.PROVIDER_URL, buildURL(host, port, baseDN));</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">				if (rootDN != null)</span>
+				{
+<span class="nc" id="L120">					env.put(Context.SECURITY_PRINCIPAL, rootDN);</span>
+				}
+<span class="nc bnc" id="L122" title="All 2 branches missed.">				if (password != null)</span>
+				{
+<span class="nc" id="L124">					env.put(Context.SECURITY_CREDENTIALS, password);</span>
+				}
+<span class="nc" id="L126">				mContext = new InitialDirContext(env);</span>
+			}
+<span class="nc" id="L128">			catch (NamingException e)</span>
+			{
+<span class="nc" id="L130">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_LDAP, &quot;0&quot;, e);
+<span class="nc" id="L133">			}</span>
+		}
+<span class="nc" id="L135">		mOpen = true;</span>
+<span class="nc" id="L136">	}</span>
+
+	/**
+	 * Closes the connection to the LDAP server
+	 */
+	public void close()
+	{
+<span class="nc bnc" id="L143" title="All 2 branches missed.">		if (mOpen)</span>
+		{
+			try
+			{
+<span class="nc bnc" id="L147" title="All 2 branches missed.">				if (mContext != null)</span>
+				{
+<span class="nc" id="L149">					mContext.close();</span>
+				}
+			}
+<span class="nc" id="L152">			catch (NamingException e)</span>
+			{
+<span class="nc" id="L154">				Trace.warn(&quot;Cannot close context for LDAP connection &quot; + mName);</span>
+<span class="nc" id="L155">			}</span>
+		}
+
+<span class="nc" id="L158">		mOpen = false;</span>
+<span class="nc" id="L159">	}</span>
+
+	/**
+	 * Returns the &lt;code&gt;Context&lt;/code&gt; of the current connection to the LDAP
+	 * server.
+	 */
+	public DirContext getContext()
+	{
+<span class="nc" id="L167">		return mContext;</span>
+	}
+
+	/**
+	 * Creates and returns &lt;code&gt;SearchControls&lt;/code&gt; used to search entries
+	 * in the LDAP server. Some values are read out of the configuration.
+	 * 
+	 * @return new &lt;code&gt;SearchControls&lt;/code&gt;, initialized with values of
+	 *         the configuration
+	 * @throws XException if something goes wrong
+	 */
+	public SearchControls getSearchControls() throws XException
+	{
+<span class="nc" id="L180">		Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L181">		int scope = getScope();</span>
+<span class="nc" id="L182">		long countlim = config.getValueAsIntOptional(CHAPTER_LDAPCONNECTION,</span>
+				mName, &quot;CountLimit&quot;);
+<span class="nc bnc" id="L184" title="All 2 branches missed.">		if (countlim &lt; 0)</span>
+		{
+<span class="nc" id="L186">			countlim = 0;</span>
+		}
+
+<span class="nc" id="L189">		int timelim = config.getValueAsIntOptional(CHAPTER_LDAPCONNECTION,</span>
+				mName, &quot;TimeLimit&quot;);
+<span class="nc bnc" id="L191" title="All 2 branches missed.">		if (timelim &lt; 0)</span>
+		{
+<span class="nc" id="L193">			timelim = 0;</span>
+		}
+
+<span class="nc" id="L196">		SearchControls controls = new SearchControls();</span>
+<span class="nc" id="L197">		controls.setSearchScope(scope);</span>
+<span class="nc" id="L198">		controls.setCountLimit(countlim);</span>
+<span class="nc" id="L199">		controls.setCountLimit(timelim);</span>
+
+<span class="nc" id="L201">		return controls;</span>
+	}
+
+	private int getScope() throws XException
+	{
+<span class="nc" id="L206">		int scope = SearchControls.SUBTREE_SCOPE;</span>
+
+<span class="nc" id="L208">		String configScope = Configuration.getInstance().getValueOptional(</span>
+				CHAPTER_LDAPCONNECTION, mName, &quot;Scope&quot;);
+
+<span class="nc bnc" id="L211" title="All 2 branches missed.">		if (configScope != null)</span>
+		{
+<span class="nc bnc" id="L213" title="All 2 branches missed.">			if (configScope.toLowerCase().equals(&quot;onelevel&quot;))</span>
+			{
+<span class="nc" id="L215">				scope = SearchControls.ONELEVEL_SCOPE;</span>
+			}
+<span class="nc bnc" id="L217" title="All 2 branches missed.">			else if (configScope.toLowerCase().equals(&quot;subtree&quot;))</span>
+			{
+<span class="nc" id="L219">				scope = SearchControls.SUBTREE_SCOPE;</span>
+			}
+			else
+			{
+<span class="nc" id="L223">				Vector params = new Vector(1);</span>
+<span class="nc" id="L224">				params.add(configScope);</span>
+<span class="nc" id="L225">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_LDAP, &quot;1&quot;);
+			}
+		}
+
+<span class="nc" id="L231">		return scope;</span>
+	}
+
+	/**
+	 * Builds an URL that points to a LDAP server.
+	 * 
+	 * @return URL that points to a LDAP server.
+	 */
+	private String buildURL(String host, int port, String baseDN)
+	{
+<span class="nc" id="L241">		StringBuffer buffer = new StringBuffer(&quot;ldap://&quot;).append(host);</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">		if (port &gt; 0)</span>
+		{
+<span class="nc" id="L244">			buffer.append(&quot;:&quot;).append(port);</span>
+		}
+<span class="nc bnc" id="L246" title="All 2 branches missed.">		if (baseDN != null)</span>
+		{
+<span class="nc" id="L248">			buffer.append(&quot;/&quot;).append(baseDN);</span>
+		}
+<span class="nc" id="L250">		return buffer.toString();</span>
+	}
+
+	static private String getFullName(String name)
+	{
+<span class="nc" id="L255">		return new StringBuffer().append(name).append(&quot;.&quot;).append(</span>
+<span class="nc" id="L256">				Thread.currentThread().getName()).toString();</span>
+	}
+
+	/**
+	 * Empty method, LDAP connections are not transacted.
+	 */
+	public void commit()
+	{
+	// intentionally empty
+
+<span class="nc" id="L266">	}</span>
+
+	/**
+	 * Empty method, LDAP connections are not transacted.
+	 */
+	public void rollback()
+	{
+	// intentionally empty
+
+<span class="nc" id="L275">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

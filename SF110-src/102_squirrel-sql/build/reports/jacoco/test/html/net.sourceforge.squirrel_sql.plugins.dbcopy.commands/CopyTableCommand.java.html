@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CopyTableCommand.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.plugins.dbcopy.commands</a> &gt; <span class="el_source">CopyTableCommand.java</span></div><h1>CopyTableCommand.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.plugins.dbcopy.commands;
+
+/*
+ * Copyright (C) 2005 Rob Manning
+ * manningr@users.sourceforge.net
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ */
+
+import java.sql.SQLException;
+import java.util.List;
+
+import net.sourceforge.squirrel_sql.client.gui.IProgressCallBackFactory;
+import net.sourceforge.squirrel_sql.client.gui.ProgressCallBackFactory;
+import net.sourceforge.squirrel_sql.client.session.IObjectTreeAPI;
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.fw.sql.DatabaseObjectType;
+import net.sourceforge.squirrel_sql.fw.sql.IDatabaseObjectInfo;
+import net.sourceforge.squirrel_sql.fw.sql.ITableInfo;
+import net.sourceforge.squirrel_sql.fw.sql.ProgressCallBack;
+import net.sourceforge.squirrel_sql.fw.sql.SQLDatabaseMetaData;
+import net.sourceforge.squirrel_sql.fw.sql.SQLUtilities;
+import net.sourceforge.squirrel_sql.fw.util.ICommand;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.DBCopyPlugin;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.util.DBUtil;
+
+public class CopyTableCommand implements ICommand
+{
+	/**
+	 * Current session.
+	 */
+	private ISession _session;
+
+	/**
+	 * Current plugin.
+	 */
+	private final DBCopyPlugin _plugin;
+
+	/** Logger for this class. */
+<span class="nc" id="L56">	private final static ILogger log = LoggerController.createLogger(CopyTableCommand.class);</span>
+
+	/** Internationalized strings for this class */
+<span class="nc" id="L59">	private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L60">		StringManagerFactory.getStringManager(CopyTableCommand.class);</span>
+
+<span class="nc" id="L62">	private IProgressCallBackFactory progressCallBackFactory = new ProgressCallBackFactory();</span>
+
+	static interface i18n
+	{
+
+		// i18n[CopyTablesCommand.progressDialogTitle=Analyzing FKs in Tables to Copy]
+<span class="nc" id="L68">		String PROGRESS_DIALOG_TITLE = s_stringMgr.getString(&quot;CopyTablesCommand.progressDialogTitle&quot;);</span>
+
+		// i18n[CopyTablesCommand.loadingPrefix=Analyzing table:]
+<span class="nc" id="L71">		String LOADING_PREFIX = s_stringMgr.getString(&quot;CopyTablesCommand.loadingPrefix&quot;);</span>
+
+	}
+
+	/**
+	 * Ctor specifying the current session.
+	 */
+	public CopyTableCommand(ISession session, DBCopyPlugin plugin)
+	{
+<span class="nc" id="L80">		super();</span>
+<span class="nc" id="L81">		_session = session;</span>
+<span class="nc" id="L82">		_plugin = plugin;</span>
+<span class="nc" id="L83">	}</span>
+
+	public void setProgressCallBackFactory(IProgressCallBackFactory progressCallBackFactory)
+	{
+<span class="nc" id="L87">		this.progressCallBackFactory = progressCallBackFactory;</span>
+<span class="nc" id="L88">	}	</span>
+	
+	/**
+	 * Execute this command. Save the session and selected objects in the plugin for use in paste command.
+	 */
+	public void execute()
+	{
+<span class="nc" id="L95">		IObjectTreeAPI api = _session.getObjectTreeAPIOfActiveSessionWindow();</span>
+<span class="nc bnc" id="L96" title="All 2 branches missed.">		if (api != null)</span>
+		{
+<span class="nc" id="L98">			IDatabaseObjectInfo[] dbObjs = api.getSelectedDatabaseObjects();</span>
+<span class="nc bnc" id="L99" title="All 2 branches missed.">			if (DatabaseObjectType.TABLE_TYPE_DBO.equals(dbObjs[0].getDatabaseObjectType()))</span>
+			{
+<span class="nc" id="L101">				String catalog = dbObjs[0].getCatalogName();</span>
+<span class="nc" id="L102">				String schema = dbObjs[0].getSchemaName();</span>
+<span class="nc bnc" id="L103" title="All 2 branches missed.">				if (log.isDebugEnabled())</span>
+				{
+<span class="nc" id="L105">					log.debug(&quot;CopyTableCommand.execute: catalog=&quot; + catalog);</span>
+<span class="nc" id="L106">					log.debug(&quot;CopyTableCommand.execute: schema=&quot; + schema);</span>
+				}
+<span class="nc" id="L108">				dbObjs = DBUtil.getTables(_session, catalog, schema, null);</span>
+<span class="nc bnc" id="L109" title="All 2 branches missed.">				for (int i = 0; i &lt; dbObjs.length; i++)</span>
+				{
+<span class="nc" id="L111">					ITableInfo info = (ITableInfo) dbObjs[i];</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">					if (log.isDebugEnabled())</span>
+					{
+<span class="nc" id="L114">						log.debug(&quot;dbObj[&quot; + i + &quot;] = &quot; + info.getSimpleName());</span>
+					}
+				}
+			}
+
+<span class="nc" id="L119">			_plugin.setSourceSession(_session);</span>
+<span class="nc" id="L120">			final IDatabaseObjectInfo[] fdbObjs = dbObjs;</span>
+<span class="nc" id="L121">			final SQLDatabaseMetaData md = _session.getSQLConnection().getSQLMetaData();</span>
+<span class="nc" id="L122">			_session.getApplication().getThreadPool().addTask(new Runnable()</span>
+<span class="nc" id="L123">			{</span>
+				public void run()
+				{
+					try
+					{
+<span class="nc" id="L128">						getInsertionOrder(fdbObjs, md);</span>
+<span class="nc" id="L129">						_plugin.setPasteMenuEnabled(true);</span>
+					}
+<span class="nc" id="L131">					catch (SQLException e)</span>
+					{
+<span class="nc" id="L133">						log.error(&quot;Unexected exception: &quot;, e);</span>
+<span class="nc" id="L134">					}</span>
+<span class="nc" id="L135">				}</span>
+			});
+
+		}
+<span class="nc" id="L139">	}</span>
+
+	private void getInsertionOrder(IDatabaseObjectInfo[] dbObjs, SQLDatabaseMetaData md) throws SQLException
+	{
+<span class="nc" id="L143">		List&lt;ITableInfo&gt; selectedTables = DBUtil.convertObjectArrayToTableList(dbObjs);</span>
+		
+		// Only concerned about order when more than one table.
+<span class="nc bnc" id="L146" title="All 2 branches missed.">		if (selectedTables.size() &gt; 1)</span>
+		{
+<span class="nc" id="L148">			ProgressCallBack cb =</span>
+<span class="nc" id="L149">				progressCallBackFactory.create(_session.getApplication().getMainFrame(),</span>
+					i18n.PROGRESS_DIALOG_TITLE, dbObjs.length);
+
+<span class="nc" id="L152">			cb.setLoadingPrefix(i18n.LOADING_PREFIX);</span>
+<span class="nc" id="L153">			selectedTables = SQLUtilities.getInsertionOrder(selectedTables, md, cb);</span>
+<span class="nc" id="L154">			cb.setVisible(false);</span>
+<span class="nc" id="L155">			cb.dispose();</span>
+<span class="nc" id="L156">			_plugin.setSourceDatabaseObjects(DBUtil.convertTableToObjectList(selectedTables));</span>
+
+<span class="nc" id="L158">		}</span>
+		else
+		{
+<span class="nc" id="L161">			_plugin.setSourceDatabaseObjects(DBUtil.convertTableToObjectList(selectedTables));</span>
+		}
+<span class="nc" id="L163">	}</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

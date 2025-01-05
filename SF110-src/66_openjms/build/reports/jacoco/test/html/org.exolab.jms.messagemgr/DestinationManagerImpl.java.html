@@ -1,0 +1,788 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DestinationManagerImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.messagemgr</a> &gt; <span class="el_source">DestinationManagerImpl.java</span></div><h1>DestinationManagerImpl.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2001-2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: DestinationManagerImpl.java,v 1.2 2005/11/12 10:49:48 tanderson Exp $
+ */
+package org.exolab.jms.messagemgr;
+
+import java.sql.Connection;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
+import javax.jms.InvalidDestinationException;
+import javax.jms.JMSException;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import org.exolab.jms.client.JmsDestination;
+import org.exolab.jms.client.JmsQueue;
+import org.exolab.jms.client.JmsTopic;
+import org.exolab.jms.gc.GarbageCollectionService;
+import org.exolab.jms.message.MessageImpl;
+import org.exolab.jms.persistence.DatabaseService;
+import org.exolab.jms.persistence.PersistenceAdapter;
+import org.exolab.jms.persistence.PersistenceException;
+import org.exolab.jms.service.Service;
+import org.exolab.jms.service.ServiceException;
+
+
+/**
+ * The destination manager is responsible for creating and managing the
+ * lifecycle of {@link DestinationCache} objects. The destination manager is
+ * also responsible for managing messages, that are received by the message
+ * manager, which do not have any registered {@link DestinationCache}.
+ *
+ * @author &lt;a href=&quot;mailto:jima@comware.com.au&quot;&gt;Jim Alateras&lt;/a&gt;
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.2 $ $Date: 2005/11/12 10:49:48 $
+ */
+public class DestinationManagerImpl extends Service
+        implements DestinationManager {
+
+    /**
+     * The set of persistent and non-persistent destinations, keyed on name.
+     */
+<span class="nc" id="L89">    private final HashMap _destinations = new HashMap();</span>
+
+    /**
+     * The set of active DestinationCache instances, keyed on destination.
+     */
+<span class="nc" id="L94">    private final HashMap _caches = new HashMap();</span>
+
+    /**
+     * Synchronization helper. Should be synchronized on whenever accessing
+     * _destinations, or _caches
+     */
+<span class="nc" id="L100">    private final Object _lock = _destinations;</span>
+
+    /**
+     * Maintains a linked list of DestinationEventListener objects. These
+     * listeners will be informed when destinations are added or destroyed.
+     */
+<span class="nc" id="L106">    private LinkedList _listeners = new LinkedList();</span>
+
+    /**
+     * The message manager.
+     */
+    private final MessageManager _messages;
+
+    /**
+     * The destination cache factory.
+     */
+    private final DestinationCacheFactory _factory;
+
+    /**
+     * The consumer manager.
+     */
+    private ConsumerManager _consumers;
+
+    /**
+     * The database service.
+     */
+    private final DatabaseService _database;
+
+    /**
+     * The garbage collection service.
+     */
+    private final GarbageCollectionService _collector;
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L136">    private static final Log _log =</span>
+<span class="nc" id="L137">            LogFactory.getLog(DestinationManagerImpl.class);</span>
+
+    /**
+     * Construct a new &lt;code&gt;DestinationManagerImpl&lt;/code&gt;.
+     *
+     * @param messages  the message manager
+     * @param factory   the destination cache factory
+     * @param database  the database service
+     * @param collector the garbage collection service
+     */
+    public DestinationManagerImpl(MessageManager messages,
+                                  DestinationCacheFactory factory,
+                                  DatabaseService database,
+<span class="nc" id="L150">                                  GarbageCollectionService collector) {</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        if (messages == null) {</span>
+<span class="nc" id="L152">            throw new IllegalArgumentException(&quot;Argument 'messages' is null&quot;);</span>
+        }
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        if (factory == null) {</span>
+<span class="nc" id="L155">            throw new IllegalArgumentException(&quot;Argument 'factory' is null&quot;);</span>
+        }
+<span class="nc bnc" id="L157" title="All 2 branches missed.">        if (database == null) {</span>
+<span class="nc" id="L158">            throw new IllegalArgumentException(&quot;Argument 'database' is null&quot;);</span>
+        }
+<span class="nc bnc" id="L160" title="All 2 branches missed.">        if (collector == null) {</span>
+<span class="nc" id="L161">            throw new IllegalArgumentException(&quot;Argument 'collector' is null&quot;);</span>
+        }
+<span class="nc" id="L163">        _messages = messages;</span>
+<span class="nc" id="L164">        _factory = factory;</span>
+<span class="nc" id="L165">        _database = database;</span>
+<span class="nc" id="L166">        _collector = collector;</span>
+<span class="nc" id="L167">    }</span>
+
+    /**
+     * Sets the consumer manager.
+     *
+     * @param consumers the consumer manager
+     */
+    public void setConsumerManager(ConsumerManager consumers) {
+<span class="nc" id="L175">        _consumers = consumers;</span>
+<span class="nc" id="L176">    }</span>
+
+    /**
+     * Returns the cache for the supplied destination.
+     * &lt;p/&gt;
+     * If the cache doesn't exist, it will be created, and any registered {@link
+     * DestinationEventListener}s will be notified.
+     *
+     * @param destination the destination of the cache to return
+     * @return the cache associated with &lt;code&gt;destination&lt;/code&gt;
+     * @throws InvalidDestinationException if &lt;code&gt;destination&lt;/code&gt; doesn't
+     *                                     exist
+     * @throws JMSException                if the cache can't be created
+     */
+    public DestinationCache getDestinationCache(JmsDestination destination)
+            throws JMSException {
+        DestinationCache result;
+<span class="nc" id="L193">        boolean created = false;</span>
+
+<span class="nc" id="L195">        synchronized (_lock) {</span>
+<span class="nc" id="L196">            final String name = destination.getName();</span>
+
+            // make sure the managed destination instance is used.
+<span class="nc" id="L199">            destination = getExistingDestination(name);</span>
+
+<span class="nc" id="L201">            result = (DestinationCache) _caches.get(destination);</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">            if (result == null) {</span>
+<span class="nc" id="L203">                checkWildcard(destination);</span>
+<span class="nc" id="L204">                result = _factory.createDestinationCache(destination);</span>
+<span class="nc" id="L205">                _caches.put(destination, result);</span>
+<span class="nc" id="L206">                _messages.addEventListener(destination, result);</span>
+<span class="nc" id="L207">                created = true;</span>
+            }
+<span class="nc" id="L209">        }</span>
+
+<span class="nc bnc" id="L211" title="All 2 branches missed.">        if (created) {</span>
+            // notify the listeners that a new cache has been added,
+            // outside the sync of _lock
+<span class="nc" id="L214">            notifyCacheAdded(result);</span>
+        }
+
+<span class="nc" id="L217">        return result;</span>
+    }
+
+    /**
+     * Returns a destination given its name.
+     *
+     * @param name the name of the destination
+     * @return the destination corresponding to &lt;code&gt;name&lt;/code&gt; or
+     *         &lt;code&gt;null&lt;/code&gt; if none exists
+     */
+    public JmsDestination getDestination(String name) {
+<span class="nc" id="L228">        synchronized (_lock) {</span>
+<span class="nc" id="L229">            return (JmsDestination) _destinations.get(name);</span>
+        }
+    }
+
+    /**
+     * Register an event listener to be notified when destinations are created
+     * and destroyed.
+     *
+     * @param listener the listener to add
+     */
+    public void addDestinationEventListener(DestinationEventListener listener) {
+<span class="nc" id="L240">        synchronized (_listeners) {</span>
+<span class="nc bnc" id="L241" title="All 2 branches missed.">            if (!_listeners.contains(listener)) {</span>
+<span class="nc" id="L242">                _listeners.add(listener);</span>
+            }
+<span class="nc" id="L244">        }</span>
+<span class="nc" id="L245">    }</span>
+
+    /**
+     * Remove an event listener.
+     *
+     * @param listener the listener to remove
+     */
+    public void removeDestinationEventListener(
+            DestinationEventListener listener) {
+<span class="nc" id="L254">        synchronized (_listeners) {</span>
+<span class="nc" id="L255">            _listeners.remove(listener);</span>
+<span class="nc" id="L256">        }</span>
+<span class="nc" id="L257">    }</span>
+
+    /**
+     * Create a destination.
+     * &lt;p/&gt;
+     * Any registered {@link DestinationEventListener}s will be notified.
+     *
+     * @param destination the destination to create
+     * @throws InvalidDestinationException if the destination already exists or
+     *                                     is a wildcard destination
+     * @throws JMSException                if the destination can't be created
+     */
+    public void createDestination(JmsDestination destination)
+            throws JMSException {
+<span class="nc" id="L271">        checkWildcard(destination);</span>
+<span class="nc" id="L272">        synchronized (_lock) {</span>
+<span class="nc bnc" id="L273" title="All 2 branches missed.">            if (exists(destination.getName())) {</span>
+<span class="nc" id="L274">                throw new InvalidDestinationException(</span>
+<span class="nc" id="L275">                        &quot;Destination already exists: &quot; + destination.getName());</span>
+            }
+<span class="nc bnc" id="L277" title="All 2 branches missed.">            if (destination.getPersistent()) {</span>
+<span class="nc" id="L278">                createPersistentDestination(destination);</span>
+            }
+<span class="nc" id="L280">            addToDestinations(destination);</span>
+<span class="nc" id="L281">        }</span>
+
+<span class="nc" id="L283">        notifyDestinationAdded(destination);</span>
+<span class="nc" id="L284">    }</span>
+
+    /**
+     * Remove a destination.
+     * &lt;p/&gt;
+     * All messages and durable consumers will be removed. Any registered {@link
+     * DestinationEventListener}s will be notified.
+     *
+     * @param destination the destination to remove
+     * @throws InvalidDestinationException if the destination is invalid
+     * @throws JMSException                if the destination can't be removed
+     */
+    public void removeDestination(JmsDestination destination)
+            throws JMSException {
+
+<span class="nc bnc" id="L299" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L300">            _log.debug(&quot;removeDestination(destination=&quot; + destination + &quot;)&quot;);</span>
+        }
+
+        // make sure the managed destination instance is used.
+<span class="nc" id="L304">        destination = getExistingDestination(destination.getName());</span>
+
+<span class="nc bnc" id="L306" title="All 2 branches missed.">        boolean queue = (destination instanceof JmsQueue) ? true : false;</span>
+
+<span class="nc bnc" id="L308" title="All 2 branches missed.">        if (!queue) {</span>
+            // If its a topic, unsubscribe any inactive durable subscribers.
+            // The following will fail if there are active subscribers
+<span class="nc" id="L311">            _consumers.unsubscribe((JmsTopic) destination);</span>
+        }
+
+<span class="nc" id="L314">        synchronized (_lock) {</span>
+<span class="nc" id="L315">            DestinationCache cache =</span>
+<span class="nc" id="L316">                    (DestinationCache) _caches.get(destination);</span>
+            // make sure there are no consumers
+<span class="nc bnc" id="L318" title="All 4 branches missed.">            if (cache != null &amp;&amp; cache.hasConsumers()) {</span>
+<span class="nc" id="L319">                throw new JMSException(&quot;Cannot delete destination&quot;</span>
+                                       + destination + &quot; since there are &quot;
+                                       + &quot; active consumers.&quot;);
+            }
+<span class="nc" id="L323">        }</span>
+
+        // now that we have removed all the durable consumers we can remove
+        // the administered topic. First delete it from memory and then
+        // from the persistent store
+        try {
+<span class="nc" id="L329">            _database.begin();</span>
+<span class="nc" id="L330">            Connection connection = _database.getConnection();</span>
+
+<span class="nc" id="L332">            _database.getAdapter().removeDestination(connection,</span>
+<span class="nc" id="L333">                                                     destination.getName());</span>
+<span class="nc" id="L334">            destroyDestinationCache(destination);</span>
+<span class="nc" id="L335">            removeFromDestinations(destination);</span>
+<span class="nc" id="L336">            _database.commit();</span>
+<span class="nc" id="L337">        } catch (Exception exception) { // JMSException, PersistenceException</span>
+<span class="nc" id="L338">            String msg = &quot;Failed to remove destination &quot;</span>
+<span class="nc" id="L339">                    + destination.getName();</span>
+<span class="nc" id="L340">            cleanup(msg, exception);</span>
+<span class="nc" id="L341">        }</span>
+
+<span class="nc" id="L343">        notifyDestinationRemoved(destination);</span>
+<span class="nc" id="L344">    }</span>
+
+    /**
+     * Invoked when the {@link MessageManager} receives a non-persistent
+     * message.
+     *
+     * @param destination the message's destination
+     * @param message     the message
+     * @throws JMSException if the listener fails to handle the message
+     */
+    public void messageAdded(JmsDestination destination,
+                             MessageImpl message)
+            throws JMSException {
+<span class="nc bnc" id="L357" title="All 2 branches missed.">        if (destination instanceof JmsTopic) {</span>
+            // check to see whether there are active consumers interested
+            // in the specified destination. If there are then we need to
+            // create a destination cache and pass the message to it.
+<span class="nc bnc" id="L361" title="All 2 branches missed.">            if (_consumers.hasActiveConsumers(destination)) {</span>
+<span class="nc bnc" id="L362" title="All 2 branches missed.">                if (!exists(destination.getName())) {</span>
+<span class="nc" id="L363">                    createDestination(destination);</span>
+                }
+<span class="nc" id="L365">                DestinationCache cache = getDestinationCache(destination);</span>
+<span class="nc" id="L366">                cache.messageAdded(destination, message);</span>
+<span class="nc" id="L367">            }</span>
+        } else {
+            // destination is a queue. Since the message is non-persistent,
+            // create the cache and pass the message to it.
+<span class="nc bnc" id="L371" title="All 2 branches missed.">            if (!exists(destination.getName())) {</span>
+<span class="nc" id="L372">                createDestination(destination);</span>
+            }
+<span class="nc" id="L374">            DestinationCache cache = getDestinationCache(destination);</span>
+<span class="nc" id="L375">            cache.messageAdded(destination, message);</span>
+        }
+<span class="nc" id="L377">    }</span>
+
+    /**
+     * Invoked when the {@link MessageManager} receives a persistent message.
+     *
+     * @param destination the message's destination
+     * @param message     the message
+     * @throws JMSException         if the listener fails to handle the message
+     * @throws PersistenceException if there is a persistence related problem
+     */
+    public void persistentMessageAdded(JmsDestination destination,
+                                       MessageImpl message)
+            throws JMSException, PersistenceException {
+<span class="nc" id="L390">        DestinationCache cache = getDestinationCache(destination);</span>
+<span class="nc" id="L391">        cache.persistentMessageAdded(destination, message);</span>
+<span class="nc" id="L392">    }</span>
+
+    /**
+     * Returns all destinations.
+     *
+     * @return a list of JmsDestination instances.
+     * @throws JMSException for any JMS error
+     */
+    public List getDestinations() throws JMSException {
+<span class="nc" id="L401">        synchronized (_lock) {</span>
+<span class="nc" id="L402">            return new ArrayList(_destinations.values());</span>
+        }
+    }
+
+    /**
+     * Returns a map of all destinations that match the specified topic.
+     * &lt;p/&gt;
+     * If the topic represents a wildcard then it may match none, one or more
+     * destinations.
+     *
+     * @param topic the topic
+     * @return a map of topics to DestinationCache instances
+     */
+    public Map getTopicDestinationCaches(JmsTopic topic) {
+<span class="nc" id="L416">        HashMap result = new HashMap();</span>
+
+<span class="nc" id="L418">        synchronized (_lock) {</span>
+<span class="nc" id="L419">            Iterator iter = _caches.keySet().iterator();</span>
+<span class="nc bnc" id="L420" title="All 2 branches missed.">            while (iter.hasNext()) {</span>
+<span class="nc" id="L421">                JmsDestination dest = (JmsDestination) iter.next();</span>
+<span class="nc bnc" id="L422" title="All 2 branches missed.">                if ((dest instanceof JmsTopic) &amp;&amp;</span>
+<span class="nc bnc" id="L423" title="All 2 branches missed.">                        (topic.match((JmsTopic) dest))) {</span>
+<span class="nc" id="L424">                    result.put(dest, _caches.get(dest));</span>
+                }
+<span class="nc" id="L426">            }</span>
+<span class="nc" id="L427">        }</span>
+
+<span class="nc" id="L429">        return result;</span>
+    }
+
+    /**
+     * Perform any garbage collection on this resource. This will have the
+     * effect of releasing system resources.  If the 'aggressive' flag is set to
+     * true then the garbage collection should do more to release memory related
+     * resources since it is called when the application memory is low.
+     *
+     * @param aggressive &lt;code&gt;true&lt;/code&gt; for aggressive garbage collection
+     */
+    public void collectGarbage(boolean aggressive) {
+<span class="nc" id="L441">        int gcCaches = 0;</span>
+<span class="nc" id="L442">        int gcDestinations = 0;</span>
+
+        DestinationCache[] caches;
+<span class="nc" id="L445">        synchronized (_lock) {</span>
+<span class="nc" id="L446">            caches = (DestinationCache[]) _caches.values().toArray(</span>
+                    new DestinationCache[0]);
+<span class="nc" id="L448">        }</span>
+<span class="nc bnc" id="L449" title="All 2 branches missed.">        for (int index = 0; index &lt; caches.length; index++) {</span>
+<span class="nc" id="L450">            DestinationCache cache = caches[index];</span>
+<span class="nc bnc" id="L451" title="All 2 branches missed.">            if (cache.canDestroy()) {</span>
+<span class="nc bnc" id="L452" title="All 2 branches missed.">                if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L453">                    _log.debug(&quot;Garbage collecting destination cache=&quot;</span>
+                               + cache);
+                }
+<span class="nc" id="L456">                destroyDestinationCache(cache);</span>
+<span class="nc" id="L457">                gcCaches++;</span>
+            } else {
+                // the cache is active, so issue a garbage collection
+                // request on it
+<span class="nc" id="L461">                cache.collectGarbage(aggressive);</span>
+            }
+        }
+
+        // get rid of non-persistent destinations, without associated caches.
+<span class="nc" id="L466">        synchronized (_lock) {</span>
+<span class="nc" id="L467">            JmsDestination[] destinations</span>
+<span class="nc" id="L468">                    = (JmsDestination[]) _destinations.values().toArray(</span>
+                            new JmsDestination[0]);
+<span class="nc bnc" id="L470" title="All 2 branches missed.">            for (int i = 0; i &lt; destinations.length; ++i) {</span>
+<span class="nc" id="L471">                JmsDestination dest = destinations[i];</span>
+<span class="nc bnc" id="L472" title="All 4 branches missed.">                if (!dest.getPersistent() &amp;&amp; !_caches.containsKey(dest)) {</span>
+<span class="nc" id="L473">                    gcDestinations++;</span>
+<span class="nc" id="L474">                    _destinations.remove(dest.getName());</span>
+                }
+            }
+
+            // log the information
+<span class="nc" id="L479">            _log.info(&quot;DMGC Collected &quot; + gcCaches + &quot; caches, &quot;</span>
+<span class="nc" id="L480">                      + _caches.size()</span>
+                      + &quot; remaining.&quot;);
+<span class="nc" id="L482">            _log.info(&quot;DMGC Collected &quot; + gcDestinations + &quot; destinations, &quot;</span>
+<span class="nc" id="L483">                      + _destinations.size() + &quot; remaining.&quot;);</span>
+<span class="nc" id="L484">        }</span>
+
+<span class="nc" id="L486">    }</span>
+
+    /**
+     * Start the service.
+     *
+     * @throws ServiceException if the service fails to start
+     */
+    protected void doStart() throws ServiceException {
+<span class="nc bnc" id="L494" title="All 2 branches missed.">        if (_consumers == null) {</span>
+<span class="nc" id="L495">            throw new ServiceException(</span>
+                    &quot;ConsumerManager hasn't been initialised&quot;);
+        }
+<span class="nc" id="L498">        init();</span>
+<span class="nc" id="L499">        _collector.register(this);</span>
+<span class="nc" id="L500">    }</span>
+
+    /**
+     * Stop the service.
+     *
+     * @throws ServiceException if the service fails to stop
+     */
+    protected void doStop() throws ServiceException {
+<span class="nc" id="L508">        _collector.unregister(this);</span>
+
+        JmsDestination[] destinations;
+<span class="nc" id="L511">        synchronized (_lock) {</span>
+<span class="nc" id="L512">            destinations = (JmsDestination[]) _caches.keySet().toArray(</span>
+                    new JmsDestination[0]);
+<span class="nc" id="L514">        }</span>
+<span class="nc bnc" id="L515" title="All 2 branches missed.">        for (int index = 0; index &lt; destinations.length; index++) {</span>
+<span class="nc" id="L516">            destroyDestinationCache(destinations[index]);</span>
+        }
+
+<span class="nc" id="L519">        _caches.clear();</span>
+
+<span class="nc" id="L521">        _destinations.clear();</span>
+
+        // remove all the listeners
+<span class="nc" id="L524">        synchronized (_listeners) {</span>
+<span class="nc" id="L525">            _listeners.clear();</span>
+<span class="nc" id="L526">        }</span>
+<span class="nc" id="L527">    }</span>
+
+    /**
+     * Initialises the destination manager.
+     *
+     * @throws ServiceException if the service cannot be initialised
+     */
+    protected void init() throws ServiceException {
+        Enumeration iter;
+        try {
+<span class="nc" id="L537">            _database.begin();</span>
+<span class="nc" id="L538">            Connection connection = _database.getConnection();</span>
+
+            // return a list of JmsDestination objects.
+<span class="nc" id="L541">            iter = _database.getAdapter().getAllDestinations(connection);</span>
+<span class="nc" id="L542">            _database.commit();</span>
+<span class="nc" id="L543">        } catch (PersistenceException exception) {</span>
+<span class="nc" id="L544">            _log.error(exception, exception);</span>
+<span class="nc" id="L545">            rollback();</span>
+<span class="nc" id="L546">            throw new ServiceException(&quot;Failed to get destinations&quot;, exception);</span>
+<span class="nc" id="L547">        }</span>
+
+<span class="nc bnc" id="L549" title="All 2 branches missed.">        while (iter.hasMoreElements()) {</span>
+            // add each destination to the cache
+<span class="nc" id="L551">            JmsDestination dest = (JmsDestination) iter.nextElement();</span>
+<span class="nc" id="L552">            addToDestinations(dest);</span>
+<span class="nc" id="L553">        }</span>
+<span class="nc" id="L554">    }</span>
+
+    /**
+     * Determines if a destination exists.
+     *
+     * @param name the destination name
+     * @return &lt;code&gt;true&lt;/code&gt; if the destination exists, otherwise
+     *         &lt;code&gt;false
+     */
+    protected boolean exists(String name) {
+<span class="nc bnc" id="L564" title="All 2 branches missed.">        return getDestination(name) != null;</span>
+    }
+
+    /**
+     * Delete the specfied destination.
+     *
+     * @param cache the destination to destroy
+     */
+    protected void destroyDestinationCache(DestinationCache cache) {
+<span class="nc" id="L573">        destroyDestinationCache(cache.getDestination());</span>
+<span class="nc" id="L574">    }</span>
+
+    /**
+     * Delete the specfied destination.
+     *
+     * @param dest the destination to destroy
+     */
+    protected void destroyDestinationCache(JmsDestination dest) {
+<span class="nc" id="L582">        synchronized (_lock) {</span>
+<span class="nc" id="L583">            DestinationCache cache = (DestinationCache) _caches.remove(dest);</span>
+<span class="nc bnc" id="L584" title="All 2 branches missed.">            if (cache != null) {</span>
+                // deregister the cache from message manager.
+<span class="nc" id="L586">                _messages.removeEventListener(dest);</span>
+
+                // notify the listeners that a cache has been removed from
+                // the destination manager
+<span class="nc" id="L590">                notifyCacheRemoved(cache);</span>
+
+<span class="nc" id="L592">                cache.destroy();</span>
+            }
+<span class="nc" id="L594">        }</span>
+<span class="nc" id="L595">    }</span>
+
+    /**
+     * Create a persistent destination.
+     *
+     * @param destination the destination to create
+     * @throws JMSException if the destination cannot be created
+     */
+    private void createPersistentDestination(JmsDestination destination)
+            throws JMSException {
+<span class="nc bnc" id="L605" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L606">            _log.debug(&quot;createPersistentDestination(destination=&quot;</span>
+                       + destination + &quot;)&quot;);
+        }
+
+<span class="nc bnc" id="L610" title="All 2 branches missed.">        boolean queue = (destination instanceof JmsQueue) ? true : false;</span>
+<span class="nc" id="L611">        PersistenceAdapter adapter = _database.getAdapter();</span>
+
+        // check that the destination does not exist. If it exists then return
+        // false. If it doesn't exists the create it and bind it to the jndi
+        // context
+
+        try {
+<span class="nc" id="L618">            _database.begin();</span>
+<span class="nc" id="L619">            Connection connection = _database.getConnection();</span>
+<span class="nc" id="L620">            adapter.addDestination(connection, destination.getName(), queue);</span>
+<span class="nc" id="L621">            _database.commit();</span>
+<span class="nc" id="L622">        } catch (Exception exception) { // JMSException, PersistenceException</span>
+<span class="nc" id="L623">            cleanup(&quot;Failed to create persistent destination &quot;</span>
+<span class="nc" id="L624">                    + destination.getName(), exception);</span>
+<span class="nc" id="L625">        }</span>
+<span class="nc" id="L626">    }</span>
+
+    /**
+     * Notify the list of {@link DestinationEventListener} objects that the
+     * specified destination has been added.
+     *
+     * @param destination the added destination
+     * @throws JMSException if a listener fails to be notified
+     */
+    private void notifyDestinationAdded(JmsDestination destination)
+            throws JMSException {
+<span class="nc" id="L637">        DestinationEventListener[] listeners = getListeners();</span>
+<span class="nc bnc" id="L638" title="All 2 branches missed.">        for (int i = 0; i &lt; listeners.length; ++i) {</span>
+<span class="nc" id="L639">            listeners[i].destinationAdded(destination);</span>
+        }
+<span class="nc" id="L641">    }</span>
+
+    /**
+     * Notify the list of {@link DestinationEventListener} objects that the
+     * specified destination has been removed.
+     *
+     * @param destination the added destination
+     * @throws JMSException if a listeners fails to be notified
+     */
+    private void notifyDestinationRemoved(JmsDestination destination)
+            throws JMSException {
+<span class="nc" id="L652">        DestinationEventListener[] listeners = getListeners();</span>
+<span class="nc bnc" id="L653" title="All 2 branches missed.">        for (int i = 0; i &lt; listeners.length; ++i) {</span>
+<span class="nc" id="L654">            listeners[i].destinationRemoved(destination);</span>
+        }
+<span class="nc" id="L656">    }</span>
+
+    /**
+     * Notify the list of {@link DestinationEventListener} objects that the
+     * specified message cache has been added.
+     *
+     * @param cache the added cache
+     */
+    private void notifyCacheAdded(DestinationCache cache) {
+<span class="nc" id="L665">        JmsDestination destination = cache.getDestination();</span>
+<span class="nc" id="L666">        DestinationEventListener[] listeners = getListeners();</span>
+<span class="nc bnc" id="L667" title="All 2 branches missed.">        for (int i = 0; i &lt; listeners.length; ++i) {</span>
+<span class="nc" id="L668">            listeners[i].cacheAdded(destination, cache);</span>
+        }
+<span class="nc" id="L670">    }</span>
+
+    /**
+     * Notify the list of {@link DestinationEventListener} objects that the
+     * specified message cache has been removed.
+     *
+     * @param cache the added cache
+     */
+    private void notifyCacheRemoved(DestinationCache cache) {
+<span class="nc" id="L679">        JmsDestination destination = cache.getDestination();</span>
+<span class="nc" id="L680">        DestinationEventListener[] listeners = getListeners();</span>
+<span class="nc bnc" id="L681" title="All 2 branches missed.">        for (int i = 0; i &lt; listeners.length; ++i) {</span>
+<span class="nc" id="L682">            listeners[i].cacheRemoved(destination, cache);</span>
+        }
+<span class="nc" id="L684">    }</span>
+
+    /**
+     * Add the specified destination to the destination cache.
+     *
+     * @param destination the destination to add
+     */
+    private void addToDestinations(JmsDestination destination) {
+<span class="nc" id="L692">        synchronized (_lock) {</span>
+<span class="nc bnc" id="L693" title="All 2 branches missed.">            if (!_destinations.containsKey(destination.getName())) {</span>
+<span class="nc" id="L694">                _destinations.put(destination.getName(), destination);</span>
+            }
+<span class="nc" id="L696">        }</span>
+<span class="nc" id="L697">    }</span>
+
+    /**
+     * Remove the specified destination from the cache.
+     *
+     * @param destination the destination to remove
+     */
+    private void removeFromDestinations(JmsDestination destination) {
+<span class="nc" id="L705">        synchronized (_lock) {</span>
+<span class="nc" id="L706">            _destinations.remove(destination.getName());</span>
+<span class="nc" id="L707">        }</span>
+<span class="nc" id="L708">    }</span>
+
+    /**
+     * Returns a destination given its name.
+     *
+     * @param name the name of the destination
+     * @return the destination corresponding to &lt;code&gt;name&lt;/code&gt;
+     * @throws InvalidDestinationException if the named destination doesn't
+     *                                     exist
+     */
+    private JmsDestination getExistingDestination(String name)
+            throws InvalidDestinationException {
+<span class="nc" id="L720">        JmsDestination destination = getDestination(name);</span>
+<span class="nc bnc" id="L721" title="All 2 branches missed.">        if (destination == null) {</span>
+<span class="nc" id="L722">            throw new InvalidDestinationException(</span>
+                    &quot;Destination does not exist:&quot; + name);
+        }
+<span class="nc" id="L725">        return destination;</span>
+    }
+
+    /**
+     * Ensures that the specified destination isn't a wildcard.
+     *
+     * @param destination the destination to check
+     * @throws InvalidDestinationException if the destination is a wildcard
+     */
+    private void checkWildcard(JmsDestination destination)
+            throws InvalidDestinationException {
+<span class="nc bnc" id="L736" title="All 2 branches missed.">        if (destination instanceof JmsTopic</span>
+<span class="nc bnc" id="L737" title="All 2 branches missed.">                &amp;&amp; ((JmsTopic) destination).isWildCard()) {</span>
+<span class="nc" id="L738">            throw new InvalidDestinationException(</span>
+                    &quot;Wildcarded topics cannot be managed: &quot;
+<span class="nc" id="L740">                    + destination.getName());</span>
+        }
+<span class="nc" id="L742">    }</span>
+
+    /**
+     * Returns the registered {@link DestinationEventListener}s.
+     *
+     * @return the registered {@link DestinationEventListener}s.
+     */
+    private DestinationEventListener[] getListeners() {
+<span class="nc" id="L750">        synchronized (_listeners) {</span>
+<span class="nc" id="L751">            return (DestinationEventListener[]) _listeners.toArray(</span>
+                    new DestinationEventListener[0]);
+        }
+    }
+
+    /**
+     * Rollback the current transaction, logging any error.
+     */
+    private void rollback() {
+        try {
+<span class="nc" id="L761">            _database.rollback();</span>
+<span class="nc" id="L762">        } catch (PersistenceException exception) {</span>
+<span class="nc" id="L763">            _log.error(exception, exception);</span>
+<span class="nc" id="L764">        }</span>
+<span class="nc" id="L765">    }</span>
+
+    /**
+     * Cleanup a failed transaction, and propagate the exception as a
+     * JMSException.
+     *
+     * @param message   the message to log
+     * @param exception the exception propagate
+     * @throws JMSException &lt;code&gt;exception&lt;/code&gt; if it is an instance of
+     *                      JMSException, else a new JMSException containing
+     *                      &lt;code&gt;message&lt;/code&gt;
+     */
+    private void cleanup(String message, Exception exception)
+            throws JMSException {
+<span class="nc" id="L779">        _log.error(message, exception);</span>
+<span class="nc" id="L780">        rollback();</span>
+<span class="nc bnc" id="L781" title="All 2 branches missed.">        if (exception instanceof JMSException) {</span>
+<span class="nc" id="L782">            throw (JMSException) exception;</span>
+        } else {
+<span class="nc" id="L784">            throw new JMSException(message + &quot;: &quot; + exception.getMessage());</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

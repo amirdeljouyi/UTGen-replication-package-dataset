@@ -1,0 +1,485 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DefaultReferenceEncodedNucleotideSequence.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.core.residue.nt</a> &gt; <span class="el_source">DefaultReferenceEncodedNucleotideSequence.java</span></div><h1>DefaultReferenceEncodedNucleotideSequence.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+/*
+ * Created on Feb 9, 2009
+ *
+ * @author dkatzel
+ */
+package org.jcvi.jillion.core.residue.nt;
+
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map.Entry;
+import java.util.SortedMap;
+import java.util.TreeMap;
+
+import org.jcvi.jillion.core.Range;
+import org.jcvi.jillion.core.Sequence;
+import org.jcvi.jillion.internal.core.io.ValueSizeStrategy;
+import org.jcvi.jillion.internal.core.residue.AbstractResidueSequence;
+
+final class DefaultReferenceEncodedNucleotideSequence extends AbstractResidueSequence&lt;Nucleotide&gt; implements ReferenceMappedNucleotideSequence{
+
+<span class="nc" id="L45">	private static final Nucleotide[] NUCLEOTIDE_ORDINALS = Nucleotide.values();</span>
+    private final int length;
+    private final int startOffset;
+    private final NucleotideSequence reference;
+    /**
+     * All of the differences between this 
+     * read and the reference it is aligned 
+     * to (which could be a contig consensus)
+     * are encoded here. If there are no SNPs in this read:
+     * meaning that this read aligns to its reference at 100%
+     * identity, then this value &lt;strong&gt; will be null&lt;/strong&gt;.
+     * &lt;br/&gt;
+     * The encoding uses {@link ValueSizeStrategy}
+     * to pack the data in as few bytes as possible.
+     * Here is the current encoding:&lt;br/&gt;
+     * &lt;ul&gt;
+     *  &lt;li&gt;first byte is the ordinal value of the {@link ValueSizeStrategy}
+     *   used to store the number of elements&lt;/li&gt;
+     *  
+     *  &lt;li&gt;the next 1,2 or 4 bytes (depending on the {@link ValueSizeStrategy}
+     *  specified in the previous byte) denote the number of SNPs encoded.&lt;/li&gt;
+     *  
+     *  &lt;li&gt;the next byte is the ordinal value of the {@link ValueSizeStrategy}
+     *   used to store the number of bytes
+     *   required for each SNP offset value&lt;/li&gt;
+     *  
+     *  &lt;li&gt;the next $num_snps * 1,2 or 4 bytes (depending on the {@link ValueSizeStrategy}
+     *  specified in the previous byte) encode the SNP offsets in the read.&lt;/li&gt;
+     *  
+     *  &lt;/li&gt; the remaining bytes store the actual SNP values as Nucleotide ordinal values
+     *  packed as 4 bits each.  This means that each byte actually stores
+     *  2 SNPs.&lt;/li&gt;
+     *  &lt;ul/&gt;
+     */
+    private final byte[] encodedSnpsInfo;
+    /**
+     * Our HashCode value,
+     * This value is lazy loaded
+     * so we only have 
+     * to compute the hashcode value
+     * once.
+     * 
+     * We can afford to store it because
+     * the Java memory model will padd out
+     * the bytes anyway so we don't
+     * take up any extra memory.
+     */
+    private int hash;
+    
+    
+    @Override
+	public SortedMap&lt;Integer, Nucleotide&gt; getDifferenceMap() {
+<span class="nc bnc" id="L97" title="All 2 branches missed.">    	if(encodedSnpsInfo==null){</span>
+<span class="nc" id="L98">    		return new TreeMap&lt;Integer, Nucleotide&gt;();</span>
+    	}
+<span class="nc" id="L100">        ByteBuffer buf = ByteBuffer.wrap(encodedSnpsInfo);</span>
+<span class="nc" id="L101">        ValueSizeStrategy numSnpsSizeStrategy = ValueSizeStrategy.values()[buf.get()];</span>
+<span class="nc" id="L102">		int size = numSnpsSizeStrategy.getNext(buf);</span>
+<span class="nc" id="L103">        ValueSizeStrategy snpSizeStrategy = ValueSizeStrategy.values()[buf.get()];</span>
+<span class="nc" id="L104">    	byte[] snps = getSnpArray(numSnpsSizeStrategy, size, snpSizeStrategy);</span>
+<span class="nc" id="L105">    	SortedMap&lt;Integer, Nucleotide&gt; differenceMap = new TreeMap&lt;Integer, Nucleotide&gt;();</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">    	for(int i=0; i&lt;size; i++){        	</span>
+<span class="nc" id="L107">            Integer offset = snpSizeStrategy.getNext(buf);</span>
+<span class="nc" id="L108">            int index = i/2;</span>
+<span class="nc bnc" id="L109" title="All 2 branches missed.">        	if(i%2==0){</span>
+<span class="nc" id="L110">        		int temp1 = snps[index]&gt;&gt;4;</span>
+<span class="nc" id="L111">				differenceMap.put(offset, NUCLEOTIDE_ORDINALS[temp1 &amp; 0x0F]);</span>
+<span class="nc" id="L112">        	}else{</span>
+<span class="nc" id="L113">        		differenceMap.put(offset,NUCLEOTIDE_ORDINALS[snps[index] &amp; 0x0F]);</span>
+        	}
+			
+        }
+<span class="nc" id="L117">		return differenceMap;</span>
+	}
+
+    public DefaultReferenceEncodedNucleotideSequence(NucleotideSequence reference,
+            String toBeEncoded, int startOffset){
+<span class="nc" id="L122">    	this(reference, new NucleotideSequenceBuilder(toBeEncoded), startOffset);</span>
+<span class="nc" id="L123">    }</span>
+
+	public DefaultReferenceEncodedNucleotideSequence(NucleotideSequence reference,
+<span class="nc" id="L126">            NucleotideSequenceBuilder toBeEncoded, int startOffset){</span>
+<span class="nc" id="L127">        List&lt;Integer&gt; tempGapList = new ArrayList&lt;Integer&gt;();     </span>
+<span class="nc" id="L128">        this.startOffset = startOffset;</span>
+<span class="nc" id="L129">        this.length = (int)toBeEncoded.getLength();</span>
+<span class="nc" id="L130">        this.reference = reference;</span>
+<span class="nc" id="L131">        SortedMap&lt;Integer, Nucleotide&gt; differentGlyphMap = populateFields(reference, toBeEncoded, startOffset, tempGapList);</span>
+<span class="nc" id="L132">        int numSnps = differentGlyphMap.size();</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        if(numSnps ==0){</span>
+        	//no snps
+<span class="nc" id="L135">        	encodedSnpsInfo =null;</span>
+<span class="nc" id="L136">        	return;</span>
+        }
+       
+<span class="nc" id="L139">    	ValueSizeStrategy snpSizeStrategy = ValueSizeStrategy.getStrategyFor(differentGlyphMap.lastKey().intValue());</span>
+<span class="nc" id="L140">        int snpByteLength = computeNumberOfBytesToStore(numSnps,snpSizeStrategy);</span>
+<span class="nc" id="L141">        ValueSizeStrategy numSnpsStrategy = ValueSizeStrategy.getStrategyFor(snpByteLength);</span>
+<span class="nc" id="L142">        int bufferSize = numSnpsStrategy.getNumberOfBytesPerValue()+ snpByteLength;</span>
+<span class="nc" id="L143">        ByteBuffer buffer = ByteBuffer.allocate(bufferSize);</span>
+        
+<span class="nc" id="L145">        buffer.put((byte)numSnpsStrategy.ordinal());</span>
+<span class="nc" id="L146">		numSnpsStrategy.put(buffer, numSnps);</span>
+        
+<span class="nc" id="L148">        buffer.put((byte)snpSizeStrategy.ordinal());</span>
+<span class="nc" id="L149">        int i=0;</span>
+<span class="nc" id="L150">        byte[] snpValues = new byte[(numSnps+1)/2];</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">    	for(Entry&lt;Integer, Nucleotide&gt; entry : differentGlyphMap.entrySet()){</span>
+        
+<span class="nc" id="L153">        	snpSizeStrategy.put(buffer, entry.getKey().intValue());</span>
+<span class="nc" id="L154">        	byte ordinal = entry.getValue().getOrdinalAsByte();</span>
+<span class="nc" id="L155">        	int index = i/2;</span>
+<span class="nc bnc" id="L156" title="All 2 branches missed.">        	if(i%2==0){</span>
+<span class="nc" id="L157">        		snpValues[index] = (byte)(ordinal&lt;&lt;4 &amp; 0xF0);</span>
+        	}else{
+<span class="nc" id="L159">        		snpValues[index] = (byte)(snpValues[index] | ordinal);</span>
+        	}
+        	  	
+<span class="nc" id="L162">        	i++;</span>
+<span class="nc" id="L163">        }</span>
+    	
+<span class="nc" id="L165">		buffer.put(snpValues);	        </span>
+<span class="nc" id="L166">        encodedSnpsInfo = buffer.array();</span>
+    
+<span class="nc" id="L168">    }</span>
+    
+    
+    private int computeNumberOfBytesToStore(int numSnps,ValueSizeStrategy snpSizeStrategy) {
+<span class="nc" id="L172">    	int numBytesPerSnpIndex = snpSizeStrategy.getNumberOfBytesPerValue();</span>
+<span class="nc" id="L173">    	int numBytesRequiredToStoreSnps = (numSnps+1)/2;</span>
+<span class="nc" id="L174">    	int numberOfBytesToStoreSnpOffsets=numBytesPerSnpIndex*numSnps;</span>
+<span class="nc" id="L175">    	return 2+numberOfBytesToStoreSnpOffsets + numBytesRequiredToStoreSnps;</span>
+	}
+
+
+	private SortedMap&lt;Integer, Nucleotide&gt; populateFields(
+			NucleotideSequence reference,
+            NucleotideSequenceBuilder toBeEncoded, int startOffset, List&lt;Integer&gt; tempGapList) {
+<span class="nc" id="L182">        handleBeforeReference(startOffset);</span>
+<span class="nc" id="L183">        handleAfterReference(reference, toBeEncoded, startOffset);</span>
+<span class="nc" id="L184">        TreeMap&lt;Integer, Nucleotide&gt; differentGlyphMap = new TreeMap&lt;Integer, Nucleotide&gt;();</span>
+        
+<span class="nc" id="L186">       Iterator&lt;Nucleotide&gt; readIterator = toBeEncoded.iterator();</span>
+<span class="nc" id="L187">       Iterator&lt;Nucleotide&gt; refIterator = reference.iterator(new Range.Builder(length)</span>
+<span class="nc" id="L188">    		   													.shift(startOffset)</span>
+<span class="nc" id="L189">    		   													.build());</span>
+<span class="nc" id="L190">       int i=0;</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">       while(readIterator.hasNext()){</span>
+<span class="nc" id="L192">            Nucleotide g = readIterator.next();</span>
+<span class="nc" id="L193">            final Nucleotide referenceGlyph = refIterator.next();            </span>
+           
+<span class="nc bnc" id="L195" title="All 2 branches missed.">            if(g.isGap()){</span>
+<span class="nc" id="L196">                tempGapList.add(Integer.valueOf(i));</span>
+            }
+<span class="nc bnc" id="L198" title="All 2 branches missed.">            if(isDifferent(g, referenceGlyph)){</span>
+<span class="nc" id="L199">                    differentGlyphMap.put(Integer.valueOf(i), g);</span>
+            }
+<span class="nc" id="L201">            i++;</span>
+<span class="nc" id="L202">        }</span>
+<span class="nc" id="L203">        return differentGlyphMap;</span>
+    }
+
+    private void handleAfterReference(Sequence&lt;Nucleotide&gt; reference,
+            NucleotideSequenceBuilder toBeEncoded, int startOffset) {
+<span class="nc" id="L208">        int lastOffsetOfSequence = (int)toBeEncoded.getLength()+startOffset;</span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">        if(lastOffsetOfSequence &gt; reference.getLength()){</span>
+<span class="nc" id="L210">            int overhang = (int)(toBeEncoded.getLength()+startOffset - reference.getLength());</span>
+<span class="nc" id="L211">            throw new IllegalArgumentException(String.format(&quot;sequences extends beyond reference by %d bases&quot;, overhang));</span>
+        }
+<span class="nc" id="L213">    }</span>
+
+
+    private void handleBeforeReference(int startOffset) {
+<span class="nc bnc" id="L217" title="All 2 branches missed.">        if(startOffset&lt;0){</span>
+            //handle before values
+<span class="nc" id="L219">           throw new IllegalArgumentException(&quot;can not start before reference: &quot;+ startOffset);</span>
+        }
+<span class="nc" id="L221">    }</span>
+
+    private boolean isDifferent(Nucleotide g, final Nucleotide referenceGlyph) {
+<span class="nc bnc" id="L224" title="All 2 branches missed.">        return g!=referenceGlyph;</span>
+    }
+
+    @Override
+	public Iterator&lt;Nucleotide&gt; iterator() {
+<span class="nc" id="L229">    	Nucleotide[] array = asNucleotideArray();</span>
+<span class="nc" id="L230">    	return Arrays.asList(array).iterator();</span>
+	}
+
+	@Override
+	public Iterator&lt;Nucleotide&gt; iterator(Range range) {		
+<span class="nc" id="L235">		Nucleotide[] array = asNucleotideArray(range);</span>
+<span class="nc" id="L236">		return Arrays.asList(array).iterator();</span>
+	}
+
+
+
+
+	private Nucleotide[] createReferenceArray(Range range){
+<span class="nc" id="L243">		Nucleotide[] array = new Nucleotide[(int)range.getLength()];</span>
+<span class="nc" id="L244">		Iterator&lt;Nucleotide&gt; iter = reference.iterator(range);</span>
+<span class="nc" id="L245">		int i=0;</span>
+<span class="nc bnc" id="L246" title="All 2 branches missed.">		while(iter.hasNext()){</span>
+<span class="nc" id="L247">			array[i] = iter.next();</span>
+<span class="nc" id="L248">			i++;</span>
+		}
+<span class="nc" id="L250">		return array;</span>
+	}
+	private Nucleotide[] asNucleotideArray(Range range) {
+<span class="nc bnc" id="L253" title="All 2 branches missed.">		if(range==null){</span>
+<span class="nc" id="L254">			throw new NullPointerException(&quot;range can not be null&quot;);</span>
+		}
+<span class="nc" id="L256">		Nucleotide[] array = asNucleotideArray();</span>
+<span class="nc" id="L257">		return Arrays.copyOfRange(array, (int)range.getBegin(), (int)range.getEnd()+1);</span>
+	}
+	private Nucleotide[] asNucleotideArray() {
+		//get the reference bases as an array
+		//we convert to an array since
+		//we need to replace with our SNPs
+		//and its simpler than
+		//list.remove(offset); list.add(offset, snp);
+		//with boundary checking
+		//or 
+		//list.add(offset, snp);
+		//list.remove(offset+1);
+		//without resizing list everytime.
+<span class="nc" id="L270">		Nucleotide[] array= createReferenceArray(new Range.Builder(length)</span>
+<span class="nc" id="L271">										.shift(startOffset).build());</span>
+<span class="nc bnc" id="L272" title="All 2 branches missed.">		if(encodedSnpsInfo !=null){</span>
+			//pull out all of our SNP data at the same
+			//time and 
+<span class="nc" id="L275">	        ByteBuffer buf = ByteBuffer.wrap(encodedSnpsInfo);</span>
+	        
+<span class="nc" id="L277">	        ValueSizeStrategy numSnpsSizeStrategy = ValueSizeStrategy.values()[buf.get()];</span>
+<span class="nc" id="L278">			int size = numSnpsSizeStrategy.getNext(buf);</span>
+<span class="nc" id="L279">	        ValueSizeStrategy sizeStrategy = ValueSizeStrategy.values()[buf.get()];</span>
+<span class="nc" id="L280">	        byte[] snps = getSnpArray(numSnpsSizeStrategy, size, sizeStrategy);</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">	        for(int i=0; i&lt;size; i++){        	</span>
+<span class="nc" id="L282">	            int index = sizeStrategy.getNext(buf); </span>
+<span class="nc" id="L283">				int snpIndex = i/2;</span>
+<span class="nc bnc" id="L284" title="All 2 branches missed.">				if(i%2==0){</span>
+<span class="nc" id="L285">					array[index]= NUCLEOTIDE_ORDINALS[snps[snpIndex]&gt;&gt;4 &amp;0x0F];</span>
+				}else{
+<span class="nc" id="L287">					array[index]= NUCLEOTIDE_ORDINALS[snps[snpIndex] &amp; 0x0F];</span>
+				}
+	        }
+        }
+<span class="nc" id="L291">		return array;</span>
+	}
+    @Override
+    public Nucleotide get(long index) {
+<span class="nc bnc" id="L295" title="All 4 branches missed.">        if(index &lt;0 || index &gt;= length){</span>
+<span class="nc" id="L296">            throw new IndexOutOfBoundsException(&quot;invalid offset &quot; +index);</span>
+        }
+        
+        
+<span class="nc bnc" id="L300" title="All 2 branches missed.">        if(encodedSnpsInfo !=null){</span>
+        	//there are snps so we need to check them first
+        
+<span class="nc" id="L303">	        ByteBuffer buf = ByteBuffer.wrap(encodedSnpsInfo);</span>
+	        
+<span class="nc" id="L305">	        ValueSizeStrategy numSnpsSizeStrategy = ValueSizeStrategy.values()[buf.get()];</span>
+<span class="nc" id="L306">			int size = numSnpsSizeStrategy.getNext(buf);</span>
+<span class="nc" id="L307">	        ValueSizeStrategy sizeStrategy = ValueSizeStrategy.values()[buf.get()];</span>
+<span class="nc" id="L308">	        byte[] snps = getSnpArray(numSnpsSizeStrategy, size, sizeStrategy);</span>
+<span class="nc bnc" id="L309" title="All 2 branches missed.">	        for(int i=0; i&lt;size; i++){        	</span>
+<span class="nc" id="L310">	            int nextValue = sizeStrategy.getNext(buf);</span>
+<span class="nc bnc" id="L311" title="All 2 branches missed.">				if(index ==nextValue){</span>
+<span class="nc" id="L312">					int snpIndex = i/2;</span>
+<span class="nc bnc" id="L313" title="All 2 branches missed.">					if(i%2==0){</span>
+<span class="nc" id="L314">						return NUCLEOTIDE_ORDINALS[snps[snpIndex]&gt;&gt;4 &amp;0x0F];</span>
+					}else{
+<span class="nc" id="L316">						return NUCLEOTIDE_ORDINALS[snps[snpIndex] &amp; 0x0F];</span>
+					}
+
+	            }
+	        }
+        }
+<span class="nc" id="L322">        long referenceIndex = index+startOffset;</span>
+<span class="nc" id="L323">        return reference.get(referenceIndex);</span>
+    }
+
+
+
+	private byte[] getSnpArray(ValueSizeStrategy numSnpsSizeStrategy,
+			int size, ValueSizeStrategy sizeStrategy) {
+<span class="nc" id="L330">		int from = numSnpsSizeStrategy.getNumberOfBytesPerValue()+2+size*sizeStrategy.getNumberOfBytesPerValue();</span>
+<span class="nc" id="L331">		return Arrays.copyOfRange(encodedSnpsInfo, from, encodedSnpsInfo.length);</span>
+	}
+
+
+    @Override
+    public boolean isGap(int index) {
+<span class="nc" id="L337">        return getGapOffsets().contains(Integer.valueOf(index));</span>
+        
+    }
+    
+    @Override
+    public long getLength() {
+<span class="nc" id="L343">        return length;</span>
+    }
+
+    @Override
+    public List&lt;Integer&gt; getGapOffsets() {
+<span class="nc" id="L348">        List&lt;Integer&gt; referenceGapOffsets = shiftReferenceGaps();</span>
+<span class="nc bnc" id="L349" title="All 2 branches missed.">        if(encodedSnpsInfo !=null){</span>
+<span class="nc" id="L350">	        return modifyForSnps(referenceGapOffsets);</span>
+        }
+<span class="nc" id="L352">        return referenceGapOffsets;</span>
+    }
+
+	private List&lt;Integer&gt; modifyForSnps(List&lt;Integer&gt; gaps) {
+		//now check our snps to see
+		//1. if we have snp where the ref has a gap
+		//2. if we have gap
+<span class="nc" id="L359">		ByteBuffer buf = ByteBuffer.wrap(encodedSnpsInfo);</span>
+<span class="nc" id="L360">		int size = ValueSizeStrategy.values()[buf.get()].getNext(buf);</span>
+<span class="nc" id="L361">		ValueSizeStrategy sizeStrategy = ValueSizeStrategy.values()[buf.get()];</span>
+<span class="nc" id="L362">		List&lt;Integer&gt; snps = new ArrayList&lt;Integer&gt;(size);</span>
+<span class="nc bnc" id="L363" title="All 2 branches missed.">		for(int i=0; i&lt;size; i++){</span>
+<span class="nc" id="L364">		    Integer snpOffset = sizeStrategy.getNext(buf);</span>
+		    //if we have a snp where 
+		    //the reference has a gap
+		    //remove it from our list of gaps
+<span class="nc bnc" id="L368" title="All 2 branches missed.">		    if(gaps.contains(snpOffset)){</span>
+<span class="nc" id="L369">		        gaps.remove(snpOffset);</span>
+		    }
+<span class="nc" id="L371">		    snps.add(snpOffset);</span>
+		}
+<span class="nc bnc" id="L373" title="All 2 branches missed.">		if(buf.hasRemaining()){</span>
+<span class="nc" id="L374">			int numBytesRemaining =buf.remaining();</span>
+			
+<span class="nc" id="L376">			 byte[] snpArray = Arrays.copyOfRange(encodedSnpsInfo, encodedSnpsInfo.length- numBytesRemaining, encodedSnpsInfo.length);</span>
+<span class="nc bnc" id="L377" title="All 2 branches missed.">		     for(int i=0; i&lt;size; i++){</span>
+<span class="nc" id="L378">		    	 int snpIndex = i/2;</span>
+		    	 final Nucleotide snp;
+<span class="nc bnc" id="L380" title="All 2 branches missed.">					if(i%2==0){</span>
+<span class="nc" id="L381">						snp= NUCLEOTIDE_ORDINALS[snpArray[snpIndex]&gt;&gt;4 &amp;0x0F];</span>
+					}else{
+<span class="nc" id="L383">						snp= NUCLEOTIDE_ORDINALS[snpArray[snpIndex] &amp; 0x0F];</span>
+					}
+<span class="nc bnc" id="L385" title="All 2 branches missed.">		    	 if(Nucleotide.Gap == snp){</span>
+<span class="nc" id="L386">		    		 gaps.add(snps.get(i));</span>
+		    	 }
+		     }
+		    
+		}
+		//sort gaps so they are in order
+		//before this line, our gaps are in
+		//sorted ref gaps
+		//followed by sorted snps which happen to be gaps
+<span class="nc" id="L395">		Collections.sort(gaps);</span>
+<span class="nc" id="L396">		return gaps;</span>
+	}
+	//first, get gaps from our aligned section of the reference
+    //we may have a snp in the gap location
+    //so we need to check for that
+	/**
+	 * Most reference gaps should also
+	 * be present in our gapped sequence
+	 * so we need to get the reference gaps
+	 * that overlap with our sequence range
+	 * and shift them accordingly so read coordinate space.
+	 * (offset 0 is first base in our read)
+	 * @return
+	 */
+	private List&lt;Integer&gt; shiftReferenceGaps() {
+<span class="nc" id="L411">		List&lt;Integer&gt; refGapOffsets = reference.getGapOffsets();</span>
+<span class="nc" id="L412">        List&lt;Integer&gt; gaps = new ArrayList&lt;Integer&gt;(refGapOffsets.size());</span>
+<span class="nc bnc" id="L413" title="All 2 branches missed.">        for(Integer refGap : refGapOffsets){</span>
+<span class="nc" id="L414">            int adjustedCoordinate = refGap.intValue() - startOffset;</span>
+<span class="nc bnc" id="L415" title="All 4 branches missed.">            if(adjustedCoordinate &gt;=0 &amp;&amp; adjustedCoordinate&lt;length){</span>
+<span class="nc" id="L416">                gaps.add(Integer.valueOf(adjustedCoordinate));</span>
+            }
+<span class="nc" id="L418">        }</span>
+<span class="nc" id="L419">		return gaps;</span>
+	}
+
+	@Override
+    public int hashCode() {
+<span class="nc" id="L424">		long length = getLength();</span>
+<span class="nc bnc" id="L425" title="All 4 branches missed.">		if(hash==0 &amp;&amp; length &gt;0){</span>
+<span class="nc" id="L426">	        final int prime = 31;</span>
+<span class="nc" id="L427">	        int result = 1;</span>
+<span class="nc" id="L428">	        Iterator&lt;Nucleotide&gt; iter = iterator();</span>
+<span class="nc bnc" id="L429" title="All 2 branches missed.">	        while(iter.hasNext()){</span>
+<span class="nc" id="L430">	        	result = prime * result + iter.next().hashCode();</span>
+	        }
+<span class="nc" id="L432">	        hash= result;</span>
+		}
+<span class="nc" id="L434">	    return hash;</span>
+    }
+    @Override
+    public boolean equals(Object obj) {
+<span class="nc bnc" id="L438" title="All 2 branches missed.">    	 if (this == obj){</span>
+<span class="nc" id="L439">             return true;</span>
+         }
+<span class="nc bnc" id="L441" title="All 2 branches missed.">         if (!(obj instanceof NucleotideSequence)){</span>
+<span class="nc" id="L442">             return false;</span>
+         }
+<span class="nc" id="L444">         NucleotideSequence other = (NucleotideSequence) obj;</span>
+<span class="nc bnc" id="L445" title="All 2 branches missed.">         if(getLength() != other.getLength()){</span>
+<span class="nc" id="L446">         	return false;</span>
+         }
+<span class="nc" id="L448">        Iterator&lt;Nucleotide&gt; iter = iterator();</span>
+<span class="nc" id="L449">        Iterator&lt;Nucleotide&gt; otherIter = other.iterator();</span>
+<span class="nc bnc" id="L450" title="All 2 branches missed.">        while(iter.hasNext()){</span>
+<span class="nc bnc" id="L451" title="All 2 branches missed.">     	   if(!iter.next().equals(otherIter.next())){</span>
+<span class="nc" id="L452">     		   return false;</span>
+     	   }
+        }
+<span class="nc" id="L455">        return true;</span>
+    }
+    
+    /**
+     * {@inheritDoc}
+     */
+     @Override
+     public int getNumberOfGaps() {
+<span class="nc" id="L463">         return getGapOffsets().size();</span>
+     }
+    
+    
+     @Override
+     public String toString(){
+<span class="nc" id="L469">    	 Nucleotide[] array = asNucleotideArray();</span>
+<span class="nc" id="L470">    	 StringBuilder builder = new StringBuilder(array.length);</span>
+<span class="nc bnc" id="L471" title="All 2 branches missed.">    	 for(int i=0; i&lt; array.length; i++){</span>
+<span class="nc" id="L472">    		 builder.append(array[i]);</span>
+    	 }
+<span class="nc" id="L474">         return builder.toString();</span>
+     }
+
+
+
+	@Override
+	public NucleotideSequence getReferenceSequence() {
+<span class="nc" id="L481">		return reference;</span>
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

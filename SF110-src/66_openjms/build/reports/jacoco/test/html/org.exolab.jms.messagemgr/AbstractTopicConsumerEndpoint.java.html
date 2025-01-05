@@ -1,0 +1,472 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractTopicConsumerEndpoint.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.messagemgr</a> &gt; <span class="el_source">AbstractTopicConsumerEndpoint.java</span></div><h1>AbstractTopicConsumerEndpoint.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: AbstractTopicConsumerEndpoint.java,v 1.3 2007/01/24 12:00:28 tanderson Exp $
+ */
+
+package org.exolab.jms.messagemgr;
+
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+import javax.jms.InvalidSelectorException;
+import javax.jms.JMSException;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import org.exolab.jms.client.JmsDestination;
+import org.exolab.jms.client.JmsTopic;
+import org.exolab.jms.message.MessageImpl;
+import org.exolab.jms.persistence.PersistenceException;
+import org.exolab.jms.server.ServerConnection;
+
+
+/**
+ * A {@link ConsumerEndpoint} for topics.
+ *
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.3 $ $Date: 2007/01/24 12:00:28 $
+ */
+abstract class AbstractTopicConsumerEndpoint extends AbstractConsumerEndpoint
+        implements DestinationEventListener {
+
+    /**
+     * The identity of the connection that owns this consumer, or
+     * &lt;code&gt;-1&lt;/code&gt; if this consumer isn't currently associated with a
+     * connection.
+     */
+    private long _connectionId;
+
+    /**
+     * The destination manager.
+     */
+    private final DestinationManager _destinations;
+
+    /**
+     * Cache of all handles for this consumer.
+     */
+<span class="nc" id="L88">    private MessageQueue _handles = new MessageQueue();</span>
+
+    /**
+     * Maintains a map of TopicDestinationCache that this endpoint subscribes
+     * to, keyed on JmsTopic. A wildcard subscription may point to more than
+     * one.
+     */
+<span class="nc" id="L95">    protected Map _caches = Collections.synchronizedMap(new HashMap());</span>
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L100">    private static final Log _log =</span>
+<span class="nc" id="L101">            LogFactory.getLog(AbstractTopicConsumerEndpoint.class);</span>
+
+
+    /**
+     * Construct a new &lt;code&gt;TopicConsumerEndpoint&lt;/code&gt;.
+     * &lt;p/&gt;
+     * The destination and selector determine where it will be sourcing its
+     * messages from, and scheduler is used to asynchronously deliver messages
+     * to the consumer.
+     *
+     * @param consumerId   the identity of this consumer
+     * @param connectionId the identity of the connection that owns this
+     *                     consumer
+     * @param topic        the topic(s) to access. May be a wildcarded topic.
+     * @param selector     the message selector. May be &lt;code&gt;null&lt;/code&gt;
+     * @param noLocal      if true, inhibits the delivery of messages published
+     *                     by its own connection.
+     * @param destinations the destination manager
+     * @throws InvalidSelectorException if the selector is invalid
+     * @throws JMSException             if the destination caches can't be
+     *                                  constructed
+     */
+    public AbstractTopicConsumerEndpoint(long consumerId, long connectionId,
+                                         JmsTopic topic,
+                                         String selector, boolean noLocal,
+                                         DestinationManager destinations)
+            throws JMSException {
+<span class="nc" id="L128">        super(consumerId, topic, selector, noLocal);</span>
+<span class="nc" id="L129">        _connectionId = connectionId;</span>
+<span class="nc" id="L130">        _destinations = destinations;</span>
+<span class="nc" id="L131">    }</span>
+
+    /**
+     * Returns the identity of the connection that owns this consumer.
+     *
+     * @return the identity of the connection, or &lt;code&gt;-1&lt;/code&gt; if this is not
+     *         currently associated with a connection.
+     * @see ServerConnection#getConnectionId
+     */
+    public long getConnectionId() {
+<span class="nc" id="L141">        return _connectionId;</span>
+    }
+
+    /**
+     * Determines if this consumer can consume messages from the specified
+     * destination.
+     *
+     * @param destination the destination
+     * @return &lt;code&gt;true&lt;/code&gt; if the consumer can consume messages from
+     *         &lt;code&gt;destination&lt;/code&gt;; otherwise &lt;code&gt;false&lt;/code&gt;
+     */
+    public boolean canConsume(JmsDestination destination) {
+<span class="nc" id="L153">        boolean result = false;</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        if (destination instanceof JmsTopic) {</span>
+<span class="nc" id="L155">            JmsTopic topic = (JmsTopic) getDestination();</span>
+<span class="nc bnc" id="L156" title="All 2 branches missed.">            if (!topic.isWildCard()) {</span>
+<span class="nc" id="L157">                result = super.canConsume(destination);</span>
+            } else {
+<span class="nc" id="L159">                result = topic.match((JmsTopic) destination);</span>
+            }
+        }
+<span class="nc" id="L162">        return result;</span>
+    }
+
+    /**
+     * Return a delivered, but unacknowledged message to the cache.
+     *
+     * @param handle the handle of the message to return
+     */
+    public void returnMessage(MessageHandle handle) {
+<span class="nc" id="L171">        addMessage(handle);</span>
+<span class="nc" id="L172">    }</span>
+
+    /**
+     * Return the number of unsent messages in the cache for this consumer.
+     *
+     * @return the number of unsent messages
+     */
+    public int getMessageCount() {
+<span class="nc" id="L180">        return _handles.size();</span>
+    }
+
+    /**
+     * This event is called when a non-persistent message is added to the
+     * &lt;code&gt;DestinationCache&lt;/code&gt;.
+     *
+     * @param handle  a handle to the message
+     * @param message the added message
+     * @return &lt;code&gt;true&lt;/code&gt; if the listener accepted the message; otherwise
+     *         &lt;code&gt;false&lt;/ode&gt;
+     * @throws JMSException if the listener fails to handle the message
+     */
+    public boolean messageAdded(MessageHandle handle, MessageImpl message)
+            throws JMSException {
+<span class="nc" id="L195">        boolean accepted = true;</span>
+
+        // if the 'noLocal' indicator is set, and the message arrived on
+        // the same connection, ignore the message
+<span class="nc bnc" id="L199" title="All 4 branches missed.">        if (getNoLocal() &amp;&amp; message.getConnectionId() == getConnectionId()) {</span>
+<span class="nc" id="L200">            accepted = false;</span>
+        } else {
+            // create a message handle for this consumer
+<span class="nc" id="L203">            handle = new TopicConsumerMessageHandle(handle, this);</span>
+
+<span class="nc bnc" id="L205" title="All 2 branches missed.">            if (!_handles.contains(handle)) {</span>
+                // if the message is not already in the cache then add it
+<span class="nc" id="L207">                addMessage(handle);</span>
+            } else {
+<span class="nc" id="L209">                accepted = false;</span>
+<span class="nc" id="L210">                _log.warn(&quot;Endpoint=&quot; + this + &quot; already has message cached: &quot; +</span>
+                          handle);
+            }
+        }
+<span class="nc" id="L214">        return accepted;</span>
+    }
+
+    /**
+     * This event is called when a message is removed from the
+     * &lt;code&gt;DestinationCache&lt;/code&gt;.
+     *
+     * @param messageId the identifier of the removed message
+     * @throws JMSException if the listener fails to handle the message
+     */
+    public void messageRemoved(String messageId) throws JMSException {
+<span class="nc" id="L225">        MessageHandle handle = _handles.remove(messageId);</span>
+<span class="nc bnc" id="L226" title="All 2 branches missed.">        if (handle != null) {</span>
+<span class="nc" id="L227">            handle.destroy();</span>
+        }
+<span class="nc" id="L229">    }</span>
+
+    /**
+     * This event is called when a persistent message is added to the
+     * &lt;code&gt;DestinationCache&lt;/code&gt;.
+     *
+     * @param handle  a handle to the added message
+     * @param message the added message
+     * @return &lt;code&gt;true&lt;/code&gt; if the listener accepted the message;
+     * @throws JMSException         if the listener fails to handle the message
+     * @throws PersistenceException if there is a persistence related problem
+     */
+    public boolean persistentMessageAdded(MessageHandle handle,
+                                          MessageImpl message)
+            throws JMSException, PersistenceException {
+<span class="nc" id="L244">        boolean accepted = true;</span>
+
+        // if the 'noLocal' indicator is set, and the message arrived on
+        // the same connection, ignore the message
+<span class="nc bnc" id="L248" title="All 4 branches missed.">        if (getNoLocal() &amp;&amp; message.getConnectionId() == getConnectionId()) {</span>
+<span class="nc" id="L249">            accepted = false;</span>
+        } else {
+            // create a message handle for this consumer
+<span class="nc" id="L252">            handle = new TopicConsumerMessageHandle(handle, this);</span>
+<span class="nc bnc" id="L253" title="All 2 branches missed.">            if (isPersistent()) {</span>
+                // and make it persistent if this is a durable consumer
+<span class="nc" id="L255">                handle.add();</span>
+            }
+
+<span class="nc bnc" id="L258" title="All 2 branches missed.">            if (!_handles.contains(handle)) {</span>
+                // if the message is not already in the cache then add it
+<span class="nc" id="L260">                addMessage(handle);</span>
+            } else {
+<span class="nc" id="L262">                accepted = false;</span>
+<span class="nc" id="L263">                _log.warn(&quot;Endpoint=&quot; + this + &quot; already has message cached: &quot; +</span>
+                          handle);
+            }
+        }
+<span class="nc" id="L267">        return accepted;</span>
+    }
+
+    /**
+     * This event is called when a message is removed from the
+     * &lt;code&gt;DestinationCache&lt;/code&gt;.
+     *
+     * @param messageId the identifier of the removed message
+     * @throws JMSException         if the listener fails to handle the message
+     * @throws PersistenceException if there is a persistence related problem
+     */
+    public void persistentMessageRemoved(String messageId)
+            throws JMSException, PersistenceException {
+<span class="nc" id="L280">        MessageHandle handle = _handles.remove(messageId);</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">        if (handle != null) {</span>
+<span class="nc" id="L282">            handle.destroy();</span>
+        }
+<span class="nc" id="L284">    }</span>
+
+
+    /**
+     * Invoked when a destination is created.
+     *
+     * @param destination the destination that was added
+     */
+    public void destinationAdded(JmsDestination destination) {
+        // no-op
+<span class="nc" id="L294">    }</span>
+
+    /**
+     * Invoked when a destination is removed.
+     *
+     * @param destination the destination that was removed
+     */
+    public void destinationRemoved(JmsDestination destination) {
+        // no-op
+<span class="nc" id="L303">    }</span>
+
+    /**
+     * Invoked when a message cache is created.
+     *
+     * @param destination the destination that messages are being cached for
+     * @param cache       the corresponding cache
+     */
+    public void cacheAdded(JmsDestination destination,
+                           DestinationCache cache) {
+<span class="nc bnc" id="L313" title="All 2 branches missed.">        if (destination instanceof JmsTopic) {</span>
+<span class="nc" id="L314">            JmsTopic myTopic = (JmsTopic) getDestination();</span>
+<span class="nc" id="L315">            JmsTopic topic = (JmsTopic) destination;</span>
+<span class="nc bnc" id="L316" title="All 4 branches missed.">            if (myTopic.match(topic) &amp;&amp; !_caches.containsKey(topic)) {</span>
+<span class="nc" id="L317">                _caches.put(topic, cache);</span>
+<span class="nc" id="L318">                cache.addConsumer(this);</span>
+            }
+        }
+<span class="nc" id="L321">    }</span>
+
+    /**
+     * Invoked when a message cache is removed.
+     *
+     * @param destination the destination that messages are no longer being
+     *                    cached for
+     * @param cache       the corresponding cache
+     */
+    public void cacheRemoved(JmsDestination destination,
+                             DestinationCache cache) {
+<span class="nc bnc" id="L332" title="All 2 branches missed.">        if (destination instanceof JmsTopic) {</span>
+<span class="nc" id="L333">            _caches.remove(destination);</span>
+        }
+<span class="nc" id="L335">    }</span>
+
+    /**
+     * Registers this with the associated {@link DestinationCache}s. The
+     * consumer may receive messages immediately.
+     *
+     * @throws JMSException for any JMS error
+     */
+    protected void init() throws JMSException {
+<span class="nc" id="L344">        JmsTopic topic = (JmsTopic) getDestination();</span>
+
+        // register the endpoint with the destination
+<span class="nc bnc" id="L347" title="All 2 branches missed.">        if (topic.isWildCard()) {</span>
+            // if the topic is a wild card then we need to retrieve a
+            // set of matching destination caches.
+<span class="nc" id="L350">            _caches = _destinations.getTopicDestinationCaches(topic);</span>
+            // for each cache register this endpoint as a consumer of
+            // it's messages. Before doing so register as a destination
+            // event listener with the DestinationManager
+<span class="nc" id="L354">            _destinations.addDestinationEventListener(this);</span>
+<span class="nc" id="L355">            DestinationCache[] caches = getDestinationCaches();</span>
+<span class="nc bnc" id="L356" title="All 2 branches missed.">            for (int i = 0; i &lt; caches.length; ++i) {</span>
+<span class="nc" id="L357">                caches[i].addConsumer(this);</span>
+            }
+<span class="nc" id="L359">        } else {</span>
+            // if the topic is not a wildcard then we need to get the
+            // destination cache. If one does not exist then we need to
+            // create it.
+<span class="nc" id="L363">            DestinationCache cache = _destinations.getDestinationCache(topic);</span>
+<span class="nc" id="L364">            _caches.put(topic, cache);</span>
+<span class="nc" id="L365">            cache.addConsumer(this);</span>
+        }
+<span class="nc" id="L367">    }</span>
+
+    /**
+     * Set the connection identifier.
+     *
+     * @param connectionId the identity of the connection that owns this
+     *                     consumer
+     * @see #getConnectionId
+     */
+    protected void setConnectionId(long connectionId) {
+<span class="nc" id="L377">        _connectionId = connectionId;</span>
+<span class="nc" id="L378">    }</span>
+
+    /**
+     * Add the handle to the cache.
+     *
+     * @param handle the message handle to add
+     */
+    protected void addMessage(MessageHandle handle) {
+<span class="nc" id="L386">        _handles.add(handle);</span>
+<span class="nc" id="L387">        notifyMessageAvailable();</span>
+<span class="nc" id="L388">    }</span>
+
+    /**
+     * Return the next available message to the client.
+     *
+     * @return the next message, or &lt;code&gt;null&lt;/code&gt; if none is available
+     * @throws JMSException for any error
+     * @param cancel
+     */
+    protected MessageHandle doReceive(Condition cancel) throws JMSException {
+<span class="nc" id="L398">        MessageHandle result = null;</span>
+        MessageHandle handle;
+<span class="nc bnc" id="L400" title="All 4 branches missed.">        while (!cancel.get() &amp;&amp; (handle = _handles.removeFirst()) != null) {</span>
+<span class="nc bnc" id="L401" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L402">                _log.debug(&quot;doReceive() - next available=&quot; + handle.getMessageId());</span>
+            }
+            // ensure that the message still exists
+<span class="nc" id="L405">            MessageImpl message = handle.getMessage();</span>
+<span class="nc bnc" id="L406" title="All 2 branches missed.">            if (message != null) {</span>
+<span class="nc bnc" id="L407" title="All 2 branches missed.">                if (selects(message)) {</span>
+                    // got a message which is applicable for the endpoint
+<span class="nc" id="L409">                    result = handle;</span>
+<span class="nc" id="L410">                    break;</span>
+                } else {
+                    // message has been filtered out so destroy the handle.
+<span class="nc" id="L413">                    handle.destroy();</span>
+                }
+            }
+<span class="nc" id="L416">        }</span>
+<span class="nc bnc" id="L417" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc bnc" id="L418" title="All 2 branches missed.">            _log.debug(&quot;doReceive() - result=&quot; + (result != null ? result.getMessageId() : null));</span>
+        }
+<span class="nc" id="L420">        return result;</span>
+    }
+
+    /**
+     * Closes this endpoint.
+     */
+    protected void doClose() {
+        // unregister as a destination event listener
+<span class="nc" id="L428">        _destinations.removeDestinationEventListener(this);</span>
+
+        // unregister from the destination before continuing
+<span class="nc" id="L431">        DestinationCache[] caches = getDestinationCaches();</span>
+<span class="nc bnc" id="L432" title="All 2 branches missed.">        for (int i = 0; i &lt; caches.length; ++i) {</span>
+<span class="nc" id="L433">            caches[i].removeConsumer(this);</span>
+        }
+<span class="nc" id="L435">        _caches.clear();</span>
+
+<span class="nc bnc" id="L437" title="All 2 branches missed.">        if (!isPersistent()) {</span>
+            // for non-persistent consumers, destroy all outstanding message
+            // handles
+<span class="nc" id="L440">            MessageHandle[] handles = _handles.toArray();</span>
+<span class="nc bnc" id="L441" title="All 2 branches missed.">            for (int i = 0; i &lt; handles.length; ++i) {</span>
+<span class="nc" id="L442">                MessageHandle handle = handles[i];</span>
+                try {
+<span class="nc" id="L444">                    handle.destroy();</span>
+<span class="nc" id="L445">                } catch (JMSException exception) {</span>
+<span class="nc" id="L446">                    _log.error(exception, exception);</span>
+<span class="nc" id="L447">                }</span>
+            }
+        }
+<span class="nc" id="L450">    }</span>
+
+    /**
+     * Returns the destination manager.
+     *
+     * @return the destination manager
+     */
+    protected DestinationManager getDestinationManager() {
+<span class="nc" id="L458">        return _destinations;</span>
+    }
+
+    /**
+     * Returns the destination caches.
+     *
+     * @return the destination caches
+     */
+    protected DestinationCache[] getDestinationCaches() {
+<span class="nc" id="L467">        return (DestinationCache[]) _caches.values().toArray(</span>
+                new DestinationCache[0]);
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

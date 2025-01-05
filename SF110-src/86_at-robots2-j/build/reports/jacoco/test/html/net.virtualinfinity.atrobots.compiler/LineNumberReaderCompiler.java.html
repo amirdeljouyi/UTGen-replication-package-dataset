@@ -1,0 +1,321 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LineNumberReaderCompiler.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">86_at-robots2-j</a> &gt; <a href="index.source.html" class="el_package">net.virtualinfinity.atrobots.compiler</a> &gt; <span class="el_source">LineNumberReaderCompiler.java</span></div><h1>LineNumberReaderCompiler.java</h1><pre class="source lang-java linenums">package net.virtualinfinity.atrobots.compiler;
+
+import net.virtualinfinity.atrobots.atsetup.*;
+import net.virtualinfinity.atrobots.computer.DebugInfo;
+import net.virtualinfinity.atrobots.computer.Program;
+
+import java.io.IOException;
+import java.io.LineNumberReader;
+import java.util.*;
+
+/**
+ * A line-lexer visiter which creates a compiled output.
+ *
+ * @author Daniel Pitts
+ */
+<span class="nc" id="L16">public class LineNumberReaderCompiler {</span>
+<span class="nc" id="L17">    private final Errors errors = new Errors();</span>
+<span class="nc" id="L18">    private final List&lt;Short&gt; programCode = new ArrayList&lt;Short&gt;();</span>
+<span class="nc" id="L19">    private final Map&lt;String, Symbol&gt; symbols = new HashMap&lt;String, Symbol&gt;();</span>
+<span class="nc" id="L20">    private final Collection&lt;UnresolvedToken&gt; unresolved = new ArrayList&lt;UnresolvedToken&gt;();</span>
+<span class="nc" id="L21">    private final Map&lt;String, Integer&gt; configs = new HashMap&lt;String, Integer&gt;();</span>
+<span class="nc" id="L22">    private final List&lt;String&gt; lines = new ArrayList&lt;String&gt;();</span>
+<span class="nc" id="L23">    private final List&lt;Integer&gt; instructionLineNumber = new ArrayList&lt;Integer&gt;();</span>
+<span class="nc" id="L24">    private final DebugInfo debugInfo = new DebugInfo();</span>
+    private int variables;
+<span class="nc" id="L26">    private String message = &quot;&quot;;</span>
+    private int maxProcessorSpeed;
+
+    {
+<span class="nc" id="L30">        setConfig(HardwareSpecification.SCANNER, 5);</span>
+<span class="nc" id="L31">        setConfig(HardwareSpecification.WEAPON, 2);</span>
+<span class="nc" id="L32">        setConfig(HardwareSpecification.ARMOR, 2);</span>
+<span class="nc" id="L33">        setConfig(HardwareSpecification.ENGINE, 2);</span>
+<span class="nc" id="L34">        setConfig(HardwareSpecification.HEATSINKS, 1);</span>
+<span class="nc" id="L35">        setConfig(HardwareSpecification.MINES, 0);</span>
+<span class="nc" id="L36">        setConfig(HardwareSpecification.SHIELD, 0);</span>
+    }
+
+    private static final int BUILT_IN_SYMBOL_LINENUMBER = -1;
+
+    private LineVisitor createLineVisitor() {
+<span class="nc" id="L42">        return new MyLineVisitor();</span>
+    }
+
+    public AtRobotCompilerOutput compile(LineNumberReader reader) throws IOException {
+<span class="nc" id="L46">        createLineLexer(reader).visitAllLines();</span>
+<span class="nc" id="L47">        resolve();</span>
+<span class="nc" id="L48">        return createCompilerOutput();</span>
+    }
+
+    private AtRobotLineLexer createLineLexer(LineNumberReader reader) {
+<span class="nc" id="L52">        return new AtRobotLineLexer(reader, createLineVisitor());</span>
+    }
+
+    {
+<span class="nc" id="L56">        addConstant(Short.MAX_VALUE, &quot;MAXINT&quot;, BUILT_IN_SYMBOL_LINENUMBER);</span>
+<span class="nc" id="L57">        addConstant(Short.MIN_VALUE, &quot;MININT&quot;, BUILT_IN_SYMBOL_LINENUMBER);</span>
+<span class="nc" id="L58">        addConstants(AtRobotPort.values(), AtRobotMicrocodes.CONSTANT);</span>
+<span class="nc" id="L59">        addConstants(AtRobotInstruction.values(), AtRobotMicrocodes.CONSTANT);</span>
+<span class="nc" id="L60">        addConstants(AtRobotInterrupt.values(), AtRobotMicrocodes.CONSTANT);</span>
+<span class="nc" id="L61">        addConstants(AtRobotRegister.values(), AtRobotMicrocodes.REFERENCE);</span>
+<span class="nc" id="L62">    }</span>
+
+    private void addConstants(AtRobotSymbol[] values, short microcode) {
+<span class="nc bnc" id="L65" title="All 2 branches missed.">        for (AtRobotSymbol symbol : values) {</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">            for (String name : symbol.getSymbolNames()) {</span>
+<span class="nc" id="L67">                addSymbol(name, microcode, symbol.getSymbolValue(), BUILT_IN_SYMBOL_LINENUMBER);</span>
+<span class="nc" id="L68">            }</span>
+        }
+<span class="nc" id="L70">    }</span>
+
+<span class="nc" id="L72">    private class MyLineVisitor implements LineVisitor {</span>
+        public void expectedDigit(int column, int lineNumber) {
+<span class="nc" id="L74">            errors.add(&quot;Expected digit.&quot;, lineNumber, column);</span>
+<span class="nc" id="L75">        }</span>
+
+        public void expectedDirectiveName(int column, int lineNumber) {
+<span class="nc" id="L78">            errors.add(&quot;Expected directive.&quot;, lineNumber, column);</span>
+<span class="nc" id="L79">        }</span>
+
+        public void unexpectedCharacter(int column, int lineNumber) {
+<span class="nc" id="L82">            errors.add(&quot;Unexpected character&quot;, lineNumber, column);</span>
+<span class="nc" id="L83">        }</span>
+
+        public void invalidVariableNameChar(int column, int lineNumber) {
+<span class="nc" id="L86">            errors.add(&quot;Invalid character in variable name&quot;, lineNumber, column);</span>
+<span class="nc" id="L87">        }</span>
+
+        public void expectedDeviceName(int column, int lineNumber) {
+<span class="nc" id="L90">            errors.add(&quot;Expected device name&quot;, lineNumber, column);</span>
+<span class="nc" id="L91">        }</span>
+
+        public void expectedMoreTokens(int lineNumber) {
+<span class="nc" id="L94">            errors.add(&quot;Expected more tokens on line&quot;, lineNumber);</span>
+<span class="nc" id="L95">        }</span>
+
+        public void invalidNumber(int lineNumber) {
+<span class="nc" id="L98">            errors.add(&quot;Not a valid number&quot;, lineNumber);</span>
+<span class="nc" id="L99">        }</span>
+
+        public void defineVariable(String variableName, int lineNumber) {
+<span class="nc" id="L102">            addReference(variables + 128, variableName, lineNumber);</span>
+<span class="nc" id="L103">            variables++;</span>
+<span class="nc" id="L104">        }</span>
+
+        public void numberedLabel(int value, int lineNumber) {
+<span class="nc" id="L107">            programCode.add((short) value);</span>
+<span class="nc" id="L108">            alignProgram();</span>
+<span class="nc" id="L109">            programCode.set(programCode.size() - 1, AtRobotMicrocodes.NUMBERED_LABEL);</span>
+<span class="nc" id="L110">            markLineNumber(lineNumber);</span>
+<span class="nc" id="L111">        }</span>
+
+        public void maxProcessorSpeed(int speed) {
+<span class="nc" id="L114">            maxProcessorSpeed = speed;</span>
+<span class="nc" id="L115">        }</span>
+
+        public void setMessage(String message) {
+<span class="nc" id="L118">            LineNumberReaderCompiler.this.message = message;</span>
+<span class="nc" id="L119">        }</span>
+
+        public void setConfig(String name, int value) {
+<span class="nc" id="L122">            LineNumberReaderCompiler.this.setConfig(name, value);</span>
+<span class="nc" id="L123">        }</span>
+
+
+        public void machineCode(int[] values, int lineNumber) {
+<span class="nc bnc" id="L127" title="All 2 branches missed.">            for (int value : values) {</span>
+<span class="nc" id="L128">                programCode.add((short) value);</span>
+            }
+<span class="nc" id="L130">            alignProgram();</span>
+<span class="nc" id="L131">            markLineNumber(lineNumber);</span>
+<span class="nc" id="L132">        }</span>
+
+        public void label(String label, int lineNumber) {
+<span class="nc" id="L135">            addSymbol(label, AtRobotMicrocodes.RESOLVED_LABEL, programCode.size() / 4, lineNumber);</span>
+<span class="nc" id="L136">        }</span>
+
+        public void tokenizedLine(List&lt;Token&gt; tokens, int lineNumber) {
+<span class="nc" id="L139">            addTokensToProgram(tokens);</span>
+<span class="nc" id="L140">            alignProgram();</span>
+<span class="nc" id="L141">            addMicrocodeToProgram(tokens);</span>
+<span class="nc" id="L142">            markLineNumber(lineNumber);</span>
+<span class="nc" id="L143">        }</span>
+
+        public void unknownDirective(String directive, int lineNumber) {
+<span class="nc" id="L146">            errors.add(&quot;Unknown directive: #&quot; + directive, lineNumber);</span>
+<span class="nc" id="L147">        }</span>
+
+        public void appendRawLine(String line) {
+<span class="nc" id="L150">            lines.add(line);</span>
+<span class="nc" id="L151">        }</span>
+    }
+
+    private void setConfig(String name, int value) {
+<span class="nc" id="L155">        configs.put(name.toLowerCase(), value);</span>
+<span class="nc" id="L156">    }</span>
+
+
+    private void alignProgram() {
+<span class="nc bnc" id="L160" title="All 2 branches missed.">        while (programCode.size() % 4 != 0) {</span>
+<span class="nc" id="L161">            programCode.add((short) 0);</span>
+        }
+<span class="nc" id="L163">    }</span>
+
+    private void markLineNumber(int lineNumber) {
+<span class="nc" id="L166">        debugInfo.setLineForInstructionPointer(instructionLineNumber.size(), lineNumber + &quot;: &quot; + lines.get(lines.size() - 1));</span>
+<span class="nc" id="L167">        instructionLineNumber.add(lineNumber);</span>
+<span class="nc" id="L168">    }</span>
+
+    private void addSymbol(String name, short microcode, int value, int lineNumber) {
+<span class="nc" id="L171">        final String lowerCaseName = name.toLowerCase();</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">        if (symbols.containsKey(lowerCaseName)) {</span>
+<span class="nc" id="L173">            duplicateSymbol(lowerCaseName, symbols.get(lowerCaseName), lineNumber);</span>
+        }
+<span class="nc" id="L175">        symbols.put(lowerCaseName, new Symbol(microcode, (short) value, lineNumber));</span>
+<span class="nc bnc" id="L176" title="All 2 branches missed.">        if (microcode == AtRobotMicrocodes.REFERENCE) {</span>
+<span class="nc" id="L177">            debugInfo.addVariable(value, name);</span>
+        }
+<span class="nc" id="L179">    }</span>
+
+    public void resolve() {
+<span class="nc" id="L182">        int sum = 0;</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">        for (int value : configs.values()) {</span>
+<span class="nc" id="L184">            sum += value;</span>
+<span class="nc" id="L185">        }</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">        if (sum &gt; 12) {</span>
+<span class="nc" id="L187">            errors.info(&quot;Config points too high. &quot; + sum + &quot; out of a max of 12.&quot;);</span>
+        }
+<span class="nc bnc" id="L189" title="All 2 branches missed.">        for (UnresolvedToken entry : unresolved) {</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">            if (!entry.getToken().isUnresolved(symbols)) {</span>
+<span class="nc" id="L191">                resolve(entry.getAddress(), entry.getToken());</span>
+            } else {
+<span class="nc" id="L193">                errors.add(&quot;Unresolved symbol: &quot; + entry.getToken().toString(), entry.getToken().getLineNumber());</span>
+            }
+<span class="nc" id="L195">        }</span>
+<span class="nc" id="L196">    }</span>
+
+    private Program createProgram() {
+<span class="nc bnc" id="L199" title="All 2 branches missed.">        if (hasErrors()) {</span>
+<span class="nc" id="L200">            return null;</span>
+        } else {
+<span class="nc" id="L202">            return new Program(getProgramCode());</span>
+        }
+    }
+
+    private HardwareSpecification createHardwareSpecification() {
+<span class="nc bnc" id="L207" title="All 2 branches missed.">        if (hasErrors()) {</span>
+<span class="nc" id="L208">            return null;</span>
+        } else {
+<span class="nc" id="L210">            return new HardwareSpecification(configs);</span>
+        }
+    }
+
+    public AtRobotCompilerOutput createCompilerOutput() {
+<span class="nc" id="L215">        return new AtRobotCompilerOutput(getErrors(), createProgram(), createHardwareSpecification(), getMaxProcessorSpeed(), getDebugInfo(), getMessage());</span>
+    }
+
+    private DebugInfo getDebugInfo() {
+<span class="nc" id="L219">        return debugInfo;</span>
+    }
+
+    private String getMessage() {
+<span class="nc" id="L223">        return message;</span>
+    }
+
+    private Errors getErrors() {
+<span class="nc" id="L227">        return errors;</span>
+    }
+
+    private int getMaxProcessorSpeed() {
+<span class="nc" id="L231">        return maxProcessorSpeed;</span>
+    }
+
+
+    private void addMicrocodeToProgram(List&lt;Token&gt; tokens) {
+<span class="nc" id="L236">        programCode.set(programCode.size() - 1, getMicrocodeFor(tokens));</span>
+<span class="nc" id="L237">    }</span>
+
+    private void addTokensToProgram(List&lt;Token&gt; tokens) {
+<span class="nc bnc" id="L240" title="All 2 branches missed.">        for (Token token : tokens) {</span>
+<span class="nc" id="L241">            addTokenToProgram(token);</span>
+<span class="nc" id="L242">        }</span>
+<span class="nc" id="L243">    }</span>
+
+    private void addTokenToProgram(Token token) {
+<span class="nc" id="L246">        programCode.add(token.getValue(symbols));</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">        if (token.isUnresolved(symbols)) {</span>
+<span class="nc" id="L248">            unresolved.add(new UnresolvedToken(programCode.size() - 1, token));</span>
+        }
+<span class="nc" id="L250">    }</span>
+
+    private short getMicrocodeFor(List&lt;Token&gt; tokens) {
+<span class="nc" id="L253">        short microcode = 0;</span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">        for (ListIterator&lt;Token&gt; iterator = tokens.listIterator(tokens.size()); iterator.hasPrevious(); ) {</span>
+<span class="nc" id="L255">            microcode = (short) ((microcode &lt;&lt; 4) | iterator.previous().getMicrocode(symbols));</span>
+        }
+<span class="nc" id="L257">        return microcode;</span>
+    }
+
+    private void addReference(int value, String variableName, int lineNumber) {
+<span class="nc" id="L261">        addSymbol(variableName, AtRobotMicrocodes.REFERENCE, value, lineNumber);</span>
+<span class="nc" id="L262">    }</span>
+
+    private void addConstant(int value, String name, int lineNumber) {
+<span class="nc" id="L265">        addSymbol(name, AtRobotMicrocodes.CONSTANT, value, lineNumber);</span>
+<span class="nc" id="L266">    }</span>
+
+    private void resolve(int address, Token token) {
+<span class="nc" id="L269">        adjustValue(address, token);</span>
+<span class="nc" id="L270">        adjustMicrocode(address, token);</span>
+<span class="nc" id="L271">    }</span>
+
+    private void adjustValue(int address, Token token) {
+<span class="nc" id="L274">        programCode.set(address, token.getValue(symbols));</span>
+<span class="nc" id="L275">    }</span>
+
+    private void adjustMicrocode(int address, Token token) {
+<span class="nc" id="L278">        final int microcodeIndex = address | 3;</span>
+<span class="nc" id="L279">        programCode.set(microcodeIndex, replaceMicrocdeNibble(address &amp; 3, programCode.get(microcodeIndex), token.getMicrocode(symbols)));</span>
+<span class="nc" id="L280">    }</span>
+
+    private short replaceMicrocdeNibble(int opNumber, short oldMicrocode, short nibble) {
+<span class="nc" id="L283">        return (short) ((oldMicrocode &amp; (0xFFFF0FFF &gt;&gt; ((3 - opNumber) &lt;&lt; 2))) | ((nibble &amp; 0xF) &lt;&lt; (opNumber &lt;&lt; 2)));</span>
+    }
+
+    private short[] getProgramCode() {
+<span class="nc" id="L287">        final short[] programCode = new short[this.programCode.size()];</span>
+<span class="nc" id="L288">        int i = 0;</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">        for (short value : this.programCode) {</span>
+<span class="nc" id="L290">            programCode[i++] = value;</span>
+<span class="nc" id="L291">        }</span>
+<span class="nc" id="L292">        return programCode;</span>
+    }
+
+    private void duplicateSymbol(String lowerCaseName, Symbol symbol, int lineNumber) {
+<span class="nc bnc" id="L296" title="All 2 branches missed.">        errors.add(&quot;Duplicate symbol: &quot; + lowerCaseName + &quot;.&quot; + (symbol.getLineNumber() &gt;= 0 ? &quot; Original declaration on line &quot; + symbol.getLineNumber() : &quot;&quot;), lineNumber);</span>
+<span class="nc" id="L297">    }</span>
+
+    private boolean hasErrors() {
+<span class="nc" id="L300">        return errors.hasErrors();</span>
+    }
+
+    private static class UnresolvedToken {
+        private final int address;
+        private final Token token;
+
+<span class="nc" id="L307">        private UnresolvedToken(int address, Token token) {</span>
+<span class="nc" id="L308">            this.address = address;</span>
+<span class="nc" id="L309">            this.token = token;</span>
+<span class="nc" id="L310">        }</span>
+
+        public int getAddress() {
+<span class="nc" id="L313">            return address;</span>
+        }
+
+        public Token getToken() {
+<span class="nc" id="L317">            return token;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

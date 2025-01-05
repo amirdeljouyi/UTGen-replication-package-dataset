@@ -1,0 +1,429 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DeletedMessageStore.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.base.deletedMessageStore</a> &gt; <span class="el_source">DeletedMessageStore.java</span></div><h1>DeletedMessageStore.java</h1><pre class="source lang-java linenums">package net.sf.xbus.base.deletedMessageStore;
+
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.util.Enumeration;
+import java.util.Hashtable;
+
+import net.sf.xbus.application.Adapter;
+import net.sf.xbus.application.PostProcessor;
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.TAManager;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.core.config.Configuration;
+import net.sf.xbus.base.core.trace.Trace;
+import net.sf.xbus.base.xbussystem.XBUSSystem;
+import net.sf.xbus.base.xml.XDomSupport;
+import net.sf.xbus.base.xml.XMLHelper;
+
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+
+/**
+ * &lt;code&gt;DeletedMessageStore&lt;/code&gt; manages the saving of messages before they
+ * are deleted in case of an error.
+ * &lt;p&gt;
+ * It implements a &lt;b&gt;Singleton &lt;/b&gt; pattern, where there is one instance per
+ * thread.
+ */
+public class DeletedMessageStore
+{
+	private static final String SECTION = &quot;DeletedMessageStore&quot;;
+
+<span class="nc" id="L41">	private static Hashtable mDeletedMessageStores = new Hashtable();</span>
+
+<span class="nc" id="L43">	private static final Object classLock = DeletedMessageStore.class;</span>
+
+<span class="nc" id="L45">	private Object mMessage = null;</span>
+
+<span class="nc" id="L47">	private XBUSSystem mSystem = null;</span>
+
+	private DeletedMessageStore()
+<span class="nc" id="L50">	{</span>
+<span class="nc" id="L51">		mDeletedMessageStores.put(Thread.currentThread().getName(), this);</span>
+<span class="nc" id="L52">	}</span>
+
+	/**
+	 * Returns an instance of the &lt;code&gt;DeletedMessageStore&lt;/code&gt;. A new
+	 * instance will be created if there is none existing for this thread.
+	 * 
+	 * @return an instance of the &lt;code&gt;DeletedMessageStore&lt;/code&gt;
+	 */
+	public static DeletedMessageStore getInstance()
+	{
+<span class="nc" id="L62">		synchronized (classLock)</span>
+		{
+<span class="nc" id="L64">			DeletedMessageStore dmStore = (DeletedMessageStore) mDeletedMessageStores</span>
+<span class="nc" id="L65">					.get(Thread.currentThread().getName());</span>
+
+<span class="nc bnc" id="L67" title="All 2 branches missed.">			if (dmStore == null)</span>
+			{
+<span class="nc" id="L69">				dmStore = new DeletedMessageStore();</span>
+			}
+<span class="nc" id="L71">			return dmStore;</span>
+		}
+	}
+
+	/**
+	 * Set the message that shall be saved. The XML file will contain the
+	 * &lt;code&gt;String&lt;/code&gt; representation of this object.
+	 * 
+	 * @param message
+	 *            the message to be saved
+	 */
+	public void setMessage(Object message)
+	{
+<span class="nc" id="L84">		mMessage = message;</span>
+<span class="nc" id="L85">	}</span>
+
+	/**
+	 * Sets the system that has received the message.
+	 * 
+	 * @param system
+	 *            the receiving message
+	 */
+	public void setSystem(XBUSSystem system)
+	{
+<span class="nc" id="L95">		mSystem = system;</span>
+<span class="nc" id="L96">	}</span>
+
+	/**
+	 * Writes the name of the system, its additional addresses and the message
+	 * into a XML file. The name of the directory is read out of the
+	 * configuration. The filename is
+	 * &lt;code&gt;&lt;i&gt;system.getCompleteName()&lt;/i&gt;.xml.&lt;i&gt;timestamp&lt;/i&gt;&lt;/code&gt;.
+	 * 
+	 * @return true if the writing has been successful, false if there has been
+	 *         a problem
+	 */
+	public boolean writeMessage()
+	{
+		try
+		{
+<span class="nc bnc" id="L111" title="All 2 branches missed.">			if (getEnabled(mSystem))</span>
+			{
+<span class="nc" id="L113">				writeFile(buildXML(mMessage, mSystem), mSystem, getDirectory());</span>
+			}
+<span class="nc" id="L115">			return true;</span>
+		}
+<span class="nc" id="L117">		catch (XException e)</span>
+		{
+<span class="nc" id="L119">			Trace.error(&quot;Problem while writing to DeletedMessageStore&quot;);</span>
+<span class="nc" id="L120">			return false;</span>
+		}
+	}
+
+	/**
+	 * Reads the name of all files containing deleted messages.
+	 * 
+	 * @return an array with the name of all files containing deleted messages
+	 * @throws XException
+	 *             if any error occures
+	 */
+	public static String[] getDeletedMessageFilenames() throws XException
+	{
+<span class="nc" id="L133">		File[] files = new File(getDirectory()).listFiles();</span>
+
+<span class="nc" id="L135">		String[] retArray = new String[files.length];</span>
+<span class="nc bnc" id="L136" title="All 2 branches missed.">		for (int i = 0; i &lt; retArray.length; i++)</span>
+		{
+<span class="nc" id="L138">			retArray[i] = files[i].getName();</span>
+		}
+<span class="nc" id="L140">		return retArray;</span>
+	}
+
+	/**
+	 * Reads a deleted message and makes a new attempt to send it to its
+	 * destinations.
+	 * 
+	 * @param filename
+	 *            the name of a file containing a deleted message
+	 * @return a message of success or failure
+	 */
+	public static String resendDeletedMessage(String filename)
+	{
+<span class="nc" id="L153">		StringBuffer retString = new StringBuffer();</span>
+<span class="nc" id="L154">		TAManager taManager = null;</span>
+
+<span class="nc" id="L156">		Trace.info(&quot;Resending message from &quot; + filename);</span>
+
+		/*
+		 * Reading and parsing the deleted message
+		 */
+		try
+		{
+<span class="nc" id="L163">			Document messageDom = XMLHelper.parseXML(readFile(getDirectory()</span>
+					+ Constants.FILE_SEPERATOR + filename), null, null);
+<span class="nc" id="L165">			XBUSSystem source = new XBUSSystem(messageDom.getFirstChild()</span>
+<span class="nc" id="L166">					.getNodeName());</span>
+<span class="nc" id="L167">			NodeList addresses = messageDom.getElementsByTagName(&quot;Address&quot;);</span>
+<span class="nc" id="L168">			Node address = null;</span>
+<span class="nc" id="L169">			String attrName = null;</span>
+<span class="nc" id="L170">			String addressValue = null;</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">			for (int i = 0; i &lt; addresses.getLength(); i++)</span>
+			{
+<span class="nc" id="L173">				address = addresses.item(i);</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">				if ((attrName = XMLHelper.getAttribute(address, &quot;name&quot;)) == null)</span>
+				{
+<span class="nc" id="L176">					throw new XException(Constants.LOCATION_INTERN,</span>
+							Constants.LAYER_BASE,
+							Constants.PACKAGE_BASE_DELETEDMESSAGESTORE, &quot;1&quot;);
+				}
+<span class="nc bnc" id="L180" title="All 2 branches missed.">				if ((addressValue = XMLHelper.getNodeText(address)) == null)</span>
+				{
+<span class="nc" id="L182">					throw new XException(Constants.LOCATION_INTERN,</span>
+							Constants.LAYER_BASE,
+							Constants.PACKAGE_BASE_DELETEDMESSAGESTORE, &quot;2&quot;);
+				}
+<span class="nc" id="L186">				source.setAddress(attrName, addressValue);</span>
+			}
+
+<span class="nc" id="L189">			NodeList data = messageDom.getElementsByTagName(&quot;Data&quot;);</span>
+<span class="nc" id="L190">			String request = null;</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">			if (data.getLength() &gt; 0)</span>
+			{
+<span class="nc" id="L193">				Node messageNode = messageDom.getElementsByTagName(&quot;Data&quot;)</span>
+<span class="nc" id="L194">						.item(0);</span>
+<span class="nc" id="L195">				Node dataNode = null;</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">				if ((dataNode = messageNode.getFirstChild()) != null)</span>
+				{
+<span class="nc" id="L198">					request = dataNode.getNodeValue();</span>
+				}
+			}
+<span class="nc bnc" id="L201" title="All 2 branches missed.">			if (request == null)</span>
+			{
+<span class="nc" id="L203">				throw new XException(Constants.LOCATION_INTERN,</span>
+						Constants.LAYER_BASE,
+						Constants.PACKAGE_BASE_DELETEDMESSAGESTORE, &quot;3&quot;);
+			}
+
+			/*
+			 * Resending the message
+			 */
+<span class="nc" id="L211">			taManager = TAManager.getInstance();</span>
+<span class="nc" id="L212">			taManager.clearManager();</span>
+<span class="nc" id="L213">			taManager.begin();</span>
+
+<span class="nc" id="L215">			Adapter adapter = new Adapter();</span>
+<span class="nc" id="L216">			adapter.callApplication(source, request, Constants.TYPE_TEXT);</span>
+<span class="nc" id="L217">			Object responseObject = adapter.getResponse();</span>
+<span class="nc bnc" id="L218" title="All 2 branches missed.">			if (Constants.RC_OK.equals(adapter.getReturncode()))</span>
+			{
+<span class="nc" id="L220">				taManager.commit();</span>
+<span class="nc" id="L221">				PostProcessor.start(source, responseObject,</span>
+						Constants.POSTPROCESSING_PERSYSTEM);
+<span class="nc" id="L223">				Trace.info(&quot;End resending &quot; + source.getCompleteName());</span>
+<span class="nc" id="L224">				Trace.info(&quot;-----------------------------&quot;);</span>
+<span class="nc" id="L225">				retString.append(&quot;Message from &quot;).append(</span>
+<span class="nc" id="L226">						source.getCompleteName()).append(</span>
+						&quot; successfully resent!&quot;);
+
+<span class="nc" id="L229">				File messageFile = new File(getDirectory()</span>
+						+ Constants.FILE_SEPERATOR + filename);
+<span class="nc bnc" id="L231" title="All 2 branches missed.">				if (messageFile.delete())</span>
+				{
+<span class="nc" id="L233">					retString.append(&quot;&lt;br&gt;&quot;);</span>
+<span class="nc" id="L234">					retString.append(&quot;File &quot;).append(filename).append(</span>
+							&quot; has been deleted.&quot;);
+				}
+				else
+				{
+<span class="nc" id="L239">					retString.append(&quot;&lt;br /&gt;&quot;);</span>
+<span class="nc" id="L240">					retString.append(&quot;File &quot;).append(filename).append(</span>
+							&quot; cannot be deleted.&quot;);
+				}
+<span class="nc" id="L243">			}</span>
+			else
+			{
+<span class="nc" id="L246">				taManager.rollback();</span>
+<span class="nc" id="L247">				Trace.info(&quot;Error while resending &quot; + source.getCompleteName());</span>
+<span class="nc" id="L248">				Trace.info(&quot;-----------------------------&quot;);</span>
+<span class="nc" id="L249">				retString.append(&quot;Error while resending &quot;).append(</span>
+<span class="nc" id="L250">						source.getCompleteName()).append(&quot;&lt;br&gt;&quot;).append(</span>
+<span class="nc" id="L251">						&quot;Reason: &quot;).append(adapter.getErrormessage()).append(</span>
+<span class="nc" id="L252">						&quot;&lt;br&gt;&quot;).append(&quot;File &quot;).append(filename).append(</span>
+						&quot; has not been deleted.&quot;);
+			}
+		}
+<span class="nc" id="L256">		catch (Exception t)</span>
+		{
+<span class="nc" id="L258">			Trace.info(&quot;Error while resending &quot; + filename);</span>
+<span class="nc" id="L259">			Trace.info(&quot;-----------------------------&quot;);</span>
+<span class="nc" id="L260">			retString.append(&quot;Error while resending &quot;).append(filename).append(</span>
+<span class="nc" id="L261">					&quot;&lt;br&gt;&quot;).append(&quot;Reason: &quot;).append(t.getMessage()).append(</span>
+<span class="nc" id="L262">					&quot;&lt;br&gt;&quot;).append(&quot;File &quot;).append(filename).append(</span>
+					&quot; has not been deleted.&quot;);
+		}
+		finally
+		{
+<span class="nc bnc" id="L267" title="All 2 branches missed.">			if (taManager != null)</span>
+			{
+<span class="nc" id="L269">				taManager.close();</span>
+			}
+		}
+
+<span class="nc" id="L273">		return retString.toString();</span>
+
+	}
+
+	private static boolean getEnabled(XBUSSystem system) throws XException
+	{
+<span class="nc" id="L279">		Configuration config = Configuration.getInstance();</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">		return config.getValueAsBooleanOptional(Constants.CHAPTER_BASE,</span>
+				SECTION, &quot;Enabled&quot;)
+<span class="nc bnc" id="L282" title="All 2 branches missed.">				|| config.getValueAsBooleanOptional(Constants.CHAPTER_SYSTEM,</span>
+<span class="nc" id="L283">						system.getName(), &quot;UseDeletedMessageStore&quot;);</span>
+	}
+
+	/**
+	 * Reads the name of the directory of the deleted messages out of the
+	 * configuration.
+	 * 
+	 * @return the name of the directory containing the deleted messages
+	 * @throws XException
+	 *             if any error occures
+	 */
+	public static String getDirectory() throws XException
+	{
+<span class="nc" id="L296">		return Configuration.getInstance().getValue(Constants.CHAPTER_BASE,</span>
+				SECTION, &quot;Directory&quot;);
+	}
+
+	private void writeFile(String message, XBUSSystem system, String directory)
+			throws XException
+	{
+<span class="nc" id="L303">		String fileName = new StringBuffer(directory).append(</span>
+<span class="nc" id="L304">				Constants.FILE_SEPERATOR).append(system.getCompleteName())</span>
+<span class="nc" id="L305">				.append(Constants.getDateAsString()).append(&quot;.xml&quot;).toString();</span>
+
+<span class="nc" id="L307">		BufferedWriter buffOut = null;</span>
+		try
+		{
+<span class="nc" id="L310">			buffOut = new BufferedWriter(new OutputStreamWriter(</span>
+<span class="nc" id="L311">					new FileOutputStream(fileName), Constants.getXMLEncoding()));</span>
+<span class="nc" id="L312">			buffOut.write(message);</span>
+<span class="nc" id="L313">			buffOut.close();</span>
+		}
+<span class="nc" id="L315">		catch (IOException e)</span>
+		{
+<span class="nc" id="L317">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_BASE,
+					Constants.PACKAGE_BASE_DELETEDMESSAGESTORE, &quot;0&quot;, e);
+		}
+		finally
+		{
+<span class="nc bnc" id="L323" title="All 2 branches missed.">			if (buffOut != null)</span>
+			{
+				try
+				{
+<span class="nc" id="L327">					buffOut.close();</span>
+				}
+<span class="nc" id="L329">				catch (IOException e1)</span>
+				{
+<span class="nc" id="L331">					throw new XException(Constants.LOCATION_EXTERN,</span>
+							Constants.LAYER_BASE,
+							Constants.PACKAGE_BASE_DELETEDMESSAGESTORE, &quot;0&quot;, e1);
+<span class="nc" id="L334">				}</span>
+			}
+		}
+<span class="nc" id="L337">	}</span>
+
+	private String buildXML(Object message, XBUSSystem system)
+			throws XException
+	{
+<span class="nc" id="L342">		Document doc = XMLHelper.getDocumentBuilder(&quot;Default&quot;, null)</span>
+<span class="nc" id="L343">				.newDocument();</span>
+
+<span class="nc" id="L345">		Element root = doc.createElement(XDomSupport.makeTagNameValid(system</span>
+<span class="nc" id="L346">				.getName()));</span>
+<span class="nc" id="L347">		doc.appendChild(root);</span>
+
+<span class="nc" id="L349">		Hashtable addresses = system.getAddresses();</span>
+<span class="nc bnc" id="L350" title="All 2 branches missed.">		if (!addresses.isEmpty())</span>
+		{
+<span class="nc" id="L352">			Element addressesNode = doc.createElement(&quot;Addresses&quot;);</span>
+<span class="nc" id="L353">			String address = null;</span>
+<span class="nc" id="L354">			Element addressNode = null;</span>
+<span class="nc bnc" id="L355" title="All 2 branches missed.">			for (Enumeration keys = addresses.keys(); keys.hasMoreElements();)</span>
+			{
+<span class="nc" id="L357">				address = (String) keys.nextElement();</span>
+<span class="nc" id="L358">				addressNode = doc.createElement(&quot;Address&quot;);</span>
+<span class="nc" id="L359">				addressNode.setAttribute(&quot;name&quot;, address);</span>
+<span class="nc" id="L360">				addressNode.appendChild(doc.createTextNode((String) addresses</span>
+<span class="nc" id="L361">						.get(address)));</span>
+<span class="nc" id="L362">				addressesNode.appendChild(addressNode);</span>
+			}
+<span class="nc" id="L364">			root.appendChild(addressesNode);</span>
+		}
+
+<span class="nc" id="L367">		Element data = doc.createElement(&quot;Data&quot;);</span>
+<span class="nc" id="L368">		data.appendChild(doc.createCDATASection(message.toString()));</span>
+<span class="nc" id="L369">		root.appendChild(data);</span>
+
+<span class="nc" id="L371">		return XMLHelper.serializeXML(doc, null);</span>
+	}
+
+	/**
+	 * Reads a file.
+	 * 
+	 * @param filename
+	 *            the name of the file including the directory
+	 * @return the content of the file
+	 */
+	static private String readFile(String filename) throws XException
+	{
+<span class="nc" id="L383">		StringBuffer retBuffer = new StringBuffer();</span>
+<span class="nc" id="L384">		File sourceFile = new File(filename);</span>
+		String zeile;
+<span class="nc" id="L386">		BufferedReader buffReader = null;</span>
+
+		try
+		{
+<span class="nc" id="L390">			buffReader = new BufferedReader(new InputStreamReader(</span>
+					new FileInputStream(sourceFile)));
+
+<span class="nc bnc" id="L393" title="All 2 branches missed.">			if ((zeile = buffReader.readLine()) != null)</span>
+			{
+<span class="nc" id="L395">				retBuffer.append(zeile);</span>
+			} // if((zeile = buffReader.readLine()) != null)
+
+<span class="nc bnc" id="L398" title="All 2 branches missed.">			while ((zeile = buffReader.readLine()) != null)</span>
+			{
+<span class="nc" id="L400">				retBuffer.append(Constants.LINE_SEPERATOR);</span>
+<span class="nc" id="L401">				retBuffer.append(zeile);</span>
+			} // while ((zeile = buffReader.readLine()) != null)
+		}
+<span class="nc" id="L404">		catch (IOException e)</span>
+		{
+<span class="nc" id="L406">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_BASE,
+					Constants.PACKAGE_BASE_DELETEDMESSAGESTORE, &quot;0&quot;, e);
+		}
+		finally
+		{
+<span class="nc bnc" id="L412" title="All 2 branches missed.">			if (buffReader != null)</span>
+			{
+				try
+				{
+<span class="nc" id="L416">					buffReader.close();</span>
+				}
+<span class="nc" id="L418">				catch (IOException e1)</span>
+				{
+					// do nothing
+<span class="nc" id="L421">				}</span>
+			}
+		}
+
+<span class="nc" id="L425">		return retBuffer.toString();</span>
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

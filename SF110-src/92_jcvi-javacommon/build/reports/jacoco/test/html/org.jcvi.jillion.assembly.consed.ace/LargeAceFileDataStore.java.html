@@ -1,0 +1,712 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LargeAceFileDataStore.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.assembly.consed.ace</a> &gt; <span class="el_source">LargeAceFileDataStore.java</span></div><h1>LargeAceFileDataStore.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+package org.jcvi.jillion.assembly.consed.ace;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
+import org.jcvi.jillion.assembly.consed.ConsedUtil;
+import org.jcvi.jillion.assembly.consed.ConsedUtil.ClipPointsType;
+import org.jcvi.jillion.core.Direction;
+import org.jcvi.jillion.core.Range;
+import org.jcvi.jillion.core.datastore.DataStoreClosedException;
+import org.jcvi.jillion.core.datastore.DataStoreException;
+import org.jcvi.jillion.core.datastore.DataStoreFilter;
+import org.jcvi.jillion.core.datastore.DataStoreFilters;
+import org.jcvi.jillion.core.io.IOUtil;
+import org.jcvi.jillion.core.qual.QualitySequence;
+import org.jcvi.jillion.core.util.iter.IteratorUtil;
+import org.jcvi.jillion.core.util.iter.StreamingIterator;
+import org.jcvi.jillion.internal.core.datastore.DataStoreStreamingIterator;
+import org.jcvi.jillion.internal.core.util.iter.AbstractBlockingStreamingIterator;
+/**
+ * {@code LargeAceFileDataStore} is an {@link AceFileContigDataStore}
+ * implementation that doesn't store any contig or 
+ * read information in memory.
+ * This means that each {@link #get(String)} or {@link #contains(String)}
+ * requires re-parsing the ace file which can take some time.
+ * Other methods such as {@link #getNumberOfRecords()} are lazy-loaded
+ * and are only parsed the first time they are asked for.
+ * &lt;p/&gt;
+ * Since each method call involves re-parsing the ace file,
+ * that file must not be modified or moved during the
+ * entire lifetime of the instance.
+ * It is recommended that instances are wrapped
+ * in  a cached datastore using
+ * {@link DataStoreUtil#createNewCachedDataStore(Class, org.jcvi.jillion.core.datastore.DataStore, int)}.
+ * @author dkatzel
+ *
+ */
+final class LargeAceFileDataStore implements AceFileContigDataStore{
+
+	private final File aceFile;
+<span class="nc" id="L65">	private Long numberOfContigs = null;</span>
+<span class="nc" id="L66">	private Long totalNumberOfReads =null;</span>
+	
+<span class="nc" id="L68">	private List&lt;WholeAssemblyAceTag&gt; wholeAssemblyTags =null;</span>
+<span class="nc" id="L69">    private List&lt;ConsensusAceTag&gt; consensusTags= null;</span>
+<span class="nc" id="L70">    private List&lt;ReadAceTag&gt; readTags=null;</span>
+    
+	private final DataStoreFilter contigIdFilter;
+	 private volatile boolean isClosed;
+	/**
+	 * Create a new instance of {@link LargeAceFileDataStore}.
+	 * @param aceFile the ace file to create an {@link AceFileContigDataStore}
+	 * from. (can not be null and must exist)
+	 * @return a new {@link AceFileContigDataStore}; 
+	 * will never be null.
+	 * @throws FileNotFoundException if the ace file does not exist.
+	 * @throws NullPointerException if aceFile is null.
+	 */
+	public static AceFileContigDataStore create(File aceFile) throws FileNotFoundException{
+<span class="nc" id="L84">		return new LargeAceFileDataStore(aceFile, DataStoreFilters.alwaysAccept());</span>
+	}
+	/**
+	 * Create a new instance of {@link LargeAceFileDataStore}
+	 * with only some of the contigs from the given ace file.
+	 * Any contigs excluded by the given {@link DataStoreFilter}
+	 * will be completely ignored during calls to {@link #getNumberOfRecords()}
+	 * {@link #iterator()} and {@link #idIterator()}, return
+	 * {@code false} for {@link #contains(String)}
+	 * and return null for {@link #get(String)}
+	 * @param aceFile the ace file to create an {@link AceFileContigDataStore}
+	 * from. (can not be null and must exist)
+	 * @param contigIdFilter a {@link DataStoreFilter}
+	 * instance if only some contigs from the given
+	 * file should be included in this datastore.
+	 * Calls to {@link #get(String)}
+	 * @return a new {@link AceFileContigDataStore}; 
+	 * will never be null.
+	 * @throws FileNotFoundException if the ace file does not exist.
+	 * @throws NullPointerException if aceFile is null.
+	 */
+	public static AceFileContigDataStore create(File aceFile, DataStoreFilter contigIdFilter) throws FileNotFoundException{
+<span class="nc" id="L106">		return new LargeAceFileDataStore(aceFile, contigIdFilter);</span>
+	}
+	
+	
+<span class="nc" id="L110">	private LargeAceFileDataStore(File aceFile, DataStoreFilter contigIdFilter) throws FileNotFoundException {</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">		if(contigIdFilter ==null){</span>
+<span class="nc" id="L112">			throw new NullPointerException(&quot;filter can not be null&quot;);</span>
+		}
+<span class="nc bnc" id="L114" title="All 2 branches missed.">		if(aceFile ==null){</span>
+<span class="nc" id="L115">			throw new NullPointerException(&quot;ace file can not be null&quot;);</span>
+		}
+<span class="nc bnc" id="L117" title="All 2 branches missed.">		if(!aceFile.exists()){</span>
+<span class="nc" id="L118">			throw new FileNotFoundException(</span>
+<span class="nc" id="L119">					String.format(&quot;ace file %s does not exist&quot;, aceFile.getAbsolutePath()));</span>
+		}
+<span class="nc" id="L121">		this.aceFile = aceFile;</span>
+<span class="nc" id="L122">		this.contigIdFilter = contigIdFilter;</span>
+<span class="nc" id="L123">	}</span>
+	
+	
+	    
+    protected final void throwExceptionIfClosed() {
+<span class="nc bnc" id="L128" title="All 2 branches missed.">        if(isClosed){</span>
+<span class="nc" id="L129">            throw new DataStoreClosedException(&quot;DataStore is closed&quot;);</span>
+        }
+<span class="nc" id="L131">    }</span>
+    
+    @Override
+    public final void close() throws IOException {	    	
+<span class="nc" id="L135">        isClosed = true;</span>
+<span class="nc" id="L136">    }</span>
+    @Override
+    public final boolean isClosed() {
+<span class="nc" id="L139">        return isClosed;</span>
+    }
+	@Override
+	public synchronized StreamingIterator&lt;String&gt; idIterator() throws DataStoreException {
+<span class="nc" id="L143">		throwExceptionIfClosed();</span>
+<span class="nc" id="L144">		IdIteratorImpl ids = new IdIteratorImpl();</span>
+<span class="nc" id="L145">		ids.start();</span>
+<span class="nc" id="L146">		return DataStoreStreamingIterator.create(this, ids);</span>
+	}
+	@Override
+	public AceContig get(String id) throws DataStoreException {
+<span class="nc" id="L150">		throwExceptionIfClosed();</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">		if(!contigIdFilter.accept(id)){</span>
+			//if the id isn't accepted by the filter
+			//then there is no way it's in this datastore.
+<span class="nc" id="L154">			return null;</span>
+		}
+<span class="nc" id="L156">		SingleContigVisitor visitor = new SingleContigVisitor(id);</span>
+
+		try {
+<span class="nc" id="L159">			AceFileParser.create(aceFile).accept(visitor);</span>
+<span class="nc" id="L160">		} catch (IOException e) {</span>
+<span class="nc" id="L161">			throw new DataStoreException(&quot;error parsing ace file&quot;,e);</span>
+<span class="nc" id="L162">		}</span>
+<span class="nc" id="L163">		return visitor.getContig();</span>
+	}
+	@Override
+	public boolean contains(String id) throws DataStoreException {		
+<span class="nc bnc" id="L167" title="All 2 branches missed.">		if(id ==null){</span>
+<span class="nc" id="L168">			throw new NullPointerException(&quot;id can not be null&quot;);</span>
+		}
+<span class="nc" id="L170">		throwExceptionIfClosed();</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">		if(!contigIdFilter.accept(id)){</span>
+			//if the id isn't accepted by the filter
+			//then there is no way it's in this datastore
+<span class="nc" id="L174">			return false;</span>
+		}
+
+<span class="nc" id="L177">		StreamingIterator&lt;String&gt; ids = idIterator();</span>
+		try{
+<span class="nc bnc" id="L179" title="All 2 branches missed.">			while(ids.hasNext()){</span>
+<span class="nc" id="L180">				String nextId = ids.next();</span>
+<span class="nc bnc" id="L181" title="All 2 branches missed.">				if(id.equals(nextId)){</span>
+<span class="nc" id="L182">					return true;</span>
+				}
+<span class="nc" id="L184">			}</span>
+		}finally{
+<span class="nc" id="L186">			IOUtil.closeAndIgnoreErrors(ids);</span>
+		}
+<span class="nc" id="L188">		return false;</span>
+	}
+	
+	
+	@Override
+	public synchronized StreamingIterator&lt;WholeAssemblyAceTag&gt; getWholeAssemblyTagIterator()
+			throws DataStoreException {
+<span class="nc" id="L195">		throwExceptionIfClosed();</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">		if( wholeAssemblyTags==null){</span>
+<span class="nc" id="L197">			setTagLists();</span>
+		}
+<span class="nc" id="L199">		return IteratorUtil.createStreamingIterator(wholeAssemblyTags.iterator());</span>
+	}
+	@Override
+	public synchronized StreamingIterator&lt;ReadAceTag&gt; getReadTagIterator()
+			throws DataStoreException {
+<span class="nc" id="L204">		throwExceptionIfClosed();</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">		if( readTags==null){</span>
+<span class="nc" id="L206">			setTagLists();</span>
+		}
+<span class="nc" id="L208">		return IteratorUtil.createStreamingIterator(readTags.iterator());</span>
+	}
+	@Override
+	public synchronized StreamingIterator&lt;ConsensusAceTag&gt; getConsensusTagIterator()
+			throws DataStoreException {
+<span class="nc" id="L213">		throwExceptionIfClosed();</span>
+<span class="nc bnc" id="L214" title="All 2 branches missed.">		if( consensusTags==null){</span>
+<span class="nc" id="L215">			setTagLists();</span>
+		}
+<span class="nc" id="L217">		return IteratorUtil.createStreamingIterator(consensusTags.iterator());</span>
+	}
+	private void setTagLists() throws DataStoreException {
+		try {
+<span class="nc" id="L221">			AceTagsVisitor visitor = new AceTagsVisitor();</span>
+<span class="nc" id="L222">			AceFileParser.create(aceFile).accept(visitor);</span>
+<span class="nc bnc" id="L223" title="All 2 branches missed.">			if(!visitor.isCompletlyParsed()){</span>
+<span class="nc" id="L224">				throw new DataStoreException(&quot;could not completely parse tags from ace file&quot;);</span>
+			}
+<span class="nc" id="L226">			wholeAssemblyTags = visitor.getWholeAssemblyTags();</span>
+<span class="nc" id="L227">			consensusTags = visitor.getConsensusTags();</span>
+<span class="nc" id="L228">			readTags = visitor.getReadTags();</span>
+<span class="nc" id="L229">		} catch (IOException e) {</span>
+<span class="nc" id="L230">			throw new DataStoreException(&quot;error parsing ace tags from ace file&quot;, e);</span>
+<span class="nc" id="L231">		}</span>
+<span class="nc" id="L232">	}</span>
+	@Override
+	public synchronized long getNumberOfTotalReads() throws DataStoreException {
+<span class="nc" id="L235">		throwExceptionIfClosed();</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">		if( totalNumberOfReads==null){</span>
+<span class="nc" id="L237">			setNumContigsAndTotalReads();</span>
+		}
+<span class="nc" id="L239">		return totalNumberOfReads;</span>
+	}
+	@Override
+	public synchronized long getNumberOfRecords() throws DataStoreException {
+<span class="nc" id="L243">		throwExceptionIfClosed();</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">		if(numberOfContigs ==null){</span>
+<span class="nc" id="L245">			setNumContigsAndTotalReads();</span>
+		}
+<span class="nc" id="L247">		return numberOfContigs;</span>
+	}
+	private synchronized void setNumContigsAndTotalReads() throws DataStoreException {
+		//haven't parsed num contigs yet 
+<span class="nc" id="L251">		SizeVisitor visitor = new SizeVisitor();</span>
+		try {
+<span class="nc" id="L253">			AceFileParser.create(aceFile).accept(visitor);</span>
+<span class="nc" id="L254">		} catch (IOException e) {</span>
+<span class="nc" id="L255">			throw new DataStoreException(&quot;error parsing number of contigs&quot;,e);</span>
+<span class="nc" id="L256">		}</span>
+<span class="nc" id="L257">		totalNumberOfReads= visitor.getTotalNumberOfReads();</span>
+<span class="nc" id="L258">		numberOfContigs= visitor.getNumberOfContigs();</span>
+<span class="nc" id="L259">	}</span>
+	
+	@Override
+	public StreamingIterator&lt;AceContig&gt; iterator() {
+<span class="nc" id="L263">		throwExceptionIfClosed();</span>
+<span class="nc" id="L264">		AceFileDataStoreIterator iter= new AceFileDataStoreIterator();</span>
+<span class="nc" id="L265">	    iter.start();</span>
+<span class="nc" id="L266">	    return DataStoreStreamingIterator.create(this, iter);</span>
+	}
+	
+
+<span class="nc" id="L270">	private final class SizeVisitor implements AceFileVisitor{</span>
+<span class="nc" id="L271">private final AceContigReadVisitor readVisitor = new AceContigReadVisitor() {</span>
+			
+			@Override
+			public void visitTraceDescriptionLine(String traceName, String phdName,
+					Date date) {
+				//no-op								
+<span class="nc" id="L277">			}</span>
+			
+			@Override
+			public void visitQualityLine(int qualLeft, int qualRight, int alignLeft,
+					int alignRight) {
+<span class="nc" id="L282">				 ClipPointsType clipPointsType = ConsedUtil.ClipPointsType.getType(qualLeft, qualRight, alignLeft, alignRight);</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">		     		if(clipPointsType !=ClipPointsType.VALID){</span>
+		     			//ignore read
+<span class="nc" id="L285">		     			totalNumberOfReads--;</span>
+		     		}
+				
+<span class="nc" id="L288">			}</span>
+			
+			@Override
+			public void visitEnd() {
+				//no-op								
+<span class="nc" id="L293">			}</span>
+			
+			@Override
+			public void visitBasesLine(String mixedCaseBasecalls) {
+				//no-op								
+<span class="nc" id="L298">			}</span>
+			
+			@Override
+			public void halted() {
+				//no-op								
+<span class="nc" id="L303">			}</span>
+		}; 
+<span class="nc" id="L305">		private long size=0L;</span>
+<span class="nc" id="L306">		private long totalNumberOfReads=0L;</span>
+		
+		public long getNumberOfContigs() {
+<span class="nc" id="L309">			return size;</span>
+		}
+
+		public long getTotalNumberOfReads() {
+<span class="nc" id="L313">			return totalNumberOfReads;</span>
+		}
+
+		@Override
+		public void visitHeader(int numberOfContigs, long totalNumberOfReads) {
+			//no-op			
+<span class="nc" id="L319">		}</span>
+
+		@Override
+		public AceContigVisitor visitContig(AceFileVisitorCallback callback,
+				String contigId, int numberOfBases, int numberOfReads,
+				int numberOfBaseSegments, boolean reverseComplemented) {
+<span class="nc bnc" id="L325" title="All 2 branches missed.">			if(contigIdFilter.accept(contigId)){</span>
+<span class="nc" id="L326">				size++;</span>
+<span class="nc" id="L327">				totalNumberOfReads+=numberOfReads;</span>
+<span class="nc" id="L328">				return new AceContigVisitor() {</span>
+					
+					@Override
+					public void visitEnd() {
+						//no-op						
+<span class="nc" id="L333">					}</span>
+					
+					@Override
+					public void visitConsensusQualities(
+							QualitySequence ungappedConsensusQualities) {
+						//no-op						
+<span class="nc" id="L339">					}</span>
+					
+					@Override
+					public AceContigReadVisitor visitBeginRead(String readId, int gappedLength) {
+<span class="nc" id="L343">						return readVisitor;</span>
+					}
+					
+					@Override
+					public void visitBasesLine(String mixedCaseBasecalls) {
+						//no-op						
+<span class="nc" id="L349">					}</span>
+					
+					@Override
+					public void visitBaseSegment(Range gappedConsensusRange, String readId) {
+						//no-op						
+<span class="nc" id="L354">					}</span>
+					
+					@Override
+					public void visitAlignedReadInfo(String readId, Direction dir,
+							int gappedStartOffset) {
+						//no-op						
+<span class="nc" id="L360">					}</span>
+					
+					@Override
+					public void halted() {
+						//no-op						
+<span class="nc" id="L365">					}</span>
+				};
+			}
+<span class="nc" id="L368">			return null;</span>
+		}
+
+		@Override
+		public void visitReadTag(String id, String type, String creator,
+				long gappedStart, long gappedEnd, Date creationDate,
+				boolean isTransient) {
+			//no-op		
+<span class="nc" id="L376">		}</span>
+
+		@Override
+		public AceConsensusTagVisitor visitConsensusTag(String id, String type,
+				String creator, long gappedStart, long gappedEnd,
+				Date creationDate, boolean isTransient) {
+			//skip
+<span class="nc" id="L383">			return null;</span>
+		}
+
+		@Override
+		public void visitWholeAssemblyTag(String type, String creator,
+				Date creationDate, String data) {
+			//no-op		
+<span class="nc" id="L390">		}</span>
+
+		@Override
+		public void visitEnd() {
+			//no-op		
+<span class="nc" id="L395">		}</span>
+
+		@Override
+		public void halted() {
+			//no-op		
+<span class="nc" id="L400">		}</span>
+
+
+		
+	}
+	/**
+     * Special implementation of a {@link StreamingIterator}
+     * that directly parses the ace file.  This allows us
+     * to iterate over the entire file in 1 pass.
+     * @author dkatzel
+     */
+<span class="nc" id="L411">    private final class AceFileDataStoreIterator extends AbstractBlockingStreamingIterator&lt;AceContig&gt;{</span>
+
+        /**
+        * {@inheritDoc}
+        */
+        @Override
+        protected void backgroundThreadRunMethod() {
+<span class="nc" id="L418">            AceFileVisitor visitor = new AceFileVisitor() {</span>
+
+				@Override
+				public void visitHeader(int numberOfContigs,
+						long totalNumberOfReads) {
+					//no-op					
+<span class="nc" id="L424">				}</span>
+
+				@Override
+				public AceContigVisitor visitContig(
+						AceFileVisitorCallback callback, String contigId,
+						int numberOfBases, int numberOfReads,
+						int numberOfBaseSegments, boolean reverseComplemented) {
+<span class="nc bnc" id="L431" title="All 2 branches missed.">					if(contigIdFilter.accept(contigId)){</span>
+<span class="nc" id="L432">						return new AbstractAceContigBuilderVisitor(contigId, numberOfBases, numberOfReads) {</span>
+							
+							@Override
+							protected void visitContig(AceContigBuilder builder) {
+<span class="nc" id="L436">								 AceFileDataStoreIterator.this.blockingPut(builder.build());								</span>
+<span class="nc" id="L437">							}</span>
+						};
+					}
+<span class="nc" id="L440">					return null;</span>
+				}
+
+				@Override
+				public void visitReadTag(String id, String type,
+						String creator, long gappedStart, long gappedEnd,
+						Date creationDate, boolean isTransient) {
+					//no-op		
+<span class="nc" id="L448">				}</span>
+
+				@Override
+				public AceConsensusTagVisitor visitConsensusTag(String id,
+						String type, String creator, long gappedStart,
+						long gappedEnd, Date creationDate, boolean isTransient) {
+					//skip
+<span class="nc" id="L455">					return null;</span>
+				}
+
+				@Override
+				public void visitWholeAssemblyTag(String type, String creator,
+						Date creationDate, String data) {
+					//no-op		
+<span class="nc" id="L462">				}</span>
+
+				@Override
+				public void visitEnd() {
+					//no-op		
+<span class="nc" id="L467">				}</span>
+
+				@Override
+				public void halted() {
+					//no-op		
+<span class="nc" id="L472">				}</span>
+
+            };
+            try {
+<span class="nc" id="L476">                AceFileParser.create(aceFile).accept(visitor);</span>
+<span class="nc" id="L477">            } catch (Exception e) {</span>
+                //some kind of exception occured while we were parsing the ace file
+<span class="nc" id="L479">                throw new RuntimeException(&quot;error while iterating over ace file&quot;,e);</span>
+<span class="nc" id="L480">            }</span>
+            
+<span class="nc" id="L482">        }</span>
+    }
+    private static final class SingleContigVisitor implements AceFileVisitor{
+
+    	private AceContig contig;
+    	private final String contigIdToGet;
+    	
+<span class="nc" id="L489">		public SingleContigVisitor(String contigIdToGet) {</span>
+<span class="nc" id="L490">			this.contigIdToGet = contigIdToGet;</span>
+<span class="nc" id="L491">		}		</span>
+		
+		public final AceContig getContig() {
+<span class="nc" id="L494">			return contig;</span>
+		}
+
+
+		@Override
+		public void visitHeader(int numberOfContigs, long totalNumberOfReads) {
+			//no-op			
+<span class="nc" id="L501">		}</span>
+		@Override
+		public AceContigVisitor visitContig(final AceFileVisitorCallback callback,
+				String contigId, int numberOfBases, int numberOfReads,
+				int numberOfBaseSegments, boolean reverseComplemented) {
+<span class="nc bnc" id="L506" title="All 2 branches missed.">			if(contigId.equals(contigIdToGet)){</span>
+<span class="nc" id="L507">				return new AbstractAceContigBuilderVisitor(contigId, numberOfBases, numberOfReads) {</span>
+					
+					@Override
+					protected void visitContig(AceContigBuilder builder) {
+<span class="nc" id="L511">						contig = builder.build();	</span>
+<span class="nc" id="L512">						callback.haltParsing();</span>
+<span class="nc" id="L513">					}</span>
+				};
+			}
+<span class="nc" id="L516">			return null;</span>
+		}
+		@Override
+		public void visitReadTag(String id, String type, String creator,
+				long gappedStart, long gappedEnd, Date creationDate,
+				boolean isTransient) {
+			//no-op		
+<span class="nc" id="L523">		}</span>
+		@Override
+		public AceConsensusTagVisitor visitConsensusTag(String id, String type,
+				String creator, long gappedStart, long gappedEnd,
+				Date creationDate, boolean isTransient) {
+			//skip	
+<span class="nc" id="L529">			return null;</span>
+		}
+		@Override
+		public void visitWholeAssemblyTag(String type, String creator,
+				Date creationDate, String data) {
+			//no-op		
+<span class="nc" id="L535">		}</span>
+		@Override
+		public void visitEnd() {
+			//no-op		
+<span class="nc" id="L539">		}</span>
+		@Override
+		public void halted() {
+			//no-op		
+<span class="nc" id="L543">		}</span>
+		
+    	
+    }
+    
+    
+    	
+    
+<span class="nc" id="L551">    private final class IdIteratorImpl extends AbstractBlockingStreamingIterator&lt;String&gt;{</span>
+<span class="nc" id="L552">    	private class InnerVisitor implements AceFileVisitor{</span>
+
+			@Override
+			public void visitHeader(int numberOfContigs, long totalNumberOfReads) {
+				//no-op				
+<span class="nc" id="L557">			}</span>
+
+			@Override
+			public AceContigVisitor visitContig(
+					AceFileVisitorCallback callback, String contigId,
+					int numberOfBases, int numberOfReads,
+					int numberOfBaseSegments, boolean reverseComplemented) {
+<span class="nc bnc" id="L564" title="All 2 branches missed.">				if(contigIdFilter.accept(contigId)){</span>
+<span class="nc" id="L565">					IdIteratorImpl.this.blockingPut(contigId);</span>
+				}
+<span class="nc" id="L567">				return null;</span>
+			}
+
+			@Override
+			public void visitReadTag(String id, String type, String creator,
+					long gappedStart, long gappedEnd, Date creationDate,
+					boolean isTransient) {
+				//no-op	
+<span class="nc" id="L575">			}</span>
+
+			@Override
+			public AceConsensusTagVisitor visitConsensusTag(String id,
+					String type, String creator, long gappedStart,
+					long gappedEnd, Date creationDate, boolean isTransient) {
+				//skip
+<span class="nc" id="L582">				return null;</span>
+			}
+
+			@Override
+			public void visitWholeAssemblyTag(String type, String creator,
+					Date creationDate, String data) {
+				//no-op	
+<span class="nc" id="L589">			}</span>
+
+			@Override
+			public void visitEnd() {
+				//no-op	
+<span class="nc" id="L594">			}</span>
+
+			@Override
+			public void halted() {
+				//no-op	
+<span class="nc" id="L599">			}</span>
+    	
+			
+    	}
+        /**
+        * {@inheritDoc}
+        */
+        @Override
+        protected void backgroundThreadRunMethod() {
+<span class="nc" id="L608">        	AceFileVisitor builder = new InnerVisitor();</span>
+            try {
+<span class="nc" id="L610">                AceFileParser.create(aceFile).accept(builder);</span>
+<span class="nc" id="L611">            } catch (Exception e) {</span>
+                //some kind of exception occured while we were parsing the ace file
+<span class="nc" id="L613">                throw new RuntimeException(&quot;error while iterating over ace file&quot;,e);</span>
+<span class="nc" id="L614">            }</span>
+            
+<span class="nc" id="L616">        }</span>
+    }
+    
+<span class="nc" id="L619">    private class AceTagsVisitor implements AceFileVisitor{</span>
+
+    	/**
+	     * List of all the {@link WholeAssemblyAceTag}s
+	     * in the ace file in the order they are
+	     * declared in the file.
+	     */
+<span class="nc" id="L626">	    private final List&lt;WholeAssemblyAceTag&gt; wholeAssemblyTags = new ArrayList&lt;WholeAssemblyAceTag&gt;();</span>
+	    /**
+	     * List of all the {@link ConsensusAceTag}s
+	     * in the ace file in the order they are
+	     * declared in the file.
+	     */
+<span class="nc" id="L632">	    private final List&lt;ConsensusAceTag&gt; consensusTags = new ArrayList&lt;ConsensusAceTag&gt;();</span>
+	    /**
+	     * List of all the {@link ReadAceTag}s
+	     * in the ace file in the order they are
+	     * declared in the file.
+	     */
+<span class="nc" id="L638">	    private final List&lt;ReadAceTag&gt; readTags = new ArrayList&lt;ReadAceTag&gt;();</span>
+	    
+<span class="nc" id="L640">	    private boolean completlyParsed=false;</span>
+	    
+		@Override
+		public void visitHeader(int numberOfContigs, long totalNumberOfReads) {
+			//no-op
+			
+<span class="nc" id="L646">		}</span>
+		@Override
+		public AceContigVisitor visitContig(AceFileVisitorCallback callback,
+				String contigId, int numberOfBases, int numberOfReads,
+				int numberOfBaseSegments, boolean reverseComplemented) {
+			//always skip
+<span class="nc" id="L652">			return null;</span>
+		}
+		@Override
+		public void visitReadTag(String id, String type, String creator,
+				long gappedStart, long gappedEnd, Date creationDate,
+				boolean isTransient) {
+<span class="nc" id="L658">			readTags.add(new ReadAceTag(id, type, creator, creationDate, </span>
+<span class="nc" id="L659">                    Range.of(gappedStart,gappedEnd), isTransient));</span>
+			
+<span class="nc" id="L661">		}</span>
+
+		@Override
+		public AceConsensusTagVisitor visitConsensusTag(String id, String type,
+				String creator, long gappedStart, long gappedEnd,
+				Date creationDate, boolean isTransient) {
+<span class="nc bnc" id="L667" title="All 2 branches missed.">			if(contigIdFilter.accept(id)){</span>
+<span class="nc" id="L668">				return new AbstractAceConsensusTagVisitor(id, type,creator, </span>
+<span class="nc" id="L669">						gappedStart, gappedEnd, creationDate, isTransient) {</span>
+					
+					@Override
+					protected void visitConsensusTag(ConsensusAceTag consensusTag) {
+<span class="nc" id="L673">						consensusTags.add(consensusTag);						</span>
+<span class="nc" id="L674">					}</span>
+				};
+			}
+			//skip
+<span class="nc" id="L678">			return null;</span>
+		}
+
+		@Override
+		public void visitWholeAssemblyTag(String type, String creator,
+				Date creationDate, String data) {
+<span class="nc" id="L684">			wholeAssemblyTags.add(new WholeAssemblyAceTag(type, creator, creationDate, data.trim()));</span>
+			
+<span class="nc" id="L686">		}</span>
+		@Override
+		public void visitEnd() {
+<span class="nc" id="L689">			completlyParsed = true;</span>
+			
+<span class="nc" id="L691">		}</span>
+		@Override
+		public void halted() {
+			//no-op			
+<span class="nc" id="L695">		}</span>
+		public final List&lt;WholeAssemblyAceTag&gt; getWholeAssemblyTags() {
+<span class="nc" id="L697">			return wholeAssemblyTags;</span>
+		}
+		public final List&lt;ConsensusAceTag&gt; getConsensusTags() {
+<span class="nc" id="L700">			return consensusTags;</span>
+		}
+		public final List&lt;ReadAceTag&gt; getReadTags() {
+<span class="nc" id="L703">			return readTags;</span>
+		}
+		public final boolean isCompletlyParsed() {
+<span class="nc" id="L706">			return completlyParsed;</span>
+		}
+	    
+	    
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

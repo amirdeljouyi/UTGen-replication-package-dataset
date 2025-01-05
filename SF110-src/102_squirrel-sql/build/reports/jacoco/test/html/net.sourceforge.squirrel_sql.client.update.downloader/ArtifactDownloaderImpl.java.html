@@ -1,0 +1,474 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ArtifactDownloaderImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.update.downloader</a> &gt; <span class="el_source">ArtifactDownloaderImpl.java</span></div><h1>ArtifactDownloaderImpl.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (C) 2007 Rob Manning
+ * manningr@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+package net.sourceforge.squirrel_sql.client.update.downloader;
+
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+import net.sourceforge.squirrel_sql.client.update.UpdateUtil;
+import net.sourceforge.squirrel_sql.client.update.downloader.event.DownloadEventType;
+import net.sourceforge.squirrel_sql.client.update.downloader.event.DownloadStatusEvent;
+import net.sourceforge.squirrel_sql.client.update.downloader.event.DownloadStatusListener;
+import net.sourceforge.squirrel_sql.client.update.gui.ArtifactStatus;
+import net.sourceforge.squirrel_sql.client.update.util.PathUtils;
+import net.sourceforge.squirrel_sql.client.update.util.PathUtilsImpl;
+import net.sourceforge.squirrel_sql.fw.util.FileWrapper;
+import net.sourceforge.squirrel_sql.fw.util.IProxySettings;
+import net.sourceforge.squirrel_sql.fw.util.Utilities;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+/**
+ * Loops through a list of artifacts and downloads each one into the appropriate directory. Notifies listeners
+ * of important events.
+ * 
+ * @author manningr
+ */
+public class ArtifactDownloaderImpl implements Runnable, ArtifactDownloader
+{
+	/** Logger for this class. */
+<span class="nc" id="L48">	private final static ILogger s_log = LoggerController.createLogger(ArtifactDownloaderImpl.class);</span>
+
+	/** This is the pattern that all translation jars (i18n) begin with */
+	public static final String TRANSLATION_JAR_PREFIX_PATTERN = &quot;squirrel-sql_.*&quot;;
+
+<span class="nc" id="L53">	private List&lt;ArtifactStatus&gt; _artifactStatus = null;</span>
+
+<span class="nc" id="L55">	private volatile boolean _stopped = false;</span>
+
+<span class="nc" id="L57">	private boolean _isRemoteUpdateSite = true;</span>
+
+<span class="nc" id="L59">	private String _host = null;</span>
+
+<span class="nc" id="L61">	private String _path = null;</span>
+
+<span class="nc" id="L63">	private String _fileSystemUpdatePath = null;</span>
+
+<span class="nc" id="L65">	private List&lt;DownloadStatusListener&gt; listeners = new ArrayList&lt;DownloadStatusListener&gt;();</span>
+
+<span class="nc" id="L67">	Thread downloadThread = null;</span>
+
+<span class="nc" id="L69">	String _updatesDir = null;</span>
+
+<span class="nc" id="L71">	private int _port = 80;</span>
+
+	/** The name of the channel from which we are downloading artifacts */
+	private String _channelName;
+
+<span class="nc" id="L76">	private UpdateUtil _util = null;</span>
+
+<span class="nc" id="L78">	private PathUtils _pathUtils = new PathUtilsImpl();</span>
+
+<span class="nc" id="L80">	private IProxySettings _proxySettings = null;</span>
+
+<span class="nc" id="L82">	private boolean releaseVersionWillChange = false;</span>
+
+<span class="nc" id="L84">	private RetryStrategy _retryStrategy = new DefaultRetryStrategyImpl();</span>
+	
+	public ArtifactDownloaderImpl(List&lt;ArtifactStatus&gt; artifactStatus)
+<span class="nc" id="L87">	{</span>
+<span class="nc" id="L88">		_artifactStatus = artifactStatus;</span>
+<span class="nc" id="L89">		downloadThread = new Thread(this, &quot;ArtifactDownloadThread&quot;);</span>
+<span class="nc" id="L90">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#start()
+	 */
+	public void start()
+	{
+<span class="nc" id="L97">		downloadThread.start();</span>
+<span class="nc" id="L98">	}</span>
+
+	/**
+	 * Runnable interface method implementation
+	 */
+	public void run()
+	{
+<span class="nc" id="L105">		long totalBytesDownloaded = 0;</span>
+		try
+		{
+
+<span class="nc" id="L109">			prepareDownloadsDirectory();</span>
+
+<span class="nc" id="L111">			sendDownloadStarted(_artifactStatus.size());</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">			for (ArtifactStatus status : _artifactStatus)</span>
+			{
+<span class="nc bnc" id="L114" title="All 2 branches missed.">				if (_stopped)</span>
+				{
+<span class="nc" id="L116">					sendDownloadStopped();</span>
+<span class="nc" id="L117">					return;</span>
+				}
+				else
+				{
+<span class="nc" id="L121">					sendDownloadFileStarted(status.getName());</span>
+				}
+<span class="nc" id="L123">				String fileToGet =</span>
+<span class="nc" id="L124">					_pathUtils.buildPath(true, _path, _channelName, status.getType(), status.getName());</span>
+
+<span class="nc" id="L126">				String destDir = getArtifactDownloadDestDir(status);</span>
+
+<span class="nc bnc" id="L128" title="All 2 branches missed.">				if (_util.isPresentInDownloadsDirectory(status))</span>
+				{
+<span class="nc bnc" id="L130" title="All 2 branches missed.">					if (s_log.isInfoEnabled())</span>
+					{
+<span class="nc" id="L132">						s_log.info(&quot;run: Skipping download of file (&quot; + fileToGet + &quot;) which is already present &quot;</span>
+							+ &quot;in the downloads directory.&quot;);
+					}
+<span class="nc" id="L135">					sendDownloadFileCompleted(status.getName());</span>
+<span class="nc" id="L136">					continue;</span>
+				}
+
+<span class="nc" id="L139">				boolean result = true;</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">				if (_isRemoteUpdateSite)</span>
+				{
+<span class="nc" id="L142">					int count = 0;</span>
+<span class="nc" id="L143">					boolean success = false;</span>
+<span class="nc bnc" id="L144" title="All 4 branches missed.">					while (_retryStrategy.shouldTryAgain(count++) &amp;&amp; !success)</span>
+					{
+<span class="nc" id="L146">						success = attemptFileDownload(fileToGet, destDir, status);</span>
+<span class="nc bnc" id="L147" title="All 2 branches missed.">						if (!success)</span>
+						{
+<span class="nc" id="L149">							Utilities.sleep(_retryStrategy.getTimeToWaitBeforeRetrying(count));</span>
+						}
+					}
+<span class="nc bnc" id="L152" title="All 2 branches missed.">					if (!success)</span>
+					{
+<span class="nc" id="L154">						sendDownloadFailed();</span>
+<span class="nc" id="L155">						return;</span>
+					}
+<span class="nc" id="L157">				}</span>
+				else
+				{
+<span class="nc" id="L160">					fileToGet =</span>
+<span class="nc" id="L161">						_pathUtils.buildPath(false, this._fileSystemUpdatePath, status.getType(), status.getName());</span>
+<span class="nc" id="L162">					result = _util.downloadLocalUpdateFile(fileToGet, destDir);</span>
+				}
+<span class="nc bnc" id="L164" title="All 2 branches missed.">				if (result == false)</span>
+				{
+<span class="nc" id="L166">					sendDownloadFailed();</span>
+<span class="nc" id="L167">					return;</span>
+				}
+				else
+				{
+<span class="nc" id="L171">					sendDownloadFileCompleted(status.getName());</span>
+<span class="nc" id="L172">					totalBytesDownloaded += status.getSize();</span>
+				}
+<span class="nc" id="L174">			}</span>
+		}
+<span class="nc" id="L176">		catch (FileNotFoundException e)</span>
+		{
+<span class="nc" id="L178">			s_log.error(&quot;run: Unexpected exception: &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L179">			sendDownloadFailed();</span>
+<span class="nc" id="L180">			return;</span>
+		}
+<span class="nc" id="L182">		catch (IOException e)</span>
+		{
+<span class="nc" id="L184">			s_log.error(&quot;run: Unexpected exception: &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L185">			sendDownloadFailed();</span>
+<span class="nc" id="L186">			return;</span>
+<span class="nc" id="L187">		}</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">		if (s_log.isInfoEnabled())</span>
+		{
+<span class="nc" id="L190">			s_log.info(&quot;run: Downloaded &quot; + totalBytesDownloaded + &quot; bytes total for all update files.&quot;);</span>
+		}
+<span class="nc" id="L192">		sendDownloadComplete();</span>
+<span class="nc" id="L193">	}</span>
+
+	private void prepareDownloadsDirectory() throws FileNotFoundException, IOException
+	{
+		// if the release version doesn't change, we won't be pulling down core artifacts. So, we just
+		// need to make sure that all core files have been copied from their installed locations into the
+		// corresponding directory in download, which is in the CLASSPATH of the updater. This covers the
+		// case where the update is being run for the first time after install, and no new version is
+		// available, but the user wants to install/remove plugins and/or translations.
+<span class="nc bnc" id="L202" title="All 2 branches missed.">		if (!releaseVersionWillChange)</span>
+		{
+			// Copy core files minus any i18n jars to core downloads directory
+<span class="nc" id="L205">			_util.copyDir(_util.getSquirrelLibraryDir(), TRANSLATION_JAR_PREFIX_PATTERN, false,</span>
+<span class="nc" id="L206">				_util.getCoreDownloadsDir());</span>
+
+			// Copy i18n files to i18n downloads directory
+<span class="nc" id="L209">			_util.copyDir(_util.getSquirrelLibraryDir(), TRANSLATION_JAR_PREFIX_PATTERN, true,</span>
+<span class="nc" id="L210">				_util.getI18nDownloadsDir());</span>
+
+			// Copy the app module jar to core downloads directory
+<span class="nc" id="L213">			_util.copyFile(_util.getInstalledSquirrelMainJarLocation(), _util.getCoreDownloadsDir());</span>
+		}
+		// Move any i18n files that are located in the core downloads dir to the i18n downloads dir. The spring
+		// application context will not load properly (for some unknown reason) when there are i18n jars in the
+		// classpath. So as a work-around, we simply ensure that they are where they should be anyway.
+		// Previously we were not as careful about this, so it is possible that i18n jars were copied into the
+		// core downloads directory.
+<span class="nc" id="L220">		_util.moveFiles(_util.getCoreDownloadsDir(), TRANSLATION_JAR_PREFIX_PATTERN, true,</span>
+<span class="nc" id="L221">			_util.getI18nDownloadsDir());</span>
+<span class="nc" id="L222">	}</span>
+
+	private boolean attemptFileDownload(String fileToGet, String destDir, ArtifactStatus status)
+	{
+<span class="nc" id="L226">		boolean success = true;</span>
+
+		try
+		{
+<span class="nc" id="L230">			_util.downloadHttpUpdateFile(_host, _port, fileToGet, destDir, status.getSize(),</span>
+<span class="nc" id="L231">				status.getChecksum(), _proxySettings);</span>
+		}
+<span class="nc" id="L233">		catch (Exception e)</span>
+		{
+<span class="nc" id="L235">			s_log.error(&quot;run: encountered exception while attempting to download file (&quot; + fileToGet + &quot;): &quot;</span>
+<span class="nc" id="L236">				+ e.getMessage(), e);</span>
+<span class="nc" id="L237">			success = false;</span>
+<span class="nc" id="L238">		}</span>
+<span class="nc" id="L239">		return success;</span>
+	}
+
+	private String getArtifactDownloadDestDir(ArtifactStatus status)
+	{
+
+<span class="nc" id="L245">		FileWrapper destDir = _util.getCoreDownloadsDir();</span>
+<span class="nc bnc" id="L246" title="All 2 branches missed.">		if (UpdateUtil.PLUGIN_ARTIFACT_ID.equals(status.getType()))</span>
+		{
+<span class="nc" id="L248">			destDir = _util.getPluginDownloadsDir();</span>
+		}
+<span class="nc bnc" id="L250" title="All 2 branches missed.">		if (UpdateUtil.TRANSLATION_ARTIFACT_ID.equals(status.getType()))</span>
+		{
+<span class="nc" id="L252">			destDir = _util.getI18nDownloadsDir();</span>
+		}
+<span class="nc" id="L254">		return destDir.getAbsolutePath();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#stopDownload()
+	 */
+	public void stopDownload()
+	{
+<span class="nc" id="L262">		_stopped = true;</span>
+<span class="nc" id="L263">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#getArtifactStatus()
+	 */
+	public List&lt;ArtifactStatus&gt; getArtifactStatus()
+	{
+<span class="nc" id="L270">		return _artifactStatus;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#setArtifactStatus(java.util.List)
+	 */
+	public void setArtifactStatus(List&lt;ArtifactStatus&gt; status)
+	{
+<span class="nc" id="L278">		_artifactStatus = status;</span>
+<span class="nc" id="L279">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#isRemoteUpdateSite()
+	 */
+	public boolean isRemoteUpdateSite()
+	{
+<span class="nc" id="L286">		return _isRemoteUpdateSite;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#setIsRemoteUpdateSite(boolean)
+	 */
+	public void setIsRemoteUpdateSite(boolean remoteUpdateSite)
+	{
+<span class="nc" id="L294">		_isRemoteUpdateSite = remoteUpdateSite;</span>
+<span class="nc" id="L295">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#getHost()
+	 */
+	public String getHost()
+	{
+<span class="nc" id="L302">		return _host;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#setHost(java.lang.String)
+	 */
+	public void setHost(String host)
+	{
+<span class="nc" id="L310">		this._host = host;</span>
+<span class="nc" id="L311">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#getPath()
+	 */
+	public String getPath()
+	{
+<span class="nc" id="L318">		return _path;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#setPath(java.lang.String)
+	 */
+	public void setPath(String path)
+	{
+<span class="nc" id="L326">		this._path = path;</span>
+<span class="nc" id="L327">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#getUtil()
+	 */
+	public UpdateUtil getUtil()
+	{
+<span class="nc" id="L334">		return _util;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#addDownloadStatusListener(net.sourceforge.squirrel_sql.client.update.downloader.event.DownloadStatusListener)
+	 */
+	public void addDownloadStatusListener(DownloadStatusListener listener)
+	{
+<span class="nc" id="L342">		listeners.add(listener);</span>
+<span class="nc" id="L343">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#removeDownloadListener(net.sourceforge.squirrel_sql.client.update.downloader.event.DownloadStatusListener)
+	 */
+	public void removeDownloadListener(DownloadStatusListener listener)
+	{
+<span class="nc" id="L350">		listeners.remove(listener);</span>
+<span class="nc" id="L351">	}</span>
+
+	private void sendEvent(DownloadStatusEvent evt)
+	{
+<span class="nc bnc" id="L355" title="All 2 branches missed.">		for (DownloadStatusListener listener : listeners)</span>
+		{
+<span class="nc" id="L357">			listener.handleDownloadStatusEvent(evt);</span>
+<span class="nc" id="L358">		}</span>
+<span class="nc" id="L359">	}</span>
+
+	private void sendDownloadStarted(int totalFileCount)
+	{
+<span class="nc" id="L363">		DownloadStatusEvent evt = new DownloadStatusEvent(DownloadEventType.DOWNLOAD_STARTED);</span>
+<span class="nc" id="L364">		evt.setFileCountTotal(totalFileCount);</span>
+<span class="nc" id="L365">		sendEvent(evt);</span>
+<span class="nc" id="L366">	}</span>
+
+	private void sendDownloadStopped()
+	{
+<span class="nc" id="L370">		DownloadStatusEvent evt = new DownloadStatusEvent(DownloadEventType.DOWNLOAD_STOPPED);</span>
+<span class="nc" id="L371">		sendEvent(evt);</span>
+<span class="nc" id="L372">	}</span>
+
+	private void sendDownloadComplete()
+	{
+<span class="nc" id="L376">		DownloadStatusEvent evt = new DownloadStatusEvent(DownloadEventType.DOWNLOAD_COMPLETED);</span>
+<span class="nc" id="L377">		sendEvent(evt);</span>
+<span class="nc" id="L378">	}</span>
+
+	private void sendDownloadFailed()
+	{
+<span class="nc" id="L382">		DownloadStatusEvent evt = new DownloadStatusEvent(DownloadEventType.DOWNLOAD_FAILED);</span>
+<span class="nc" id="L383">		sendEvent(evt);</span>
+<span class="nc" id="L384">	}</span>
+
+	private void sendDownloadFileStarted(String filename)
+	{
+<span class="nc" id="L388">		DownloadStatusEvent evt = new DownloadStatusEvent(DownloadEventType.DOWNLOAD_FILE_STARTED);</span>
+<span class="nc" id="L389">		evt.setFilename(filename);</span>
+<span class="nc" id="L390">		sendEvent(evt);</span>
+<span class="nc" id="L391">	}</span>
+
+	private void sendDownloadFileCompleted(String filename)
+	{
+<span class="nc" id="L395">		DownloadStatusEvent evt = new DownloadStatusEvent(DownloadEventType.DOWNLOAD_FILE_COMPLETED);</span>
+<span class="nc" id="L396">		evt.setFilename(filename);</span>
+<span class="nc" id="L397">		sendEvent(evt);</span>
+<span class="nc" id="L398">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#getFileSystemUpdatePath()
+	 */
+	public String getFileSystemUpdatePath()
+	{
+<span class="nc" id="L405">		return _fileSystemUpdatePath;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#setFileSystemUpdatePath(java.lang.String)
+	 */
+	public void setFileSystemUpdatePath(String systemUpdatePath)
+	{
+<span class="nc" id="L413">		_fileSystemUpdatePath = systemUpdatePath;</span>
+<span class="nc" id="L414">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#setPort(int)
+	 */
+	public void setPort(int updateServerPort)
+	{
+<span class="nc" id="L421">		_port = updateServerPort;</span>
+<span class="nc" id="L422">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#setChannelName(java.lang.String)
+	 */
+	public void setChannelName(String name)
+	{
+<span class="nc" id="L429">		_channelName = name;</span>
+<span class="nc" id="L430">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#setUtil(net.sourceforge.squirrel_sql.client.update.UpdateUtil)
+	 */
+	public void setUtil(UpdateUtil util)
+	{
+<span class="nc" id="L437">		this._util = util;</span>
+<span class="nc" id="L438">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader#setProxySettings(net.sourceforge.squirrel_sql.fw.util.IProxySettings)
+	 */
+	public void setProxySettings(IProxySettings settings)
+	{
+<span class="nc" id="L445">		_proxySettings = settings;</span>
+<span class="nc" id="L446">	}</span>
+
+	/**
+	 * @return the releaseVersionWillChange
+	 */
+	public boolean isReleaseVersionWillChange()
+	{
+<span class="nc" id="L453">		return releaseVersionWillChange;</span>
+	}
+
+	/**
+	 * @param releaseVersionWillChange
+	 *           the releaseVersionWillChange to set
+	 */
+	public void setReleaseVersionWillChange(boolean releaseVersionWillChange)
+	{
+<span class="nc" id="L462">		this.releaseVersionWillChange = releaseVersionWillChange;</span>
+<span class="nc" id="L463">	}</span>
+
+	/**
+	 * @param strategy the _retryStrategy to set
+	 */
+	public void setRetryStrategy(RetryStrategy strategy)
+	{
+<span class="nc" id="L470">		_retryStrategy = strategy;</span>
+<span class="nc" id="L471">	}</span>
+	
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

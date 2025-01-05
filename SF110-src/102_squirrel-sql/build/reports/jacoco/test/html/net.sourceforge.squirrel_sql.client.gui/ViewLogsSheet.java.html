@@ -1,0 +1,576 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ViewLogsSheet.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.gui</a> &gt; <span class="el_source">ViewLogsSheet.java</span></div><h1>ViewLogsSheet.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.gui;
+
+/*
+ * Copyright (C) 2002-2006 Colin Bell
+ * colbell@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+import java.awt.BorderLayout;
+import java.awt.Container;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FilenameFilter;
+
+import javax.swing.AbstractAction;
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JCheckBox;
+import javax.swing.JComponent;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
+import javax.swing.KeyStroke;
+import javax.swing.SwingUtilities;
+import javax.swing.WindowConstants;
+
+import net.sourceforge.squirrel_sql.client.IApplication;
+import net.sourceforge.squirrel_sql.client.gui.desktopcontainer.DialogWidget;
+import net.sourceforge.squirrel_sql.client.preferences.SquirrelPreferences;
+import net.sourceforge.squirrel_sql.client.util.ApplicationFiles;
+import net.sourceforge.squirrel_sql.fw.gui.CursorChanger;
+import net.sourceforge.squirrel_sql.fw.gui.DirectoryListComboBox;
+import net.sourceforge.squirrel_sql.fw.gui.GUIUtils;
+import net.sourceforge.squirrel_sql.fw.gui.TextPopupMenu;
+import net.sourceforge.squirrel_sql.fw.gui.ToolBar;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+/**
+ * This sheet shows the SQuirreL log files.
+ * 
+ * @author &lt;A HREF=&quot;mailto:colbell@users.sourceforge.net&quot;&gt;Colin Bell&lt;/A&gt;
+ */
+public class ViewLogsSheet extends DialogWidget
+{
+	/** Internationalized strings for this class. */
+<span class="nc" id="L68">	private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L69">		StringManagerFactory.getStringManager(ViewLogsSheet.class);</span>
+
+	/** Logger for this class. */
+<span class="nc" id="L72">	private static final ILogger s_log = LoggerController.createLogger(ViewLogsSheet.class);</span>
+
+	/** Singleton instance of this class. */
+	private static ViewLogsSheet s_instance;
+
+	/** Application API. */
+	private final IApplication _app;
+
+	/** Preferences */
+	private final SquirrelPreferences _prefs;
+
+	/** Combo box containing all the log files. */
+<span class="nc" id="L84">	private final LogsComboBox _logDirCmb = new LogsComboBox();</span>
+
+	/** Text area containing the log contents. */
+<span class="nc" id="L87">	private final JTextArea _logContentsTxt = new JTextArea(20, 50);</span>
+
+	/** Button that refreshes the log contents. */
+<span class="nc" id="L90">	private final JButton _refreshBtn = new JButton(s_stringMgr.getString(&quot;ViewLogsSheet.refresh&quot;));</span>
+
+<span class="nc" id="L92">	private final JCheckBox _errorChkbox = new JCheckBox(&quot;Errors&quot;);</span>
+
+<span class="nc" id="L94">	private final JCheckBox _debugChkbox = new JCheckBox(&quot;Debug&quot;);</span>
+
+<span class="nc" id="L96">	private final JCheckBox _infoChkbox = new JCheckBox(&quot;Info&quot;);</span>
+
+	/** Directory containing the log files. */
+	private final File _logDir;
+
+	/** If &lt;TT&gt;true&lt;/TT&gt; user is closing this window. */
+<span class="nc" id="L102">	private boolean _closing = false;</span>
+
+	/** If &lt;TT&gt;true&lt;/TT&gt; log is being refreshed. */
+<span class="nc" id="L105">	private boolean _refreshing = false;</span>
+
+	/**
+	 * Ctor specifying the application API.
+	 * 
+	 * @param app
+	 *           Application API.
+	 * @throws IllegalArgumentException
+	 *            Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;IApplication passed.
+	 */
+	private ViewLogsSheet(IApplication app)
+	{
+<span class="nc" id="L117">		super(s_stringMgr.getString(&quot;ViewLogsSheet.title&quot;), true, true, true, true, app);</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">		if (app == null) { throw new IllegalArgumentException(&quot;IApplication == null&quot;); }</span>
+
+<span class="nc" id="L120">		_app = app;</span>
+<span class="nc" id="L121">		_prefs = _app.getSquirrelPreferences();</span>
+<span class="nc" id="L122">		_logDir = new ApplicationFiles().getExecutionLogFile().getParentFile();</span>
+<span class="nc" id="L123">		createUserInterface();</span>
+<span class="nc" id="L124">	}</span>
+
+	/**
+	 * Show this window
+	 * 
+	 * @param app
+	 *           Application API.
+	 * @throws IllegalArgumentException
+	 *            Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;IApplication&lt;/TT&gt; object passed.
+	 */
+	public static synchronized void showSheet(IApplication app)
+	{
+<span class="nc bnc" id="L136" title="All 2 branches missed.">		if (s_instance == null)</span>
+		{
+<span class="nc" id="L138">			s_instance = new ViewLogsSheet(app);</span>
+<span class="nc" id="L139">			app.getMainFrame().addWidget(s_instance);</span>
+<span class="nc" id="L140">			centerWithinDesktop(s_instance);</span>
+		}
+
+<span class="nc" id="L143">		final boolean wasVisible = s_instance.isVisible();</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">		if (!wasVisible)</span>
+		{
+<span class="nc" id="L146">			s_instance.setVisible(true);</span>
+		}
+<span class="nc" id="L148">		s_instance.moveToFront();</span>
+<span class="nc bnc" id="L149" title="All 4 branches missed.">		if (!wasVisible &amp;&amp; !s_instance._refreshing)</span>
+		{
+<span class="nc" id="L151">			s_instance.startRefreshingLog();</span>
+		}
+<span class="nc" id="L153">	}</span>
+
+	/**
+	 * Nulls the singleton instance of this class in a thread-safe way.
+	 */
+	public static synchronized void disposeInstance()
+	{
+<span class="nc" id="L160">		s_instance = null;</span>
+<span class="nc" id="L161">	}</span>
+
+	@Override
+	public void dispose()
+	{
+		// Stop refresh if it is running.
+<span class="nc" id="L167">		_closing = true;</span>
+
+<span class="nc" id="L169">		ViewLogsSheet.disposeInstance();</span>
+
+<span class="nc" id="L171">		super.dispose();</span>
+<span class="nc" id="L172">	}</span>
+
+	/**
+	 * Close this sheet.
+	 */
+	private void performClose()
+	{
+<span class="nc" id="L179">		dispose();</span>
+<span class="nc" id="L180">	}</span>
+
+	/**
+	 * Start a thread to refrsh the log.
+	 */
+	private synchronized void startRefreshingLog()
+	{
+<span class="nc bnc" id="L187" title="All 2 branches missed.">		if (!_refreshing)</span>
+		{
+<span class="nc" id="L189">			_app.getThreadPool().addTask(new Refresher());</span>
+		}
+<span class="nc" id="L191">	}</span>
+
+	/**
+	 * Enables the log combo box and refresh button using the Swing event thread.
+	 */
+	private void enableComponents(final boolean enabled)
+	{
+<span class="nc" id="L198">		GUIUtils.processOnSwingEventThread(new Runnable()</span>
+<span class="nc" id="L199">		{</span>
+			public void run()
+			{
+<span class="nc" id="L202">				_refreshBtn.setEnabled(enabled);</span>
+<span class="nc" id="L203">				_logDirCmb.setEnabled(enabled);</span>
+<span class="nc" id="L204">			}</span>
+		});
+<span class="nc" id="L206">	}</span>
+
+	/**
+	 * Refresh the log.
+	 */
+	private void refreshLog()
+	{
+<span class="nc" id="L213">		enableComponents(false);</span>
+<span class="nc" id="L214">		final CursorChanger cursorChg = new CursorChanger(getAwtContainer());</span>
+<span class="nc" id="L215">		cursorChg.show();</span>
+		try
+		{
+			try
+			{
+<span class="nc" id="L220">				SwingUtilities.invokeAndWait(new Runnable()</span>
+<span class="nc" id="L221">				{</span>
+					public void run()
+					{
+<span class="nc" id="L224">						_logContentsTxt.setText(&quot;&quot;);</span>
+<span class="nc" id="L225">					}</span>
+				});
+			}
+<span class="nc" id="L228">			catch (final Exception ex)</span>
+			{
+				// i18n[ViewLogsSheet.error.clearlogcontents=Error clearing the log contents]
+<span class="nc" id="L231">				s_log.error(s_stringMgr.getString(&quot;ViewLogsSheet.error.clearlogcontents&quot;), ex);</span>
+<span class="nc" id="L232">			}</span>
+<span class="nc" id="L233">			final File logFile = (File) _logDirCmb.getSelectedItem();</span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">			if (logFile != null)</span>
+			{
+				try
+				{
+<span class="nc bnc" id="L238" title="All 4 branches missed.">					if (logFile.exists() &amp;&amp; logFile.canRead())</span>
+					{
+<span class="nc" id="L240">						final BufferedReader rdr = new BufferedReader(new FileReader(logFile));</span>
+						try
+						{
+<span class="nc" id="L243">							String line = null;</span>
+<span class="nc" id="L244">							StringBuilder chunk = new StringBuilder(16384);</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">							while ((line = rdr.readLine()) != null)</span>
+							{
+<span class="nc bnc" id="L247" title="All 2 branches missed.">								if (_closing) { return; }</span>
+
+<span class="nc bnc" id="L249" title="All 2 branches missed.">								if (chunk.length() &gt; 16000)</span>
+								{
+<span class="nc" id="L251">									final String finalLine = chunk.toString();</span>
+<span class="nc" id="L252">									SwingUtilities.invokeAndWait(new Runnable()</span>
+<span class="nc" id="L253">									{</span>
+										public void run()
+										{
+<span class="nc bnc" id="L256" title="All 2 branches missed.">											if (!_closing)</span>
+											{
+<span class="nc" id="L258">												_logContentsTxt.append(finalLine);</span>
+											}
+<span class="nc" id="L260">										}</span>
+									});
+<span class="nc" id="L262">									chunk = new StringBuilder(16384);</span>
+<span class="nc" id="L263">								}</span>
+								else
+								{
+<span class="nc bnc" id="L266" title="All 2 branches missed.">									if (shouldAppendLineToChunk(line))</span>
+									{
+<span class="nc" id="L268">										chunk.append(line).append('\n');</span>
+									}
+								}
+							}
+
+<span class="nc bnc" id="L273" title="All 2 branches missed.">							if (_closing) { return; }</span>
+
+<span class="nc" id="L275">							final String finalLine = chunk.toString();</span>
+<span class="nc" id="L276">							SwingUtilities.invokeAndWait(new Runnable()</span>
+<span class="nc" id="L277">							{</span>
+								public void run()
+								{
+<span class="nc bnc" id="L280" title="All 2 branches missed.">									if (!_closing)</span>
+									{
+<span class="nc" id="L282">										_logContentsTxt.append(finalLine);</span>
+									}
+<span class="nc" id="L284">								}</span>
+							});
+						}
+						finally
+						{
+<span class="nc" id="L289">							rdr.close();</span>
+						}
+					}
+				}
+<span class="nc" id="L293">				catch (final Exception ex)</span>
+				{
+					// i18n[ViewLogsSheet.error.processinglogfile=Error occured processing log file]
+<span class="nc" id="L296">					final String msg = s_stringMgr.getString(&quot;ViewLogsSheet.error.processinglogfile&quot;);</span>
+<span class="nc" id="L297">					s_log.error(msg, ex);</span>
+<span class="nc" id="L298">				}</span>
+			}
+			else
+			{
+<span class="nc bnc" id="L302" title="All 2 branches missed.">				if (s_log.isDebugEnabled()) {</span>
+					// i18n[ViewLogsSheet.info.nulllogfile=Null log file name]
+<span class="nc" id="L304">					s_log.debug(s_stringMgr.getString(&quot;ViewLogsSheet.info.nulllogfile&quot;));</span>
+				}
+			}
+
+<span class="nc bnc" id="L308" title="All 2 branches missed.">			if (_closing) { return; }</span>
+
+			// Position to the start of the last line in log.
+			try
+			{
+<span class="nc" id="L313">				final int pos = Math.max(0, _logContentsTxt.getText().length() - 1);</span>
+<span class="nc" id="L314">				final int line = _logContentsTxt.getLineOfOffset(pos);</span>
+<span class="nc" id="L315">				final int finalpos = _logContentsTxt.getLineStartOffset(line);</span>
+<span class="nc" id="L316">				SwingUtilities.invokeAndWait(new Runnable()</span>
+<span class="nc" id="L317">				{</span>
+					public void run()
+					{
+<span class="nc" id="L320">						_logContentsTxt.setCaretPosition(finalpos);</span>
+<span class="nc" id="L321">					}</span>
+				});
+			}
+<span class="nc" id="L324">			catch (final Exception ex)</span>
+			{
+				// i18n[ViewLogsSheet.error.setcaret=Error positioning caret in log text component]
+<span class="nc" id="L327">				s_log.error(s_stringMgr.getString(&quot;ViewLogsSheet.error.setcaret&quot;), ex);</span>
+<span class="nc" id="L328">			}</span>
+		}
+		finally
+		{
+<span class="nc" id="L332">			enableComponents(true);</span>
+<span class="nc" id="L333">			_refreshing = false;</span>
+<span class="nc" id="L334">			cursorChg.restore();</span>
+		}
+<span class="nc" id="L336">	}</span>
+
+	/**
+	 * 199828 [Foo Thread] message
+	 * 
+	 * @param line
+	 * @return
+	 */
+	private boolean shouldAppendLineToChunk(String line)
+	{
+<span class="nc" id="L346">		boolean result = false;</span>
+<span class="nc bnc" id="L347" title="All 4 branches missed.">		if (line == null || line.length() == 0) { return false; }</span>
+<span class="nc bnc" id="L348" title="All 6 branches missed.">		if (_errorChkbox.isSelected() &amp;&amp; _debugChkbox.isSelected() &amp;&amp; _infoChkbox.isSelected()) { return true; }</span>
+<span class="nc" id="L349">		final int threadNameEndIdx = line.indexOf(&quot;]&quot;);</span>
+<span class="nc bnc" id="L350" title="All 2 branches missed.">		if (threadNameEndIdx &gt; -1)</span>
+		{
+<span class="nc" id="L352">			char levelChar = ' ';</span>
+<span class="nc bnc" id="L353" title="All 2 branches missed.">			if (line.length() &gt;= threadNameEndIdx + 2)</span>
+			{
+<span class="nc" id="L355">				levelChar = line.charAt(threadNameEndIdx + 2);</span>
+			}
+<span class="nc bnc" id="L357" title="All 4 branches missed.">			if (_errorChkbox.isSelected() &amp;&amp; levelChar == 'E')</span>
+			{
+<span class="nc" id="L359">				result = true;</span>
+			}
+<span class="nc bnc" id="L361" title="All 4 branches missed.">			if (_debugChkbox.isSelected() &amp;&amp; levelChar == 'D')</span>
+			{
+<span class="nc" id="L363">				result = true;</span>
+			}
+<span class="nc bnc" id="L365" title="All 4 branches missed.">			if (_infoChkbox.isSelected() &amp;&amp; levelChar == 'I')</span>
+			{
+<span class="nc" id="L367">				result = true;</span>
+			}
+<span class="nc bnc" id="L369" title="All 6 branches missed.">			if (levelChar != 'E' &amp;&amp; levelChar != 'D' &amp;&amp; levelChar != 'I')</span>
+			{
+<span class="nc" id="L371">				result = true;</span>
+			}
+<span class="nc" id="L373">		}</span>
+		else
+		{
+<span class="nc" id="L376">			result = true;</span>
+		}
+<span class="nc" id="L378">		return result;</span>
+	}
+
+	/**
+	 * Create user interface.
+	 */
+	private void createUserInterface()
+	{
+<span class="nc" id="L386">		setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);</span>
+<span class="nc" id="L387">		makeToolWindow(true);</span>
+<span class="nc" id="L388">		final Container contentPane = getContentPane();</span>
+<span class="nc" id="L389">		contentPane.setLayout(new BorderLayout());</span>
+<span class="nc" id="L390">		contentPane.add(createToolBar(), BorderLayout.NORTH);</span>
+<span class="nc" id="L391">		contentPane.add(createMainPanel(), BorderLayout.CENTER);</span>
+<span class="nc" id="L392">		contentPane.add(createButtonsPanel(), BorderLayout.SOUTH);</span>
+<span class="nc" id="L393">		pack();</span>
+
+<span class="nc" id="L395">		final AbstractAction closeAction = new AbstractAction()</span>
+<span class="nc" id="L396">		{</span>
+			private static final long serialVersionUID = 1L;
+
+			public void actionPerformed(ActionEvent actionEvent)
+			{
+<span class="nc" id="L401">				performClose();</span>
+<span class="nc" id="L402">			}</span>
+		};
+<span class="nc" id="L404">		final KeyStroke escapeStroke = KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0);</span>
+<span class="nc" id="L405">		getRootPane().getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(escapeStroke,</span>
+			&quot;CloseAction&quot;);
+<span class="nc" id="L407">		getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(escapeStroke, &quot;CloseAction&quot;);</span>
+<span class="nc" id="L408">		getRootPane().getInputMap(JComponent.WHEN_FOCUSED).put(escapeStroke, &quot;CloseAction&quot;);</span>
+<span class="nc" id="L409">		getRootPane().getActionMap().put(&quot;CloseAction&quot;, closeAction);</span>
+
+<span class="nc" id="L411">	}</span>
+
+	private ToolBar createToolBar()
+	{
+<span class="nc" id="L415">		final ToolBar tb = new ToolBar();</span>
+<span class="nc" id="L416">		tb.setUseRolloverButtons(true);</span>
+<span class="nc" id="L417">		tb.setFloatable(false);</span>
+
+<span class="nc" id="L419">		final Object[] args = { getTitle(), _logDir.getAbsolutePath() };</span>
+<span class="nc" id="L420">		final String lblTitle = s_stringMgr.getString(&quot;ViewLogsSheet.storedin&quot;, args);</span>
+<span class="nc" id="L421">		final JLabel lbl = new JLabel(lblTitle);</span>
+<span class="nc" id="L422">		lbl.setBorder(BorderFactory.createEmptyBorder(0, 5, 0, 0));</span>
+<span class="nc" id="L423">		tb.add(lbl);</span>
+
+<span class="nc" id="L425">		return tb;</span>
+	}
+
+	/**
+	 * Create the main panel containing the log details and selector.
+	 */
+	private JPanel createMainPanel()
+	{
+		// _logContentsTxt.setEditable(false);
+<span class="nc" id="L434">		final TextPopupMenu pop = new TextPopupMenu();</span>
+<span class="nc" id="L435">		pop.setTextComponent(_logContentsTxt);</span>
+<span class="nc" id="L436">		_logContentsTxt.addMouseListener(new MouseAdapter()</span>
+<span class="nc" id="L437">		{</span>
+			@Override
+			public void mousePressed(MouseEvent evt)
+			{
+<span class="nc bnc" id="L441" title="All 2 branches missed.">				if (evt.isPopupTrigger())</span>
+				{
+<span class="nc" id="L443">					pop.show(evt.getComponent(), evt.getX(), evt.getY());</span>
+				}
+<span class="nc" id="L445">			}</span>
+
+			@Override
+			public void mouseReleased(MouseEvent evt)
+			{
+<span class="nc bnc" id="L450" title="All 2 branches missed.">				if (evt.isPopupTrigger())</span>
+				{
+<span class="nc" id="L452">					pop.show(evt.getComponent(), evt.getX(), evt.getY());</span>
+				}
+<span class="nc" id="L454">			}</span>
+		});
+
+<span class="nc" id="L457">		final File appLogFile = new ApplicationFiles().getExecutionLogFile();</span>
+<span class="nc" id="L458">		_logDirCmb.load(appLogFile.getParentFile());</span>
+
+<span class="nc bnc" id="L460" title="All 2 branches missed.">		if (_logDirCmb.getModel().getSize() &gt; 0)</span>
+		{
+<span class="nc" id="L462">			LogFile logFile = new LogFile(appLogFile);</span>
+<span class="nc" id="L463">			_logDirCmb.setSelectedItem(logFile);</span>
+		}
+
+		// Done after the set of the selected item above so that we control
+		// when the initial build is done. We want to make sure that under all
+		// versions of the JDK that the window is shown before the (possibly
+		// lengthy) refresh starts.
+<span class="nc" id="L470">		_logDirCmb.addActionListener(new ChangeLogListener());</span>
+
+<span class="nc" id="L472">		final JPanel pnl = new JPanel(new BorderLayout());</span>
+<span class="nc" id="L473">		pnl.add(_logDirCmb, BorderLayout.NORTH);</span>
+<span class="nc" id="L474">		_logContentsTxt.setBorder(BorderFactory.createEmptyBorder(0, 1, 0, 0));</span>
+<span class="nc" id="L475">		pnl.add(new JScrollPane(_logContentsTxt), BorderLayout.CENTER);</span>
+
+<span class="nc" id="L477">		return pnl;</span>
+	}
+
+	/**
+	 * Create panel at bottom containing the buttons.
+	 */
+	private JPanel createButtonsPanel()
+	{
+<span class="nc" id="L485">		final JPanel pnl = new JPanel();</span>
+
+<span class="nc" id="L487">		pnl.add(_refreshBtn);</span>
+<span class="nc" id="L488">		_refreshBtn.addActionListener(new ActionListener()</span>
+<span class="nc" id="L489">		{</span>
+			public void actionPerformed(ActionEvent evt)
+			{
+<span class="nc" id="L492">				startRefreshingLog();</span>
+<span class="nc" id="L493">			}</span>
+		});
+
+<span class="nc" id="L496">		final JButton closeBtn = new JButton(s_stringMgr.getString(&quot;ViewLogsSheet.close&quot;));</span>
+<span class="nc" id="L497">		closeBtn.addActionListener(new ActionListener()</span>
+<span class="nc" id="L498">		{</span>
+			public void actionPerformed(ActionEvent evt)
+			{
+<span class="nc" id="L501">				performClose();</span>
+<span class="nc" id="L502">			}</span>
+		});
+<span class="nc" id="L504">		pnl.add(closeBtn);</span>
+
+<span class="nc" id="L506">		_errorChkbox.setSelected(_prefs.getShowErrorLogMessages());</span>
+<span class="nc" id="L507">		_errorChkbox.addActionListener(new ActionListener()</span>
+<span class="nc" id="L508">		{</span>
+			public void actionPerformed(ActionEvent e)
+			{
+<span class="nc" id="L511">				_prefs.setShowErrorLogMessages(_errorChkbox.isSelected());</span>
+<span class="nc" id="L512">			}</span>
+		});
+<span class="nc" id="L514">		_infoChkbox.setSelected(_prefs.getShowInfoLogMessages());</span>
+<span class="nc" id="L515">		_infoChkbox.addActionListener(new ActionListener()</span>
+<span class="nc" id="L516">		{</span>
+			public void actionPerformed(ActionEvent e)
+			{
+<span class="nc" id="L519">				_prefs.setShowInfoLogMessages(_infoChkbox.isSelected());</span>
+<span class="nc" id="L520">			}</span>
+		});
+<span class="nc" id="L522">		_debugChkbox.setSelected(_prefs.getShowDebugLogMessage());</span>
+<span class="nc" id="L523">		_debugChkbox.addActionListener(new ActionListener()</span>
+<span class="nc" id="L524">		{</span>
+			public void actionPerformed(ActionEvent e)
+			{
+<span class="nc" id="L527">				_prefs.setShowDebugLogMessages(_debugChkbox.isSelected());</span>
+<span class="nc" id="L528">			}</span>
+		});
+<span class="nc" id="L530">		pnl.add(_errorChkbox);</span>
+<span class="nc" id="L531">		pnl.add(_infoChkbox);</span>
+<span class="nc" id="L532">		pnl.add(_debugChkbox);</span>
+
+<span class="nc" id="L534">		GUIUtils.setJButtonSizesTheSame(new JButton[] { closeBtn, _refreshBtn });</span>
+<span class="nc" id="L535">		getRootPane().setDefaultButton(closeBtn);</span>
+
+<span class="nc" id="L537">		return pnl;</span>
+	}
+
+<span class="nc" id="L540">	private final class ChangeLogListener implements ActionListener</span>
+	{
+		public void actionPerformed(ActionEvent evt)
+		{
+<span class="nc" id="L544">			ViewLogsSheet.this.startRefreshingLog();</span>
+<span class="nc" id="L545">		}</span>
+	}
+
+<span class="nc" id="L548">	private final class Refresher implements Runnable</span>
+	{
+		public void run()
+		{
+<span class="nc" id="L552">			ViewLogsSheet.this.refreshLog();</span>
+<span class="nc" id="L553">		}</span>
+	}
+
+	private static final class LogsComboBox extends DirectoryListComboBox
+	{
+		private static final long serialVersionUID = 1L;
+
+		private File _dir;
+
+		@Override
+		public void load(File dir, FilenameFilter filter)
+		{
+<span class="nc" id="L565">			_dir = dir;</span>
+<span class="nc" id="L566">			super.load(dir, filter);</span>
+<span class="nc" id="L567">		}</span>
+
+		@Override
+		public void addItem(Object anObject)
+		{
+<span class="nc" id="L572">			super.addItem(new LogFile(_dir, anObject.toString()));</span>
+<span class="nc" id="L573">		}</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

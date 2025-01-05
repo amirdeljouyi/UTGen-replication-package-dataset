@@ -1,0 +1,446 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>QueryTokenizer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.fw.sql</a> &gt; <span class="el_source">QueryTokenizer.java</span></div><h1>QueryTokenizer.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.fw.sql;
+/*
+ * Copyright (C) 2001-2003 Johan Compagner
+ * jcompagner@j-com.nl
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+
+import net.sourceforge.squirrel_sql.fw.preferences.IQueryTokenizerPreferenceBean;
+import net.sourceforge.squirrel_sql.fw.util.StringUtilities;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+public class QueryTokenizer implements IQueryTokenizer
+{
+<span class="nc" id="L34">	protected ArrayList&lt;String&gt; _queries = new ArrayList&lt;String&gt;();</span>
+    
+	protected Iterator&lt;String&gt; _queryIterator;
+
+<span class="nc" id="L38">    protected String _querySep = null;</span>
+    
+<span class="nc" id="L40">    protected String _lineCommentBegin = null;</span>
+    
+<span class="nc" id="L42">    protected boolean _removeMultiLineComment = true;</span>
+
+<span class="nc" id="L44">    protected ITokenizerFactory _tokenizerFactory = null;</span>
+    
+    /** Logger for this class. */
+<span class="nc" id="L47">    private final static ILogger s_log =</span>
+<span class="nc" id="L48">        LoggerController.createLogger(QueryTokenizer.class); </span>
+    
+<span class="nc" id="L50">    public QueryTokenizer() {}</span>
+    
+	public QueryTokenizer(String querySep, 
+                          String lineCommentBegin, 
+                          boolean removeMultiLineComment)
+<span class="nc" id="L55">	{</span>
+<span class="nc" id="L56">        _querySep = querySep;</span>
+<span class="nc" id="L57">        _lineCommentBegin = lineCommentBegin;</span>
+<span class="nc" id="L58">        _removeMultiLineComment = removeMultiLineComment;</span>
+<span class="nc" id="L59">        setFactory();</span>
+<span class="nc" id="L60">	}</span>
+
+    public QueryTokenizer(IQueryTokenizerPreferenceBean prefs) {
+<span class="nc" id="L63">        this(prefs.getStatementSeparator(), </span>
+<span class="nc" id="L64">             prefs.getLineComment(),</span>
+<span class="nc" id="L65">             prefs.isRemoveMultiLineComments()); </span>
+<span class="nc" id="L66">    }</span>
+    
+    /**
+     * Sets the ITokenizerFactory which is used to create additional instances
+     * of the IQueryTokenizer - this is used for handling file includes
+     * recursively.  
+     */
+    protected void setFactory() {
+<span class="nc" id="L74">        _tokenizerFactory = new ITokenizerFactory() {</span>
+            public IQueryTokenizer getTokenizer() {
+<span class="nc" id="L76">                return new QueryTokenizer();</span>
+            }
+        };
+<span class="nc" id="L79">    }</span>
+    
+
+	private int getLenOfQuerySepIfAtLastCharOfQuerySep(String sql, int i, String querySep, boolean inLiteral)
+	{
+<span class="nc bnc" id="L84" title="All 2 branches missed.">		if(inLiteral)</span>
+		{
+<span class="nc" id="L86">			return -1;</span>
+		}
+
+<span class="nc" id="L89">		char c = sql.charAt(i);</span>
+
+<span class="nc bnc" id="L91" title="All 4 branches missed.">		if(1 == querySep.length() &amp;&amp; c == querySep.charAt(0))</span>
+		{
+<span class="nc" id="L93">			return 1;</span>
+		}
+		else
+		{
+<span class="nc" id="L97">			int fromIndex = i - querySep.length();</span>
+<span class="nc bnc" id="L98" title="All 2 branches missed.">			if(0 &gt; fromIndex)</span>
+			{
+<span class="nc" id="L100">				return -1;</span>
+			}
+
+<span class="nc" id="L103">			int querySepIndex = sql.indexOf(querySep, fromIndex);</span>
+
+<span class="nc bnc" id="L105" title="All 2 branches missed.">			if(0 &gt; querySepIndex)</span>
+			{
+<span class="nc" id="L107">				return -1;</span>
+			}
+
+<span class="nc bnc" id="L110" title="All 2 branches missed.">			if(Character.isWhitespace(c))</span>
+			{
+<span class="nc bnc" id="L112" title="All 2 branches missed.">				if(querySepIndex + querySep.length() == i)</span>
+				{
+<span class="nc bnc" id="L114" title="All 2 branches missed.">					if(0 == querySepIndex)</span>
+					{
+<span class="nc" id="L116">						return querySep.length() + 1;</span>
+					}
+<span class="nc bnc" id="L118" title="All 2 branches missed.">					else if(Character.isWhitespace(sql.charAt(querySepIndex - 1)))</span>
+					{
+<span class="nc" id="L120">						return querySep.length() + 2;</span>
+					}
+				}
+			}
+<span class="nc bnc" id="L124" title="All 2 branches missed.">			else if(sql.length() -1 == i)</span>
+			{
+<span class="nc bnc" id="L126" title="All 2 branches missed.">				if(querySepIndex + querySep.length() - 1 == i)</span>
+				{
+<span class="nc bnc" id="L128" title="All 2 branches missed.">					if(0 == querySepIndex)</span>
+					{
+<span class="nc" id="L130">						return querySep.length();</span>
+					}
+<span class="nc bnc" id="L132" title="All 2 branches missed.">					else if(Character.isWhitespace(sql.charAt(querySepIndex - 1)))</span>
+					{
+<span class="nc" id="L134">						return querySep.length() + 1;</span>
+					}
+				}
+			}
+
+<span class="nc" id="L139">			return -1;</span>
+		}
+	}
+    
+	public boolean hasQuery()
+	{
+<span class="nc" id="L145">		return _queryIterator.hasNext();</span>
+	}
+
+	public String nextQuery()
+	{
+<span class="nc" id="L150">		return _queryIterator.next();</span>
+	}
+
+    public void setScriptToTokenize(String script) {
+<span class="nc" id="L154">        _queries.clear();</span>
+        
+<span class="nc" id="L156">        String MULTI_LINE_COMMENT_END = &quot;*/&quot;;</span>
+<span class="nc" id="L157">        String MULTI_LINE_COMMENT_BEGIN = &quot;/*&quot;;</span>
+
+<span class="nc" id="L159">        script = script.replace('\r', ' ');</span>
+
+<span class="nc" id="L161">        StringBuffer curQuery = new StringBuffer();</span>
+
+<span class="nc" id="L163">        boolean isInLiteral = false;</span>
+<span class="nc" id="L164">        boolean isInMultiLineComment = false;</span>
+<span class="nc" id="L165">        boolean isInLineComment = false;</span>
+<span class="nc" id="L166">        int literalSepCount = 0;</span>
+
+
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        for (int i = 0; i &lt; script.length(); ++i)</span>
+        {
+<span class="nc" id="L171">            char c = script.charAt(i);</span>
+
+<span class="nc bnc" id="L173" title="All 2 branches missed.">            if(false == isInLiteral)</span>
+            {
+                ///////////////////////////////////////////////////////////
+                // Handling of comments
+
+                // We look backwards
+<span class="nc bnc" id="L179" title="All 4 branches missed.">                if(isInLineComment &amp;&amp; script.startsWith(&quot;\n&quot;, i - &quot;\n&quot;.length()))</span>
+                {
+<span class="nc" id="L181">                    isInLineComment = false;</span>
+                }
+
+                // We look backwards
+<span class="nc bnc" id="L185" title="All 4 branches missed.">                if(isInMultiLineComment &amp;&amp; script.startsWith(MULTI_LINE_COMMENT_END, i - MULTI_LINE_COMMENT_END.length()))</span>
+                {
+<span class="nc" id="L187">                    isInMultiLineComment = false;</span>
+                }
+
+
+<span class="nc bnc" id="L191" title="All 4 branches missed.">                if(false == isInLineComment &amp;&amp; false == isInMultiLineComment)</span>
+                {
+                    // We look forward
+<span class="nc" id="L194">                    isInMultiLineComment = script.startsWith(MULTI_LINE_COMMENT_BEGIN, i);</span>
+<span class="nc" id="L195">                    isInLineComment = script.startsWith(_lineCommentBegin, i);</span>
+
+<span class="nc bnc" id="L197" title="All 4 branches missed.">                    if(isInMultiLineComment &amp;&amp; _removeMultiLineComment)</span>
+                    {
+                        // skip ahead so the cursor is now immediately after the begin comment string
+<span class="nc" id="L200">                        i+=MULTI_LINE_COMMENT_BEGIN.length()+1;</span>
+                    }
+                }
+
+<span class="nc bnc" id="L204" title="All 6 branches missed.">                if((isInMultiLineComment &amp;&amp; _removeMultiLineComment) || isInLineComment)</span>
+                {
+                    // This is responsible that comments are not in curQuery
+<span class="nc" id="L207">                    continue;</span>
+                }
+                //
+                ////////////////////////////////////////////////////////////
+            }
+
+<span class="nc" id="L213">            curQuery.append(c);</span>
+
+<span class="nc bnc" id="L215" title="All 2 branches missed.">            if ('\'' == c)</span>
+            {
+<span class="nc bnc" id="L217" title="All 2 branches missed.">                if(false == isInLiteral)</span>
+                {
+<span class="nc" id="L219">                    isInLiteral = true;</span>
+                }
+                else
+                {
+<span class="nc" id="L223">                    ++literalSepCount;</span>
+                }
+            }
+            else
+            {
+<span class="nc bnc" id="L228" title="All 2 branches missed.">                if(0 != literalSepCount % 2)</span>
+                {
+<span class="nc" id="L230">                    isInLiteral = false;</span>
+                }
+<span class="nc" id="L232">                literalSepCount = 0;</span>
+            }
+
+
+<span class="nc" id="L236">            int querySepLen = </span>
+<span class="nc" id="L237">                getLenOfQuerySepIfAtLastCharOfQuerySep(script, i, _querySep, isInLiteral);</span>
+
+<span class="nc bnc" id="L239" title="All 4 branches missed.">            if(-1 &lt; querySepLen &amp;&amp; !isInMultiLineComment)</span>
+            {
+<span class="nc" id="L241">                int newLength = curQuery.length() - querySepLen;</span>
+<span class="nc bnc" id="L242" title="All 4 branches missed.">                if(-1 &lt; newLength &amp;&amp; curQuery.length() &gt; newLength)</span>
+                {
+<span class="nc" id="L244">                    curQuery.setLength(newLength);</span>
+
+<span class="nc" id="L246">                    String newQuery = curQuery.toString().trim();</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">                    if(0 &lt; newQuery.length())</span>
+                    {
+<span class="nc" id="L249">                        _queries.add(curQuery.toString().trim());</span>
+                    }
+                }
+<span class="nc" id="L252">                curQuery.setLength(0);</span>
+            }
+        }
+
+<span class="nc" id="L256">        String lastQuery = curQuery.toString().trim();</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">        if(0 &lt; lastQuery.length())</span>
+        {
+<span class="nc" id="L259">            _queries.add(lastQuery.trim());</span>
+        }
+
+<span class="nc" id="L262">        _queryIterator = _queries.iterator();</span>
+<span class="nc" id="L263">    }</span>
+    
+    /**
+     * Returns the number of queries that the tokenizer found in the script 
+     * given in the last call to setScriptToTokenize, or 0 if 
+     * setScriptToTokenize has not yet been called.
+     */
+    public int getQueryCount() {
+<span class="nc bnc" id="L271" title="All 2 branches missed.">        if (_queries == null) {</span>
+<span class="nc" id="L272">            return 0;</span>
+        }
+<span class="nc" id="L274">        return _queries.size();</span>
+    }
+    
+    
+    
+    public static void main(String[] args)
+    {
+        //String sql = &quot;A'''' sss ;  GO ;; GO'&quot;;
+        //String sql = &quot;A\n--x\n--y\n/*\nB&quot;;
+        //String sql = &quot;GO GO&quot;;
+<span class="nc" id="L284">        String sql = &quot;@c:\\tools\\sql\\file.sql&quot;;</span>
+        
+        
+<span class="nc" id="L287">        QueryTokenizer qt = new QueryTokenizer(&quot;GO&quot;, &quot;--&quot;, true);</span>
+
+<span class="nc" id="L289">        qt.setScriptToTokenize(sql);</span>
+        
+<span class="nc bnc" id="L291" title="All 2 branches missed.">        while(qt.hasQuery())</span>
+        {
+<span class="nc" id="L293">            System.out.println(&quot;&gt;&quot; + qt.nextQuery() + &quot;&lt;&quot;);</span>
+        }
+<span class="nc" id="L295">    }</span>
+
+    /**
+     * @return the query statement separator
+     */
+    public String getQuerySep() {
+<span class="nc" id="L301">        return _querySep;</span>
+    }
+
+    /**
+     * @param sep the value to use for the query statement separator
+     */
+    public void setQuerySep(String sep) {
+<span class="nc" id="L308">        _querySep = sep;</span>
+<span class="nc" id="L309">    }</span>
+
+    /**
+     * @return the _lineCommentBegin
+     */
+    public String getLineCommentBegin() {
+<span class="nc" id="L315">        return _lineCommentBegin;</span>
+    }
+
+    /**
+     * @param commentBegin the _lineCommentBegin to set
+     */
+    public void setLineCommentBegin(String commentBegin) {
+<span class="nc" id="L322">        _lineCommentBegin = commentBegin;</span>
+<span class="nc" id="L323">    }</span>
+
+    /**
+     * @return the _removeMultiLineComment
+     */
+    public boolean isRemoveMultiLineComment() {
+<span class="nc" id="L329">        return _removeMultiLineComment;</span>
+    }
+
+   @Override
+   public TokenizerSessPropsInteractions getTokenizerSessPropsInteractions()
+   {
+<span class="nc" id="L335">      return new TokenizerSessPropsInteractions();</span>
+   }
+
+   /**
+     * @param multiLineComment the _removeMultiLineComment to set
+     */
+    public void setRemoveMultiLineComment(boolean multiLineComment) {
+<span class="nc" id="L342">        _removeMultiLineComment = multiLineComment;</span>
+<span class="nc" id="L343">    }</span>
+    
+    /** 
+     * This uses statements that begin with scriptIncludePrefix to indicate 
+     * that the following text is a filename containing SQL statements that 
+     * should be loaded.   
+     * 
+     * @param scriptIncludePrefix the 
+     * @param lineCommentBegin
+     * @param removeMultiLineComment
+     */
+    protected void expandFileIncludes(String scriptIncludePrefix) {
+<span class="nc bnc" id="L355" title="All 2 branches missed.">        if (scriptIncludePrefix == null) {</span>
+<span class="nc" id="L356">            s_log.error(&quot;scriptIncludePrefix cannot be null &quot;);</span>
+<span class="nc" id="L357">            return;</span>
+        }
+<span class="nc" id="L359">        ArrayList&lt;String&gt; tmp = new ArrayList&lt;String&gt;();</span>
+<span class="nc bnc" id="L360" title="All 2 branches missed.">        for (Iterator&lt;String&gt; iter = _queries.iterator(); iter.hasNext();) {</span>
+<span class="nc" id="L361">            String sql = iter.next();</span>
+<span class="nc bnc" id="L362" title="All 2 branches missed.">            if (sql.startsWith(scriptIncludePrefix)) {</span>
+                try {
+<span class="nc" id="L364">                    String filename = </span>
+<span class="nc" id="L365">                        sql.substring(scriptIncludePrefix.length());</span>
+<span class="nc" id="L366">                    List&lt;String&gt; fileSQL = getStatementsFromIncludeFile(filename);</span>
+<span class="nc" id="L367">                    tmp.addAll(fileSQL);</span>
+<span class="nc" id="L368">                } catch (Exception e) {</span>
+<span class="nc" id="L369">                    s_log.error(</span>
+                       &quot;Unexpected error while attempting to include file &quot; +
+                       &quot;from &quot;+sql, e);
+<span class="nc" id="L372">                }</span>
+                
+            } else {
+<span class="nc" id="L375">                tmp.add(sql);</span>
+            }
+<span class="nc" id="L377">        }</span>
+<span class="nc" id="L378">        _queries = tmp;</span>
+<span class="nc" id="L379">    }</span>
+    
+    protected List&lt;String&gt; getStatementsFromIncludeFile(String filename) 
+        throws Exception 
+    {
+<span class="nc bnc" id="L384" title="All 2 branches missed.">        if (filename.startsWith(&quot;'&quot;)) {</span>
+<span class="nc" id="L385">            filename = filename.substring(1);</span>
+        }
+<span class="nc bnc" id="L387" title="All 2 branches missed.">        if (filename.endsWith(&quot;'&quot;)) {</span>
+<span class="nc" id="L388">            filename = StringUtilities.chop(filename);</span>
+        }
+<span class="nc bnc" id="L390" title="All 2 branches missed.">        if (filename.endsWith(&quot;\n&quot;)) {</span>
+<span class="nc" id="L391">      	  filename = StringUtilities.chop(filename);</span>
+        }
+<span class="nc" id="L393">        ArrayList&lt;String&gt; result = new ArrayList&lt;String&gt;();</span>
+<span class="nc bnc" id="L394" title="All 2 branches missed.">        if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L395">            s_log.debug(&quot;Attemping to open file '&quot;+filename+&quot;'&quot;);</span>
+        }
+<span class="nc" id="L397">        File f = new File(filename);</span>
+        /*
+        if (f.canRead()) {
+        */
+<span class="nc" id="L401">            StringBuffer fileLines = new StringBuffer();</span>
+            try {
+<span class="nc" id="L403">                BufferedReader reader = new BufferedReader(new FileReader(f));</span>
+<span class="nc" id="L404">                String next = reader.readLine();</span>
+<span class="nc bnc" id="L405" title="All 2 branches missed.">                while (next != null) {</span>
+<span class="nc" id="L406">                    fileLines.append(next);</span>
+<span class="nc" id="L407">                    fileLines.append(&quot;\n&quot;);</span>
+<span class="nc" id="L408">                    next = reader.readLine();</span>
+                }
+<span class="nc" id="L410">            } catch (Exception e) {</span>
+<span class="nc" id="L411">                s_log.error(</span>
+                    &quot;Unexpected exception while reading lines from file &quot; +
+                    &quot;(&quot;+filename+&quot;)&quot;, e);
+<span class="nc" id="L414">            }</span>
+<span class="nc bnc" id="L415" title="All 2 branches missed.">            if (fileLines.toString().length() &gt; 0) {</span>
+<span class="nc" id="L416">                IQueryTokenizer qt = null;</span>
+<span class="nc bnc" id="L417" title="All 2 branches missed.">                if (_tokenizerFactory != null) {</span>
+<span class="nc" id="L418">                    qt = _tokenizerFactory.getTokenizer();</span>
+                } else {
+<span class="nc" id="L420">                    qt = new QueryTokenizer(_querySep, </span>
+                                            _lineCommentBegin, 
+                                            _removeMultiLineComment);
+                }
+<span class="nc" id="L424">                qt.setScriptToTokenize(fileLines.toString());</span>
+<span class="nc bnc" id="L425" title="All 2 branches missed.">                while (qt.hasQuery()) {</span>
+<span class="nc" id="L426">                    String sql = qt.nextQuery();</span>
+<span class="nc" id="L427">                    result.add(sql);</span>
+<span class="nc" id="L428">                }</span>
+            }
+            /*
+        } else {
+            s_log.error(&quot;Unable to open file: &quot;+filename+&quot; for reading&quot;);
+        }
+        */
+<span class="nc" id="L435">        return result;</span>
+    }
+
+    /* (non-Javadoc)
+     * @see net.sourceforge.squirrel_sql.fw.sql.IQueryTokenizer#getSQLStatementSeparator()
+     */
+    public String getSQLStatementSeparator() {
+<span class="nc" id="L442">        return _querySep;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

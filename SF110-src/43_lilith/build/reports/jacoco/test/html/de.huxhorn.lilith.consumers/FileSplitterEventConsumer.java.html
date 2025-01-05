@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FileSplitterEventConsumer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">43_lilith</a> &gt; <a href="index.source.html" class="el_package">de.huxhorn.lilith.consumers</a> &gt; <span class="el_source">FileSplitterEventConsumer.java</span></div><h1>FileSplitterEventConsumer.java</h1><pre class="source lang-java linenums">/*
+ * Lilith - a log event viewer.
+ * Copyright (C) 2007-2009 Joern Huxhorn
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see &lt;http://www.gnu.org/licenses/&gt;.
+ */
+package de.huxhorn.lilith.consumers;
+
+import de.huxhorn.lilith.data.eventsource.EventWrapper;
+import de.huxhorn.lilith.data.eventsource.SourceIdentifier;
+import de.huxhorn.lilith.engine.EventConsumer;
+import de.huxhorn.lilith.engine.FileBufferFactory;
+import de.huxhorn.lilith.engine.SourceManager;
+import de.huxhorn.lilith.engine.impl.EventSourceImpl;
+import de.huxhorn.sulky.buffers.FileBuffer;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.File;
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+
+public class FileSplitterEventConsumer&lt;T extends Serializable&gt;
+	implements EventConsumer&lt;T&gt;
+{
+<span class="nc" id="L43">	private final Logger logger = LoggerFactory.getLogger(FileSplitterEventConsumer.class);</span>
+
+	private FileBufferFactory&lt;T&gt; fileBufferFactory;
+	private ConcurrentMap&lt;SourceIdentifier, FileBuffer&lt;EventWrapper&lt;T&gt;&gt;&gt; fileBuffers;
+	private SourceManager&lt;T&gt; sourceManager;
+
+	public FileSplitterEventConsumer(FileBufferFactory&lt;T&gt; fileBufferFactory, SourceManager&lt;T&gt; sourceManager)
+<span class="nc" id="L50">	{</span>
+<span class="nc" id="L51">		this.fileBufferFactory = fileBufferFactory;</span>
+<span class="nc" id="L52">		fileBuffers = new ConcurrentHashMap&lt;SourceIdentifier, FileBuffer&lt;EventWrapper&lt;T&gt;&gt;&gt;();</span>
+<span class="nc" id="L53">		this.sourceManager = sourceManager;</span>
+<span class="nc" id="L54">	}</span>
+
+	public void consume(List&lt;EventWrapper&lt;T&gt;&gt; events)
+	{
+<span class="nc bnc" id="L58" title="All 4 branches missed.">		if(events != null &amp;&amp; events.size() &gt; 0)</span>
+		{
+<span class="nc" id="L60">			Map&lt;SourceIdentifier, List&lt;EventWrapper&lt;T&gt;&gt;&gt; splittedEvents = new HashMap&lt;SourceIdentifier, List&lt;EventWrapper&lt;T&gt;&gt;&gt;();</span>
+<span class="nc bnc" id="L61" title="All 2 branches missed.">			for(EventWrapper&lt;T&gt; wrapper : events)</span>
+			{
+<span class="nc" id="L63">				SourceIdentifier si = wrapper.getSourceIdentifier();</span>
+<span class="nc" id="L64">				List&lt;EventWrapper&lt;T&gt;&gt; sourceList = splittedEvents.get(si);</span>
+<span class="nc bnc" id="L65" title="All 2 branches missed.">				if(sourceList == null)</span>
+				{
+<span class="nc" id="L67">					sourceList = new ArrayList&lt;EventWrapper&lt;T&gt;&gt;();</span>
+<span class="nc" id="L68">					splittedEvents.put(si, sourceList);</span>
+				}
+<span class="nc" id="L70">				sourceList.add(wrapper);</span>
+<span class="nc" id="L71">			}</span>
+<span class="nc bnc" id="L72" title="All 2 branches missed.">			if(logger.isInfoEnabled())</span>
+			{
+<span class="nc" id="L74">				logger.info(&quot;Split {} events to {} sources.&quot;, events.size(), splittedEvents.size());</span>
+			}
+<span class="nc bnc" id="L76" title="All 2 branches missed.">			for(Map.Entry&lt;SourceIdentifier, List&lt;EventWrapper&lt;T&gt;&gt;&gt; entry : splittedEvents.entrySet())</span>
+			{
+<span class="nc" id="L78">				SourceIdentifier si = entry.getKey();</span>
+<span class="nc" id="L79">				List&lt;EventWrapper&lt;T&gt;&gt; value = entry.getValue();</span>
+<span class="nc" id="L80">				int valueCount = value.size();</span>
+				// we know that valueCount is &gt; 0 because otherwise it wouldn' exist.
+<span class="nc" id="L82">				EventWrapper&lt;T&gt; lastEvent = value.get(valueCount - 1);</span>
+				// only create view/add if valid
+<span class="nc" id="L84">				FileBuffer&lt;EventWrapper&lt;T&gt;&gt; buffer = resolveBuffer(si);</span>
+<span class="nc" id="L85">				buffer.addAll(value);</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">				if(logger.isInfoEnabled()) logger.info(&quot;Wrote {} events for source '{}'.&quot;, valueCount, si);</span>
+
+<span class="nc bnc" id="L88" title="All 2 branches missed.">				if(lastEvent.getEvent() == null)</span>
+				{
+<span class="nc bnc" id="L90" title="All 2 branches missed.">					if(sourceManager != null)</span>
+					{
+<span class="nc" id="L92">						sourceManager.removeSource(si);</span>
+					}
+
+<span class="nc" id="L95">					File activeFile = fileBufferFactory.getLogFileFactory().getActiveFile(si);</span>
+<span class="nc" id="L96">					activeFile.delete();</span>
+<span class="nc" id="L97">					fileBuffers.remove(si);</span>
+				}
+<span class="nc" id="L99">			}</span>
+		}
+<span class="nc" id="L101">	}</span>
+
+	private FileBuffer&lt;EventWrapper&lt;T&gt;&gt; resolveBuffer(SourceIdentifier si)
+	{
+<span class="nc" id="L105">		FileBuffer&lt;EventWrapper&lt;T&gt;&gt; result = fileBuffers.get(si);</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">		if(result == null)</span>
+		{
+<span class="nc" id="L108">			result = fileBufferFactory.createActiveBuffer(si);</span>
+<span class="nc" id="L109">			FileBuffer&lt;EventWrapper&lt;T&gt;&gt; contained = fileBuffers.putIfAbsent(si, result);</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">			if(contained != null)</span>
+			{
+<span class="nc" id="L112">				result = contained;</span>
+			}
+<span class="nc bnc" id="L114" title="All 2 branches missed.">			else if(sourceManager != null)</span>
+			{
+<span class="nc" id="L116">				sourceManager.addSource(new EventSourceImpl&lt;T&gt;(si, result, false));</span>
+			}
+		}
+<span class="nc" id="L119">		return result;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

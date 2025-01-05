@@ -1,0 +1,959 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RDBMSAdapter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.persistence</a> &gt; <span class="el_source">RDBMSAdapter.java</span></div><h1>RDBMSAdapter.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2000-2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: RDBMSAdapter.java,v 1.7 2007/04/16 02:50:21 tanderson Exp $
+ */
+package org.exolab.jms.persistence;
+
+import java.sql.Connection;
+import java.sql.Date;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.Vector;
+
+import EDU.oswego.cs.dl.util.concurrent.FIFOReadWriteLock;
+import EDU.oswego.cs.dl.util.concurrent.ReadWriteLock;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import org.exolab.jms.authentication.User;
+import org.exolab.jms.client.JmsDestination;
+import org.exolab.jms.client.JmsQueue;
+import org.exolab.jms.client.JmsTopic;
+import org.exolab.jms.config.DatabaseConfiguration;
+import org.exolab.jms.config.RdbmsDatabaseConfiguration;
+import org.exolab.jms.events.BasicEventManager;
+import org.exolab.jms.events.EventHandler;
+import org.exolab.jms.message.MessageImpl;
+import org.exolab.jms.messagemgr.MessageHandle;
+
+
+/**
+ * This adapter is a wrapper class around the persistency mechanism.
+ * It isolates the client from the working specifics of the database, by
+ * providing a simple straight forward interface. Furure changes to
+ * the database will only require changes to the adapter.
+ *
+ * @author &lt;a href=&quot;mailto:mourikis@exolab.org&quot;&gt;Jim Mourikis&lt;/a&gt;
+ * @version $Revision: 1.7 $ $Date: 2007/04/16 02:50:21 $
+ */
+
+public class RDBMSAdapter
+    extends PersistenceAdapter
+    implements EventHandler {
+
+    /**
+     * The seed generator.
+     */
+    private final SeedGenerator _seeds;
+
+    /**
+     * The destination manager.
+     */
+    private final Destinations _destinations;
+
+    /**
+     * The consumer manager.
+     */
+    private final Consumers _consumers;
+
+    /**
+     * The message manager.
+     */
+    private final Messages _messages;
+
+    /**
+     * The message handles manager.
+     */
+    private final MessageHandles _handles;
+
+    /**
+     * The user manager.
+     */
+    private final Users _users;
+
+    /**
+     * The schema version number. Note this must be incremented whenever
+     * The schema changes.
+     */
+    public static final String SCHEMA_VERSION = &quot;V0.7.6&quot;;
+
+    /**
+     *  The JDBC ConnectionManager.
+     */
+<span class="nc" id="L127">    private DBConnectionManager _connectionManager = null;</span>
+
+    /**
+     * Lock to help prevent deadlocks when administratively removing
+     * destinations, while producers and consumers are actively sending
+     * and receiving messages. It ensures that when a destination is in the
+     * process of being removed, no other changes are occuring on the
+     * messages and message_handles tables.
+     */
+<span class="nc" id="L136">    private ReadWriteLock _destinationLock = new FIFOReadWriteLock();</span>
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L141">    private static final Log _log = LogFactory.getLog(RDBMSAdapter.class);</span>
+
+
+    /**
+     * Connects to the given db.
+     *
+     * @throws PersistenceException if a connection cannot be establised to the
+     *                              database
+     */
+    public RDBMSAdapter(DatabaseConfiguration dbConfig, String driver, String url,
+                 String userName, String password)
+<span class="nc" id="L152">            throws PersistenceException {</span>
+
+<span class="nc" id="L154">        RdbmsDatabaseConfiguration config =</span>
+<span class="nc" id="L155">                dbConfig.getRdbmsDatabaseConfiguration();</span>
+
+        // create the connection manager, and configure it
+<span class="nc" id="L158">        _connectionManager = getConnectionManager(config.getClazz());</span>
+<span class="nc" id="L159">        _connectionManager.setUser(userName);</span>
+<span class="nc" id="L160">        _connectionManager.setPassword(password);</span>
+<span class="nc" id="L161">        _connectionManager.setDriver(driver);</span>
+<span class="nc" id="L162">        _connectionManager.setURL(url);</span>
+<span class="nc" id="L163">        _connectionManager.setMaxActive(config.getMaxActive());</span>
+<span class="nc" id="L164">        _connectionManager.setMaxIdle(config.getMaxIdle());</span>
+<span class="nc" id="L165">        _connectionManager.setMinIdleTime(config.getMinIdleTime());</span>
+<span class="nc" id="L166">        _connectionManager.setEvictionInterval(config.getEvictionInterval());</span>
+<span class="nc" id="L167">        _connectionManager.setTestQuery(config.getTestQuery());</span>
+<span class="nc" id="L168">        _connectionManager.setTestBeforeUse(config.getTestBeforeUse());</span>
+
+        // initialisze the connection manager
+<span class="nc" id="L171">        _connectionManager.init();</span>
+
+<span class="nc" id="L173">        Connection connection = null;</span>
+        try {
+            // initialize the various caches and helper classes used to
+            // execute the various SQL.
+<span class="nc" id="L177">            connection = getConnection();</span>
+
+<span class="nc" id="L179">            String version = getSchemaVersion(connection);</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">            if (version == null) {</span>
+<span class="nc" id="L181">                initSchemaVersion(connection);</span>
+<span class="nc bnc" id="L182" title="All 2 branches missed.">            } else if (!version.equals(SCHEMA_VERSION)) {</span>
+<span class="nc" id="L183">                throw new PersistenceException(</span>
+                    &quot;Schema needs to be converted from version=&quot; + version
+                    + &quot; to version=&quot; + SCHEMA_VERSION
+                    + &quot;\nBack up your database, and run 'dbtool -migrate'&quot;
+                    + &quot;to convert the schema&quot;);
+            }
+
+<span class="nc" id="L190">            _seeds = new SeedGenerator();</span>
+<span class="nc" id="L191">            _consumers = new Consumers(_seeds, connection);</span>
+<span class="nc" id="L192">            _destinations = new Destinations(_seeds, _consumers, connection);</span>
+<span class="nc" id="L193">            _consumers.setDestinations(_destinations);</span>
+<span class="nc" id="L194">            _messages = new Messages(_destinations);</span>
+<span class="nc" id="L195">            _handles = new MessageHandles(_destinations, _consumers);</span>
+<span class="nc" id="L196">            _users = new Users();</span>
+<span class="nc" id="L197">            connection.commit();</span>
+<span class="nc" id="L198">        } catch (PersistenceException exception) {</span>
+<span class="nc" id="L199">            SQLHelper.rollback(connection);</span>
+<span class="nc" id="L200">            throw exception;</span>
+<span class="nc" id="L201">        } catch (Exception exception) {</span>
+<span class="nc" id="L202">            throw new PersistenceException(</span>
+                    &quot;Failed to initialise database adapter&quot;, exception);
+        } finally {
+<span class="nc" id="L205">            SQLHelper.close(connection);</span>
+
+        }
+
+/*
+        // check whether we should initiate automatic garbage collection
+        if (dbConfig.hasGarbageCollectionInterval()) {
+            _gcInterval = dbConfig.getGarbageCollectionInterval() * 1000;
+            registerEvent();
+        }
+
+        if (dbConfig.hasGarbageCollectionBlockSize()) {
+            _gcBlockSize = dbConfig.getGarbageCollectionBlockSize();
+        }
+
+        if (dbConfig.hasGarbageCollectionThreadPriority()) {
+            _gcThreadPriority = dbConfig.getGarbageCollectionBlockSize();
+            if (_gcThreadPriority &lt; Thread.MIN_PRIORITY) {
+                _gcThreadPriority = Thread.MIN_PRIORITY;
+            } else if (_gcThreadPriority &gt; Thread.MAX_PRIORITY) {
+                _gcThreadPriority = Thread.MAX_PRIORITY;
+            }
+        }
+*/
+<span class="nc" id="L229">    }</span>
+
+    /**
+     * Close the database.
+     */
+    public void close() {
+<span class="nc" id="L235">        _consumers.close();</span>
+<span class="nc" id="L236">        _destinations.close();</span>
+<span class="nc" id="L237">    }</span>
+
+    // implementation of PersistenceAdapter.getLastId
+    public long getLastId(Connection connection)
+        throws PersistenceException {
+
+<span class="nc" id="L243">        long lastId = -1;</span>
+<span class="nc" id="L244">        PreparedStatement query = null;</span>
+<span class="nc" id="L245">        ResultSet result = null;</span>
+<span class="nc" id="L246">        PreparedStatement insert = null;</span>
+        try {
+<span class="nc" id="L248">            query = connection.prepareStatement(</span>
+                    &quot;select maxid from message_id where id = 1&quot;);
+<span class="nc" id="L250">            result = query.executeQuery();</span>
+
+<span class="nc bnc" id="L252" title="All 2 branches missed.">            if (result.next()) {</span>
+<span class="nc" id="L253">                lastId = result.getInt(1);</span>
+            } else {
+                // first entry create.
+<span class="nc" id="L256">                insert = connection.prepareStatement(</span>
+                        &quot;insert into message_id values (?,?)&quot;);
+<span class="nc" id="L258">                insert.setInt(1, 1);</span>
+<span class="nc" id="L259">                insert.setLong(2, 0);</span>
+<span class="nc" id="L260">                insert.executeUpdate();</span>
+<span class="nc" id="L261">                lastId = 0;</span>
+            }
+<span class="nc" id="L263">        } catch (Exception exception) {</span>
+<span class="nc" id="L264">            throw new PersistenceException(&quot;Failed to get last message id&quot;,</span>
+                                           exception);
+        } finally {
+<span class="nc" id="L267">            SQLHelper.close(result);</span>
+<span class="nc" id="L268">            SQLHelper.close(insert);</span>
+<span class="nc" id="L269">            SQLHelper.close(query);</span>
+        }
+
+<span class="nc" id="L272">        return lastId;</span>
+    }
+
+    // implementation of PersistenceAdapter.updateIds
+    public void updateIds(Connection connection, long id)
+            throws PersistenceException {
+<span class="nc" id="L278">        PreparedStatement insert = null;</span>
+        try {
+<span class="nc" id="L280">            insert = connection.prepareStatement(</span>
+                    &quot;update message_id set maxId = ? where id = 1&quot;);
+
+<span class="nc" id="L283">            insert.setLong(1, id);</span>
+<span class="nc" id="L284">            insert.executeUpdate();</span>
+<span class="nc" id="L285">        } catch (Exception exception) {</span>
+<span class="nc" id="L286">            throw new PersistenceException(&quot;Failed to update message id&quot;,</span>
+                                           exception);
+        } finally {
+<span class="nc" id="L289">            SQLHelper.close(insert);</span>
+        }
+<span class="nc" id="L291">    }</span>
+
+    // implementation of PersistenceMessage.addMessage
+    public void addMessage(Connection connection, MessageImpl message)
+            throws PersistenceException {
+
+<span class="nc" id="L297">        long start = 0;</span>
+
+<span class="nc bnc" id="L299" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L300">            start = System.currentTimeMillis();</span>
+        }
+
+        try {
+<span class="nc" id="L304">            _destinationLock.readLock().acquire();</span>
+<span class="nc" id="L305">            _messages.add(connection, message);</span>
+<span class="nc" id="L306">        } catch (InterruptedException exception) {</span>
+<span class="nc" id="L307">            throw new PersistenceException(&quot;Failed to acquire lock&quot;,</span>
+                                           exception);
+        } finally {
+<span class="nc" id="L310">            _destinationLock.readLock().release();</span>
+
+<span class="nc bnc" id="L312" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L313">                _log.debug(&quot;addMessage,&quot; +</span>
+<span class="nc" id="L314">                           (System.currentTimeMillis() - start));</span>
+            }
+        }
+<span class="nc" id="L317">    }</span>
+
+    // implementation of PersistenceMessage.addMessage
+    public void updateMessage(Connection connection, MessageImpl message)
+            throws PersistenceException {
+<span class="nc" id="L322">        long start = 0;</span>
+<span class="nc bnc" id="L323" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L324">            start = System.currentTimeMillis();</span>
+        }
+
+        try {
+<span class="nc" id="L328">            _destinationLock.readLock().acquire();</span>
+<span class="nc" id="L329">            _messages.update(connection, message);</span>
+<span class="nc" id="L330">        } catch (InterruptedException exception) {</span>
+<span class="nc" id="L331">            throw new PersistenceException(&quot;Failed to acquire lock&quot;,</span>
+                                           exception);
+        } finally {
+<span class="nc" id="L334">            _destinationLock.readLock().release();</span>
+<span class="nc bnc" id="L335" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L336">                _log.debug(&quot;updateMessage,&quot; +</span>
+<span class="nc" id="L337">                           (System.currentTimeMillis() - start));</span>
+            }
+        }
+<span class="nc" id="L340">    }</span>
+
+    // implementation of PersistenceAdapter.getUnprocessedMessages
+    public Vector getUnprocessedMessages(Connection connection)
+            throws PersistenceException {
+<span class="nc" id="L345">        long start = 0;</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L347">            start = System.currentTimeMillis();</span>
+        }
+
+        try {
+<span class="nc" id="L351">            return _messages.getUnprocessedMessages(connection);</span>
+        } finally {
+<span class="nc bnc" id="L353" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L354">                _log.debug(</span>
+                        &quot;getUnprocessedMessages,&quot;
+<span class="nc" id="L356">                        + (System.currentTimeMillis() - start));</span>
+            }
+        }
+    }
+
+
+    // implementation of PersistenceAdapter.removeMessage
+    public void removeMessage(Connection connection, String id)
+            throws PersistenceException {
+<span class="nc" id="L365">        long start = 0;</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L367">            start = System.currentTimeMillis();</span>
+        }
+
+        try {
+<span class="nc" id="L371">            _destinationLock.readLock().acquire();</span>
+<span class="nc" id="L372">            _messages.remove(connection, id);</span>
+<span class="nc" id="L373">        } catch (InterruptedException exception) {</span>
+<span class="nc" id="L374">            throw new PersistenceException(&quot;Failed to acquire lock&quot;,</span>
+                                           exception);
+        } finally {
+<span class="nc" id="L377">            _destinationLock.readLock().release();</span>
+<span class="nc bnc" id="L378" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L379">                _log.debug(&quot;removeMessage,&quot; +</span>
+<span class="nc" id="L380">                           (System.currentTimeMillis() - start));</span>
+            }
+        }
+<span class="nc" id="L383">    }</span>
+
+    // implementation of PersistenceAdapter.getMessage
+    public MessageImpl getMessage(Connection connection, String id)
+            throws PersistenceException {
+<span class="nc" id="L388">        long start = 0;</span>
+<span class="nc bnc" id="L389" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L390">            start = System.currentTimeMillis();</span>
+        }
+
+        try {
+<span class="nc" id="L394">            return _messages.get(connection, id);</span>
+        } finally {
+<span class="nc bnc" id="L396" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L397">                _log.debug(</span>
+<span class="nc" id="L398">                        &quot;getMessage,&quot; + (System.currentTimeMillis() - start));</span>
+            }
+        }
+    }
+
+    // implementation of PersistenceAdapter.getMessages
+    public Vector getMessages(Connection connection, MessageHandle handle)
+            throws PersistenceException {
+<span class="nc" id="L406">        long start = 0;</span>
+<span class="nc bnc" id="L407" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L408">            start = System.currentTimeMillis();</span>
+        }
+
+        try {
+<span class="nc" id="L412">            return _messages.getMessages(connection,</span>
+<span class="nc" id="L413">                                                   handle.getDestination()</span>
+<span class="nc" id="L414">                                                   .getName(), handle.getPriority(),</span>
+<span class="nc" id="L415">                                                   handle.getAcceptedTime());</span>
+        } finally {
+<span class="nc bnc" id="L417" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L418">                _log.debug(</span>
+<span class="nc" id="L419">                        &quot;getMessages,&quot; + (System.currentTimeMillis() - start));</span>
+            }
+        }
+    }
+
+    // implementation of PersistenceAdapter.addMessageHandle
+    public void addMessageHandle(Connection connection, MessageHandle handle)
+            throws PersistenceException {
+<span class="nc" id="L427">        long start = 0;</span>
+<span class="nc bnc" id="L428" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L429">            start = System.currentTimeMillis();</span>
+        }
+
+        try {
+<span class="nc" id="L433">            _destinationLock.readLock().acquire();</span>
+<span class="nc" id="L434">            _handles.addMessageHandle(connection, handle);</span>
+<span class="nc" id="L435">        } catch (InterruptedException exception) {</span>
+<span class="nc" id="L436">            throw new PersistenceException(&quot;Failed to acquire lock&quot;,</span>
+                                           exception);
+        } finally {
+<span class="nc" id="L439">            _destinationLock.readLock().release();</span>
+<span class="nc bnc" id="L440" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L441">                _log.debug(</span>
+                        &quot;addMessageHandle,&quot;
+<span class="nc" id="L443">                        + (System.currentTimeMillis() - start));</span>
+            }
+        }
+<span class="nc" id="L446">    }</span>
+
+    // implementation of PersistenceAdapter.updateMessageHandle
+    public void updateMessageHandle(Connection connection,
+                                    MessageHandle handle)
+            throws PersistenceException {
+<span class="nc" id="L452">        long start = 0;</span>
+<span class="nc bnc" id="L453" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L454">            start = System.currentTimeMillis();</span>
+        }
+
+        try {
+<span class="nc" id="L458">            _destinationLock.readLock().acquire();</span>
+<span class="nc" id="L459">            _handles.updateMessageHandle(connection, handle);</span>
+<span class="nc" id="L460">        } catch (InterruptedException exception) {</span>
+<span class="nc" id="L461">            throw new PersistenceException(&quot;Failed to acquire lock&quot;,</span>
+                                           exception);
+        } finally {
+<span class="nc" id="L464">            _destinationLock.readLock().release();</span>
+<span class="nc bnc" id="L465" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L466">                _log.debug(</span>
+                        &quot;updateMessageHandle,&quot;
+<span class="nc" id="L468">                        + (System.currentTimeMillis() - start));</span>
+            }
+        }
+<span class="nc" id="L471">    }</span>
+
+    // implementation of PersistenceAdapter.removeMessageHandle
+    public void removeMessageHandle(Connection connection,
+                                    MessageHandle handle)
+            throws PersistenceException {
+<span class="nc" id="L477">        long start = 0;</span>
+<span class="nc bnc" id="L478" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L479">            start = System.currentTimeMillis();</span>
+        }
+
+        try {
+<span class="nc" id="L483">            _destinationLock.readLock().acquire();</span>
+<span class="nc" id="L484">            _handles.removeMessageHandle(connection, handle);</span>
+<span class="nc" id="L485">        } catch (InterruptedException exception) {</span>
+<span class="nc" id="L486">            throw new PersistenceException(&quot;Failed to acquire lock&quot;,</span>
+                                           exception);
+        } finally {
+<span class="nc" id="L489">            _destinationLock.readLock().release();</span>
+<span class="nc bnc" id="L490" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L491">                _log.debug(</span>
+                        &quot;removeMessageHandle,&quot;
+<span class="nc" id="L493">                        + (System.currentTimeMillis() - start));</span>
+            }
+        }
+<span class="nc" id="L496">    }</span>
+
+    // implementation of PersistenceAdapter.getMessageHandles
+    public Vector getMessageHandles(Connection connection,
+                                    JmsDestination destination, String name)
+            throws PersistenceException {
+<span class="nc" id="L502">        long start = 0;</span>
+<span class="nc bnc" id="L503" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L504">            start = System.currentTimeMillis();</span>
+        }
+
+        try {
+<span class="nc" id="L508">            return _handles.getMessageHandles(connection,</span>
+<span class="nc" id="L509">                                                               destination.getName(),</span>
+                                                               name);
+        } finally {
+<span class="nc bnc" id="L512" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L513">                _log.debug(&quot;getMessageHandles,&quot;</span>
+<span class="nc" id="L514">                           + (System.currentTimeMillis() - start));</span>
+            }
+        }
+    }
+
+    // implementation of PersistenceAdapter.addDurableConsumer
+    public void addDurableConsumer(Connection connection, String topic,
+                                   String consumer)
+            throws PersistenceException {
+
+        try {
+<span class="nc" id="L525">            _destinationLock.readLock().acquire();</span>
+<span class="nc" id="L526">            _consumers.add(connection, topic, consumer);</span>
+<span class="nc" id="L527">        } catch (InterruptedException exception) {</span>
+<span class="nc" id="L528">            throw new PersistenceException(&quot;Failed to acquire lock&quot;,</span>
+                                           exception);
+        } finally {
+<span class="nc" id="L531">            _destinationLock.readLock().release();</span>
+        }
+<span class="nc" id="L533">    }</span>
+
+    // implementation of PersistenceAdapter.removeDurableConsumer
+    public void removeDurableConsumer(Connection connection, String consumer)
+            throws PersistenceException {
+
+        try {
+<span class="nc" id="L540">            _destinationLock.readLock().acquire();</span>
+<span class="nc" id="L541">            _consumers.remove(connection, consumer);</span>
+<span class="nc" id="L542">        } catch (InterruptedException exception) {</span>
+<span class="nc" id="L543">            throw new PersistenceException(&quot;Failed to acquire lock&quot;,</span>
+                                           exception);
+        } finally {
+<span class="nc" id="L546">            _destinationLock.readLock().release();</span>
+        }
+<span class="nc" id="L548">    }</span>
+
+    // implementation of PersistenceAdapter.getDurableConsumers
+    public Enumeration getDurableConsumers(Connection connection, String topic)
+            throws PersistenceException {
+<span class="nc" id="L553">        return _consumers.getDurableConsumers(topic).elements();</span>
+    }
+
+    // implementation of PersistenceAdapter.getAllDurableConsumers
+    public HashMap getAllDurableConsumers(Connection connection)
+            throws PersistenceException {
+
+<span class="nc" id="L560">        return _consumers.getAllDurableConsumers();</span>
+    }
+
+    // implementation of PersistenceAdapter.durableConsumerExists
+    public boolean durableConsumerExists(Connection connection, String name)
+            throws PersistenceException {
+
+<span class="nc" id="L567">        return _consumers.exists(name);</span>
+    }
+
+    // implementation of PersistenceAdapter.addDestination
+    public void addDestination(Connection connection, String name,
+                               boolean queue)
+            throws PersistenceException {
+
+<span class="nc bnc" id="L575" title="All 2 branches missed.">        JmsDestination destination = (queue)</span>
+                ? (JmsDestination) new JmsQueue(name)
+                : (JmsDestination) new JmsTopic(name);
+
+        // create the destination. If the destination is also
+        // a queue create a special consumer for it.
+        try {
+<span class="nc" id="L582">            _destinationLock.readLock().acquire();</span>
+<span class="nc" id="L583">            _destinations.add(connection, destination);</span>
+<span class="nc bnc" id="L584" title="All 2 branches missed.">            if (queue) {</span>
+<span class="nc" id="L585">                _consumers.add(connection, name, name);</span>
+            }
+<span class="nc" id="L587">        } catch (InterruptedException exception) {</span>
+<span class="nc" id="L588">            throw new PersistenceException(&quot;Failed to acquire lock&quot;,</span>
+                                           exception);
+        } finally {
+<span class="nc" id="L591">            _destinationLock.readLock().release();</span>
+        }
+<span class="nc" id="L593">    }</span>
+
+    // implementation of PersistenceAdapter.removeDestination
+    public void removeDestination(Connection connection, String name)
+            throws PersistenceException {
+
+<span class="nc" id="L599">        JmsDestination destination = _destinations.get(name);</span>
+<span class="nc bnc" id="L600" title="All 2 branches missed.">        if (destination != null) {</span>
+            try {
+<span class="nc" id="L602">                _destinationLock.writeLock().acquire();</span>
+<span class="nc" id="L603">                _destinations.remove(connection, destination);</span>
+<span class="nc" id="L604">            } catch (InterruptedException exception) {</span>
+<span class="nc" id="L605">                throw new PersistenceException(&quot;Failed to acquire lock&quot;,</span>
+                                               exception);
+            } finally {
+<span class="nc" id="L608">                _destinationLock.writeLock().release();</span>
+            }
+        }
+<span class="nc" id="L611">    }</span>
+
+    // implementation of PersistenceAdapter.getAllDestinations
+    public Enumeration getAllDestinations(Connection connection)
+            throws PersistenceException {
+
+<span class="nc" id="L617">        return _destinations.getDestinations().elements();</span>
+    }
+
+    // implementation of PersistenceAdapter.checkDestination
+    public boolean checkDestination(Connection connection, String name)
+            throws PersistenceException {
+
+<span class="nc bnc" id="L624" title="All 2 branches missed.">        return (_destinations.get(name) != null);</span>
+    }
+
+    // implementation of getQueueMessageCount
+    public int getQueueMessageCount(Connection connection, String name)
+            throws PersistenceException {
+
+<span class="nc" id="L631">        return _handles.getMessageCount(connection, name,</span>
+                                                         name);
+    }
+
+    // implementation of PersistenceAdapter.getQueueMessageCount
+    public int getDurableConsumerMessageCount(Connection connection,
+                                              String destination, String name)
+            throws PersistenceException {
+
+<span class="nc" id="L640">        return _handles.getMessageCount(connection,</span>
+                                                         destination, name);
+    }
+
+    // implementation of PersistenceAdapter.getQueueMessageCount
+    public void removeExpiredMessages(Connection connection)
+            throws PersistenceException {
+
+<span class="nc" id="L648">        _messages.removeExpiredMessages(connection);</span>
+<span class="nc" id="L649">    }</span>
+
+    // implementation of PersistenceAdapter.removeExpiredMessageHandles
+    public void removeExpiredMessageHandles(Connection connection,
+                                            String consumer)
+            throws PersistenceException {
+
+<span class="nc" id="L656">        _handles.removeExpiredMessageHandles(connection,</span>
+                                                              consumer);
+<span class="nc" id="L658">    }</span>
+
+    // implementation of PersistenceAdapter.getNonExpiredMessages
+    public Vector getNonExpiredMessages(Connection connection,
+                                        JmsDestination destination)
+            throws PersistenceException {
+
+<span class="nc" id="L665">        return _messages.getNonExpiredMessages(connection,</span>
+                                                         destination);
+    }
+
+    // implementation of EventHandler.handleEvent
+    public void handleEvent(int event, Object callback, long time) {
+        // disabled, as per bug 816895 - Exception in purgeMessages
+//          if (event == COLLECT_DATABASE_GARBAGE_EVENT) {
+//              // collect garbage now, but before doing so change the thread
+//              // priority to low.
+//              try {
+//                  Thread.currentThread().setPriority(_gcThreadPriority);
+//                  purgeMessages();
+//              } finally {
+//                  Thread.currentThread().setPriority(Thread.NORM_PRIORITY);
+//                  registerEvent();
+//              }
+//          }
+<span class="nc" id="L683">    }</span>
+
+    /**
+     * Return a connection to the database from the pool of connections. It will
+     * throw an PersistenceException if it cannot retrieve a connection. The
+     * client should close the connection normally, since the pool is a
+     * connection event listener.
+     *
+     * @return Connection - a pooled connection or null
+     * @throws PersistenceException - if it cannot retrieve a connection
+     */
+    public Connection getConnection()
+            throws PersistenceException {
+<span class="nc" id="L696">        return _connectionManager.getConnection();</span>
+    }
+
+    /**
+     * Return a reference to the DBConnectionManager
+     *
+     * @return DBConnectionManager
+     */
+    public DBConnectionManager getDBConnectionManager() {
+<span class="nc" id="L705">        return _connectionManager;</span>
+    }
+
+    public void addUser(Connection connection, User user)
+            throws PersistenceException {
+<span class="nc" id="L710">        _users.add(connection, user);</span>
+<span class="nc" id="L711">    }</span>
+
+    public Enumeration getAllUsers(Connection connection)
+            throws PersistenceException {
+<span class="nc" id="L715">        return _users.getAllUsers(connection).elements();</span>
+    }
+
+    public User getUser(Connection connection, User user)
+            throws PersistenceException {
+<span class="nc" id="L720">        return _users.get(connection, user);</span>
+    }
+
+    public void removeUser(Connection connection, User user)
+            throws PersistenceException {
+<span class="nc" id="L725">        _users.remove(connection, user);</span>
+<span class="nc" id="L726">    }</span>
+
+    public void updateUser(Connection connection, User user)
+            throws PersistenceException {
+<span class="nc" id="L730">        _users.update(connection, user);</span>
+<span class="nc" id="L731">    }</span>
+
+    /**
+     * Incrementally purge all processed messages from the database.
+     * @todo this needs to be revisited. See bug 816895
+     * - existing expired messages are purged at startup
+     * - messages received that subsequently expire while the server is
+     *   running are removed individually.
+     * - not clear how the previous implementation ever worked.
+     *   The Messages.getMessageIds() method returns all messages, not
+     *   just those processed, nor is it clear that the processed flag
+     *   is ever non-zero.
+     *   The current implementation (as a fix for bug 816895 - Exception in
+     *   purgeMessages) simply delegates to removeExpiredMessages()
+     *
+     * @return the number of messages deleted
+     */
+    public synchronized int purgeMessages() {
+        // int deleted = 0;
+
+<span class="nc" id="L751">        Connection connection = null;</span>
+        try {
+<span class="nc" id="L753">            connection = getConnection();</span>
+<span class="nc" id="L754">            removeExpiredMessages(connection);</span>
+<span class="nc" id="L755">            connection.commit();</span>
+<span class="nc" id="L756">        } catch (Exception exception) {</span>
+<span class="nc" id="L757">            _log.error(&quot;Exception in purgeMessages&quot;, exception);</span>
+        } finally {
+<span class="nc" id="L759">            SQLHelper.close(connection);</span>
+        }
+<span class="nc" id="L761">        return 0;</span>
+
+//          if (connection == null) {
+//              return 0;
+//          }
+
+//          // we have a valid connection so we can proceed
+//          try {
+//              long stime = System.currentTimeMillis();
+//              HashMap msgids = _messages.getMessageIds(
+//                  connection, _lastTime, _gcBlockSize);
+
+//              // if there are no messages then reset the last time to
+//              // 0 and break;
+//              if (msgids.size() &gt; 0) {
+//                  // find the minimum and maximum..we can improve the way we
+//                  // do this.
+//                  Iterator iter = msgids.values().iterator();
+//                  long min = -1;
+//                  long max = -1;
+
+//                  while (iter.hasNext()) {
+//                      Long id = (Long) iter.next();
+//                      if ((min == -1) &amp;&amp;
+//                          (max == -1)) {
+//                          min = id.longValue();
+//                          max = id.longValue();
+//                      }
+
+//                      if (id.longValue() &lt; min) {
+//                          min = id.longValue();
+//                      } else if (id.longValue() &gt; max) {
+//                          max = id.longValue();
+//                      }
+//                  }
+
+//                  // set the last time for the next iteration unless the
+//                  // the size of the msgids is less than the gcBlockSize.
+//                  // If the later is the case then reset the last time.
+//                  // This is in preparation for the next pass through this
+//                  // method.
+//                  if (msgids.size() &lt; _gcBlockSize) {
+//                      _lastTime = 0;
+//                  } else {
+//                      _lastTime = max;
+//                  }
+
+//                  // now iterate through the message list and delete the
+//                  // messages that do not have corresponding handles.
+//                  Vector hdlids = _handles.getMessageIds(connection, min, max);
+//                  iter = msgids.keySet().iterator();
+//                  while (iter.hasNext()) {
+//                      String id = (String) iter.next();
+//                      if (!hdlids.contains(id)) {
+//                          // this message is not referenced by anyone so we can
+//                          // delete it
+//                          _messages.remove(connection, id);
+//                          deleted++;
+//                      }
+//                  }
+//                  connection.commit();
+//              } else {
+//                  // reset the lastTime
+//                  _lastTime = 0;
+//              }
+//              _log.debug(&quot;DBGC Deleted &quot; + deleted + &quot; messages and took &quot;
+//                  + (System.currentTimeMillis() - stime) +
+//                  &quot;ms to complete.&quot;);
+//          } catch (Exception exception) {
+//              try {
+//                  connection.rollback();
+//              } catch (Exception nested) {
+//                  // ignore this exception
+//              }
+//              _log.error(&quot;Exception in purgeMessages&quot;, exception);
+//              deleted = 0;
+//          } finally {
+//              try {
+//                  connection.close();
+//              } catch (Exception nested) {
+//                  // ignore
+//              }
+//          }
+//
+//        return deleted;
+    }
+
+    /**
+     * Get the schema version
+     *
+     * @param connection the connection to use
+     * @return the schema version, or null, if no version has been initialised
+     * @throws PersistenceException for any related persistence exception
+     */
+    private String getSchemaVersion(Connection connection)
+            throws PersistenceException {
+
+<span class="nc" id="L858">        String version = null;</span>
+<span class="nc" id="L859">        PreparedStatement query = null;</span>
+<span class="nc" id="L860">        ResultSet result = null;</span>
+        try {
+<span class="nc" id="L862">            query = connection.prepareStatement(</span>
+                    &quot;select version from system_data where id = 1&quot;);
+<span class="nc" id="L864">            result = query.executeQuery();</span>
+<span class="nc bnc" id="L865" title="All 2 branches missed.">            if (result.next()) {</span>
+<span class="nc" id="L866">                version = result.getString(1);</span>
+            }
+<span class="nc" id="L868">        } catch (SQLException exception) {</span>
+<span class="nc" id="L869">            throw new PersistenceException(&quot;Failed to get the schema version&quot;,</span>
+                                           exception);
+        } finally {
+<span class="nc" id="L872">            SQLHelper.close(result);</span>
+<span class="nc" id="L873">            SQLHelper.close(query);</span>
+
+        }
+<span class="nc" id="L876">        return version;</span>
+    }
+
+    /**
+     * Initialise the schema version
+     *
+     * @param connection the connection to use
+     */
+    private void initSchemaVersion(Connection connection)
+            throws PersistenceException {
+
+<span class="nc" id="L887">        _log.info(&quot;Initialising schema version &quot; + SCHEMA_VERSION);</span>
+<span class="nc" id="L888">        PreparedStatement insert = null;</span>
+        try {
+<span class="nc" id="L890">            insert = connection.prepareStatement(&quot;insert into system_data (id, version, creationDate) &quot;</span>
+                                                 + &quot;values (?,?,?)&quot;);
+<span class="nc" id="L892">            insert.setInt(1, 1);</span>
+<span class="nc" id="L893">            insert.setString(2, SCHEMA_VERSION);</span>
+<span class="nc" id="L894">            insert.setDate(3, new Date(System.currentTimeMillis()));</span>
+<span class="nc" id="L895">            insert.executeUpdate();</span>
+
+<span class="nc" id="L897">        } catch (SQLException exception) {</span>
+<span class="nc" id="L898">            throw new PersistenceException(</span>
+                    &quot;Failed to initialise schema version&quot;, exception);
+        } finally {
+<span class="nc" id="L901">            SQLHelper.close(insert);</span>
+        }
+<span class="nc" id="L903">    }</span>
+
+    /**
+     * Register an event to collect and remove processed messages with the
+     * {@link BasicEventManager}
+     */
+//   private void registerEvent() {
+//        try {
+        // disabled, as per bug 816895 - Exception in purgeMessages
+//              BasicEventManager.instance().registerEventRelative(
+//                  new Event(COLLECT_DATABASE_GARBAGE_EVENT, this, null),
+//                  _gcInterval);
+//          } catch (IllegalEventDefinedException exception) {
+//              _log.error(&quot;registerEvent failed&quot;, exception);
+//          }
+//   }
+
+    /**
+     * Creates a {@link DBConnectionManager} using its fully qualified class
+     * name
+     *
+     * @param className the fully qualified class name
+     * @throws PersistenceException if it cannot be created
+     */
+    private DBConnectionManager getConnectionManager(String className)
+            throws PersistenceException {
+
+<span class="nc" id="L930">        DBConnectionManager result = null;</span>
+<span class="nc" id="L931">        Class clazz = null;</span>
+<span class="nc" id="L932">        ClassLoader loader = Thread.currentThread().getContextClassLoader();</span>
+        try {
+<span class="nc bnc" id="L934" title="All 2 branches missed.">            if (loader != null) {</span>
+<span class="nc" id="L935">                clazz = loader.loadClass(className);</span>
+            }
+<span class="nc" id="L937">        } catch (ClassNotFoundException ignore) {</span>
+<span class="nc" id="L938">        }</span>
+        try {
+<span class="nc bnc" id="L940" title="All 2 branches missed.">            if (clazz == null) {</span>
+<span class="nc" id="L941">                clazz = Class.forName(className);</span>
+            }
+<span class="nc" id="L943">        } catch (ClassNotFoundException exception) {</span>
+<span class="nc" id="L944">            throw new PersistenceException(&quot;Failed to locate connection manager implementation: &quot;</span>
+                                           + className, exception);
+<span class="nc" id="L946">        }</span>
+
+        try {
+<span class="nc" id="L949">            result = (DBConnectionManager) clazz.newInstance();</span>
+<span class="nc" id="L950">        } catch (Exception exception) {</span>
+<span class="nc" id="L951">            throw new PersistenceException(</span>
+                    &quot;Failed to create connection manager&quot;, exception);
+<span class="nc" id="L953">        }</span>
+
+<span class="nc" id="L955">        return result;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

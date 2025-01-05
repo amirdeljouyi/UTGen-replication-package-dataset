@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DeleteTablesCommand.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.session.action</a> &gt; <span class="el_source">DeleteTablesCommand.java</span></div><h1>DeleteTablesCommand.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.session.action;
+
+/*
+ * Copyright (C) 2006 Rob Manning
+ * manningr@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.HashSet;
+import java.util.List;
+
+import net.sourceforge.squirrel_sql.client.gui.IProgressCallBackFactory;
+import net.sourceforge.squirrel_sql.client.gui.ProgressCallBackFactory;
+import net.sourceforge.squirrel_sql.client.session.IObjectTreeAPI;
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.client.session.SQLExecuterTask;
+import net.sourceforge.squirrel_sql.fw.dialects.DialectFactory;
+import net.sourceforge.squirrel_sql.fw.gui.GUIUtils;
+import net.sourceforge.squirrel_sql.fw.sql.ITableInfo;
+import net.sourceforge.squirrel_sql.fw.sql.ProgressCallBack;
+import net.sourceforge.squirrel_sql.fw.sql.SQLDatabaseMetaData;
+import net.sourceforge.squirrel_sql.fw.sql.SQLUtilities;
+import net.sourceforge.squirrel_sql.fw.util.ICommand;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.Utilities;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+/**
+ * @version $Id: DeleteTablesCommand.java,v 1.9 2008-10-11 22:55:54 manningr Exp $
+ * @author Rob Manning
+ */
+public class DeleteTablesCommand implements ICommand
+{
+	/** Logger for this class. */
+<span class="nc" id="L52">	private final ILogger s_log = LoggerController.createLogger(DeleteTablesCommand.class);</span>
+
+	/** Internationalized strings for this class */
+<span class="nc" id="L55">	private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L56">		StringManagerFactory.getStringManager(DeleteTablesCommand.class);</span>
+
+	static interface i18n
+	{
+
+		// i18n[DeleteTablesCommand.progressDialogTitle=Analyzing tables to delete]
+<span class="nc" id="L62">		String PROGRESS_DIALOG_TITLE = s_stringMgr.getString(&quot;DeleteTablesCommand.progressDialogTitle&quot;);</span>
+
+		// i18n[DeleteTablesCommand.loadingPrefix=Analyzing table:]
+<span class="nc" id="L65">		String LOADING_PREFIX = s_stringMgr.getString(&quot;DeleteTablesCommand.loadingPrefix&quot;);</span>
+
+	}
+
+	/** Current session. */
+	private final ISession _session;
+
+	/** Tables that have records to be deleted. */
+	private final List&lt;ITableInfo&gt; _tables;
+
+	/**
+	 * A set of materialized view names in the same schema as the table(s) being deleted
+	 */
+<span class="nc" id="L78">	private HashSet&lt;String&gt; matViewLookup = null;</span>
+
+	/** API for the current tree. */
+	private IObjectTreeAPI _tree;
+
+<span class="nc" id="L83">	private IProgressCallBackFactory progressCallBackFactory = new ProgressCallBackFactory();</span>
+	
+	/**
+	 * Ctor.
+	 * 
+	 * @param session
+	 *           Current session..
+	 * @param tables
+	 *           Array of &lt;TT&gt;IDatabaseObjectInfo&lt;/TT&gt; objects representing the tables to be deleted.
+	 * @throws IllegalArgumentException
+	 *            Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;ISession&lt;/TT&gt; passed.
+	 */
+	public DeleteTablesCommand(IObjectTreeAPI tree, List&lt;ITableInfo&gt; tables)
+	{
+<span class="nc" id="L97">		super();</span>
+<span class="nc bnc" id="L98" title="All 2 branches missed.">		if (tree == null) { throw new IllegalArgumentException(&quot;ISession == null&quot;); }</span>
+<span class="nc bnc" id="L99" title="All 2 branches missed.">		if (tables == null) { throw new IllegalArgumentException(&quot;IDatabaseObjectInfo[] == null&quot;); }</span>
+
+<span class="nc" id="L101">		_session = tree.getSession();</span>
+<span class="nc" id="L102">		_tree = tree;</span>
+<span class="nc" id="L103">		_tables = tables;</span>
+<span class="nc" id="L104">	}</span>
+
+	/**
+	 * Delete records from the selected tables in the object tree.
+	 */
+	public void execute()
+	{		
+<span class="nc" id="L111">		ProgressCallBack cb =</span>
+<span class="nc" id="L112">			progressCallBackFactory.create(_session.getApplication().getMainFrame(), </span>
+<span class="nc" id="L113">				i18n.PROGRESS_DIALOG_TITLE, _tables.size());</span>
+			
+<span class="nc" id="L115">		cb.setLoadingPrefix(i18n.LOADING_PREFIX);</span>
+<span class="nc" id="L116">		DeleteExecuter executer = new DeleteExecuter(cb);</span>
+<span class="nc" id="L117">		_session.getApplication().getThreadPool().addTask(executer);</span>
+<span class="nc" id="L118">	}</span>
+
+	private class DeleteExecuter implements Runnable
+	{
+
+<span class="nc" id="L123">		ProgressCallBack _cb = null;</span>
+
+		public DeleteExecuter(ProgressCallBack cb)
+<span class="nc" id="L126">		{</span>
+<span class="nc" id="L127">			Utilities.checkNull(&quot;DeleteExecuter.init&quot;, &quot;cb&quot;, cb);</span>
+<span class="nc" id="L128">			_cb = cb;</span>
+<span class="nc" id="L129">		}</span>
+
+		public void run()
+		{
+<span class="nc" id="L133">			final SQLDatabaseMetaData md = _session.getSQLConnection().getSQLMetaData();</span>
+<span class="nc" id="L134">			List&lt;ITableInfo&gt; orderedTables = _tables;</span>
+			try
+			{
+<span class="nc" id="L137">				orderedTables = SQLUtilities.getDeletionOrder(_tables, md, _cb);</span>
+			}
+<span class="nc" id="L139">			catch (Exception e)</span>
+			{
+<span class="nc" id="L141">				s_log.error(&quot;Unexpected exception while attempting to order tables&quot;, e);</span>
+			} finally {
+<span class="nc" id="L143">				GUIUtils.processOnSwingEventThread(new Runnable()</span>
+<span class="nc" id="L144">				{</span>
+					public void run()				
+					{
+<span class="nc" id="L147">						_cb.setVisible(false);</span>
+<span class="nc" id="L148">					}</span>
+				});
+			}
+<span class="nc" id="L151">			final String sqlSep = _session.getQueryTokenizer().getSQLStatementSeparator();</span>
+<span class="nc" id="L152">			String cascadeClause = null;</span>
+			try
+			{
+<span class="nc" id="L155">				cascadeClause = md.getCascadeClause();</span>
+			}
+<span class="nc" id="L157">			catch (SQLException e)</span>
+			{
+<span class="nc" id="L159">				s_log.error(&quot;Unexpected exception while attempting to get cascade clause&quot;, e);</span>
+<span class="nc" id="L160">			}</span>
+<span class="nc" id="L161">			final StringBuilder buf = new StringBuilder();</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">			for (ITableInfo ti : orderedTables)</span>
+			{
+				// Can't delete records in snapshots (Oracle materialized views)
+<span class="nc bnc" id="L165" title="All 2 branches missed.">				if (isMaterializedView(ti, _session))</span>
+				{
+<span class="nc" id="L167">					continue;</span>
+				}
+<span class="nc" id="L169">				buf.append(&quot;DELETE FROM &quot;).append(ti.getQualifiedName());</span>
+<span class="nc bnc" id="L170" title="All 4 branches missed.">				if (cascadeClause != null &amp;&amp; !cascadeClause.equals(&quot;&quot;))</span>
+				{
+<span class="nc" id="L172">					buf.append(&quot; &quot;).append(cascadeClause);</span>
+				}
+<span class="nc" id="L174">				buf.append(&quot; &quot;).append(sqlSep).append(&quot; &quot;).append('\n');</span>
+<span class="nc" id="L175">			}</span>
+<span class="nc bnc" id="L176" title="All 2 branches missed.">			if (buf.length() == 0) { return; }</span>
+<span class="nc" id="L177">			SQLExecuterTask executer = new SQLExecuterTask(_session, buf.toString(), null);</span>
+
+			// Execute the sql synchronously
+<span class="nc" id="L180">			executer.run();			</span>
+
+<span class="nc" id="L182">			GUIUtils.processOnSwingEventThread(new Runnable()</span>
+<span class="nc" id="L183">			{</span>
+				public void run()				
+				{
+<span class="nc" id="L186">					_tree.refreshSelectedNodes();</span>
+<span class="nc" id="L187">				}</span>
+			});
+<span class="nc" id="L189">		}</span>
+	}
+
+	/**
+	 * Returns a boolean value indicating whether or not the specified table info is not only a table, but also
+	 * a materialized view.
+	 * 
+	 * @param ti
+	 * @param session
+	 * @return
+	 */
+	private boolean isMaterializedView(ITableInfo ti, ISession session)
+	{
+<span class="nc bnc" id="L202" title="All 2 branches missed.">		if (!DialectFactory.isOracle(session.getMetaData()))</span>
+		{
+			// Only Oracle supports materialized views directly.
+<span class="nc" id="L205">			return false;</span>
+		}
+<span class="nc bnc" id="L207" title="All 2 branches missed.">		if (matViewLookup == null)</span>
+		{
+<span class="nc" id="L209">			initMatViewLookup(session, ti.getSchemaName());</span>
+		}
+<span class="nc" id="L211">		return matViewLookup.contains(ti.getSimpleName());</span>
+	}
+
+	private void initMatViewLookup(ISession session, String schema)
+	{
+<span class="nc" id="L216">		matViewLookup = new HashSet&lt;String&gt;();</span>
+		// There is no good way using JDBC metadata to tell if the table is a
+		// materialized view. So, we need to query the data dictionary to find
+		// that out. Get all table names whose comment indicates that they are
+		// a materialized view.
+<span class="nc" id="L221">		String sql =</span>
+			&quot;SELECT TABLE_NAME FROM ALL_TAB_COMMENTS &quot; + &quot;where COMMENTS like 'snapshot%' &quot; + &quot;and OWNER = ? &quot;;
+
+<span class="nc" id="L224">		PreparedStatement stmt = null;</span>
+<span class="nc" id="L225">		ResultSet rs = null;</span>
+		try
+		{
+<span class="nc" id="L228">			stmt = session.getSQLConnection().prepareStatement(sql);</span>
+<span class="nc" id="L229">			stmt.setString(1, schema);</span>
+<span class="nc" id="L230">			rs = stmt.executeQuery();</span>
+<span class="nc bnc" id="L231" title="All 2 branches missed.">			if (rs.next())</span>
+			{
+<span class="nc" id="L233">				String tableName = rs.getString(1);</span>
+<span class="nc" id="L234">				matViewLookup.add(tableName);</span>
+			}
+		}
+<span class="nc" id="L237">		catch (SQLException e)</span>
+		{
+<span class="nc" id="L239">			s_log.error(&quot;Unexpected exception while attempting to find mat. views &quot; + &quot;in schema: &quot; + schema, e);</span>
+		}
+		finally
+		{
+<span class="nc" id="L243">			SQLUtilities.closeResultSet(rs, true);</span>
+		}
+
+<span class="nc" id="L246">	}</span>
+
+	public void setProgressCallBackFactory(IProgressCallBackFactory progressCallBackFactory)
+	{
+<span class="nc" id="L250">		this.progressCallBackFactory = progressCallBackFactory;</span>
+<span class="nc" id="L251">	}</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,676 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UpdateControllerImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.update</a> &gt; <span class="el_source">UpdateControllerImpl.java</span></div><h1>UpdateControllerImpl.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (C) 2007 Rob Manning
+ * manningr@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+package net.sourceforge.squirrel_sql.client.update;
+
+import static java.lang.System.currentTimeMillis;
+import static net.sourceforge.squirrel_sql.client.update.UpdateUtil.RELEASE_XML_FILENAME;
+import static net.sourceforge.squirrel_sql.fw.util.Utilities.checkNull;
+
+import java.io.FileNotFoundException;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+import javax.swing.JFrame;
+import javax.swing.JOptionPane;
+
+import net.sourceforge.squirrel_sql.client.IApplication;
+import net.sourceforge.squirrel_sql.client.plugin.IPluginManager;
+import net.sourceforge.squirrel_sql.client.plugin.PluginInfo;
+import net.sourceforge.squirrel_sql.client.preferences.GlobalPreferencesActionListener;
+import net.sourceforge.squirrel_sql.client.preferences.GlobalPreferencesSheet;
+import net.sourceforge.squirrel_sql.client.preferences.IUpdateSettings;
+import net.sourceforge.squirrel_sql.client.preferences.UpdatePreferencesPanel;
+import net.sourceforge.squirrel_sql.client.update.async.ReleaseFileUpdateCheckTask;
+import net.sourceforge.squirrel_sql.client.update.async.UpdateCheckRunnableCallback;
+import net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloader;
+import net.sourceforge.squirrel_sql.client.update.downloader.ArtifactDownloaderFactory;
+import net.sourceforge.squirrel_sql.client.update.gui.ArtifactAction;
+import net.sourceforge.squirrel_sql.client.update.gui.ArtifactStatus;
+import net.sourceforge.squirrel_sql.client.update.gui.CheckUpdateListener;
+import net.sourceforge.squirrel_sql.client.update.gui.UpdateManagerDialog;
+import net.sourceforge.squirrel_sql.client.update.gui.UpdateSummaryDialog;
+import net.sourceforge.squirrel_sql.client.update.xmlbeans.ChannelXmlBean;
+import net.sourceforge.squirrel_sql.fw.gui.GUIUtils;
+import net.sourceforge.squirrel_sql.fw.gui.IJOptionPaneService;
+import net.sourceforge.squirrel_sql.fw.util.FileWrapper;
+import net.sourceforge.squirrel_sql.fw.util.FileWrapperFactory;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+/**
+ * This class implements the business logic needed by the view (UpdateManagerDialog), to let the user install
+ * new or updated software (the model)
+ * 
+ * @author manningr
+ */
+public class UpdateControllerImpl implements UpdateController, CheckUpdateListener
+{
+
+	/** This is the pattern that all translation jars (i18n) begin with */
+	public static final String TRANSLATION_JAR_PREFIX = &quot;squirrel-sql_&quot;;
+
+	/** Logger for this class. */
+<span class="nc" id="L73">	private static final ILogger s_log = LoggerController.createLogger(UpdateControllerImpl.class);</span>
+
+	/** I18n strings for this class */
+<span class="nc" id="L76">	private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L77">		StringManagerFactory.getStringManager(UpdateControllerImpl.class);</span>
+
+	/** the application and services it provides */
+<span class="nc" id="L80">	private IApplication _app = null;</span>
+
+	/** utility class for low-level update routines */
+<span class="nc" id="L83">	private UpdateUtil _util = null;</span>
+
+	/** the release that we downloaded when we last checked */
+<span class="nc" id="L86">	private ChannelXmlBean _currentChannelBean = null;</span>
+
+	/** the release we had installed the last time we checked / updated */
+<span class="nc" id="L89">	private ChannelXmlBean _installedChannelBean = null;</span>
+
+	/** Used to be able to bring the update dialog back up after re-config */
+<span class="nc" id="L92">	private static GlobalPrefsListener listener = null;</span>
+
+	/** The class that we use which is responsible for downloading artifacts */
+<span class="nc" id="L95">	private ArtifactDownloader _downloader = null;</span>
+
+<span class="nc" id="L97">	private ArtifactDownloaderFactory _downloaderFactory = null;</span>
+
+	/** Service that allows this class to safely present informative JOptionPanes to the user */
+<span class="nc" id="L100">	private IJOptionPaneService _jOptionPaneService = null;</span>
+
+	/** Factory for creating FileWrapper objects */
+<span class="nc" id="L103">	private FileWrapperFactory fileWrapperFactory = null;</span>
+
+	static interface i18n
+	{
+
+		// i18n[UpdateControllerImpl.exceptionMsg=Exception was: ]
+<span class="nc" id="L109">		String EXCEPTION_MSG = s_stringMgr.getString(&quot;UpdateControllerImpl.exceptionMsg&quot;);</span>
+
+		// i18n[UpdateControllerImpl.updateCheckFailedTitle=Update Check Failed]
+<span class="nc" id="L112">		String UPDATE_CHECK_FAILED_TITLE = s_stringMgr.getString(&quot;UpdateControllerImpl.updateCheckFailedTitle&quot;);</span>
+
+		// i18n[UpdateControllerImpl.softwareVersionCurrentMsg=This software's version is the most recent]
+		String SOFTWARE_VERSION_CURRENT_MSG =
+<span class="nc" id="L116">			s_stringMgr.getString(&quot;UpdateControllerImpl.softwareVersionCurrentMsg&quot;);</span>
+
+		// i18n[UpdateControllerImpl.updateCheckTitle=Update Check]
+<span class="nc" id="L119">		String UPDATE_CHECK_TITLE = s_stringMgr.getString(&quot;UpdateControllerImpl.updateCheckTitle&quot;);</span>
+
+		// i18n[UpdateControllerImpl.changesRecordedTitle=Changes Recorded]
+<span class="nc" id="L122">		String CHANGES_RECORDED_TITLE = s_stringMgr.getString(&quot;UpdateControllerImpl.changesRecordedTitle&quot;);</span>
+
+		// i18n[UpdateControllerImpl.changesRecordedMsg=Requested changes will be made when
+		// SQuirreL is restarted]
+<span class="nc" id="L126">		String CHANGES_RECORDED_MSG = s_stringMgr.getString(&quot;UpdateControllerImpl.changesRecordedMsg&quot;);</span>
+
+		// i18n[UpdateControllerImpl.releaseFileDownloadFailedMsg=Release file couldn't be downloaded. Please
+		// check your settings.]
+		String RELEASE_FILE_DOWNLOAD_FAILED_MSG =
+<span class="nc" id="L131">			s_stringMgr.getString(&quot;UpdateControllerImpl.releaseFileDownloadFailedMsg&quot;);</span>
+
+		// i18n[UpdateControllerImpl.promptToDownloadAvailableUpdatesMsg=There are updates available.
+		// Do you want to download them now?]
+		String PROMPT_TO_DOWNLOAD_AVAILABLE_UPDATES_MSG =
+<span class="nc" id="L136">			s_stringMgr.getString(&quot;UpdateControllerImpl.promptToDownloadAvailableUpdatesMsg&quot;);</span>
+
+		// i18n[UpdateControllerImpl.promptToDownloadAvailableUpdatesTitle=Updates Available]
+<span class="nc" id="L139">		String PROMPT_TO_DOWNLOAD_AVAILABLE_UPDATES_TITLE =</span>
+<span class="nc" id="L140">			s_stringMgr.getString(&quot;UpdateControllerImpl.promptToDownloadAvailableUpdatesTitle&quot;);</span>
+
+	}
+
+	/**
+	 * Constructor
+	 * 
+	 * @param app
+	 *           the application and services it provides
+	 */
+	public UpdateControllerImpl(IApplication app)
+<span class="nc" id="L151">	{</span>
+<span class="nc" id="L152">		_app = app;</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">		if (listener == null)</span>
+		{
+<span class="nc" id="L155">			listener = new GlobalPrefsListener();</span>
+<span class="nc" id="L156">			GlobalPreferencesSheet.addGlobalPreferencesActionListener(listener);</span>
+		}
+<span class="nc" id="L158">	}</span>
+
+	/**
+	 * @param factory
+	 */
+	public void setArtifactDownloaderFactory(ArtifactDownloaderFactory factory)
+	{
+<span class="nc" id="L165">		checkNull(&quot;setArtifactDownloaderFactory&quot;, &quot;factory&quot;, factory);</span>
+<span class="nc" id="L166">		this._downloaderFactory = factory;</span>
+<span class="nc" id="L167">	}</span>
+
+	/**
+	 * Sets the utility class for low-level update routines
+	 * 
+	 * @param util
+	 *           the Update utility class to use.
+	 */
+	public void setUpdateUtil(UpdateUtil util)
+	{
+<span class="nc" id="L177">		checkNull(&quot;setUpdateUtil&quot;,&quot;util&quot;, util);</span>
+<span class="nc" id="L178">		this._util = util;</span>
+<span class="nc" id="L179">		_util.setPluginManager(_app.getPluginManager());</span>
+<span class="nc" id="L180">	}</span>
+
+	/**
+	 * Setter to allow injection of the service implementation.
+	 * 
+	 * @param jOptionPaneService
+	 *           the non-static service that handles JOptionPane's static calls.
+	 */
+	public void setJOptionPaneService(IJOptionPaneService jOptionPaneService)
+	{
+<span class="nc" id="L190">		checkNull(&quot;setJOptionPaneService&quot;,&quot;jOptionPaneService&quot;, jOptionPaneService);</span>
+<span class="nc" id="L191">		this._jOptionPaneService = jOptionPaneService;</span>
+<span class="nc" id="L192">	}</span>
+
+	/**
+	 * @param fileWrapperFactory
+	 *           the fileFileWrapperFactory to set
+	 */
+	public void setFileWrapperFactory(FileWrapperFactory fileWrapperFactory)
+	{
+<span class="nc" id="L200">		checkNull(&quot;setFileWrapperFactory&quot;,&quot;fileWrapperFactory&quot;, fileWrapperFactory);</span>
+<span class="nc" id="L201">		this.fileWrapperFactory = fileWrapperFactory;</span>
+<span class="nc" id="L202">	}</span>
+	
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateController#showUpdateDialog()
+	 */
+	public void showUpdateDialog()
+	{
+<span class="nc" id="L209">		final JFrame parent = _app.getMainFrame();</span>
+<span class="nc" id="L210">		final IUpdateSettings settings = getUpdateSettings();</span>
+<span class="nc" id="L211">		final boolean isRemoteUpdateSite = settings.isRemoteUpdateSite();</span>
+<span class="nc" id="L212">		GUIUtils.processOnSwingEventThread(new Runnable()</span>
+<span class="nc" id="L213">		{</span>
+
+			@Override
+			public void run()
+			{
+<span class="nc" id="L218">				UpdateManagerDialog dialog = new UpdateManagerDialog(parent, isRemoteUpdateSite);</span>
+<span class="nc bnc" id="L219" title="All 2 branches missed.">				if (isRemoteUpdateSite)</span>
+				{
+<span class="nc" id="L221">					dialog.setUpdateServerName(settings.getUpdateServer());</span>
+<span class="nc" id="L222">					dialog.setUpdateServerPort(settings.getUpdateServerPort());</span>
+<span class="nc" id="L223">					dialog.setUpdateServerPath(settings.getUpdateServerPath());</span>
+<span class="nc" id="L224">					dialog.setUpdateServerChannel(settings.getUpdateServerChannel());</span>
+				}
+				else
+				{
+<span class="nc" id="L228">					dialog.setLocalUpdatePath(settings.getFileSystemUpdatePath());</span>
+				}
+<span class="nc" id="L230">				dialog.addCheckUpdateListener(UpdateControllerImpl.this);</span>
+<span class="nc" id="L231">				dialog.setVisible(true);</span>
+<span class="nc" id="L232">			}</span>
+		});
+<span class="nc" id="L234">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateController#isUpToDate()
+	 */
+	public boolean isUpToDate() throws Exception
+	{
+
+<span class="nc" id="L242">		IUpdateSettings settings = getUpdateSettings();</span>
+
+		// 1. Find the local release.xml file
+<span class="nc" id="L245">		String releaseFilename = _util.getLocalReleaseFile().getAbsolutePath();</span>
+
+		// 2. Load the local release.xml file as a ChannelXmlBean.
+<span class="nc" id="L248">		_installedChannelBean = _util.getLocalReleaseInfo(releaseFilename);</span>
+
+		// 4. Get the release.xml file as a ChannelXmlBean from the server or
+		// filesystem.
+<span class="nc bnc" id="L252" title="All 2 branches missed.">		if (settings.isRemoteUpdateSite())</span>
+		{
+			// 4a. Determine the channel that the user wants (stable or snapshot)
+<span class="nc" id="L255">			String channelName = getDesiredChannel(settings);</span>
+
+<span class="nc" id="L257">			StringBuilder releasePath = new StringBuilder(&quot;/&quot;);</span>
+<span class="nc" id="L258">			releasePath.append(getUpdateServerPath());</span>
+<span class="nc" id="L259">			releasePath.append(&quot;/&quot;);</span>
+<span class="nc" id="L260">			releasePath.append(channelName);</span>
+<span class="nc" id="L261">			releasePath.append(&quot;/&quot;);</span>
+
+<span class="nc" id="L263">			_currentChannelBean =</span>
+<span class="nc" id="L264">				_util.downloadCurrentRelease(getUpdateServerName(), getUpdateServerPortAsInt(),</span>
+<span class="nc" id="L265">					releasePath.toString(), RELEASE_XML_FILENAME, _app.getSquirrelPreferences().getProxySettings());</span>
+<span class="nc" id="L266">		}</span>
+		else
+		{
+			// 4b. Copy the release.xml file to the download directory then load the current release channel bean 
+<span class="nc" id="L270">			FileWrapper updateSiteReleaseXmlFilePath =</span>
+<span class="nc" id="L271">				fileWrapperFactory.create(settings.getFileSystemUpdatePath(), RELEASE_XML_FILENAME);</span>
+<span class="nc" id="L272">			FileWrapper downloadReleaseXmlFile = </span>
+<span class="nc" id="L273">				fileWrapperFactory.create(_util.getDownloadsDir(), RELEASE_XML_FILENAME);</span>
+<span class="nc" id="L274">			_util.copyFile(updateSiteReleaseXmlFilePath, downloadReleaseXmlFile);</span>
+<span class="nc" id="L275">			_currentChannelBean = _util.loadUpdateFromFileSystem(settings.getFileSystemUpdatePath());</span>
+		}
+
+<span class="nc" id="L278">		settings.setLastUpdateCheckTimeMillis(&quot;&quot; + currentTimeMillis());</span>
+<span class="nc" id="L279">		saveUpdateSettings(settings);</span>
+
+		// 5. Is it the same as the local copy, which was placed either by the
+		// installer or the last update?
+<span class="nc" id="L283">		return _currentChannelBean.equals(_installedChannelBean);</span>
+	}
+
+	/**
+	 * This method takes a look at preference for channel and the channel that the user currently has installed
+	 * and logs an info if switching from one to channel to another.
+	 * 
+	 * @return the name of the channel that the user wants.
+	 */
+	private String getDesiredChannel(final IUpdateSettings settings)
+	{
+<span class="nc" id="L294">		String desiredChannel = settings.getUpdateServerChannel().toLowerCase();</span>
+<span class="nc" id="L295">		String currentChannelName = _installedChannelBean.getName();</span>
+
+<span class="nc bnc" id="L297" title="All 2 branches missed.">		if (!currentChannelName.equals(desiredChannel))</span>
+		{
+<span class="nc bnc" id="L299" title="All 2 branches missed.">			if (s_log.isInfoEnabled())</span>
+			{
+<span class="nc" id="L301">				s_log.info(&quot;getDesiredChannel: User is switching distribution channel from &quot;</span>
+					+ &quot;installed channel (&quot; + currentChannelName + &quot;) to new channel (&quot; + desiredChannel + &quot;)&quot;);
+			}
+		}
+<span class="nc" id="L305">		return desiredChannel;</span>
+	}
+
+	/**
+	 * Returns a set of plugins (internal names) of plugins that are currently installed (regardless of whether
+	 * or not they are enabled).
+	 * 
+	 * @return a set of plugin internal names
+	 */
+	public Set&lt;String&gt; getInstalledPlugins()
+	{
+<span class="nc" id="L316">		Set&lt;String&gt; result = new HashSet&lt;String&gt;();</span>
+<span class="nc" id="L317">		IPluginManager pmgr = _app.getPluginManager();</span>
+<span class="nc" id="L318">		PluginInfo[] infos = pmgr.getPluginInformation();</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">		for (PluginInfo info : infos)</span>
+		{
+<span class="nc" id="L321">			result.add(info.getInternalName());</span>
+		}
+<span class="nc" id="L323">		return result;</span>
+	}
+
+	/**
+	 * Go get the files that need to be updated. The specified list could have new files to get (INSTALL),
+	 * existing files to remove (REMOVE). This method's only concern is with fetching the new artifacts to be
+	 * installed.
+	 */
+	public void pullDownUpdateFiles(List&lt;ArtifactStatus&gt; artifactStatusList,
+		DownloadStatusEventHandler handler, boolean releaseVersionWillChange)
+	{
+
+<span class="nc" id="L335">		List&lt;ArtifactStatus&gt; newartifactsList = new ArrayList&lt;ArtifactStatus&gt;();</span>
+
+<span class="nc bnc" id="L337" title="All 2 branches missed.">		for (ArtifactStatus status : artifactStatusList)</span>
+		{
+<span class="nc bnc" id="L339" title="All 2 branches missed.">			if (status.getArtifactAction() == ArtifactAction.INSTALL)</span>
+			{
+<span class="nc" id="L341">				newartifactsList.add(status);</span>
+			}
+<span class="nc" id="L343">		}</span>
+
+<span class="nc bnc" id="L345" title="All 2 branches missed.">		if (newartifactsList.size() &gt; 0)</span>
+		{
+<span class="nc" id="L347">			_downloader = _downloaderFactory.create(newartifactsList);</span>
+<span class="nc" id="L348">			_downloader.setUtil(_util);</span>
+<span class="nc" id="L349">			_downloader.setProxySettings(_app.getSquirrelPreferences().getProxySettings());</span>
+<span class="nc" id="L350">			_downloader.setIsRemoteUpdateSite(isRemoteUpdateSite());</span>
+<span class="nc" id="L351">			_downloader.setHost(getUpdateServerName());</span>
+<span class="nc" id="L352">			_downloader.setPort(Integer.parseInt(getUpdateServerPort()));</span>
+<span class="nc" id="L353">			_downloader.setPath(getUpdateServerPath());</span>
+<span class="nc" id="L354">			_downloader.setFileSystemUpdatePath(getUpdateSettings().getFileSystemUpdatePath());</span>
+<span class="nc" id="L355">			_downloader.addDownloadStatusListener(handler);</span>
+<span class="nc" id="L356">			_downloader.setReleaseVersionWillChange(releaseVersionWillChange);</span>
+<span class="nc" id="L357">			handler.setDownloader(_downloader);</span>
+<span class="nc" id="L358">			_downloader.setChannelName(getUpdateServerChannel().toLowerCase());</span>
+<span class="nc" id="L359">			_downloader.start();</span>
+		}
+		else
+		{
+<span class="nc" id="L363">			showMessage(i18n.CHANGES_RECORDED_TITLE, i18n.CHANGES_RECORDED_MSG);</span>
+		}
+<span class="nc" id="L365">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateController#getUpdateServerChannel()
+	 */
+	public String getUpdateServerChannel()
+	{
+<span class="nc" id="L372">		return getUpdateSettings().getUpdateServerChannel();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateController#getUpdateServerName()
+	 */
+	public String getUpdateServerName()
+	{
+<span class="nc" id="L380">		return getUpdateSettings().getUpdateServer();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateController#isRemoteUpdateSite()
+	 */
+	public boolean isRemoteUpdateSite()
+	{
+<span class="nc" id="L388">		return getUpdateSettings().isRemoteUpdateSite();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateController#getUpdateServerPath()
+	 */
+	public String getUpdateServerPath()
+	{
+<span class="nc" id="L396">		return getUpdateSettings().getUpdateServerPath();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateController#getUpdateServerPort()
+	 */
+	public String getUpdateServerPort()
+	{
+<span class="nc" id="L404">		return getUpdateSettings().getUpdateServerPort();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateController#getUpdateServerPortAsInt()
+	 */
+	public int getUpdateServerPortAsInt()
+	{
+<span class="nc" id="L412">		return Integer.parseInt(getUpdateServerPort());</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateController# showConfirmMessage(java.lang.String,
+	 *      java.lang.String)
+	 */
+	public boolean showConfirmMessage(String title, String msg)
+	{
+<span class="nc" id="L421">		int result =</span>
+<span class="nc" id="L422">			_jOptionPaneService.showConfirmDialog(_app.getMainFrame(), msg, title, JOptionPane.YES_NO_OPTION,</span>
+				JOptionPane.QUESTION_MESSAGE);
+<span class="nc bnc" id="L424" title="All 2 branches missed.">		return (result == JOptionPane.YES_OPTION);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateController#showMessage(java.lang.String,
+	 *      java.lang.String)
+	 */
+	public void showMessage(String title, String msg)
+	{
+<span class="nc" id="L433">		_jOptionPaneService.showMessageDialog(_app.getMainFrame(), msg, title, JOptionPane.INFORMATION_MESSAGE);</span>
+
+<span class="nc" id="L435">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateController#showErrorMessage(java.lang.String,
+	 *      java.lang.String)
+	 */
+	public void showErrorMessage(final String title, final String msg, final Exception e)
+	{
+<span class="nc" id="L443">		s_log.error(msg, e);</span>
+<span class="nc" id="L444">		_jOptionPaneService.showMessageDialog(_app.getMainFrame(), msg, title, JOptionPane.ERROR_MESSAGE);</span>
+<span class="nc" id="L445">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateController#showErrorMessage(java.lang.String,
+	 *      java.lang.String)
+	 */
+	public void showErrorMessage(String title, String msg)
+	{
+<span class="nc" id="L453">		showErrorMessage(title, msg, null);</span>
+<span class="nc" id="L454">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateController#isTimeToCheckForUpdates()
+	 */
+	public boolean isTimeToCheckForUpdates()
+	{
+<span class="nc" id="L461">		IUpdateSettings settings = getUpdateSettings();</span>
+
+<span class="nc bnc" id="L463" title="All 2 branches missed.">		if (!settings.isEnableAutomaticUpdates()) { return false; }</span>
+
+<span class="nc" id="L465">		long lastCheckTime = Long.parseLong(settings.getLastUpdateCheckTimeMillis());</span>
+<span class="nc" id="L466">		long delta = currentTimeMillis() - lastCheckTime;</span>
+
+<span class="nc" id="L468">		UpdateCheckFrequency updateCheckFrequency = _util.getUpdateCheckFrequency(settings);</span>
+
+<span class="nc" id="L470">		return updateCheckFrequency.isTimeForUpdateCheck(delta);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateController#promptUserToDownloadAvailableUpdates()
+	 */
+	public void promptUserToDownloadAvailableUpdates()
+	{
+<span class="nc" id="L478">		boolean userSaidYes =</span>
+<span class="nc" id="L479">			showConfirmMessage(i18n.PROMPT_TO_DOWNLOAD_AVAILABLE_UPDATES_TITLE,</span>
+				i18n.PROMPT_TO_DOWNLOAD_AVAILABLE_UPDATES_MSG);
+<span class="nc bnc" id="L481" title="All 2 branches missed.">		if (userSaidYes)</span>
+		{
+<span class="nc" id="L483">			showUpdateDialog();</span>
+		}
+		else
+		{
+<span class="nc" id="L487">			s_log.info(&quot;promptUserToDownloadAvailableUpdates: user decided not to download updates at &quot;</span>
+<span class="nc" id="L488">				+ &quot;this time (currentTimeMillis=&quot; + System.currentTimeMillis() + &quot;)&quot;);</span>
+		}
+<span class="nc" id="L490">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateController#checkUpToDate()
+	 */
+	public void checkUpToDate()
+	{
+<span class="nc" id="L497">		UpdateCheckRunnableCallback callback = new UpdateCheckRunnableCallback()</span>
+<span class="nc" id="L498">		{</span>
+
+			public void updateCheckComplete(final boolean isUpdateToDate,
+				final ChannelXmlBean installedChannelXmlBean, final ChannelXmlBean currentChannelXmlBean)
+			{
+<span class="nc" id="L503">				GUIUtils.processOnSwingEventThread(new Runnable()</span>
+<span class="nc" id="L504">				{</span>
+					public void run()
+					{
+<span class="nc bnc" id="L507" title="All 2 branches missed.">						if (isUpdateToDate)</span>
+						{
+<span class="nc" id="L509">							showMessage(i18n.UPDATE_CHECK_TITLE, i18n.SOFTWARE_VERSION_CURRENT_MSG);</span>
+						}
+						// build data
+<span class="nc" id="L512">						_currentChannelBean = currentChannelXmlBean;</span>
+<span class="nc" id="L513">						_installedChannelBean = installedChannelXmlBean;</span>
+<span class="nc" id="L514">						List&lt;ArtifactStatus&gt; artifactStatusItems = _util.getArtifactStatus(_currentChannelBean);</span>
+<span class="nc" id="L515">						String installedVersion = _installedChannelBean.getCurrentRelease().getVersion();</span>
+<span class="nc" id="L516">						String currentVersion = _currentChannelBean.getCurrentRelease().getVersion();</span>
+
+						// build ui
+<span class="nc" id="L519">						showUpdateSummaryDialog(artifactStatusItems, installedVersion, currentVersion);</span>
+<span class="nc" id="L520">					}</span>
+
+				});
+<span class="nc" id="L523">			}</span>
+
+			public void updateCheckFailed(final Exception e)
+			{
+<span class="nc bnc" id="L527" title="All 2 branches missed.">				if (e == null)</span>
+				{
+<span class="nc" id="L529">					showErrorMessage(i18n.UPDATE_CHECK_FAILED_TITLE, i18n.RELEASE_FILE_DOWNLOAD_FAILED_MSG);</span>
+				}
+<span class="nc bnc" id="L531" title="All 2 branches missed.">				else if (e instanceof FileNotFoundException)</span>
+				{
+					String msg =
+<span class="nc" id="L534">						s_stringMgr.getString(&quot;UpdateControllerImpl.localReleaseFileNotFound&quot;,</span>
+<span class="nc" id="L535">							_util.getSquirrelHomeDir() + &quot;/&quot; + UpdateUtil.LOCAL_UPDATE_DIR_NAME + &quot;/&quot;</span>
+								+ RELEASE_XML_FILENAME);
+<span class="nc" id="L537">					showErrorMessage(i18n.UPDATE_CHECK_FAILED_TITLE, msg);</span>
+<span class="nc" id="L538">				}</span>
+				else
+				{
+<span class="nc" id="L541">					showErrorMessage(i18n.UPDATE_CHECK_FAILED_TITLE, i18n.EXCEPTION_MSG + e.getClass().getName()</span>
+<span class="nc" id="L542">						+ &quot;:&quot; + e.getMessage(), e);</span>
+				}
+<span class="nc" id="L544">			}</span>
+
+		};
+
+<span class="nc" id="L548">		ReleaseFileUpdateCheckTask runnable =</span>
+<span class="nc" id="L549">			new ReleaseFileUpdateCheckTask(callback, getUpdateSettings(), _util, _app);</span>
+<span class="nc" id="L550">		runnable.start();</span>
+
+<span class="nc" id="L552">	}</span>
+
+	private void showUpdateSummaryDialog(final List&lt;ArtifactStatus&gt; artifactStatusItems,
+		final String installedVersion, final String currentVersion)
+	{
+<span class="nc" id="L557">		GUIUtils.processOnSwingEventThread(new Runnable()</span>
+<span class="nc" id="L558">		{</span>
+
+			public void run()
+			{
+<span class="nc" id="L562">				UpdateSummaryDialog dialog =</span>
+<span class="nc" id="L563">					new UpdateSummaryDialog(_app.getMainFrame(), artifactStatusItems, UpdateControllerImpl.this);</span>
+<span class="nc" id="L564">				dialog.setInstalledVersion(installedVersion);</span>
+<span class="nc" id="L565">				dialog.setAvailableVersion(currentVersion);</span>
+<span class="nc" id="L566">				GUIUtils.centerWithinParent(_app.getMainFrame());</span>
+<span class="nc" id="L567">				dialog.setVisible(true);</span>
+<span class="nc" id="L568">			}</span>
+
+		});
+<span class="nc" id="L571">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateController#applyChanges(java.util.List, boolean)
+	 */
+	public void applyChanges(List&lt;ArtifactStatus&gt; artifactStatusList, boolean releaseVersionWillChange)
+	{
+		try
+		{
+			// Persists the change list to the update directory.
+<span class="nc" id="L581">			_util.saveChangeList(artifactStatusList);</span>
+
+			// Kick off a thread to go and fetch the files one-by-one and register
+			// callback class - DownloadStatusEventHandler
+<span class="nc" id="L585">			pullDownUpdateFiles(artifactStatusList, new DownloadStatusEventHandler(this),</span>
+				releaseVersionWillChange);
+		}
+<span class="nc" id="L588">		catch (Exception e)</span>
+		{
+<span class="nc" id="L590">			showErrorMessage(i18n.UPDATE_CHECK_FAILED_TITLE, i18n.EXCEPTION_MSG + e.getClass().getName() + &quot;:&quot;</span>
+<span class="nc" id="L591">				+ e.getMessage(), e);</span>
+<span class="nc" id="L592">		}</span>
+
+<span class="nc" id="L594">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.gui.CheckUpdateListener#showPreferences()
+	 */
+	public void showPreferences()
+	{
+		// 1. Wait for user to click ok/close
+<span class="nc" id="L602">		listener.setWaitingForOk(true);</span>
+
+		// 2. Display global preferences
+<span class="nc" id="L605">		GlobalPreferencesSheet.showSheet(_app, UpdatePreferencesPanel.class);</span>
+
+<span class="nc" id="L607">	}</span>
+
+	public JFrame getMainFrame()
+	{
+<span class="nc" id="L611">		return _app.getMainFrame();</span>
+	}
+
+	/* Helper methods */
+
+	/**
+	 * Returns the UpdateSettings from preferences.
+	 * 
+	 * @return
+	 */
+	private IUpdateSettings getUpdateSettings()
+	{
+<span class="nc" id="L623">		return _app.getSquirrelPreferences().getUpdateSettings();</span>
+	}
+
+	/**
+	 * @param settings
+	 */
+	private void saveUpdateSettings(final IUpdateSettings settings)
+	{
+<span class="nc" id="L631">		_app.getSquirrelPreferences().setUpdateSettings(settings);</span>
+<span class="nc" id="L632">	}</span>
+
+<span class="nc" id="L634">	private class GlobalPrefsListener implements GlobalPreferencesActionListener</span>
+	{
+
+<span class="nc" id="L637">		private boolean waitingForOk = false;</span>
+
+		public void onDisplayGlobalPreferences()
+		{
+<span class="nc" id="L641">		}</span>
+
+		public void onPerformClose()
+		{
+<span class="nc" id="L645">			showDialog();</span>
+<span class="nc" id="L646">		}</span>
+
+		public void onPerformOk()
+		{
+<span class="nc" id="L650">			showDialog();</span>
+<span class="nc" id="L651">		}</span>
+
+		/**
+		 * Re-show the dialog if we were waiting for Ok/Close.
+		 */
+		private void showDialog()
+		{
+			// 2. When the user clicks ok, then display update dialog again.
+<span class="nc bnc" id="L659" title="All 2 branches missed.">			if (waitingForOk)</span>
+			{
+<span class="nc" id="L661">				waitingForOk = false;</span>
+<span class="nc" id="L662">				showUpdateDialog();</span>
+			}
+<span class="nc" id="L664">		}</span>
+
+		/**
+		 * @param waitingForOk
+		 *           the waitingForOk to set
+		 */
+		public void setWaitingForOk(boolean waitingForOk)
+		{
+<span class="nc" id="L672">			this.waitingForOk = waitingForOk;</span>
+<span class="nc" id="L673">		}</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

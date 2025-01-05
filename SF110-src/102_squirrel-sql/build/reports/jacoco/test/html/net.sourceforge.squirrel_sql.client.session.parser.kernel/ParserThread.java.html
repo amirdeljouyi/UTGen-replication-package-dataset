@@ -1,0 +1,715 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ParserThread.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.session.parser.kernel</a> &gt; <span class="el_source">ParserThread.java</span></div><h1>ParserThread.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (C) 2002 Christian Sell
+ * csell@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ * created by cse, 07.10.2002 11:57:54
+ *
+ * @version $Id: ParserThread.java,v 1.10 2010-02-11 00:16:27 gerdwagner Exp $
+ */
+package net.sourceforge.squirrel_sql.client.session.parser.kernel;
+
+import net.sourceforge.squirrel_sql.client.session.parser.kernel.completions.ErrorListener;
+import net.sourceforge.squirrel_sql.client.session.parser.kernel.completions.SQLSelectStatementListener;
+import net.sourceforge.squirrel_sql.client.session.parser.kernel.completions.SQLStatement;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+import java.text.CharacterIterator;
+import java.text.StringCharacterIterator;
+import java.util.Vector;
+
+/**
+ * a thread subclass which drives the SQL parser. The thread reads from a _workingBuffer
+ * which always blocks until data is made available. It can thus be run in the
+ * background, parsing the input from the text UI as it arrives.
+ *
+ * &lt;em&gt;Unfortunately, it depends on the generated parser/scanner and therefore
+ * cannot be generalized, unless the generated classes are made to implement public
+ * interfaces&lt;/em&gt;
+ */
+public final class ParserThread extends Thread
+{
+<span class="nc" id="L48">   private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L49">      StringManagerFactory.getStringManager(ParserThread.class);</span>
+
+<span class="nc" id="L51">   private static final ILogger s_log = LoggerController.createLogger(ParserThread.class);</span>
+
+
+   public static final String PARSER_THREAD_NM = &quot;SQLParserThread&quot;;
+
+	private String _pendingString;
+	private Errors _errors;
+	private SQLSchema _schema;
+	private SQLStatement _curSQLSelectStat;
+
+
+<span class="nc" id="L62">	private Vector&lt;TableAliasInfo&gt; _workingTableAliasInfos = </span>
+	    new Vector&lt;TableAliasInfo&gt;();
+<span class="nc" id="L64">	private TableAliasInfo[] _lastRunTableAliasInfos = new TableAliasInfo[0];</span>
+<span class="nc" id="L65">	private Vector&lt;ErrorInfo&gt; _workingErrorInfos = new Vector&lt;ErrorInfo&gt;();</span>
+<span class="nc" id="L66">	private ErrorInfo[] _lastRunErrorInfos = new ErrorInfo[0];</span>
+
+
+	private volatile boolean _exitThread;
+	private ParsingFinishedListener _parsingFinishedListener;
+
+	private int _lastParserRunOffset;
+<span class="nc" id="L73">	private int _lastErrEnd = -1;</span>
+<span class="nc" id="L74">   private int _nextStatBegin = -1;</span>
+
+	private String _workingString;
+	private IncrementalBuffer _workingBuffer;
+	private boolean _errorDetected;
+
+   private boolean _couldNotDetectPosErrorLogged;
+
+   public ParserThread(SQLSchema schema)
+	{
+<span class="nc" id="L84">		super(PARSER_THREAD_NM);</span>
+<span class="nc" id="L85">      this._schema = schema;</span>
+
+<span class="nc" id="L87">		ErrorListener errListener = new ErrorListener()</span>
+<span class="nc" id="L88">		{</span>
+			public void errorDetected(String message, int line, int column)
+			{
+<span class="nc" id="L91">				onErrorDetected(message, line, column);</span>
+<span class="nc" id="L92">			}</span>
+		};
+
+
+<span class="nc" id="L96">		this._errors = new Errors(errListener);</span>
+
+<span class="nc" id="L98">      setPriority(Thread.MIN_PRIORITY);</span>
+
+<span class="nc" id="L100">		start();</span>
+<span class="nc" id="L101">	}</span>
+
+	private void onErrorDetected(String message, int line, int column)
+	{
+<span class="nc" id="L105">		_errorDetected = true;</span>
+<span class="nc" id="L106">		int errPos = getPos(line, column);</span>
+<span class="nc" id="L107">		_lastErrEnd = getTokenEnd(errPos);</span>
+<span class="nc" id="L108">      _nextStatBegin = predictNextStatementBegin(errPos);</span>
+
+<span class="nc bnc" id="L110" title="All 2 branches missed.">      if(_lastErrEnd &gt; _nextStatBegin)</span>
+      {
+<span class="nc" id="L112">         return;</span>
+      }
+
+<span class="nc" id="L115">      int beginPos = _lastParserRunOffset + errPos;</span>
+<span class="nc" id="L116">      int endPos = _lastParserRunOffset + _lastErrEnd;</span>
+
+<span class="nc bnc" id="L118" title="All 2 branches missed.">      if(beginPos &lt; endPos)</span>
+      {
+<span class="nc" id="L120">         _workingErrorInfos.add(new ErrorInfo(message, _lastParserRunOffset + errPos , _lastParserRunOffset + _lastErrEnd-1));</span>
+      }
+<span class="nc" id="L122">	}</span>
+
+   private int predictNextStatementBegin(int errPos)
+   {
+<span class="nc" id="L126">      int commentIntervals[][] = calculateCommentIntervals();</span>
+
+//      for (int i = 0; i &lt; commentIntervals.length; i++)
+//      {
+//         System.out.println(&quot;###################&quot;);
+//         System.out.println(_workingString.substring(commentIntervals[i][0], commentIntervals[i][1]));
+//         System.out.println(&quot;###################&quot;);
+//      }
+
+
+<span class="nc" id="L136">      int ret = errPos;</span>
+<span class="nc bnc" id="L137" title="All 6 branches missed.">      while(   _workingString.length() &gt; ret &amp;&amp; (false == startsWithBeginKeyWord(ret) || isInComment(ret, commentIntervals)) )</span>
+      {
+<span class="nc" id="L139">         ++ret;</span>
+      }
+
+//      if(_workingString.length() &gt; ret)
+//      {
+//         System.out.println(&quot;*****************************BEGIN startsWithBeginKeyWord(ret) &quot; + startsWithBeginKeyWord(ret) + &quot; isInComment(ret, commentIntervals)&quot; + isInComment(ret, commentIntervals));
+//         System.out.println(_workingString.substring(ret));
+//      }
+
+<span class="nc" id="L148">      return ret;</span>
+   }
+
+   private int[][] calculateCommentIntervals()
+   {
+<span class="nc" id="L153">      Vector&lt;int[]&gt; ret = new Vector&lt;int[]&gt;();</span>
+<span class="nc" id="L154">      boolean inMultiLineComment = false;</span>
+<span class="nc" id="L155">      boolean inLineComment = false;</span>
+<span class="nc" id="L156">      boolean isaSlash = false;</span>
+<span class="nc" id="L157">      boolean isaStar = false;</span>
+<span class="nc" id="L158">      boolean isaMinus = false;</span>
+
+<span class="nc" id="L160">      int[] curComment = null;</span>
+
+<span class="nc bnc" id="L162" title="All 2 branches missed.">      for(int i=0; i &lt; _workingString.length(); ++i)</span>
+      {
+<span class="nc bnc" id="L164" title="All 8 branches missed.">         if('*' == _workingString.charAt(i) &amp;&amp; isaSlash &amp;&amp; false == inMultiLineComment &amp;&amp; false == inLineComment)</span>
+         {
+<span class="nc" id="L166">            inMultiLineComment = true;</span>
+<span class="nc" id="L167">            curComment = new int[]{i-1, -1};</span>
+         }
+<span class="nc bnc" id="L169" title="All 8 branches missed.">         else if('/' == _workingString.charAt(i) &amp;&amp; isaStar &amp;&amp; false == inLineComment &amp;&amp; inMultiLineComment)</span>
+         {
+<span class="nc" id="L171">            inMultiLineComment = false;</span>
+<span class="nc" id="L172">            curComment[1] = i;</span>
+<span class="nc" id="L173">            ret.add(curComment);</span>
+<span class="nc" id="L174">            curComment = null;</span>
+
+         }
+<span class="nc bnc" id="L177" title="All 8 branches missed.">         else if('-' == _workingString.charAt(i) &amp;&amp; isaMinus &amp;&amp; false == inMultiLineComment &amp;&amp; false == inLineComment)</span>
+         {
+<span class="nc" id="L179">            inLineComment = true;</span>
+<span class="nc" id="L180">            curComment = new int[]{i-1, -1};</span>
+         }
+<span class="nc bnc" id="L182" title="All 6 branches missed.">         else if('\n' == _workingString.charAt(i) &amp;&amp; false == inMultiLineComment &amp;&amp; inLineComment)</span>
+         {
+<span class="nc" id="L184">            inLineComment = false;</span>
+<span class="nc" id="L185">            curComment[1] = i;</span>
+<span class="nc" id="L186">            ret.add(curComment);</span>
+<span class="nc" id="L187">            curComment = null;</span>
+         }
+
+
+
+<span class="nc bnc" id="L192" title="All 2 branches missed.">         if('/' == _workingString.charAt(i))</span>
+         {
+<span class="nc" id="L194">            isaSlash = true;</span>
+         }
+<span class="nc bnc" id="L196" title="All 2 branches missed.">         else if('*' == _workingString.charAt(i))</span>
+         {
+<span class="nc" id="L198">            isaStar = true;</span>
+         }
+<span class="nc bnc" id="L200" title="All 2 branches missed.">         else if('-' == _workingString.charAt(i))</span>
+         {
+<span class="nc" id="L202">            isaMinus = true;</span>
+         }
+         else
+         {
+<span class="nc" id="L206">            isaSlash = false;</span>
+<span class="nc" id="L207">            isaStar = false;</span>
+<span class="nc" id="L208">            isaMinus = false;</span>
+         }
+      }
+
+<span class="nc bnc" id="L212" title="All 2 branches missed.">      if(null != curComment)</span>
+      {
+<span class="nc" id="L214">         curComment[1] = _workingString.length();</span>
+      }
+
+<span class="nc" id="L217">      return ret.toArray(new int[ret.size()][]);</span>
+
+
+   }
+
+   private boolean isInComment(int ret, int commentIntervals[][])
+   {
+<span class="nc bnc" id="L224" title="All 2 branches missed.">      for(int i=0; i &lt; commentIntervals.length; ++i)</span>
+      {
+<span class="nc bnc" id="L226" title="All 4 branches missed.">         if(commentIntervals[i][0] &lt;= ret &amp;&amp; ret &lt;= commentIntervals[i][1])</span>
+         {
+<span class="nc" id="L228">            return true;</span>
+         }
+      }
+
+<span class="nc" id="L232">      return false;</span>
+   }
+
+   private boolean startsWithBeginKeyWord(int ret)
+   {
+<span class="nc bnc" id="L237" title="All 2 branches missed.">      return    startsWithIgnoreCase(ret, &quot;SELECT&quot;)</span>
+<span class="nc bnc" id="L238" title="All 2 branches missed.">             || startsWithIgnoreCase(ret, &quot;UPDATE&quot;)</span>
+<span class="nc bnc" id="L239" title="All 2 branches missed.">             || startsWithIgnoreCase(ret, &quot;DELETE&quot;)</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">             || startsWithIgnoreCase(ret, &quot;INSERT&quot;)</span>
+<span class="nc bnc" id="L241" title="All 2 branches missed.">             || startsWithIgnoreCase(ret, &quot;ALTER&quot;)</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">             || startsWithIgnoreCase(ret, &quot;CREATE&quot;)</span>
+<span class="nc bnc" id="L243" title="All 2 branches missed.">             || startsWithIgnoreCase(ret, &quot;DROP&quot;);</span>
+   }
+
+   private boolean startsWithIgnoreCase(int ret, String keyWord)
+   {
+<span class="nc" id="L248">      int beginPos = ret;</span>
+      int endPos;
+
+<span class="nc bnc" id="L251" title="All 2 branches missed.">      if(ret == 0)</span>
+      {
+         // Either are at teh beginning ...
+<span class="nc" id="L254">         beginPos = 0;</span>
+      }
+<span class="nc bnc" id="L256" title="All 2 branches missed.">      else if(Character.isWhitespace(_workingString.charAt(ret-1)))</span>
+      {
+         // or a white space must be in front of the keyword.  
+<span class="nc" id="L259">         beginPos = ret;</span>
+      }
+      else
+      {
+<span class="nc" id="L263">         return false;</span>
+      }
+
+<span class="nc bnc" id="L266" title="All 2 branches missed.">      if(_workingString.length() == beginPos + keyWord.length())</span>
+      {
+<span class="nc" id="L268">         endPos = beginPos + keyWord.length();</span>
+      }
+<span class="nc bnc" id="L270" title="All 4 branches missed.">      else if(_workingString.length() &gt; beginPos + keyWord.length() &amp;&amp; Character.isWhitespace(_workingString.charAt(beginPos + keyWord.length())))</span>
+      {
+<span class="nc" id="L272">         endPos = beginPos + keyWord.length();</span>
+      }
+      else
+      {
+<span class="nc" id="L276">         return false;</span>
+      }
+
+<span class="nc" id="L279">      return keyWord.equalsIgnoreCase(_workingString.substring(beginPos, endPos));</span>
+   }
+
+
+   private int getTokenEnd(int errPos)
+	{
+<span class="nc" id="L285">		int ret = errPos;</span>
+<span class="nc bnc" id="L286" title="All 4 branches missed.">		while(_workingString.length() &gt; ret &amp;&amp; false == Character.isWhitespace(_workingString.charAt(ret)))</span>
+		{
+<span class="nc" id="L288">			++ret;</span>
+		}
+<span class="nc" id="L290">		return ret;</span>
+	}
+
+
+	private int getPos(int line, int column)
+	{
+<span class="nc" id="L296">		int ix = 0;</span>
+
+<span class="nc bnc" id="L298" title="All 2 branches missed.">      for (int i = 0; i &lt; line - 1; i++)</span>
+      {
+<span class="nc" id="L300">         ix = getNextLineStartIx(ix);</span>
+
+<span class="nc bnc" id="L302" title="All 2 branches missed.">         if (Integer.MAX_VALUE == ix)</span>
+         {
+<span class="nc bnc" id="L304" title="All 2 branches missed.">            if (false == _couldNotDetectPosErrorLogged)</span>
+            {
+<span class="nc" id="L306">               _couldNotDetectPosErrorLogged = true;</span>
+<span class="nc" id="L307">               String message = &quot;Could not find position for line = &quot; + line + &quot;, column = &quot; + column;</span>
+<span class="nc" id="L308">               s_log.error(message, new IllegalStateException(message));</span>
+            }
+
+<span class="nc" id="L311">            return _workingString.length();</span>
+         }
+
+      }
+<span class="nc" id="L315">      ix += column;</span>
+
+<span class="nc" id="L317">		return ix - 1; // -1 because column starts with 1 put pos with 0</span>
+	}
+
+   private int getNextLineStartIx(int begIx)
+   {
+      int buf;
+
+<span class="nc" id="L324">      int candidate1 = Integer.MAX_VALUE;</span>
+<span class="nc" id="L325">      buf = _workingString.indexOf('\n', begIx);</span>
+<span class="nc bnc" id="L326" title="All 2 branches missed.">      if(0 &lt;= buf)</span>
+      {
+<span class="nc" id="L328">         candidate1 = buf + 1;</span>
+      }
+
+<span class="nc" id="L331">      int candidate2 = Integer.MAX_VALUE;</span>
+<span class="nc" id="L332">      buf = _workingString.indexOf('\r', begIx);</span>
+<span class="nc bnc" id="L333" title="All 2 branches missed.">      if(0 &lt;= buf)</span>
+      {
+<span class="nc bnc" id="L335" title="All 4 branches missed.">         if(buf + 1 &lt;_workingString.length() &amp;&amp; '\n' == _workingString.charAt(buf+1))</span>
+         {
+<span class="nc" id="L337">            candidate2 = buf + 2;</span>
+         }
+         else
+         {
+<span class="nc" id="L341">            candidate2 = buf + 1;</span>
+         }
+      }
+
+<span class="nc" id="L345">      int ret = Math.min(candidate1, candidate2);</span>
+
+
+<span class="nc" id="L348">      return ret;</span>
+   }
+
+
+
+	public void notifyParser(String sqlText)
+	{
+<span class="nc" id="L355">		synchronized(this)</span>
+		{
+<span class="nc" id="L357">			_pendingString = sqlText;</span>
+<span class="nc" id="L358">			this.notify();</span>
+<span class="nc" id="L359">		}</span>
+<span class="nc" id="L360">	}</span>
+
+	public void exitThread()
+	{
+<span class="nc" id="L364">		_exitThread = true;</span>
+<span class="nc" id="L365">		synchronized(this)</span>
+		{
+<span class="nc" id="L367">			this.notify();</span>
+<span class="nc" id="L368">		}</span>
+<span class="nc" id="L369">	}</span>
+
+	public void setParsingFinishedListener(ParsingFinishedListener parsingFinishedListener)
+	{
+<span class="nc" id="L373">		_parsingFinishedListener = parsingFinishedListener;</span>
+<span class="nc" id="L374">	}</span>
+
+
+	public void run()
+	{
+		try
+		{
+			while(true)
+			{
+<span class="nc" id="L383">				synchronized(this)</span>
+				{
+<span class="nc" id="L385">					this.wait();</span>
+<span class="nc" id="L386">					_workingString = _pendingString;</span>
+<span class="nc" id="L387">					_workingBuffer = new IncrementalBuffer(new StringCharacterIterator(_workingString));</span>
+<span class="nc" id="L388">				}</span>
+
+<span class="nc bnc" id="L390" title="All 2 branches missed.">				if(_exitThread)</span>
+				{
+<span class="nc" id="L392">					break;</span>
+				}
+
+				//////////////////////////////////////////////////////////////
+				// On Errors we restart the parser behind the error
+<span class="nc" id="L397">				_errorDetected = false;</span>
+<span class="nc" id="L398">				runParser();</span>
+<span class="nc bnc" id="L399" title="All 2 branches missed.">				while(_errorDetected)</span>
+				{
+<span class="nc bnc" id="L401" title="All 2 branches missed.">					if(_workingString.length() &gt; _nextStatBegin)</span>
+					{
+<span class="nc" id="L403">						_workingString = _workingString.substring(_nextStatBegin, _workingString.length());</span>
+<span class="nc bnc" id="L404" title="All 2 branches missed.">						if(&quot;&quot;.equals(_workingString.trim()))</span>
+						{
+<span class="nc" id="L406">							break;</span>
+						}
+					}
+					else
+					{
+						break;
+					}
+
+<span class="nc" id="L414">					_lastParserRunOffset += _nextStatBegin;</span>
+<span class="nc" id="L415">					_workingBuffer = new IncrementalBuffer(new StringCharacterIterator(_workingString));</span>
+
+<span class="nc" id="L417">					_errorDetected = false;</span>
+<span class="nc" id="L418">					runParser();</span>
+				}
+
+				//
+				////////////////////////////////////////////////////////////
+
+
+				///////////////////////////////////////////////////////////
+				// We are through with parsing. Now we store the outcome
+				// in _lastRun... and tell the listeners.
+<span class="nc" id="L428">				_lastRunTableAliasInfos = _workingTableAliasInfos.toArray(new TableAliasInfo[_workingTableAliasInfos.size()]);</span>
+<span class="nc" id="L429">				_lastRunErrorInfos = _workingErrorInfos.toArray(new ErrorInfo[_workingErrorInfos.size()]);</span>
+<span class="nc" id="L430">				_workingTableAliasInfos.clear();</span>
+<span class="nc" id="L431">				_workingErrorInfos.clear();</span>
+<span class="nc" id="L432">				_lastParserRunOffset = 0;</span>
+<span class="nc bnc" id="L433" title="All 2 branches missed.">				if(null != _parsingFinishedListener)</span>
+				{
+<span class="nc" id="L435">					_parsingFinishedListener.parsingFinished();</span>
+				}
+				//
+				/////////////////////////////////////////////////////////////
+
+<span class="nc bnc" id="L440" title="All 2 branches missed.">				if(_exitThread)</span>
+				{
+<span class="nc" id="L442">					break;</span>
+				}
+			}
+		}
+<span class="nc" id="L446">      catch(ExitParserThreadRequestException eptre)</span>
+      {
+
+      }
+<span class="nc" id="L450">		catch (Exception e)</span>
+		{
+<span class="nc bnc" id="L452" title="All 2 branches missed.">			if(null != _parsingFinishedListener)</span>
+			{
+<span class="nc" id="L454">				_parsingFinishedListener.parserExitedOnException(e);</span>
+			}
+<span class="nc" id="L456">			e.printStackTrace();</span>
+<span class="nc" id="L457">		}</span>
+<span class="nc" id="L458">	}</span>
+
+	private void runParser()
+	{
+<span class="nc" id="L462">		_errors.reset();</span>
+<span class="nc" id="L463">		Scanner scanner = new Scanner(_workingBuffer, _errors);</span>
+
+<span class="nc" id="L465">		Parser parser = new Parser(scanner, _schema);</span>
+
+<span class="nc" id="L467">		parser.addParserListener(new ParserListener()</span>
+<span class="nc" id="L468">		{</span>
+			public void statementAdded(SQLStatement statement)
+			{
+<span class="nc" id="L471">				onStatementAdded(statement);</span>
+<span class="nc" id="L472">			}</span>
+		});
+
+<span class="nc" id="L475">		parser.addSQLSelectStatementListener(new SQLSelectStatementListener()</span>
+<span class="nc" id="L476">		{</span>
+			public void aliasDefined(String tableName, String aliasName)
+			{
+<span class="nc" id="L479">				onAliasDefined(tableName, aliasName);</span>
+<span class="nc" id="L480">			}</span>
+		});
+
+
+<span class="nc" id="L484">		parser.parse();</span>
+<span class="nc" id="L485">	}</span>
+
+	private void onStatementAdded(SQLStatement statement)
+	{
+<span class="nc" id="L489">		_curSQLSelectStat = statement;</span>
+<span class="nc" id="L490">	}</span>
+
+	private void onAliasDefined(String tableName, String aliasName)
+	{
+<span class="nc" id="L494">		_workingTableAliasInfos.add(new TableAliasInfo(aliasName, tableName, _curSQLSelectStat.getStart() + _lastParserRunOffset));</span>
+<span class="nc" id="L495">	}</span>
+
+	public TableAliasInfo[] getTableAliasInfos()
+	{
+<span class="nc" id="L499">		return _lastRunTableAliasInfos;</span>
+	}
+
+	public ErrorInfo[] getErrorInfos()
+	{
+<span class="nc" id="L504">		return _lastRunErrorInfos;</span>
+	}
+
+   /**
+	 * terminate the parser
+	 */
+	public void end()
+	{
+<span class="nc" id="L512">		IncrementalBuffer oldBuffer = this._workingBuffer;</span>
+<span class="nc" id="L513">		this._workingBuffer = null;</span>
+<span class="nc" id="L514">		oldBuffer.eof();</span>
+<span class="nc" id="L515">	}</span>
+
+	/**
+	 * accept the next character sequence to be parsed
+	 * @param chars
+	 */
+	public void accept(CharacterIterator chars)
+	{
+<span class="nc" id="L523">		_workingBuffer.waitChars();     //wait for pending chars to be processed</span>
+<span class="nc" id="L524">		_workingBuffer.accept(chars);   //post new characters</span>
+<span class="nc" id="L525">	}</span>
+
+	/**
+	 * This is a Scanner.Buffer implementation which blocks until character data is
+	 * available. The {@link #read} method is invoked from the background parsing thread.
+	 * The parsing thread can be terimated by calling the {@link #eof} method on this object
+	 */
+	private class IncrementalBuffer extends Scanner.Buffer
+	{
+		private CharacterIterator chars;
+		private char current;
+		private boolean atEnd;
+
+		IncrementalBuffer(CharacterIterator chars)
+<span class="nc" id="L539">		{</span>
+<span class="nc" id="L540">			this.atEnd = false;</span>
+<span class="nc" id="L541">			this.chars = chars;</span>
+<span class="nc bnc" id="L542" title="All 2 branches missed.">			this.current = chars != null ? chars.first() : CharacterIterator.DONE;</span>
+<span class="nc" id="L543">		}</span>
+
+		/**
+		 * read the next character. This method is invoked from the parser thread
+		 * @return the next available character
+		 */
+		protected synchronized char read()
+		{
+
+<span class="nc bnc" id="L552" title="All 2 branches missed.">         if(_exitThread)</span>
+         {
+<span class="nc" id="L554">            throw new ExitParserThreadRequestException();</span>
+         }
+
+<span class="nc bnc" id="L557" title="All 2 branches missed.">			if (atEnd)</span>
+			{
+<span class="nc" id="L559">				return eof;</span>
+			}
+			else
+			{
+<span class="nc bnc" id="L563" title="All 2 branches missed.">				if (current == CharacterIterator.DONE)</span>
+				{
+<span class="nc bnc" id="L565" title="All 2 branches missed.">					if (chars != null)</span>
+					{
+<span class="nc" id="L567">						synchronized (chars)</span>
+						{
+<span class="nc" id="L569">							chars.notify(); //tell the UI that this _workingBuffer is through</span>
+<span class="nc" id="L570">						}</span>
+					}
+//					try
+//					{
+//						wait();
+//					}
+//					catch (InterruptedException e)
+//					{
+//					}
+				}
+<span class="nc bnc" id="L580" title="All 2 branches missed.">				if (atEnd)</span>
+				{
+<span class="nc bnc" id="L582" title="All 2 branches missed.">               if(_exitThread)</span>
+               {
+<span class="nc" id="L584">                  throw new ExitParserThreadRequestException();</span>
+               }
+
+<span class="nc" id="L587">					current = eof;</span>
+<span class="nc" id="L588">					return eof;</span>
+				}
+				else
+				{
+<span class="nc" id="L592">					char prev = current;</span>
+
+<span class="nc bnc" id="L594" title="All 2 branches missed.">               if(_exitThread)</span>
+               {
+<span class="nc" id="L596">                  throw new ExitParserThreadRequestException();</span>
+               }
+
+<span class="nc" id="L599">					current = chars.next();</span>
+<span class="nc" id="L600">					return prev;</span>
+				}
+			}
+		}
+
+		synchronized void eof()
+		{
+<span class="nc" id="L607">			atEnd = true;</span>
+<span class="nc" id="L608">			notify();</span>
+<span class="nc" id="L609">		}</span>
+
+		/**
+		 * Post a character sequence to be read. Notify the parser thread accordingly. Invoking
+		 * this method should always be followed by a call to {@link #waitChars} to ensure that
+		 * the character sequence is not overwritten before it has been fully processed.
+		 * @param chars the chracters to be read
+		 */
+		synchronized void accept(CharacterIterator chars)
+		{
+<span class="nc" id="L619">			this.chars = chars;</span>
+<span class="nc bnc" id="L620" title="All 2 branches missed.">			this.current = chars != null ? chars.first() : CharacterIterator.DONE;</span>
+<span class="nc" id="L621">			notify();</span>
+<span class="nc" id="L622">		}</span>
+
+		/**
+		 * block the current thread until all characters from the current iterator have
+		 * been processed
+		 */
+		void waitChars()
+		{
+<span class="nc bnc" id="L630" title="All 4 branches missed.">			if (chars != null &amp;&amp; current != CharacterIterator.DONE)</span>
+			{
+<span class="nc" id="L632">				synchronized (chars)</span>
+				{
+					try
+					{
+<span class="nc" id="L636">						chars.wait();</span>
+					}
+<span class="nc" id="L638">					catch (InterruptedException e)</span>
+					{
+<span class="nc" id="L640">					}</span>
+<span class="nc" id="L641">				}</span>
+			}
+<span class="nc" id="L643">		}</span>
+
+		int getBeginIndex()
+		{
+<span class="nc bnc" id="L647" title="All 2 branches missed.">			return chars != null ? chars.getBeginIndex() : 0;</span>
+		}
+
+      protected void setIndex(int position)
+      {
+<span class="nc" id="L652">         this.current = chars.setIndex(position);</span>
+<span class="nc" id="L653">      }</span>
+   }
+
+	/**
+	 * error stream which simply saves the error codes and line info
+	 * circularily in an array of fixed size, and notifies a listener
+	 * if requested
+	 */
+	private static class Errors extends ErrorStream
+	{
+		private int[][] errorStore;
+		private int count;
+		private ErrorListener listener;
+
+		public Errors(ErrorListener listener)
+<span class="nc" id="L668">		{</span>
+<span class="nc" id="L669">			this.listener = listener;</span>
+<span class="nc" id="L670">			errorStore = new int[5][3];</span>
+<span class="nc" id="L671">		}</span>
+
+		protected void ParsErr(int n, int line, int col)
+		{
+<span class="nc" id="L675">			errorStore[count][0] = n;</span>
+<span class="nc" id="L676">			errorStore[count][1] = line;</span>
+<span class="nc" id="L677">			errorStore[count][2] = col;</span>
+<span class="nc" id="L678">			count = (count + 1) % 5;</span>
+<span class="nc bnc" id="L679" title="All 2 branches missed.">			if (listener != null)</span>
+<span class="nc" id="L680">				super.ParsErr(n, line, col);</span>
+<span class="nc" id="L681">		}</span>
+
+		protected void SemErr(int n, int line, int col)
+		{
+<span class="nc" id="L685">			errorStore[count][0] = n;</span>
+<span class="nc" id="L686">			errorStore[count][1] = line;</span>
+<span class="nc" id="L687">			errorStore[count][2] = col;</span>
+<span class="nc" id="L688">			count = (count + 1) % 5;</span>
+<span class="nc bnc" id="L689" title="All 2 branches missed.">			if (listener != null)</span>
+			{
+<span class="nc bnc" id="L691" title="All 2 branches missed.">				switch (n)</span>
+				{
+					case ParsingConstants.KW_MINUS:
+						//i18n[parserthread.undefinedTable=undefined table]
+<span class="nc" id="L695">                  StoreError(n, line, col, s_stringMgr.getString(&quot;parserthread.undefinedTable&quot;));</span>
+<span class="nc" id="L696">						break;</span>
+					default:
+<span class="nc" id="L698">						super.SemErr(n, line, col);</span>
+				}
+			}
+<span class="nc" id="L701">		}</span>
+
+		protected void StoreError(int n, int line, int col, String s)
+		{
+<span class="nc bnc" id="L705" title="All 2 branches missed.">			if (listener != null)</span>
+<span class="nc" id="L706">				listener.errorDetected(s, line, col);</span>
+<span class="nc" id="L707">		}</span>
+
+		public void reset()
+		{
+<span class="nc" id="L711">			errorStore = new int[5][3];</span>
+<span class="nc" id="L712">		}</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

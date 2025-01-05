@@ -1,0 +1,342 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BufferTableModel.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">43_lilith</a> &gt; <a href="index.source.html" class="el_package">de.huxhorn.lilith.swing.table.model</a> &gt; <span class="el_source">BufferTableModel.java</span></div><h1>BufferTableModel.java</h1><pre class="source lang-java linenums">/*
+ * Lilith - a log event viewer.
+ * Copyright (C) 2007-2009 Joern Huxhorn
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see &lt;http://www.gnu.org/licenses/&gt;.
+ */
+package de.huxhorn.lilith.swing.table.model;
+
+import de.huxhorn.sulky.buffers.Buffer;
+import de.huxhorn.sulky.buffers.CircularBuffer;
+import de.huxhorn.sulky.buffers.Dispose;
+import de.huxhorn.sulky.buffers.DisposeOperation;
+import de.huxhorn.sulky.buffers.Reset;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.swing.*;
+import javax.swing.event.EventListenerList;
+import javax.swing.event.TableModelEvent;
+import javax.swing.event.TableModelListener;
+
+public abstract class BufferTableModel&lt;T&gt;
+	implements RowBasedTableModel&lt;T&gt;, DisposeOperation
+{
+<span class="nc" id="L37">	private final Logger logger = LoggerFactory.getLogger(BufferTableModel.class);</span>
+
+	private Buffer&lt;T&gt; buffer;
+	private CircularBuffer&lt;T&gt; circularBuffer;
+	private final EventListenerList eventListenerList;
+	private boolean disposed;
+	private boolean paused;
+
+	private int pauseRowCount;
+	private int lastRowCount;
+
+	public BufferTableModel(Buffer&lt;T&gt; buffer)
+<span class="nc" id="L49">	{</span>
+<span class="nc" id="L50">		eventListenerList = new EventListenerList();</span>
+<span class="nc" id="L51">		lastRowCount = 0;</span>
+<span class="nc" id="L52">		disposed = false;</span>
+<span class="nc" id="L53">		setBuffer(buffer);</span>
+
+<span class="nc" id="L55">		Thread t = new Thread(new BufferTableModel.TableChangeDetectionRunnable(), &quot;TableChangeDetection&quot;);</span>
+<span class="nc" id="L56">		t.setDaemon(true);</span>
+<span class="nc" id="L57">		t.setPriority(Thread.NORM_PRIORITY - 1);</span>
+<span class="nc" id="L58">		t.start();</span>
+<span class="nc" id="L59">		setPaused(false);</span>
+<span class="nc" id="L60">	}</span>
+
+	public synchronized boolean isPaused()
+	{
+<span class="nc" id="L64">		return paused;</span>
+	}
+
+	public synchronized void setPaused(boolean paused)
+	{
+<span class="nc bnc" id="L69" title="All 2 branches missed.">		if(paused)</span>
+		{
+<span class="nc" id="L71">			pauseRowCount = getRowCount();</span>
+		}
+<span class="nc" id="L73">		this.paused = paused;</span>
+<span class="nc" id="L74">		notifyAll();</span>
+<span class="nc" id="L75">	}</span>
+
+	public Buffer&lt;T&gt; getBuffer()
+	{
+<span class="nc" id="L79">		return buffer;</span>
+	}
+
+	public void setBuffer(Buffer&lt;T&gt; buffer)
+	{
+<span class="nc" id="L84">		this.buffer = buffer;</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">		if(buffer instanceof CircularBuffer)</span>
+		{
+<span class="nc" id="L87">			this.circularBuffer = (CircularBuffer&lt;T&gt;) buffer;</span>
+		}
+		else
+		{
+<span class="nc" id="L91">			this.circularBuffer = null;</span>
+		}
+<span class="nc" id="L93">		setLastRowCount(0);</span>
+<span class="nc" id="L94">		this.pauseRowCount = 0;</span>
+<span class="nc" id="L95">	}</span>
+
+	public boolean clear()
+	{
+<span class="nc" id="L99">		boolean reset = Reset.reset(buffer);</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">		if(reset)</span>
+		{
+<span class="nc" id="L102">			setLastRowCount(0);</span>
+<span class="nc" id="L103">			fireTableChange();</span>
+<span class="nc" id="L104">			return true;</span>
+		}
+<span class="nc" id="L106">		return false;</span>
+	}
+
+	public synchronized int getRowCount()
+	{
+<span class="nc" id="L111">		return lastRowCount;</span>
+	}
+
+	private synchronized void setLastRowCount(int lastRowCount)
+	{
+<span class="nc" id="L116">		this.lastRowCount = lastRowCount;</span>
+<span class="nc" id="L117">	}</span>
+
+	public synchronized void dispose()
+	{
+<span class="nc" id="L121">		disposed = true;</span>
+<span class="nc" id="L122">		Dispose.dispose(buffer);</span>
+<span class="nc" id="L123">		notifyAll();</span>
+<span class="nc" id="L124">	}</span>
+
+	public boolean isDisposed()
+	{
+<span class="nc" id="L128">		return disposed;</span>
+	}
+
+	private int internalRowCount()
+	{
+<span class="nc bnc" id="L133" title="All 2 branches missed.">		if(isPaused())</span>
+		{
+<span class="nc" id="L135">			return pauseRowCount;</span>
+		}
+<span class="nc bnc" id="L137" title="All 2 branches missed.">		if(circularBuffer != null)</span>
+		{
+			// special circular handling
+<span class="nc" id="L140">			return circularBuffer.getAvailableElements();</span>
+		}
+
+<span class="nc" id="L143">		long rows = buffer.getSize();</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">		if(rows &gt; Integer.MAX_VALUE)</span>
+		{
+<span class="nc bnc" id="L146" title="All 2 branches missed.">			if(logger.isWarnEnabled())</span>
+			{
+<span class="nc" id="L148">				logger.warn(&quot;Swing can only handle &quot; + Integer.MAX_VALUE + &quot; rows instead of &quot; + rows + &quot;!&quot;);</span>
+			}
+<span class="nc" id="L150">			rows = Integer.MAX_VALUE;</span>
+		}
+<span class="nc" id="L152">		return (int) rows;</span>
+	}
+
+	public T getValueAt(int row)
+	{
+<span class="nc bnc" id="L157" title="All 2 branches missed.">		if(circularBuffer != null)</span>
+		{
+			// special circular handling
+<span class="nc" id="L160">			return circularBuffer.getRelative(row);</span>
+		}
+<span class="nc" id="L162">		return buffer.get(row);</span>
+	}
+
+	public abstract int getColumnCount();
+
+	public abstract String getColumnName(int columnIndex);
+
+	public abstract Class&lt;?&gt; getColumnClass(int columnIndex);
+
+	public boolean isCellEditable(int rowIndex, int columnIndex)
+	{
+<span class="nc" id="L173">		return false;</span>
+	}
+
+	public Object getValueAt(int rowIndex, int columnIndex)
+	{
+<span class="nc" id="L178">		T value = getValueAt(rowIndex);</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">		if(logger.isDebugEnabled()) logger.debug(&quot;value: {}&quot;, value);</span>
+<span class="nc" id="L180">		return value;</span>
+	}
+
+	public void setValueAt(Object aValue, int rowIndex, int columnIndex)
+	{
+<span class="nc" id="L185">	}</span>
+
+	private void fireTableChange()
+	{
+<span class="nc" id="L189">		TableModelEvent event = new TableModelEvent(this);</span>
+<span class="nc" id="L190">		fireTableChange(event);</span>
+<span class="nc" id="L191">	}</span>
+
+	private void fireTableChange(int prevValue, int currentValue)
+	{
+<span class="nc" id="L195">		TableModelEvent event = new TableModelEvent(this, prevValue, currentValue, TableModelEvent.ALL_COLUMNS, TableModelEvent.INSERT);</span>
+<span class="nc" id="L196">		fireTableChange(event);</span>
+<span class="nc" id="L197">	}</span>
+
+	private void fireTableChange(TableModelEvent evt)
+	{
+<span class="nc" id="L201">		Runnable r = new BufferTableModel.FireTableChangeRunnable(evt);</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">		if(SwingUtilities.isEventDispatchThread())</span>
+		{
+<span class="nc" id="L204">			r.run();</span>
+		}
+		else
+		{
+<span class="nc" id="L208">			SwingUtilities.invokeLater(r);</span>
+		}
+<span class="nc" id="L210">	}</span>
+
+	private class FireTableChangeRunnable
+		implements Runnable
+	{
+		private TableModelEvent event;
+
+		public FireTableChangeRunnable(TableModelEvent event)
+<span class="nc" id="L218">		{</span>
+<span class="nc" id="L219">			this.event = event;</span>
+<span class="nc" id="L220">		}</span>
+
+		public void run()
+		{
+			Object[] listeners;
+<span class="nc" id="L225">			synchronized(eventListenerList)</span>
+			{
+<span class="nc" id="L227">				listeners = eventListenerList.getListenerList();</span>
+<span class="nc" id="L228">			}</span>
+			// Process the listeners last to first, notifying
+			// those that are interested in this event
+<span class="nc bnc" id="L231" title="All 2 branches missed.">			for(int i = listeners.length - 2; i &gt;= 0; i -= 2)</span>
+			{
+<span class="nc bnc" id="L233" title="All 2 branches missed.">				if(listeners[i] == TableModelListener.class)</span>
+				{
+<span class="nc" id="L235">					TableModelListener listener = ((TableModelListener) listeners[i + 1]);</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">					if(logger.isDebugEnabled())</span>
+					{
+<span class="nc" id="L238">						logger.debug(&quot;Firing TableChange at {}.&quot;, listener.getClass().getName());</span>
+					}
+					try
+					{
+<span class="nc" id="L242">						listener.tableChanged(event);</span>
+					}
+<span class="nc" id="L244">					catch(Throwable ex)</span>
+					{
+<span class="nc bnc" id="L246" title="All 2 branches missed.">						if(logger.isWarnEnabled()) logger.warn(&quot;Exception while firing change!&quot;, ex);</span>
+<span class="nc" id="L247">					}</span>
+				}
+			}
+<span class="nc" id="L250">		}</span>
+
+	}
+
+	public void addTableModelListener(TableModelListener l)
+	{
+<span class="nc" id="L256">		synchronized(eventListenerList)</span>
+		{
+<span class="nc" id="L258">			eventListenerList.add(TableModelListener.class, l);</span>
+<span class="nc" id="L259">		}</span>
+<span class="nc" id="L260">	}</span>
+
+	public void removeTableModelListener(TableModelListener l)
+	{
+<span class="nc" id="L264">		synchronized(eventListenerList)</span>
+		{
+<span class="nc" id="L266">			eventListenerList.remove(TableModelListener.class, l);</span>
+<span class="nc" id="L267">		}</span>
+<span class="nc" id="L268">	}</span>
+
+<span class="nc" id="L270">	class TableChangeDetectionRunnable</span>
+		implements Runnable
+	{
+		private static final int UPDATE_INTERVAL = 500;
+
+		public void run()
+		{
+			for(; ;)
+			{
+<span class="nc bnc" id="L279" title="All 2 branches missed.">				if(isDisposed())</span>
+				{
+<span class="nc bnc" id="L281" title="All 2 branches missed.">					if(logger.isDebugEnabled()) logger.debug(&quot;Stopping TableChangeDetectionRunnable...&quot;);</span>
+<span class="nc" id="L282">					return;</span>
+				}
+<span class="nc bnc" id="L284" title="All 2 branches missed.">				if(!isPaused())</span>
+				{
+<span class="nc" id="L286">					int currentValue = internalRowCount();</span>
+
+<span class="nc bnc" id="L288" title="All 2 branches missed.">					if(currentValue &gt; -1)</span>
+					{
+<span class="nc" id="L290">						int prevValue = getRowCount();</span>
+<span class="nc bnc" id="L291" title="All 4 branches missed.">						if(prevValue != 0 &amp;&amp; currentValue &gt; prevValue)</span>
+						{
+<span class="nc" id="L293">							int lastRow = currentValue - 1;</span>
+<span class="nc" id="L294">							setLastRowCount(currentValue);</span>
+<span class="nc" id="L295">							fireTableChange(prevValue, lastRow);</span>
+<span class="nc" id="L296">						}</span>
+<span class="nc bnc" id="L297" title="All 2 branches missed.">						else if(currentValue != prevValue)</span>
+						{
+<span class="nc" id="L299">							setLastRowCount(currentValue);</span>
+<span class="nc" id="L300">							fireTableChange();</span>
+						}
+					}
+					try
+					{
+<span class="nc" id="L305">						Thread.sleep(UPDATE_INTERVAL);</span>
+					}
+<span class="nc" id="L307">					catch(InterruptedException e)</span>
+					{
+<span class="nc bnc" id="L309" title="All 2 branches missed.">						if(logger.isDebugEnabled()) logger.debug(&quot;Interrupted...&quot;, e);</span>
+<span class="nc" id="L310">						return;</span>
+<span class="nc" id="L311">					}</span>
+<span class="nc" id="L312">				}</span>
+				else
+				{
+<span class="nc" id="L315">					synchronized(BufferTableModel.this)</span>
+					{
+						for(; ;)
+						{
+<span class="nc bnc" id="L319" title="All 2 branches missed.">							if(!isPaused())</span>
+							{
+<span class="nc" id="L321">								break;</span>
+							}
+							else
+							{
+								try
+								{
+<span class="nc" id="L327">									BufferTableModel.this.wait();</span>
+								}
+<span class="nc" id="L329">								catch(InterruptedException e)</span>
+								{
+<span class="nc bnc" id="L331" title="All 2 branches missed.">									if(logger.isDebugEnabled()) logger.debug(&quot;Interrupted...&quot;, e);</span>
+<span class="nc" id="L332">									return;</span>
+<span class="nc" id="L333">								}</span>
+							}
+						}
+<span class="nc" id="L336">					}</span>
+				}
+			}
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,1192 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>StreamMessageImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.message</a> &gt; <span class="el_source">StreamMessageImpl.java</span></div><h1>StreamMessageImpl.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2000-2004 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: StreamMessageImpl.java,v 1.2 2005/05/24 13:27:10 tanderson Exp $
+ */
+package org.exolab.jms.message;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.EOFException;
+import java.io.IOException;
+import java.io.ObjectInput;
+import java.io.ObjectOutput;
+
+import javax.jms.JMSException;
+import javax.jms.MessageEOFException;
+import javax.jms.MessageFormatException;
+import javax.jms.MessageNotReadableException;
+import javax.jms.MessageNotWriteableException;
+import javax.jms.StreamMessage;
+
+
+/**
+ * This class implements the {@link javax.jms.StreamMessage} interface.
+ * &lt;p&gt;
+ * A StreamMessage is used to send a stream of Java primitives.
+ * It is filled and read sequentially. It inherits from &lt;code&gt;Message&lt;/code&gt;
+ * and adds a stream message body. It's methods are based largely on those
+ * found in &lt;code&gt;java.io.DataInputStream&lt;/code&gt; and
+ * &lt;code&gt;java.io.DataOutputStream&lt;/code&gt;.
+ * &lt;p&gt;
+ * The primitive types can be read or written explicitly using methods
+ * for each type. They may also be read or written generically as objects.
+ * For instance, a call to &lt;code&gt;StreamMessage.writeInt(6)&lt;/code&gt; is
+ * equivalent to &lt;code&gt;StreamMessage.writeObject(new Integer(6))&lt;/code&gt;.
+ * Both forms are provided because the explicit form is convenient for
+ * static programming and the object form is needed when types are not known
+ * at compile time.
+ * &lt;p&gt;
+ * When the message is first created, and when {@link #clearBody}
+ * is called, the body of the message is in write-only mode. After the
+ * first call to {@link #reset} has been made, the message body is in
+ * read-only mode. When a message has been sent, by definition, the
+ * provider calls &lt;code&gt;reset&lt;/code&gt; in order to read it's content, and
+ * when a message has been received, the provider has called
+ * &lt;code&gt;reset&lt;/code&gt; so that the message body is in read-only mode for the
+ * client.
+ * &lt;p&gt;
+ * If {@link #clearBody} is called on a message in read-only mode,
+ * the message body is cleared and the message body is in write-only mode.
+ * &lt;p&gt;
+ * If a client attempts to read a message in write-only mode, a
+ * MessageNotReadableException is thrown.
+ * &lt;p&gt;
+ * If a client attempts to write a message in read-only mode, a
+ * MessageNotWriteableException is thrown.
+ * &lt;p&gt;
+ * Stream messages support the following conversion table. The marked cases
+ * must be supported. The unmarked cases must throw a JMSException. The
+ * String to primitive conversions may throw a runtime exception if the
+ * primitives &lt;code&gt;valueOf()&lt;/code&gt; method does not accept it as a valid
+ * String representation of the primitive.
+ * &lt;p&gt;
+ * A value written as the row type can be read as the column type.
+ *
+ * &lt;pre&gt;
+ * |        | boolean byte short char int long float double String byte[]
+ * |----------------------------------------------------------------------
+ * |boolean |    X                                            X
+ * |byte    |          X     X         X   X                  X
+ * |short   |                X         X   X                  X
+ * |char    |                     X                           X
+ * |int     |                          X   X                  X
+ * |long    |                              X                  X
+ * |float   |                                    X     X      X
+ * |double  |                                          X      X
+ * |String  |    X     X     X         X   X     X     X      X
+ * |byte[]  |                                                        X
+ * |----------------------------------------------------------------------
+ * &lt;/pre&gt;
+ * &lt;p&gt;
+ * Attempting to read a null value as a Java primitive type must be treated
+ * as calling the primitive's corresponding &lt;code&gt;valueOf(String)&lt;/code&gt;
+ * conversion method with a null value. Since char does not support a String
+ * conversion, attempting to read a null value as a char must throw
+ * NullPointerException.
+ *
+ * @version     $Revision: 1.2 $ $Date: 2005/05/24 13:27:10 $
+ * @author      &lt;a href=&quot;mailto:mourikis@intalio.com&quot;&gt;Jim Mourikis&lt;/a&gt;
+ * @author      &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @see         javax.jms.StreamMessage
+ */
+public final class StreamMessageImpl extends MessageImpl
+    implements StreamMessage {
+
+    /**
+     * Object version no. for serialization
+     */
+    static final long serialVersionUID = 2;
+
+    /**
+     * Type codes
+     */
+    private static final byte NULL = 0;
+    private static final byte BOOLEAN = 1;
+    private static final byte BYTE = 2;
+    private static final byte BYTE_ARRAY = 3;
+    private static final byte SHORT = 4;
+    private static final byte CHAR = 5;
+    private static final byte INT = 6;
+    private static final byte LONG = 7;
+    private static final byte FLOAT = 8;
+    private static final byte DOUBLE = 9;
+    private static final byte STRING = 10;
+
+    /**
+     * String values representing the above type codes, for error reporting
+     * purposes
+     */
+<span class="nc" id="L161">    private static final String[] TYPE_NAMES = {</span>
+        &quot;null&quot;, &quot;boolean&quot;, &quot;byte&quot;, &quot;byte[]&quot;, &quot;short&quot;, &quot;char&quot;, &quot;int&quot;, &quot;long&quot;,
+        &quot;float&quot;, &quot;double&quot;, &quot;String&quot;};
+
+    /**
+     * Empty byte array for initialisation purposes
+     */
+<span class="nc" id="L168">    private static final byte[] EMPTY = new byte[]{};</span>
+
+    /**
+     * The byte stream to store data
+     */
+<span class="nc" id="L173">    private byte[] _bytes = EMPTY;</span>
+
+    /**
+     * The stream used for writes
+     */
+<span class="nc" id="L178">    private DataOutputStream _out = null;</span>
+
+    /**
+     * The byte stream backing the output stream
+     */
+<span class="nc" id="L183">    private ByteArrayOutputStream _byteOut = null;</span>
+
+    /**
+     * The stream used for reads
+     */
+<span class="nc" id="L188">    private DataInputStream _in = null;</span>
+
+    /**
+     * The byte stream backing the input stream
+     */
+<span class="nc" id="L193">    private ByteArrayInputStream _byteIn = null;</span>
+
+    /**
+     * Non-zero if incrementally reading a byte array using
+     * {@link #readBytes(byte[])}
+     */
+<span class="nc" id="L199">    private int _readBytes = 0;</span>
+
+    /**
+     * The length of the byte array being read using {@link #readBytes(byte[])}
+     */
+<span class="nc" id="L204">    private int _byteArrayLength = 0;</span>
+
+    /**
+     * The offset of the byte stream to start reading from. This defaults
+     * to 0, and only applies to messages that are cloned from a
+     * read-only instance where part of the stream had already been read.
+     */
+<span class="nc" id="L211">    private int _offset = 0;</span>
+
+
+    /**
+     * Construct a new StreamMessage. When first created, the message is in
+     * write-only mode.
+     *
+     * @throws JMSException if the message type can't be set, or an I/O error
+     * occurs
+     */
+<span class="nc" id="L221">    public StreamMessageImpl() throws JMSException {</span>
+<span class="nc" id="L222">        setJMSType(&quot;StreamMessage&quot;);</span>
+<span class="nc" id="L223">    }</span>
+
+    /**
+     * Clone an instance of this object
+     *
+     * @return a copy of this object
+     * @throws CloneNotSupportedException if object or attributes aren't
+     * cloneable
+     */
+    public final Object clone() throws CloneNotSupportedException {
+<span class="nc" id="L233">        StreamMessageImpl result = (StreamMessageImpl) super.clone();</span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">        if (_bodyReadOnly) {</span>
+<span class="nc" id="L235">            result._bytes = new byte[_bytes.length];</span>
+<span class="nc" id="L236">            System.arraycopy(_bytes, 0, result._bytes, 0, _bytes.length);</span>
+<span class="nc bnc" id="L237" title="All 2 branches missed.">            if (_byteIn != null) {</span>
+                // if a client subsequently reads from the cloned object,
+                // start reading from offset of the original stream
+<span class="nc" id="L240">                _offset = _bytes.length - _byteIn.available();</span>
+            }
+<span class="nc" id="L242">            result._byteIn = null;</span>
+<span class="nc" id="L243">            result._in = null;</span>
+        } else {
+<span class="nc bnc" id="L245" title="All 2 branches missed.">            if (_out != null) {</span>
+                try {
+<span class="nc" id="L247">                    _out.flush();</span>
+<span class="nc" id="L248">                } catch (IOException exception) {</span>
+<span class="nc" id="L249">                    throw new CloneNotSupportedException(</span>
+<span class="nc" id="L250">                        exception.getMessage());</span>
+<span class="nc" id="L251">                }</span>
+<span class="nc" id="L252">                result._bytes = _byteOut.toByteArray();</span>
+<span class="nc" id="L253">                result._byteOut = null;</span>
+<span class="nc" id="L254">                result._out = null;</span>
+            } else {
+<span class="nc" id="L256">                result._bytes = new byte[_bytes.length];</span>
+<span class="nc" id="L257">                System.arraycopy(_bytes, 0, result._bytes, 0, _bytes.length);</span>
+            }
+        }
+
+<span class="nc" id="L261">        return result;</span>
+    }
+
+    /**
+     * Serialize out this message's data
+     *
+     * @param out the stream to serialize out to
+     * @throws IOException if any I/O exceptions occurr
+     */
+    public final void writeExternal(ObjectOutput out) throws IOException {
+        // If it was in write mode, extract the byte array
+<span class="nc bnc" id="L272" title="All 4 branches missed.">        if (!_bodyReadOnly &amp;&amp; _out != null) {</span>
+<span class="nc" id="L273">            _out.flush();</span>
+<span class="nc" id="L274">            _bytes = _byteOut.toByteArray();</span>
+        }
+
+<span class="nc" id="L277">        super.writeExternal(out);</span>
+<span class="nc" id="L278">        out.writeLong(serialVersionUID);</span>
+<span class="nc" id="L279">        out.writeInt(_bytes.length);</span>
+<span class="nc" id="L280">        out.write(_bytes);</span>
+<span class="nc" id="L281">        out.flush();</span>
+<span class="nc" id="L282">    }</span>
+
+    /**
+     * Serialize in this message's data
+     *
+     * @param in the stream to serialize in from
+     * @throws ClassNotFoundException if the class for an object being
+     * restored cannot be found.
+     * @throws IOException if any I/O exceptions occur
+     */
+    public final void readExternal(ObjectInput in)
+        throws ClassNotFoundException, IOException {
+<span class="nc" id="L294">        super.readExternal(in);</span>
+<span class="nc" id="L295">        long version = in.readLong();</span>
+<span class="nc bnc" id="L296" title="All 2 branches missed.">        if (version == serialVersionUID) {</span>
+<span class="nc" id="L297">            int length = in.readInt();</span>
+<span class="nc" id="L298">            _bytes = new byte[length];</span>
+<span class="nc" id="L299">            in.readFully(_bytes);</span>
+<span class="nc" id="L300">        } else {</span>
+<span class="nc" id="L301">            throw new IOException(&quot;Incorrect version enountered: &quot; + version</span>
+                                  + &quot;. This version = &quot; + serialVersionUID);
+        }
+<span class="nc" id="L304">    }</span>
+
+    /**
+     * Read a &lt;code&gt;boolean&lt;/code&gt; from the bytes message stream
+     *
+     * @return the &lt;code&gt;boolean&lt;/code&gt; value read
+     * @throws JMSException if JMS fails to read message due to some internal
+     * JMS error
+     * @throws MessageEOFException if end of message stream
+     * @throws MessageFormatException if this type conversion is invalid
+     * @throws MessageNotReadableException if message is in write-only mode
+     */
+    public final boolean readBoolean() throws JMSException {
+<span class="nc" id="L317">        boolean result = false;</span>
+<span class="nc" id="L318">        prepare();</span>
+        try {
+<span class="nc" id="L320">            result = FormatConverter.getBoolean(readNext());</span>
+<span class="nc" id="L321">        } catch (MessageFormatException exception) {</span>
+<span class="nc" id="L322">            revert(exception);</span>
+<span class="nc" id="L323">        }</span>
+<span class="nc" id="L324">        return result;</span>
+    }
+
+    /**
+     * Read a byte value from the stream message
+     *
+     * @return the next byte from the stream message as an 8-bit
+     * &lt;code&gt;byte&lt;/code&gt;
+     * @throws JMSException if JMS fails to read message due to some internal
+     * JMS error
+     * @throws MessageEOFException if end of message stream
+     * @throws MessageFormatException if this type conversion is invalid
+     * @throws MessageNotReadableException if message is in write-only mode
+     * @throws NumberFormatException if numeric conversion is invalid
+     */
+    public final byte readByte() throws JMSException {
+<span class="nc" id="L340">        byte result = 0;</span>
+<span class="nc" id="L341">        prepare();</span>
+        try {
+<span class="nc" id="L343">            result = FormatConverter.getByte(readNext());</span>
+<span class="nc" id="L344">        } catch (MessageFormatException exception) {</span>
+<span class="nc" id="L345">            revert(exception);</span>
+<span class="nc" id="L346">        } catch (NumberFormatException exception) {</span>
+<span class="nc" id="L347">            revert(exception);</span>
+<span class="nc" id="L348">        }</span>
+<span class="nc" id="L349">        return result;</span>
+    }
+
+    /**
+     * Read a 16-bit number from the stream message.
+     *
+     * @return a 16-bit number from the stream message
+     * @throws JMSException if JMS fails to read message due to some internal
+     * JMS error
+     * @throws MessageEOFException if end of message stream
+     * @throws MessageFormatException if this type conversion is invalid
+     * @throws MessageNotReadableException if message is in write-only mode
+     * @throws NumberFormatException if numeric conversion is invalid
+     */
+    public final short readShort() throws JMSException {
+<span class="nc" id="L364">        short result = 0;</span>
+<span class="nc" id="L365">        prepare();</span>
+        try {
+<span class="nc" id="L367">            result = FormatConverter.getShort(readNext());</span>
+<span class="nc" id="L368">        } catch (MessageFormatException exception) {</span>
+<span class="nc" id="L369">            revert(exception);</span>
+<span class="nc" id="L370">        } catch (NumberFormatException exception) {</span>
+<span class="nc" id="L371">            revert(exception);</span>
+<span class="nc" id="L372">        }</span>
+<span class="nc" id="L373">        return result;</span>
+    }
+
+    /*
+     * Read a Unicode character value from the stream message
+     *
+     * @return a Unicode character from the stream message
+     * @throws JMSException if JMS fails to read message due to some internal
+     * JMS error
+     * @throws MessageEOFException if end of message stream
+     * @throws MessageFormatException if this type conversion is invalid
+     * @throws MessageNotReadableException if message is in write-only mode
+     */
+    public final char readChar() throws JMSException {
+<span class="nc" id="L387">        char result = 0;</span>
+<span class="nc" id="L388">        prepare();</span>
+        try {
+<span class="nc" id="L390">            result = FormatConverter.getChar(readNext());</span>
+<span class="nc" id="L391">        } catch (MessageFormatException exception) {</span>
+<span class="nc" id="L392">            revert(exception);</span>
+<span class="nc" id="L393">        } catch (NullPointerException exception) {</span>
+<span class="nc" id="L394">            revert(exception);</span>
+<span class="nc" id="L395">        }</span>
+<span class="nc" id="L396">        return result;</span>
+    }
+
+    /*
+     * Read a 32-bit integer from the stream message
+     *
+     * @return a 32-bit integer value from the stream message, interpreted
+     * as an &lt;code&gt;int&lt;/code&gt;
+     * @throws JMSException if JMS fails to read message due to some internal
+     * JMS error
+     * @throws MessageEOFException if end of message stream
+     * @throws MessageFormatException if this type conversion is invalid
+     * @throws MessageNotReadableException if message is in write-only mode
+     * @throws NumberFormatException if numeric conversion is invalid
+     */
+    public final int readInt() throws JMSException {
+<span class="nc" id="L412">        int result = 0;</span>
+<span class="nc" id="L413">        prepare();</span>
+        try {
+<span class="nc" id="L415">            result = FormatConverter.getInt(readNext());</span>
+<span class="nc" id="L416">        } catch (MessageFormatException exception) {</span>
+<span class="nc" id="L417">            revert(exception);</span>
+<span class="nc" id="L418">        } catch (NumberFormatException exception) {</span>
+<span class="nc" id="L419">            revert(exception);</span>
+<span class="nc" id="L420">        }</span>
+<span class="nc" id="L421">        return result;</span>
+    }
+
+    /*
+     * Read a 64-bit integer from the stream message
+     *
+     * @return a 64-bit integer value from the stream message, interpreted as
+     * a &lt;code&gt;long&lt;/code&gt;
+     * @throws JMSException if JMS fails to read message due to some internal
+     * JMS error
+     * @throws MessageEOFException if end of message stream
+     * @throws MessageFormatException if this type conversion is invalid
+     * @throws MessageNotReadableException if message is in write-only mode
+     * @throws NumberFormatException if numeric conversion is invalid
+     */
+    public final long readLong() throws JMSException {
+<span class="nc" id="L437">        long result = 0;</span>
+<span class="nc" id="L438">        prepare();</span>
+        try {
+<span class="nc" id="L440">            result = FormatConverter.getLong(readNext());</span>
+<span class="nc" id="L441">        } catch (MessageFormatException exception) {</span>
+<span class="nc" id="L442">            revert(exception);</span>
+<span class="nc" id="L443">        } catch (NumberFormatException exception) {</span>
+<span class="nc" id="L444">            revert(exception);</span>
+<span class="nc" id="L445">        }</span>
+<span class="nc" id="L446">        return result;</span>
+    }
+
+    /**
+     * Read a &lt;code&gt;float&lt;/code&gt; from the stream message
+     *
+     * @return a &lt;code&gt;float&lt;/code&gt; value from the stream message
+     * @throws JMSException if JMS fails to read message due to some internal
+     * JMS error
+     * @throws MessageEOFException if end of message stream
+     * @throws MessageFormatException if this type conversion is invalid
+     * @throws MessageNotReadableException if message is in write-only mode
+     * @throws NullPointerException if the value is null
+     * @throws NumberFormatException if numeric conversion is invalid
+     */
+    public final float readFloat() throws JMSException {
+<span class="nc" id="L462">        float result = 0;</span>
+<span class="nc" id="L463">        prepare();</span>
+        try {
+<span class="nc" id="L465">            result = FormatConverter.getFloat(readNext());</span>
+<span class="nc" id="L466">        } catch (MessageFormatException exception) {</span>
+<span class="nc" id="L467">            revert(exception);</span>
+<span class="nc" id="L468">        } catch (NullPointerException exception) {</span>
+<span class="nc" id="L469">            revert(exception);</span>
+<span class="nc" id="L470">        } catch (NumberFormatException exception) {</span>
+<span class="nc" id="L471">            revert(exception);</span>
+<span class="nc" id="L472">        }</span>
+<span class="nc" id="L473">        return result;</span>
+    }
+
+    /**
+     * Read a &lt;code&gt;double&lt;/code&gt; from the stream message
+     *
+     * @return a &lt;code&gt;double&lt;/code&gt; value from the stream message
+     * @throws JMSException if JMS fails to read message due to some internal
+     * JMS error
+     * @throws MessageEOFException if end of message stream
+     * @throws MessageFormatException if this type conversion is invalid
+     * @throws MessageNotReadableException if message is in write-only mode
+     * @throws NullPointerException if the value is null
+     * @throws NumberFormatException if numeric conversion is invalid
+     */
+    public final double readDouble() throws JMSException {
+<span class="nc" id="L489">        double result = 0;</span>
+<span class="nc" id="L490">        prepare();</span>
+        try {
+<span class="nc" id="L492">            result = FormatConverter.getDouble(readNext());</span>
+<span class="nc" id="L493">        } catch (MessageFormatException exception) {</span>
+<span class="nc" id="L494">            revert(exception);</span>
+<span class="nc" id="L495">        } catch (NullPointerException exception) {</span>
+<span class="nc" id="L496">            revert(exception);</span>
+<span class="nc" id="L497">        } catch (NumberFormatException exception) {</span>
+<span class="nc" id="L498">            revert(exception);</span>
+<span class="nc" id="L499">        }</span>
+<span class="nc" id="L500">        return result;</span>
+    }
+
+    /**
+     * Read in a string from the stream message
+     *
+     * @return a Unicode string from the stream message
+     * @throws JMSException if JMS fails to read message due to some internal
+     * JMS error
+     * @throws MessageEOFException if end of message stream
+     * @throws MessageFormatException if this type conversion is invalid
+     * @throws MessageNotReadableException if message is in write-only mode
+     */
+    public final String readString() throws JMSException {
+<span class="nc" id="L514">        String result = null;</span>
+<span class="nc" id="L515">        prepare();</span>
+        try {
+<span class="nc" id="L517">            result = FormatConverter.getString(readNext());</span>
+<span class="nc" id="L518">        } catch (MessageFormatException exception) {</span>
+<span class="nc" id="L519">            revert(exception);</span>
+<span class="nc" id="L520">        }</span>
+<span class="nc" id="L521">        return result;</span>
+    }
+
+    /**
+     * Read a byte array field from the stream message into the
+     * specified byte[] object (the read buffer).
+     * &lt;p&gt;
+     * To read the field value, readBytes should be successively called
+     * until it returns a value less than the length of the read buffer.
+     * The value of the bytes in the buffer following the last byte
+     * read are undefined.
+     * &lt;p&gt;
+     * If readBytes returns a value equal to the length of the buffer, a
+     * subsequent readBytes call must be made. If there are no more bytes
+     * to be read this call will return -1.
+     * &lt;p&gt;
+     * If the bytes array field value is null, readBytes returns -1.
+     * &lt;p&gt;
+     * If the bytes array field value is empty, readBytes returns 0.
+     * &lt;p&gt;
+     * Once the first readBytes call on a byte[] field value has been done,
+     * the full value of the field must be read before it is valid to read
+     * the next field. An attempt to read the next field before that has
+     * been done will throw a MessageFormatException.
+     * &lt;p&gt;
+     * To read the byte field value into a new byte[] object, use the
+     * {@link #readObject} method.
+     *
+     * @param value the buffer into which the data is read.
+     * @return the total number of bytes read into the buffer, or -1 if
+     * there is no more data because the end of the byte field has been
+     * reached.
+     * @throws JMSException if JMS fails to read message due to some internal
+     * JMS error
+     * @throws MessageEOFException if an end of message stream
+     * @throws MessageFormatException if this type conversion is invalid
+     * @throws MessageNotReadableException if message is in write-only mode
+     */
+    public final int readBytes(byte[] value) throws JMSException {
+<span class="nc" id="L560">        checkRead();</span>
+<span class="nc" id="L561">        getInputStream();</span>
+<span class="nc" id="L562">        int read = 0; // the number of bytes read</span>
+<span class="nc bnc" id="L563" title="All 2 branches missed.">        if (_readBytes == 0) {</span>
+            // read the next byte array field
+            try {
+<span class="nc" id="L566">                _in.mark(_bytes.length - _in.available());</span>
+<span class="nc" id="L567">                byte type = (byte) (_in.readByte() &amp; 0x0F);</span>
+<span class="nc bnc" id="L568" title="All 2 branches missed.">                if (type == NULL) {</span>
+<span class="nc" id="L569">                    return -1;</span>
+<span class="nc bnc" id="L570" title="All 2 branches missed.">                } else if (type != BYTE_ARRAY) {</span>
+<span class="nc" id="L571">                    _in.reset();</span>
+<span class="nc bnc" id="L572" title="All 2 branches missed.">                    if (type &lt; TYPE_NAMES.length) {</span>
+<span class="nc" id="L573">                        throw new MessageFormatException(</span>
+                            &quot;Expected type=&quot; + TYPE_NAMES[BYTE_ARRAY]
+                            + &quot;, but got type=&quot; + TYPE_NAMES[type]);
+                    } else {
+<span class="nc" id="L577">                        throw new MessageFormatException(</span>
+                            &quot;StreamMessage corrupted&quot;);
+                    }
+                }
+<span class="nc" id="L581">            } catch (IOException exception) {</span>
+<span class="nc" id="L582">                raise(exception);</span>
+<span class="nc" id="L583">            }</span>
+            try {
+<span class="nc" id="L585">                _byteArrayLength = _in.readInt();</span>
+<span class="nc" id="L586">            } catch (IOException exception) {</span>
+<span class="nc" id="L587">                raise(exception);</span>
+<span class="nc" id="L588">            }</span>
+        }
+
+<span class="nc bnc" id="L591" title="All 2 branches missed.">        if (_byteArrayLength == 0) {</span>
+            // No bytes to read. Return -1 if this is an incremental read
+            // or 0 if the byte array was empty
+<span class="nc bnc" id="L594" title="All 2 branches missed.">            if (_readBytes != 0) {</span>
+                // completing an incremental read
+<span class="nc" id="L596">                read = -1;</span>
+            }
+<span class="nc" id="L598">            _readBytes = 0;   // indicates finished reading the byte array</span>
+<span class="nc bnc" id="L599" title="All 2 branches missed.">        } else if (value.length &lt;= _byteArrayLength) {</span>
+            // bytes to read &gt;= size of target
+<span class="nc" id="L601">            read = value.length;</span>
+            try {
+<span class="nc" id="L603">                _in.readFully(value);</span>
+<span class="nc" id="L604">            } catch (IOException exception) {</span>
+<span class="nc" id="L605">                raise(exception);</span>
+<span class="nc" id="L606">            }</span>
+<span class="nc" id="L607">            _byteArrayLength -= value.length;</span>
+<span class="nc" id="L608">            ++_readBytes;</span>
+        } else {
+            // bytes to read &lt; size of target
+<span class="nc" id="L611">            read = _byteArrayLength;</span>
+            try {
+<span class="nc" id="L613">                _in.readFully(value, 0, _byteArrayLength);</span>
+<span class="nc" id="L614">            } catch (IOException exception) {</span>
+<span class="nc" id="L615">                raise(exception);</span>
+<span class="nc" id="L616">            }</span>
+<span class="nc" id="L617">            _readBytes = 0;</span>
+        }
+<span class="nc" id="L619">        return read;</span>
+    }
+
+    /**
+     * Read a Java object from the stream message
+     * &lt;p&gt;
+     * Note that this method can be used to return in objectified format,
+     * an object that had been written to the stream with the equivalent
+     * &lt;code&gt;writeObject&lt;/code&gt; method call, or it's equivalent primitive
+     * write&lt;type&gt; method.
+     * &lt;p&gt;
+     * Note that byte values are returned as byte[], not Byte[].
+     *
+     * @return a Java object from the stream message, in objectified
+     * format (eg. if it set as an int, then a Integer is returned).
+     * @throws JMSException if JMS fails to read message due to some internal
+     * JMS error
+     * @throws MessageEOFException if end of message stream
+     * @throws MessageNotReadableException if message is in write-only mode
+     */
+    public final Object readObject() throws JMSException {
+<span class="nc" id="L640">        Object result = null;</span>
+<span class="nc" id="L641">        prepare();</span>
+        try {
+<span class="nc" id="L643">            result = readNext();</span>
+<span class="nc" id="L644">        } catch (MessageFormatException exception) {</span>
+<span class="nc" id="L645">            revert(exception);</span>
+<span class="nc" id="L646">        }</span>
+<span class="nc" id="L647">        return result;</span>
+    }
+
+    /**
+     * Write a &lt;code&gt;boolean&lt;/code&gt; to the stream message.
+     * The value &lt;code&gt;true&lt;/code&gt; is written out as the value
+     * &lt;code&gt;(byte)1&lt;/code&gt;; the value &lt;code&gt;false&lt;/code&gt; is written out as
+     * the value &lt;code&gt;(byte)0&lt;/code&gt;.
+     *
+     * @param value the &lt;code&gt;boolean&lt;/code&gt; value to be written.
+     * @throws JMSException if JMS fails to write message due to
+     * some internal JMS error
+     * @throws MessageNotWriteableException if message in read-only mode
+     */
+    public final void writeBoolean(boolean value) throws JMSException {
+<span class="nc" id="L662">        checkWrite();</span>
+        try {
+<span class="nc" id="L664">            getOutputStream();</span>
+            // encode the boolean value in the type byte
+<span class="nc bnc" id="L666" title="All 2 branches missed.">            _out.writeByte(BOOLEAN | ((value) ? 1 &lt;&lt; 4 : 0));</span>
+<span class="nc" id="L667">        } catch (IOException exception) {</span>
+<span class="nc" id="L668">            raise(exception);</span>
+<span class="nc" id="L669">        }</span>
+<span class="nc" id="L670">    }</span>
+
+    /**
+     * Write out a &lt;code&gt;byte&lt;/code&gt; to the stream message
+     *
+     * @param value the &lt;code&gt;byte&lt;/code&gt; value to be written
+     * @throws JMSException if JMS fails to write message due to
+     * some internal JMS error
+     * @throws MessageNotWriteableException if message in read-only mode
+     */
+    public final void writeByte(byte value) throws JMSException {
+<span class="nc" id="L681">        checkWrite();</span>
+        try {
+<span class="nc" id="L683">            getOutputStream();</span>
+<span class="nc" id="L684">            _out.writeByte(BYTE);</span>
+<span class="nc" id="L685">            _out.writeByte(value);</span>
+<span class="nc" id="L686">        } catch (IOException exception) {</span>
+<span class="nc" id="L687">            raise(exception);</span>
+<span class="nc" id="L688">        }</span>
+<span class="nc" id="L689">    }</span>
+
+    /**
+     * Write a &lt;code&gt;short&lt;/code&gt; to the stream message
+     *
+     * @param value the &lt;code&gt;short&lt;/code&gt; to be written
+     * @throws JMSException if JMS fails to write message due to
+     * some internal JMS error
+     * @throws MessageNotWriteableException if message in read-only mode
+     */
+    public final void writeShort(short value) throws JMSException {
+<span class="nc" id="L700">        checkWrite();</span>
+        try {
+<span class="nc" id="L702">            getOutputStream();</span>
+<span class="nc" id="L703">            _out.writeByte(SHORT);</span>
+<span class="nc" id="L704">            _out.writeShort(value);</span>
+<span class="nc" id="L705">        } catch (IOException exception) {</span>
+<span class="nc" id="L706">            raise(exception);</span>
+<span class="nc" id="L707">        }</span>
+<span class="nc" id="L708">    }</span>
+
+    /**
+     * Write a &lt;code&gt;char&lt;/code&gt; to the stream message
+     *
+     * @param value the &lt;code&gt;char&lt;/code&gt; value to be written
+     * @throws JMSException if JMS fails to write message due to
+     * some internal JMS error
+     * @throws MessageNotWriteableException if message in read-only mode
+     */
+    public final void writeChar(char value) throws JMSException {
+<span class="nc" id="L719">        checkWrite();</span>
+        try {
+<span class="nc" id="L721">            getOutputStream();</span>
+<span class="nc" id="L722">            _out.writeByte(CHAR);</span>
+<span class="nc" id="L723">            _out.writeChar(value);</span>
+<span class="nc" id="L724">        } catch (IOException exception) {</span>
+<span class="nc" id="L725">            raise(exception);</span>
+<span class="nc" id="L726">        }</span>
+<span class="nc" id="L727">    }</span>
+
+    /**
+     * Write an &lt;code&gt;int&lt;/code&gt; to the stream message
+     *
+     * @param value the &lt;code&gt;int&lt;/code&gt; to be written
+     * @throws JMSException if JMS fails to write message due to
+     * some internal JMS error
+     * @throws MessageNotWriteableException if message in read-only mode
+     */
+    public final void writeInt(int value) throws JMSException {
+<span class="nc" id="L738">        checkWrite();</span>
+        try {
+<span class="nc" id="L740">            getOutputStream();</span>
+<span class="nc" id="L741">            _out.writeByte(INT);</span>
+<span class="nc" id="L742">            _out.writeInt(value);</span>
+<span class="nc" id="L743">        } catch (IOException exception) {</span>
+<span class="nc" id="L744">            raise(exception);</span>
+<span class="nc" id="L745">        }</span>
+<span class="nc" id="L746">    }</span>
+
+    /**
+     * Write a &lt;code&gt;long&lt;/code&gt; to the stream message
+     *
+     * @param value the &lt;code&gt;long&lt;/code&gt; to be written
+     * @throws JMSException if JMS fails to write message due to
+     * some internal JMS error
+     * @throws MessageNotWriteableException if message in read-only mode
+     */
+    public final void writeLong(long value) throws JMSException {
+<span class="nc" id="L757">        checkWrite();</span>
+        try {
+<span class="nc" id="L759">            getOutputStream();</span>
+<span class="nc" id="L760">            _out.writeByte(LONG);</span>
+<span class="nc" id="L761">            _out.writeLong(value);</span>
+<span class="nc" id="L762">        } catch (IOException exception) {</span>
+<span class="nc" id="L763">            raise(exception);</span>
+<span class="nc" id="L764">        }</span>
+<span class="nc" id="L765">    }</span>
+
+    /**
+     * Write a &lt;code&gt;float&lt;/code&gt; to the stream message
+     *
+     * @param value the &lt;code&gt;float&lt;/code&gt; value to be written
+     * @throws JMSException if JMS fails to write message due to
+     * some internal JMS error
+     * @throws MessageNotWriteableException if message in read-only mode
+     */
+    public final void writeFloat(float value) throws JMSException {
+<span class="nc" id="L776">        checkWrite();</span>
+        try {
+<span class="nc" id="L778">            getOutputStream();</span>
+<span class="nc" id="L779">            _out.writeByte(FLOAT);</span>
+<span class="nc" id="L780">            _out.writeFloat(value);</span>
+<span class="nc" id="L781">        } catch (IOException exception) {</span>
+<span class="nc" id="L782">            raise(exception);</span>
+<span class="nc" id="L783">        }</span>
+<span class="nc" id="L784">    }</span>
+
+    /**
+     * Write a &lt;code&gt;double&lt;/code&gt; to the stream message
+     *
+     * @param value the &lt;code&gt;double&lt;/code&gt; value to be written
+     * @throws JMSException if JMS fails to write message due to
+     * some internal JMS error
+     * @throws MessageNotWriteableException if message in read-only mode
+     */
+    public final void writeDouble(double value) throws JMSException {
+<span class="nc" id="L795">        checkWrite();</span>
+        try {
+<span class="nc" id="L797">            getOutputStream();</span>
+<span class="nc" id="L798">            _out.writeByte(DOUBLE);</span>
+<span class="nc" id="L799">            _out.writeDouble(value);</span>
+<span class="nc" id="L800">        } catch (IOException exception) {</span>
+<span class="nc" id="L801">            raise(exception);</span>
+<span class="nc" id="L802">        }</span>
+<span class="nc" id="L803">    }</span>
+
+    /**
+     * Write a string to the stream message
+     *
+     * @param value the &lt;code&gt;String&lt;/code&gt; value to be written
+     * @throws JMSException if JMS fails to write message due to
+     * some internal JMS error
+     * @throws MessageNotWriteableException if message in read-only mode
+     * @throws NullPointerException if value is null
+     */
+    public final void writeString(String value) throws JMSException {
+<span class="nc" id="L815">        checkWrite();</span>
+<span class="nc bnc" id="L816" title="All 2 branches missed.">        if (value == null) {</span>
+            // could throw IllegalArgumentException, but this is in keeping
+            // with that thrown by DataOutputStream
+<span class="nc" id="L819">            throw new NullPointerException(&quot;Argument value is null&quot;);</span>
+        }
+        try {
+<span class="nc" id="L822">            getOutputStream();</span>
+<span class="nc" id="L823">            _out.writeByte(STRING);</span>
+<span class="nc" id="L824">            _out.writeUTF(value);</span>
+<span class="nc" id="L825">        } catch (IOException exception) {</span>
+<span class="nc" id="L826">            raise(exception);</span>
+<span class="nc" id="L827">        }</span>
+<span class="nc" id="L828">    }</span>
+
+    /**
+     * Write a byte array field to the stream message
+     * &lt;p&gt;
+     * The byte array &lt;code&gt;value&lt;/code&gt; is written as a byte array field
+     * into the StreamMessage. Consecutively written byte array fields are
+     * treated as two distinct fields when reading byte array fields.
+     *
+     * @param value the byte array to be written
+     * @throws JMSException if JMS fails to write message due to
+     * some internal JMS error
+     * @throws MessageNotWriteableException if message in read-only mode
+     * @throws NullPointerException if value is null
+     */
+    public final void writeBytes(byte[] value) throws JMSException {
+<span class="nc" id="L844">        checkWrite();</span>
+<span class="nc bnc" id="L845" title="All 2 branches missed.">        if (value == null) {</span>
+            // could throw IllegalArgumentException, but this is in keeping
+            // with that thrown by DataOutputStream
+<span class="nc" id="L848">            throw new NullPointerException(&quot;Argument value is null&quot;);</span>
+        }
+        try {
+<span class="nc" id="L851">            getOutputStream();</span>
+<span class="nc" id="L852">            _out.writeByte(BYTE_ARRAY);</span>
+<span class="nc" id="L853">            _out.writeInt(value.length);</span>
+<span class="nc" id="L854">            _out.write(value);</span>
+<span class="nc" id="L855">        } catch (IOException exception) {</span>
+<span class="nc" id="L856">            raise(exception);</span>
+<span class="nc" id="L857">        }</span>
+<span class="nc" id="L858">    }</span>
+
+    /**
+     * Write a portion of a byte array as a byte array field to the stream
+     * message
+     * &lt;p&gt;
+     * The a portion of the byte array &lt;code&gt;value&lt;/code&gt; is written as a
+     * byte array field into the StreamMessage. Consecutively written byte
+     * array fields are treated as two distinct fields when reading byte
+     * array fields.
+     *
+     * @param value the byte array value to be written
+     * @param offset the initial offset within the byte array
+     * @param length the number of bytes to write
+     * @throws JMSException if JMS fails to write message due to
+     * some internal JMS error
+     * @throws MessageNotWriteableException if message in read-only mode
+     * @throws NullPointerException if value is null
+     */
+    public void writeBytes(byte[] value, int offset, int length)
+        throws JMSException {
+<span class="nc" id="L879">        checkWrite();</span>
+<span class="nc bnc" id="L880" title="All 2 branches missed.">        if (value == null) {</span>
+            // could throw IllegalArgumentException, but this is in keeping
+            // with that thrown by DataOutputStream
+<span class="nc" id="L883">            throw new NullPointerException(&quot;Argument value is null&quot;);</span>
+        }
+        try {
+<span class="nc" id="L886">            getOutputStream();</span>
+<span class="nc" id="L887">            _out.writeByte(BYTE_ARRAY);</span>
+<span class="nc" id="L888">            _out.writeInt(length);</span>
+<span class="nc" id="L889">            _out.write(value, offset, length);</span>
+<span class="nc" id="L890">        } catch (IOException exception) {</span>
+<span class="nc" id="L891">            raise(exception);</span>
+<span class="nc" id="L892">        }</span>
+<span class="nc" id="L893">    }</span>
+
+    /**
+     * Write a Java object to the stream message
+     * &lt;p&gt;
+     * Note that this method only works for the objectified primitive
+     * object types (Integer, Double, Long ...), String's and byte arrays.
+     *
+     * @param value the Java object to be written
+     * @throws JMSException if JMS fails to write message due to
+     * some internal JMS error
+     * @throws MessageFormatException if the object is invalid
+     * @throws MessageNotWriteableException if message in read-only mode
+     */
+    public void writeObject(Object value) throws JMSException {
+<span class="nc bnc" id="L908" title="All 2 branches missed.">        if (value == null) {</span>
+            try {
+<span class="nc" id="L910">                checkWrite();</span>
+<span class="nc" id="L911">                getOutputStream();</span>
+<span class="nc" id="L912">                _out.writeByte(NULL);</span>
+<span class="nc" id="L913">            } catch (IOException exception) {</span>
+<span class="nc" id="L914">                raise(exception);</span>
+<span class="nc" id="L915">            }</span>
+<span class="nc bnc" id="L916" title="All 2 branches missed.">        } else if (value instanceof Boolean) {</span>
+<span class="nc" id="L917">            writeBoolean(((Boolean) value).booleanValue());</span>
+<span class="nc bnc" id="L918" title="All 2 branches missed.">        } else if (value instanceof Byte) {</span>
+<span class="nc" id="L919">            writeByte(((Byte) value).byteValue());</span>
+<span class="nc bnc" id="L920" title="All 2 branches missed.">        } else if (value instanceof byte[]) {</span>
+<span class="nc" id="L921">            writeBytes((byte[]) value);</span>
+<span class="nc bnc" id="L922" title="All 2 branches missed.">        } else if (value instanceof Short) {</span>
+<span class="nc" id="L923">            writeShort(((Short) value).shortValue());</span>
+<span class="nc bnc" id="L924" title="All 2 branches missed.">        } else if (value instanceof Character) {</span>
+<span class="nc" id="L925">            writeChar(((Character) value).charValue());</span>
+<span class="nc bnc" id="L926" title="All 2 branches missed.">        } else if (value instanceof Integer) {</span>
+<span class="nc" id="L927">            writeInt(((Integer) value).intValue());</span>
+<span class="nc bnc" id="L928" title="All 2 branches missed.">        } else if (value instanceof Long) {</span>
+<span class="nc" id="L929">            writeLong(((Long) value).longValue());</span>
+<span class="nc bnc" id="L930" title="All 2 branches missed.">        } else if (value instanceof Float) {</span>
+<span class="nc" id="L931">            writeFloat(((Float) value).floatValue());</span>
+<span class="nc bnc" id="L932" title="All 2 branches missed.">        } else if (value instanceof Double) {</span>
+<span class="nc" id="L933">            writeDouble(((Double) value).doubleValue());</span>
+<span class="nc bnc" id="L934" title="All 2 branches missed.">        } else if (value instanceof String) {</span>
+<span class="nc" id="L935">            writeString((String) value);</span>
+        } else {
+<span class="nc" id="L937">            throw new MessageFormatException(</span>
+<span class="nc" id="L938">                &quot;Objects of type &quot; + value.getClass().getName()</span>
+                + &quot; are not supported by StreamMessage&quot;);
+        }
+<span class="nc" id="L941">    }</span>
+
+    /**
+     * Put the message body in read-only mode, and reposition the stream
+     * to the beginning
+     *
+     * @throws JMSException if JMS fails to reset the message due to
+     * some internal JMS error
+     */
+    public void reset() throws JMSException {
+        try {
+<span class="nc bnc" id="L952" title="All 2 branches missed.">            if (!_bodyReadOnly) {</span>
+<span class="nc" id="L953">                _bodyReadOnly = true;</span>
+<span class="nc bnc" id="L954" title="All 2 branches missed.">                if (_out != null) {</span>
+<span class="nc" id="L955">                    _out.flush();</span>
+<span class="nc" id="L956">                    _bytes = _byteOut.toByteArray();</span>
+<span class="nc" id="L957">                    _byteOut = null;</span>
+<span class="nc" id="L958">                    _out.close();</span>
+<span class="nc" id="L959">                    _out = null;</span>
+                }
+            } else {
+<span class="nc bnc" id="L962" title="All 2 branches missed.">                if (_in != null) {</span>
+<span class="nc" id="L963">                    _byteIn = null;</span>
+<span class="nc" id="L964">                    _in.close();</span>
+<span class="nc" id="L965">                    _in = null;</span>
+                }
+            }
+<span class="nc" id="L968">            _readBytes = 0;</span>
+<span class="nc" id="L969">        } catch (IOException exception) {</span>
+<span class="nc" id="L970">            raise(exception);</span>
+<span class="nc" id="L971">        }</span>
+<span class="nc" id="L972">    }</span>
+
+    /**
+     * Overide the super class method to reset the streams, and put the
+     * message body in write only mode
+     *
+     * @throws JMSException if JMS fails to reset the message due to
+     * some internal JMS error.
+     */
+    public void clearBody() throws JMSException {
+        try {
+<span class="nc bnc" id="L983" title="All 2 branches missed.">            if (_bodyReadOnly) {</span>
+                // in read-only mode
+<span class="nc" id="L985">                _bodyReadOnly = false;</span>
+<span class="nc bnc" id="L986" title="All 2 branches missed.">                if (_in != null) {</span>
+<span class="nc" id="L987">                    _byteIn = null;</span>
+<span class="nc" id="L988">                    _in.close();</span>
+<span class="nc" id="L989">                    _in = null;</span>
+<span class="nc" id="L990">                    _offset = 0;</span>
+                }
+<span class="nc bnc" id="L992" title="All 2 branches missed.">            } else if (_out != null) {</span>
+                // already in write-only mode
+<span class="nc" id="L994">                _byteOut = null;</span>
+<span class="nc" id="L995">                _out.close();</span>
+<span class="nc" id="L996">                _out = null;</span>
+            }
+<span class="nc" id="L998">            _bytes = EMPTY;</span>
+<span class="nc" id="L999">            _readBytes = 0;</span>
+<span class="nc" id="L1000">        } catch (IOException exception) {</span>
+<span class="nc" id="L1001">            raise(exception);</span>
+<span class="nc" id="L1002">        }</span>
+<span class="nc" id="L1003">    }</span>
+
+    /**
+     * Set the read-only mode of the message. If read-only, resets the message
+     * for reading
+     *
+     * @param readOnly if true, make the message body and properties
+     * @throws JMSException if the read-only mode cannot be changed
+     */
+    public final void setReadOnly(boolean readOnly) throws JMSException {
+<span class="nc bnc" id="L1013" title="All 2 branches missed.">        if (readOnly) {</span>
+<span class="nc" id="L1014">            reset();</span>
+        }
+<span class="nc" id="L1016">        super.setReadOnly(readOnly);</span>
+<span class="nc" id="L1017">    }</span>
+
+    /**
+     * Prepare to do a read
+     *
+     * @throws JMSException if the current position in the stream can't be
+     * marked
+     * @throws MessageNotReadableException if the message is in write-only mode
+     */
+    private final void prepare() throws JMSException {
+<span class="nc" id="L1027">        checkRead();</span>
+<span class="nc" id="L1028">        getInputStream();</span>
+        try {
+<span class="nc" id="L1030">            _in.mark(_bytes.length - _in.available());</span>
+<span class="nc" id="L1031">        } catch (IOException exception) {</span>
+<span class="nc" id="L1032">            raise(exception);</span>
+<span class="nc" id="L1033">        }</span>
+<span class="nc" id="L1034">    }</span>
+
+    /**
+     * Reverts the stream to its prior position if a MessageFormatException is
+     * thrown, and propagates the exception.
+     *
+     * @param exception the exception that caused the reset
+     * @throws MessageFormatException
+     */
+    private void revert(MessageFormatException exception)
+        throws MessageFormatException {
+        try {
+<span class="nc" id="L1046">            _in.reset();</span>
+<span class="nc" id="L1047">        } catch (IOException ignore) {</span>
+            // can't reset the stream, but need to propagate the original
+            // exception
+<span class="nc" id="L1050">        }</span>
+<span class="nc" id="L1051">        throw exception;</span>
+    }
+
+    /**
+     * Reverts the stream to its prior position if a NumberFormatException or
+     * NullPointerException is thrown, and propagates the exception.
+     *
+     * @param exception the exception that caused the reset
+     * @throws NullPointerException
+     * @throws NumberFormatException
+     */
+    private void revert(RuntimeException exception) {
+        try {
+<span class="nc" id="L1064">            _in.reset();</span>
+<span class="nc" id="L1065">        } catch (IOException ignore) {</span>
+            // can't reset the stream, but need to propagate the original
+            // exception
+<span class="nc" id="L1068">        }</span>
+<span class="nc" id="L1069">        throw exception;</span>
+    }
+
+    /**
+     * Read the next object from the stream message
+     *
+     * @return a Java object from the stream message, in objectified
+     * format (eg. if it set as an int, then a Integer is returned).
+     * @throws JMSException if JMS fails to read message due to some internal
+     * JMS error
+     * @throws MessageEOFException if end of message stream
+     * @throws MessageFormatException if a byte array has not been fully read
+     * by {@link #readBytes(byte[])}
+     * @throws MessageNotReadableException if the message is in write-only mode
+     */
+    private Object readNext() throws JMSException {
+<span class="nc bnc" id="L1085" title="All 2 branches missed.">        if (_readBytes != 0) {</span>
+<span class="nc" id="L1086">            throw new MessageFormatException(</span>
+                &quot;Cannot read the next field until the byte array is read&quot;);
+        }
+
+<span class="nc" id="L1090">        byte type = 0;</span>
+        try {
+<span class="nc" id="L1092">            type = _in.readByte();</span>
+<span class="nc" id="L1093">        } catch (IOException exception) {</span>
+<span class="nc" id="L1094">            raise(exception);</span>
+<span class="nc" id="L1095">        }</span>
+<span class="nc bnc" id="L1096" title="All 2 branches missed.">        if ((type &amp; 0x0F) &gt; TYPE_NAMES.length) {</span>
+<span class="nc" id="L1097">            throw new JMSException(&quot;StreamMessage corrupted&quot;);</span>
+        }
+<span class="nc" id="L1099">        Object result = null;</span>
+
+        try {
+<span class="nc bnc" id="L1102" title="All 11 branches missed.">            switch (type &amp; 0x0F) {</span>
+                case BOOLEAN:
+<span class="nc bnc" id="L1104" title="All 2 branches missed.">                    boolean value = ((type &amp; 0xF0) != 0) ? true : false;</span>
+<span class="nc" id="L1105">                    result = new Boolean(value);</span>
+<span class="nc" id="L1106">                    break;</span>
+                case BYTE:
+<span class="nc" id="L1108">                    result = new Byte(_in.readByte());</span>
+<span class="nc" id="L1109">                    break;</span>
+                case BYTE_ARRAY:
+<span class="nc" id="L1111">                    int length = _in.readInt();</span>
+<span class="nc" id="L1112">                    byte[] bytes = new byte[length];</span>
+<span class="nc" id="L1113">                    _in.readFully(bytes);</span>
+<span class="nc" id="L1114">                    result = bytes;</span>
+<span class="nc" id="L1115">                    break;</span>
+                case SHORT:
+<span class="nc" id="L1117">                    result = new Short(_in.readShort());</span>
+<span class="nc" id="L1118">                    break;</span>
+                case CHAR:
+<span class="nc" id="L1120">                    result = new Character(_in.readChar());</span>
+<span class="nc" id="L1121">                    break;</span>
+                case INT:
+<span class="nc" id="L1123">                    result = new Integer(_in.readInt());</span>
+<span class="nc" id="L1124">                    break;</span>
+                case LONG:
+<span class="nc" id="L1126">                    result = new Long(_in.readLong());</span>
+<span class="nc" id="L1127">                    break;</span>
+                case FLOAT:
+<span class="nc" id="L1129">                    result = new Float(_in.readFloat());</span>
+<span class="nc" id="L1130">                    break;</span>
+                case DOUBLE:
+<span class="nc" id="L1132">                    result = new Double(_in.readDouble());</span>
+<span class="nc" id="L1133">                    break;</span>
+                case STRING:
+<span class="nc" id="L1135">                    result = _in.readUTF();</span>
+                    break;
+            }
+<span class="nc" id="L1138">        } catch (IOException exception) {</span>
+<span class="nc" id="L1139">            raise(exception);</span>
+<span class="nc" id="L1140">        }</span>
+
+<span class="nc" id="L1142">        return result;</span>
+    }
+
+    /**
+     * Initialise the input stream if it hasn't been intialised
+     *
+     * @return the input stream
+     */
+    private DataInputStream getInputStream() {
+<span class="nc bnc" id="L1151" title="All 2 branches missed.">        if (_in == null) {</span>
+<span class="nc" id="L1152">            _byteIn = new ByteArrayInputStream(_bytes, _offset,</span>
+                _bytes.length - _offset);
+<span class="nc" id="L1154">            _in = new DataInputStream(_byteIn);</span>
+        }
+<span class="nc" id="L1156">        return _in;</span>
+    }
+
+    /**
+     * Initialise the output stream if it hasn't been intialised
+     *
+     * @return the output stream
+     * @throws IOException if the output stream can't be created
+     */
+    private final DataOutputStream getOutputStream() throws IOException {
+<span class="nc bnc" id="L1166" title="All 2 branches missed.">        if (_out == null) {</span>
+<span class="nc" id="L1167">            _byteOut = new ByteArrayOutputStream();</span>
+<span class="nc" id="L1168">            _out = new DataOutputStream(_byteOut);</span>
+<span class="nc" id="L1169">            _out.write(_bytes);</span>
+        }
+<span class="nc" id="L1171">        return _out;</span>
+    }
+
+    /**
+     * Helper to raise a JMSException when an I/O error occurs
+     *
+     * @param exception the exception that caused the failure
+     * @throws JMSException
+     */
+    private final void raise(IOException exception) throws JMSException {
+<span class="nc" id="L1181">        JMSException error = null;</span>
+<span class="nc bnc" id="L1182" title="All 2 branches missed.">        if (exception instanceof EOFException) {</span>
+<span class="nc" id="L1183">            error = new MessageEOFException(exception.getMessage());</span>
+        } else {
+<span class="nc" id="L1185">            error = new JMSException(exception.getMessage());</span>
+        }
+<span class="nc" id="L1187">        error.setLinkedException(exception);</span>
+<span class="nc" id="L1188">        throw error;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

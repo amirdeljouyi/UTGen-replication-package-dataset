@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SocketManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.net.tunnel</a> &gt; <span class="el_source">SocketManager.java</span></div><h1>SocketManager.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2004-2006 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: SocketManager.java,v 1.1 2006/01/11 13:24:05 tanderson Exp $
+ */
+package org.exolab.jms.net.tunnel;
+
+import java.io.IOException;
+import java.net.Socket;
+import java.rmi.server.ObjID;
+import java.util.HashMap;
+import java.util.Map;
+
+import EDU.oswego.cs.dl.util.concurrent.ClockDaemon;
+import EDU.oswego.cs.dl.util.concurrent.ThreadFactory;
+import org.apache.log4j.Logger;
+
+
+/**
+ * Manages connections for {@link TunnelServlet}.
+ *
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.1 $ $Date: 2006/01/11 13:24:05 $
+ */
+<span class="nc" id="L64">class SocketManager {</span>
+
+    /**
+     * Clock daemon for periodically running the reaper.
+     */
+    private ClockDaemon _daemon;
+
+    /**
+     * A map of &lt;code&gt;SocketInfo&lt;/code&gt;, keyed on identifier.
+     */
+<span class="nc" id="L74">    private Map _sockets = new HashMap();</span>
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L79">    private static final Logger _log = Logger.getLogger(SocketManager.class);</span>
+
+    /**
+     * Reap thread synchronization helper.
+     */
+<span class="nc" id="L84">    private final Object _reapLock = new Object();</span>
+
+    /**
+     * The maximum period that a connection may be idle before it is reaped, in
+     * milliseconds. If &lt;code&gt;0&lt;/code&gt; indicates not to reap connections.
+     */
+<span class="nc" id="L90">    private long _idlePeriod = 30 * 1000;</span>
+
+
+    /**
+     * Create a new socket.
+     *
+     * @param host the host to connect to
+     * @param port the port to connect to
+     * @return the identifier of the new endpoint
+     * @throws IOException for any I/O error
+     */
+    public synchronized String open(String host, int port) throws IOException {
+<span class="nc" id="L102">        Socket socket = new Socket(host, port);</span>
+<span class="nc" id="L103">        String id = new ObjID().toString();</span>
+<span class="nc" id="L104">        SocketInfo result = new SocketInfo(id, socket);</span>
+<span class="nc" id="L105">        _sockets.put(id, result);</span>
+<span class="nc" id="L106">        startReaper();</span>
+<span class="nc" id="L107">        return id;</span>
+    }
+
+    /**
+     * Returns a socket given its identifier.
+     *
+     * @param id the endpoint identifier
+     * @return the endpoint corresponding to &lt;code&gt;id&lt;/code&gt; or
+     *         &lt;code&gt;null&lt;/code&gt;
+     */
+    public synchronized Socket getSocket(String id) {
+<span class="nc" id="L118">        Socket result = null;</span>
+<span class="nc" id="L119">        synchronized (_reapLock) {</span>
+<span class="nc" id="L120">            SocketInfo info = getSocketInfo(id);</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">            if (info != null) {</span>
+<span class="nc" id="L122">                info.setUsed();</span>
+<span class="nc" id="L123">                result = info.getSocket();</span>
+            }
+<span class="nc" id="L125">        }</span>
+<span class="nc" id="L126">        return result;</span>
+    }
+
+    /**
+     * Close a connection given its identifier.
+     *
+     * @param id the connection identifier
+     * @throws IOException for any I/O error
+     */
+    public synchronized void close(String id) throws IOException {
+<span class="nc" id="L136">        Socket socket = getSocket(id);</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        if (socket != null) {</span>
+            try {
+<span class="nc" id="L139">                socket.close();</span>
+            } finally {
+<span class="nc" id="L141">                _sockets.remove(id);</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">                if (_sockets.isEmpty()) {</span>
+<span class="nc" id="L143">                    stopReaper();</span>
+                }
+            }
+        }
+<span class="nc" id="L147">    }</span>
+
+    /**
+     * Sets the the maximum period that a connection may be idle before it is
+     * reaped, in seconds.
+     *
+     * @param period the idle period, in seconds
+     */
+    public void setIdlePeriod(int period) {
+<span class="nc" id="L156">        _idlePeriod = period * 1000;</span>
+<span class="nc" id="L157">    }</span>
+
+    /**
+     * Returns a {@link SocketInfo} given its identifier.
+     *
+     * @param id the endpoint identifier
+     * @return the connection corresponding to &lt;code&gt;id&lt;/code&gt; or
+     *         &lt;code&gt;null&lt;/code&gt; if none exists
+     */
+    protected SocketInfo getSocketInfo(String id) {
+<span class="nc" id="L167">        return (SocketInfo) _sockets.get(id);</span>
+    }
+
+
+    /**
+     * Reap idle connections.
+     */
+    private void reapIdleConnections() {
+        Map.Entry[] entries;
+<span class="nc" id="L176">        synchronized (this) {</span>
+<span class="nc" id="L177">            entries = (Map.Entry[]) _sockets.entrySet().toArray(new Map.Entry[0]);</span>
+<span class="nc" id="L178">        }</span>
+<span class="nc" id="L179">        synchronized (_reapLock) {</span>
+<span class="nc bnc" id="L180" title="All 4 branches missed.">            for (int i = 0; i &lt; entries.length &amp;&amp; !stopReaping(); ++i) {</span>
+<span class="nc" id="L181">                Map.Entry entry = entries[i];</span>
+<span class="nc" id="L182">                SocketInfo info = (SocketInfo) entry.getValue();</span>
+<span class="nc" id="L183">                long current = System.currentTimeMillis();</span>
+<span class="nc" id="L184">                long unused = current - info.getUsed();</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">                if (unused &gt; _idlePeriod) {</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">                    if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L187">                        _log.debug(&quot;Reaping idle connection=&quot; + info.getId());</span>
+                    }
+                    try {
+<span class="nc" id="L190">                        close(info.getId());</span>
+<span class="nc" id="L191">                    } catch (IOException ignore) {</span>
+<span class="nc" id="L192">                    }</span>
+                }
+            }
+<span class="nc" id="L195">        }</span>
+<span class="nc" id="L196">    }</span>
+
+    /**
+     * Starts the reaper for dead/idle connections, if needed.
+     */
+    private synchronized void startReaper() {
+<span class="nc bnc" id="L202" title="All 2 branches missed.">        if (_daemon == null) {</span>
+<span class="nc" id="L203">            _daemon = new ClockDaemon();</span>
+<span class="nc bnc" id="L204" title="All 2 branches missed.">            if (_idlePeriod &gt; 0) {</span>
+<span class="nc" id="L205">                _daemon.setThreadFactory(new ThreadFactory() {</span>
+                    public Thread newThread(Runnable command) {
+<span class="nc" id="L207">                        Thread thread = new Thread(command, &quot;Reaper&quot;);</span>
+<span class="nc" id="L208">                        thread.setDaemon(true);</span>
+<span class="nc" id="L209">                        return thread;</span>
+                    }
+                });
+
+<span class="nc" id="L213">                _daemon.executePeriodically(_idlePeriod, new Reaper(), false);</span>
+            }
+        }
+<span class="nc" id="L216">    }</span>
+
+    /**
+     * Stops the reaper for dead/idle connections, if needed.
+     */
+    private synchronized void stopReaper() {
+<span class="nc bnc" id="L222" title="All 2 branches missed.">        if (_daemon != null) {</span>
+<span class="nc" id="L223">            _daemon.shutDown();</span>
+<span class="nc" id="L224">            _daemon = null;</span>
+        }
+<span class="nc" id="L226">    }</span>
+
+    /**
+     * Helper to determines if a reaper should terminate, by checking the
+     * interrupt status of the current thread.
+     *
+     * @return &lt;code&gt;true&lt;/code&gt; if the reaper should terminate
+     */
+    private boolean stopReaping() {
+<span class="nc" id="L235">        return Thread.currentThread().isInterrupted();</span>
+    }
+
+    /**
+     * Helper class for reaping idle connections.
+     */
+<span class="nc" id="L241">    private class Reaper implements Runnable {</span>
+
+        /**
+         * Run the reaper.
+         */
+        public void run() {
+            try {
+<span class="nc" id="L248">                reapIdleConnections();</span>
+<span class="nc" id="L249">            } catch (Throwable exception) {</span>
+<span class="nc" id="L250">                _log.error(exception, exception);</span>
+<span class="nc" id="L251">            }</span>
+<span class="nc" id="L252">        }</span>
+    }
+
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

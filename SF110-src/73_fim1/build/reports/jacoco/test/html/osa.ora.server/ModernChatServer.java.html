@@ -1,0 +1,1386 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ModernChatServer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">73_fim1</a> &gt; <a href="index.source.html" class="el_package">osa.ora.server</a> &gt; <span class="el_source">ModernChatServer.java</span></div><h1>ModernChatServer.java</h1><pre class="source lang-java linenums">/*
+ * ModernChatServer.java
+ *
+ * Created on October 27, 2009, 12:20 AM
+ *
+ * To change this template, choose Tools | Template Manager
+ * and open the template in the editor.
+ */
+package osa.ora.server;
+
+import java.net.URISyntaxException;
+import java.rmi.Naming;
+import java.rmi.RemoteException;
+import java.rmi.registry.LocateRegistry;
+import java.rmi.registry.Registry;
+import java.rmi.server.UnicastRemoteObject;
+import java.util.Calendar;
+import java.util.Enumeration;
+import java.util.Hashtable;
+import java.util.Vector;
+import java.util.logging.FileHandler;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.logging.SimpleFormatter;
+import javax.swing.JOptionPane;
+import osa.ora.server.bd.UsersBD;
+import osa.ora.server.beans.BinaryMessage;
+import osa.ora.server.beans.Group;
+import osa.ora.server.beans.IConstant;
+import osa.ora.server.beans.LoginBean;
+import osa.ora.server.beans.ResultBean;
+import osa.ora.server.beans.Room;
+import osa.ora.server.beans.ServerSettingBean;
+import osa.ora.server.beans.TextMessage;
+import osa.ora.server.beans.User;
+import osa.ora.server.client.ClientInterface;
+import osa.ora.server.threads.SendKickOffByLoginMessageThread;
+import osa.ora.server.threads.SendKickOffMessageThread;
+import osa.ora.server.threads.SendRefreshContactThread;
+import osa.ora.server.threads.SendUserUpdatedStatusThread;
+import osa.ora.server.utils.StringEncoder64;
+import osa.ora.server.utils.StringEncrypter;
+
+/**
+ *
+ * @author ooransa
+ * Class implements 2 interfaces:
+ * 1.Runnable for ping users thread : that ping users periodically to check if they are still connected or not.
+ * 2.ServerInterface that extends 2 other interfaces : Admin Interface and Client Interface , both used
+ * As the RMI view of the server for the connected client.
+ */
+public class ModernChatServer implements ServerInterface, Runnable {
+    //Logger object
+<span class="nc" id="L54">    private static Logger logger = Logger.getLogger(&quot;ModernChatServer&quot;);</span>
+    private static FileHandler fh;
+    private String authToken;
+    private String clientAuthToken;
+    private String secToken;
+    private StringEncrypter passwordEnc;
+    /**
+     * @return the logger
+     */
+    public static Logger getLogger() {
+<span class="nc" id="L64">        return logger;</span>
+    }
+    //password, groups and rooms hashtable
+    private Hashtable&lt;Integer,String&gt; passwords;
+    private Vector&lt;Group&gt; groups;
+    private Vector&lt;Room&gt; rooms;
+    //admin user object
+    private User adminUser;
+    //connected clients connections
+    private Hashtable&lt;Integer, ClientInterface&gt; connectedClients;
+    private Hashtable&lt;Integer, String&gt; connectedClientsIPs;
+    //Business Deligate to load all data.
+    private UsersBD userBD;
+    private Thread checkupThread;
+<span class="nc" id="L78">    private boolean serverRunning = false;</span>
+    //current run path
+<span class="nc" id="L80">    private String path=&quot;/&quot;;</span>
+    //security securityMode
+<span class="nc" id="L82">    private int securityMode=0;</span>
+    //server setting bean
+    private ServerSettingBean serverSettingBean;
+
+    //main method
+    public static void main(String[] args) {
+        try {
+<span class="nc" id="L89">            System.out.println(&quot;Starting Modern Chat Server .....&quot;);</span>
+<span class="nc" id="L90">            ModernChatServer modernChatServer = new ModernChatServer();            </span>
+<span class="nc" id="L91">        } catch (Exception e) {</span>
+<span class="nc" id="L92">            System.out.println(&quot;Non-Specific Exception occur&quot;);</span>
+<span class="nc" id="L93">            e.printStackTrace();</span>
+<span class="nc" id="L94">            JOptionPane.showMessageDialog(null, &quot;Error in starting up the server:&quot;+e.getMessage());</span>
+<span class="nc" id="L95">        }</span>
+<span class="nc" id="L96">    }</span>
+    /**
+     * private method to start the RMI registry
+     * @throws Exception
+     */
+    private void startRMIRegistry() throws Exception {
+        //binding
+<span class="nc" id="L103">        Registry registry = LocateRegistry.createRegistry(Integer.parseInt(getServerSettingBean().getServerPort()));</span>
+        //Registry registry=LocateRegistry.getRegistry();
+<span class="nc" id="L105">        ServerInterface c = (ServerInterface) UnicastRemoteObject.exportObject(this, 0);</span>
+        //Naming.rebind(&quot;//localhost:1190/ModernChatServer&quot;, c);
+<span class="nc" id="L107">        Naming.rebind(&quot;//&quot;+getServerSettingBean().getServerURL()+&quot;:&quot;+getServerSettingBean().getServerPort()+&quot;/ModernChatServer&quot;, c);</span>
+<span class="nc" id="L108">    }</span>
+    /** 
+     * Creates a new instance of ModernChatServer
+     */
+<span class="nc" id="L112">    public ModernChatServer() {</span>
+        //security &amp; authentication tokens
+<span class="nc" id="L114">        authToken=&quot;FIM&quot;+Calendar.getInstance().getTimeInMillis();</span>
+<span class="nc" id="L115">        clientAuthToken=&quot;FI&quot;+Calendar.getInstance().getTimeInMillis();</span>
+<span class="nc" id="L116">        secToken=&quot;F&quot;+Calendar.getInstance().getTimeInMillis();</span>
+<span class="nc" id="L117">        passwordEnc=StringEncrypter.getInstance(&quot;FIS2009&quot;);</span>
+        //instantiate correct jar path
+        try {
+<span class="nc" id="L120">            path = ModernChatServer.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath();</span>
+<span class="nc" id="L121">            path = path.substring(0, path.lastIndexOf('/') + 1);</span>
+<span class="nc" id="L122">            System.out.println(&quot;Path=&quot; + path);</span>
+<span class="nc" id="L123">        } catch (URISyntaxException ex) {</span>
+<span class="nc" id="L124">            ex.printStackTrace();</span>
+<span class="nc" id="L125">        }</span>
+        //instantiate setting Bean
+<span class="nc" id="L127">        serverSettingBean=new ServerSettingBean(path);</span>
+        //set the logger according to settings
+        try {
+<span class="nc" id="L130">            fh = new FileHandler(path+&quot;/log%g.txt&quot;, 1000000, 10, true);</span>
+<span class="nc" id="L131">            fh.setFormatter(new SimpleFormatter());</span>
+<span class="nc" id="L132">            logger.addHandler(fh);</span>
+<span class="nc" id="L133">            setLogLevel(Integer.parseInt(serverSettingBean.getLogLevel()),false,authToken);</span>
+<span class="nc" id="L134">        } catch (Exception ex) {</span>
+<span class="nc" id="L135">            logger.log(Level.SEVERE, &quot;Error while creating log file!&quot;, ex);</span>
+<span class="nc" id="L136">        }</span>
+<span class="nc" id="L137">        securityMode=Integer.parseInt(serverSettingBean.getSecureMode());</span>
+<span class="nc" id="L138">        logger.log(Level.INFO, &quot;FIM Server IP and Port=&quot; + serverSettingBean.getServerURL()+&quot;:&quot;+serverSettingBean.getServerPort());</span>
+        //load groups/users table
+        try{
+<span class="nc" id="L141">        userBD=new UsersBD(getServerSettingBean().getConnectionType(),path,this);</span>
+<span class="nc" id="L142">        }catch(Exception e){</span>
+<span class="nc" id="L143">            logger.log(Level.SEVERE, &quot;FIM Server Data Error!, Terminating ...!&quot;,e);</span>
+<span class="nc" id="L144">            System.exit(-1);</span>
+<span class="nc" id="L145">        }</span>
+<span class="nc" id="L146">        groups=userBD.loadGroupsAndUsers();</span>
+<span class="nc" id="L147">        rooms=userBD.loadRooms();</span>
+<span class="nc" id="L148">        passwords=userBD.getPasswords();</span>
+<span class="nc" id="L149">        adminUser=userBD.getAdminUser();</span>
+<span class="nc" id="L150">        logger.log(Level.INFO, &quot;Groups and Users loaded=&quot; + groups.size());</span>
+<span class="nc" id="L151">        logger.log(Level.INFO, &quot;Rooms loaded=&quot; + rooms.size());</span>
+        //initialize client connected...
+<span class="nc" id="L153">        connectedClients = new Hashtable&lt;Integer, ClientInterface&gt;();</span>
+<span class="nc" id="L154">        connectedClientsIPs=new Hashtable&lt;Integer, String&gt;();</span>
+<span class="nc" id="L155">        logger.log(Level.INFO, &quot;Starting FIM Server .....&quot;);</span>
+        try {
+<span class="nc" id="L157">            startRMIRegistry();</span>
+<span class="nc" id="L158">        } catch (Exception ex) {</span>
+<span class="nc" id="L159">            logger.log(Level.SEVERE, &quot;Error During starting RMI Registry!&quot;, ex);</span>
+<span class="nc" id="L160">            JOptionPane.showMessageDialog(null, &quot;Error During starting RMI Registry!:&quot;+ex.getMessage());</span>
+<span class="nc" id="L161">            System.exit(1);</span>
+<span class="nc" id="L162">        }</span>
+<span class="nc" id="L163">        logger.log(Level.INFO, &quot;FIM Server Started.&quot;);</span>
+<span class="nc" id="L164">        JOptionPane.showMessageDialog(null, &quot;FIM Server Started Successfully!&quot;);</span>
+        //run checkup thread
+<span class="nc" id="L166">        checkupThread = new Thread(this);</span>
+<span class="nc" id="L167">        serverRunning = true;</span>
+<span class="nc" id="L168">        checkupThread.start();</span>
+<span class="nc" id="L169">    }</span>
+    /**
+     * any clinet ping it should receive true
+     * @return true always
+     */
+    public boolean ping(){
+<span class="nc" id="L175">        return true;</span>
+    }
+    /**
+     * Method to sing in ..
+     * @param cf : user client interface to communicate with the client
+     * @param emailAddr : user email
+     * @param password : user password
+     * @param ipAddress : user ip address
+     * @return User object if authentication correctly , or null if not exist.
+     * @throws RemoteException
+     */
+    public LoginBean signIn(ClientInterface cf, String emailAddr, String password,String ipAddress) throws RemoteException {
+<span class="nc" id="L187">        LoginBean loginBean=null;</span>
+        //authenticate User
+        //DB authentication....
+<span class="nc bnc" id="L190" title="All 6 branches missed.">        if (emailAddr != null &amp;&amp; password != null &amp;&amp; ipAddress!=null) {            </span>
+<span class="nc" id="L191">            String email=StringEncoder64.decodeStringUTF8(emailAddr);</span>
+            //System.out.println(&quot;email=&quot;+email);
+<span class="nc" id="L193">            User user = authenticateUser(email, password);</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">            if (user != null) {</span>
+<span class="nc" id="L195">                ipAddress=StringEncoder64.decodeStringUTF8(ipAddress);</span>
+                //System.out.println(&quot;ip=&quot;+ipAddress);
+<span class="nc" id="L197">                ClientInterface oldOne=connectedClients.get(user.getId());</span>
+<span class="nc bnc" id="L198" title="All 2 branches missed.">                if(oldOne!=null){</span>
+<span class="nc" id="L199">                    String ipAdd=connectedClientsIPs.get(user.getId());                    </span>
+<span class="nc bnc" id="L200" title="All 4 branches missed.">                    if(ipAdd!=null &amp;&amp; ipAdd.equals(ipAddress)){</span>
+<span class="nc" id="L201">                        SendKickOffByLoginMessageThread sendKickOffByLoginMessageThread=new SendKickOffByLoginMessageThread(oldOne,true);</span>
+<span class="nc" id="L202">                        sendKickOffByLoginMessageThread.start();</span>
+<span class="nc" id="L203">                    }else{</span>
+<span class="nc" id="L204">                        SendKickOffByLoginMessageThread sendKickOffByLoginMessageThread=new SendKickOffByLoginMessageThread(oldOne,false);</span>
+<span class="nc" id="L205">                        sendKickOffByLoginMessageThread.start();</span>
+                    }
+                }
+<span class="nc" id="L208">                connectedClients.put(user.getId(), cf);</span>
+<span class="nc" id="L209">                connectedClientsIPs.put(user.getId(), ipAddress);</span>
+<span class="nc" id="L210">                getLogger().log(Level.FINE, &quot;User &quot; + email + &quot; has logged in.&quot;);</span>
+<span class="nc" id="L211">                loginBean=new LoginBean();</span>
+<span class="nc" id="L212">                loginBean.setUser(user);</span>
+<span class="nc" id="L213">                String orignalPass=passwordEnc.decrypt(passwords.get(user.getId()));</span>
+<span class="nc" id="L214">                String tokenUsed=StringEncrypter.getInstance(orignalPass).encrypt(secToken);</span>
+<span class="nc" id="L215">                loginBean.setSecureToken(tokenUsed);</span>
+<span class="nc" id="L216">                loginBean.setAuthToken(clientAuthToken);</span>
+<span class="nc" id="L217">                return loginBean;</span>
+            } else {
+<span class="nc" id="L219">                getLogger().log(Level.FINE, &quot;User &quot; + email + &quot; is not valid!&quot;);</span>
+<span class="nc" id="L220">                return null;</span>
+            }
+        } else {
+<span class="nc" id="L223">            getLogger().log(Level.WARNING, &quot;Credentials is null!&quot;);</span>
+<span class="nc" id="L224">            return null;</span>
+        }
+    }
+    /**
+     * method to sign out
+     * @param user
+     * @throws RemoteException
+     */
+    public void signOut(User user) throws RemoteException {
+        //update user in the group list
+<span class="nc bnc" id="L234" title="All 2 branches missed.">        if(user==null) return;</span>
+<span class="nc" id="L235">        connectedClients.remove(user.getId());</span>
+<span class="nc" id="L236">        connectedClientsIPs.remove(user.getId());</span>
+<span class="nc" id="L237">        user.setStatus_id(IConstant.SIGN_OUT);</span>
+<span class="nc" id="L238">        updateUserStatus(user);</span>
+<span class="nc" id="L239">    }</span>
+    /**
+     * change user password
+     * @param email : user email
+     * @param oldPass : current password
+     * @param newPass : new password
+     * @return ResultBean with either true or false
+     * @throws RemoteException
+     */
+    public ResultBean changePassword(String email,String oldPass,String newPass) throws RemoteException{
+<span class="nc" id="L249">        email=StringEncoder64.decodeStringUTF8(email);</span>
+<span class="nc" id="L250">        oldPass=StringEncrypter.getInstance(secToken).decrypt(oldPass);</span>
+<span class="nc" id="L251">        String newOldPass=StringEncrypter.getInstance(oldPass).encrypt(oldPass);</span>
+<span class="nc" id="L252">        User user=authenticateUser(email, newOldPass);</span>
+<span class="nc bnc" id="L253" title="All 2 branches missed.">        if(user==null){</span>
+<span class="nc" id="L254">            return new ResultBean(false, IConstant.ERROR, &quot;Invalid Password!&quot;);</span>
+        }
+<span class="nc" id="L256">        oldPass=passwordEnc.encrypt(oldPass);</span>
+<span class="nc" id="L257">        newPass=StringEncrypter.getInstance(secToken).decrypt(newPass);</span>
+<span class="nc" id="L258">        newPass=passwordEnc.encrypt(newPass);</span>
+<span class="nc bnc" id="L259" title="All 2 branches missed.">        if(userBD.updatePassword(user.getId(), oldPass, newPass)){</span>
+<span class="nc" id="L260">            passwords.put(user.getId(), newPass);</span>
+<span class="nc" id="L261">            return new ResultBean(true, IConstant.SUCCESS, null);</span>
+        }
+<span class="nc" id="L263">        return new ResultBean(false, IConstant.ERROR, &quot;Error During Applying New Password!&quot;);</span>
+    }
+    /**
+     * Change admin password
+     * @param emailAddr : email of the admin
+     * @param oldPass   : current password
+     * @param newPass   : new password
+     * @return ResultBean : return status
+     * @throws RemoteException
+     */
+    public ResultBean changeAdminPassword(String emailAddr,String oldPass,String newPass) throws RemoteException{
+<span class="nc" id="L274">        oldPass=StringEncrypter.getInstance(secToken).decrypt(oldPass);</span>
+<span class="nc" id="L275">        String newOldPass=StringEncrypter.getInstance(oldPass).encrypt(oldPass);</span>
+<span class="nc" id="L276">        LoginBean loginBean=signInAsAdmin(emailAddr, newOldPass);</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">        if(loginBean==null){</span>
+<span class="nc" id="L278">            return new ResultBean(false, IConstant.ERROR, &quot;Invalid Password!&quot;);</span>
+        }
+<span class="nc" id="L280">        oldPass=passwordEnc.encrypt(oldPass);</span>
+<span class="nc" id="L281">        newPass=StringEncrypter.getInstance(secToken).decrypt(newPass);</span>
+<span class="nc" id="L282">        newPass=passwordEnc.encrypt(newPass);</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">        if(userBD.updatePassword(adminUser.getId(), oldPass, newPass)){</span>
+<span class="nc" id="L284">            passwords.put(adminUser.getId(), newPass);</span>
+<span class="nc" id="L285">            return new ResultBean(true, IConstant.SUCCESS, null);</span>
+        }
+<span class="nc" id="L287">        return new ResultBean(false, IConstant.ERROR, &quot;Error During Applying New Password!&quot;);</span>
+    }
+    /**
+     * load groups and users to admin user
+     * @return All Groups with there users
+     * @throws RemoteException
+     */
+    public Vector&lt;Group&gt; loadGroupsAndUsers(String authToken) throws RemoteException {
+<span class="nc bnc" id="L295" title="All 4 branches missed.">        if(!this.clientAuthToken.equals(authToken) &amp;&amp; !this.authToken.equals(authToken)){</span>
+<span class="nc" id="L296">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L298">        return groups;</span>
+    }
+    /**
+     * Send text message between users
+     * @param msg
+     * @return true/false if message delivered or not.
+     * @throws RemoteException
+     */
+    public boolean sendTextMessage(TextMessage msg) throws RemoteException {
+<span class="nc bnc" id="L307" title="All 2 branches missed.">        if (msg.getTargetType() == IConstant.USER_CHAT) {</span>
+<span class="nc" id="L308">            ClientInterface cf = connectedClients.get(msg.getToUserId());</span>
+<span class="nc" id="L309">            return sendTextMessageToUser(msg, cf);</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">        } else if (msg.getTargetType() == IConstant.GROUP_CHAT) {</span>
+<span class="nc" id="L311">            Vector&lt;User&gt; tempUsers = null;</span>
+<span class="nc" id="L312">            ClientInterface cf = null;</span>
+<span class="nc bnc" id="L313" title="All 2 branches missed.">            for (int i = 0; i &lt; getGroups().size(); i++) {</span>
+<span class="nc bnc" id="L314" title="All 2 branches missed.">                if (getGroups().get(i).getId() == msg.getToUserId()) {</span>
+<span class="nc" id="L315">                    tempUsers = getGroups().get(i).getUsers();</span>
+<span class="nc" id="L316">                    break;</span>
+                }
+            }
+<span class="nc bnc" id="L319" title="All 4 branches missed.">            if (tempUsers != null &amp;&amp; tempUsers.size() &gt; 0) {</span>
+                //loop on users
+<span class="nc" id="L321">                boolean success = false;</span>
+<span class="nc bnc" id="L322" title="All 2 branches missed.">                for (int i = 0; i &lt; tempUsers.size(); i++) {</span>
+<span class="nc bnc" id="L323" title="All 2 branches missed.">                    if (tempUsers.get(i).getId() != msg.getFromUserId()) {</span>
+<span class="nc" id="L324">                        cf = connectedClients.get(tempUsers.get(i).getId());</span>
+<span class="nc bnc" id="L325" title="All 2 branches missed.">                        if (sendTextMessageToUser(msg, cf)) {</span>
+<span class="nc" id="L326">                            success = true;</span>
+                        }
+                    }
+                }
+<span class="nc bnc" id="L330" title="All 2 branches missed.">                if (success) {</span>
+<span class="nc" id="L331">                    return true;</span>
+                } else {
+<span class="nc" id="L333">                    return false;</span>
+                }
+            } else {
+<span class="nc" id="L336">                return false;</span>
+            }
+<span class="nc bnc" id="L338" title="All 2 branches missed.">        } else if (msg.getTargetType() == IConstant.ROOM_CHAT) {</span>
+<span class="nc" id="L339">            int[] tempUsers = null;</span>
+<span class="nc" id="L340">            ClientInterface cf = null;</span>
+<span class="nc bnc" id="L341" title="All 2 branches missed.">            for (int i = 0; i &lt; getRooms().size(); i++) {</span>
+<span class="nc bnc" id="L342" title="All 2 branches missed.">                if (getRooms().get(i).getId() == msg.getToUserId()) {</span>
+<span class="nc" id="L343">                    tempUsers = getRooms().get(i).getUserId();</span>
+<span class="nc" id="L344">                    break;</span>
+                }
+            }
+<span class="nc bnc" id="L347" title="All 4 branches missed.">            if (tempUsers != null &amp;&amp; tempUsers.length &gt; 0) {</span>
+<span class="nc" id="L348">                boolean success = false;</span>
+                //loop on users
+<span class="nc bnc" id="L350" title="All 2 branches missed.">                for (int i = 0; i &lt; tempUsers.length; i++) {</span>
+<span class="nc bnc" id="L351" title="All 2 branches missed.">                    if (tempUsers[i] != msg.getFromUserId()) {</span>
+<span class="nc" id="L352">                        cf = connectedClients.get(tempUsers[i]);</span>
+<span class="nc bnc" id="L353" title="All 2 branches missed.">                        if (sendTextMessageToUser(msg, cf)) {</span>
+<span class="nc" id="L354">                            success = true;</span>
+                        }
+                    }
+                }
+<span class="nc bnc" id="L358" title="All 2 branches missed.">                if (success) {</span>
+<span class="nc" id="L359">                    return true;</span>
+                } else {
+<span class="nc" id="L361">                    return false;</span>
+                }
+            } else {
+<span class="nc" id="L364">                return false;</span>
+            }
+        } else {
+<span class="nc" id="L367">            return false;</span>
+        }
+    }
+    /**
+     * private method to send text message to a user
+     * @param msg : the message to be send
+     * @param cf  : the client interface of the user
+     * @return boolean : true/false if the text message send or not.
+     */
+    private boolean sendTextMessageToUser(TextMessage msg, ClientInterface cf) {
+<span class="nc bnc" id="L377" title="All 2 branches missed.">        if (cf == null) {</span>
+<span class="nc" id="L378">            return false;</span>
+        } else {
+            try {
+<span class="nc" id="L381">                getLogger().log(Level.FINE, &quot;Online TextMessage=&quot; + msg.getMessage() + &quot; From=&quot; + msg.getFromUserId() + &quot; To=&quot; + msg.getToUserId());</span>
+                //online message, send it..
+<span class="nc" id="L383">                return cf.receiveTextMessage(msg);</span>
+<span class="nc" id="L384">            } catch (RemoteException ex) {</span>
+                try {
+<span class="nc" id="L386">                    getLogger().log(Level.FINE,&quot;Exception happen, will logoff this user &quot;);</span>
+<span class="nc" id="L387">                    connectedClients.remove(msg.getToUserId());</span>
+<span class="nc" id="L388">                    connectedClientsIPs.remove(msg.getToUserId());</span>
+<span class="nc" id="L389">                    offlineStatus(msg.getToUserId());</span>
+<span class="nc" id="L390">                } catch (RemoteException ex1) {</span>
+<span class="nc" id="L391">                }</span>
+<span class="nc" id="L392">                return false;</span>
+            }
+        }
+    }
+    /**
+     * Send text message but securly (i.e. encrypted)
+     * @param msg : the message to be send
+     * @return boolean : true/false if the text message send or not.
+     * @throws RemoteException
+     */
+    public boolean sendSecureTextMessage(TextMessage msg) throws RemoteException {
+<span class="nc bnc" id="L403" title="All 2 branches missed.">        if (msg.getTargetType() == IConstant.USER_CHAT) {</span>
+<span class="nc" id="L404">            ClientInterface cf = connectedClients.get(msg.getToUserId());</span>
+<span class="nc" id="L405">            return sendSecureTextMessageToUser(msg, cf);</span>
+<span class="nc bnc" id="L406" title="All 2 branches missed.">        } else if (msg.getTargetType() == IConstant.GROUP_CHAT) {</span>
+<span class="nc" id="L407">            Vector&lt;User&gt; tempUsers = null;</span>
+<span class="nc" id="L408">            ClientInterface cf = null;</span>
+<span class="nc bnc" id="L409" title="All 2 branches missed.">            for (int i = 0; i &lt; getGroups().size(); i++) {</span>
+<span class="nc bnc" id="L410" title="All 2 branches missed.">                if (getGroups().get(i).getId() == msg.getToUserId()) {</span>
+<span class="nc" id="L411">                    tempUsers = getGroups().get(i).getUsers();</span>
+<span class="nc" id="L412">                    break;</span>
+                }
+            }
+<span class="nc bnc" id="L415" title="All 4 branches missed.">            if (tempUsers != null &amp;&amp; tempUsers.size() &gt; 0) {</span>
+                //loop on users
+<span class="nc" id="L417">                boolean success = false;</span>
+<span class="nc bnc" id="L418" title="All 2 branches missed.">                for (int i = 0; i &lt; tempUsers.size(); i++) {</span>
+<span class="nc bnc" id="L419" title="All 2 branches missed.">                    if (tempUsers.get(i).getId() != msg.getFromUserId()) {</span>
+<span class="nc" id="L420">                        cf = connectedClients.get(tempUsers.get(i).getId());</span>
+<span class="nc bnc" id="L421" title="All 2 branches missed.">                        if (sendSecureTextMessageToUser(msg, cf)) {</span>
+<span class="nc" id="L422">                            success = true;</span>
+                        }
+                    }
+                }
+<span class="nc bnc" id="L426" title="All 2 branches missed.">                if (success) {</span>
+<span class="nc" id="L427">                    return true;</span>
+                } else {
+<span class="nc" id="L429">                    return false;</span>
+                }
+            } else {
+<span class="nc" id="L432">                return false;</span>
+            }
+<span class="nc bnc" id="L434" title="All 2 branches missed.">        } else if (msg.getTargetType() == IConstant.ROOM_CHAT) {</span>
+<span class="nc" id="L435">            int[] tempUsers = null;</span>
+<span class="nc" id="L436">            ClientInterface cf = null;</span>
+<span class="nc bnc" id="L437" title="All 2 branches missed.">            for (int i = 0; i &lt; getRooms().size(); i++) {</span>
+<span class="nc bnc" id="L438" title="All 2 branches missed.">                if (getRooms().get(i).getId() == msg.getToUserId()) {</span>
+<span class="nc" id="L439">                    tempUsers = getRooms().get(i).getUserId();</span>
+<span class="nc" id="L440">                    break;</span>
+                }
+            }
+<span class="nc bnc" id="L443" title="All 4 branches missed.">            if (tempUsers != null &amp;&amp; tempUsers.length &gt; 0) {</span>
+<span class="nc" id="L444">                boolean success = false;</span>
+                //loop on users
+<span class="nc bnc" id="L446" title="All 2 branches missed.">                for (int i = 0; i &lt; tempUsers.length; i++) {</span>
+<span class="nc bnc" id="L447" title="All 2 branches missed.">                    if (tempUsers[i] != msg.getFromUserId()) {</span>
+<span class="nc" id="L448">                        cf = connectedClients.get(tempUsers[i]);</span>
+<span class="nc bnc" id="L449" title="All 2 branches missed.">                        if (sendSecureTextMessageToUser(msg, cf)) {</span>
+<span class="nc" id="L450">                            success = true;</span>
+                        }
+                    }
+                }
+<span class="nc bnc" id="L454" title="All 2 branches missed.">                if (success) {</span>
+<span class="nc" id="L455">                    return true;</span>
+                } else {
+<span class="nc" id="L457">                    return false;</span>
+                }
+            } else {
+<span class="nc" id="L460">                return false;</span>
+            }
+        } else {
+<span class="nc" id="L463">            return false;</span>
+        }
+    }
+    /**
+     * private method to send secure text message to a user (encrypted)
+     * @param msg : the message to be send
+     * @param cf  : the client interface of the user
+     * @return boolean : true/false if the text message send or not.
+     */
+    private boolean sendSecureTextMessageToUser(TextMessage msg, ClientInterface cf) {
+<span class="nc bnc" id="L473" title="All 2 branches missed.">        if (cf == null) {</span>
+<span class="nc" id="L474">            return false;</span>
+        } else {
+            try {
+<span class="nc" id="L477">                getLogger().log(Level.FINE, &quot;Online TextMessage=&quot; + msg.getMessage() + &quot; From=&quot; + msg.getFromUserId() + &quot; To=&quot; + msg.getToUserId());</span>
+                //online message, send it..
+<span class="nc" id="L479">                return cf.receiveSecureTextMessage(msg);</span>
+<span class="nc" id="L480">            } catch (RemoteException ex) {</span>
+                try {
+<span class="nc" id="L482">                    getLogger().log(Level.FINE,&quot;Exception happen, will logoff this user &quot;);</span>
+<span class="nc" id="L483">                    connectedClients.remove(msg.getToUserId());</span>
+<span class="nc" id="L484">                    connectedClientsIPs.remove(msg.getToUserId());</span>
+<span class="nc" id="L485">                    offlineStatus(msg.getToUserId());</span>
+<span class="nc" id="L486">                } catch (RemoteException ex1) {</span>
+<span class="nc" id="L487">                }</span>
+<span class="nc" id="L488">                return false;</span>
+            }
+        }
+    }
+    /**
+     * Send Binary message (files)
+     * @param msg : the message to be send
+     * @return ResultBean include the status of message send or not.
+     * @throws RemoteException
+     */
+    public ResultBean sendBinaryMessage(BinaryMessage msg) throws RemoteException {
+<span class="nc" id="L499">        ClientInterface cf=connectedClients.get(msg.getToUserId());</span>
+<span class="nc bnc" id="L500" title="All 2 branches missed.">        if(cf==null){</span>
+<span class="nc" id="L501">            return new ResultBean(false,IConstant.OFFLINE,null);</span>
+        }else{
+            try {
+                //online message, send it..
+<span class="nc bnc" id="L505" title="All 2 branches missed.">                if(msg.getAction()==IConstant.REQUEST) {</span>
+<span class="nc" id="L506">                    getLogger().log(Level.FINE,&quot;Request send&quot;);</span>
+<span class="nc" id="L507">                    return cf.receiveBinaryMessageRequest(msg);</span>
+                }else{
+<span class="nc" id="L509">                    getLogger().log(Level.FINE,&quot;Online BinaryMessage size=&quot;+msg.getData().length+&quot; From=&quot;+msg.getFromUserId()+&quot; To=&quot;+msg.getToUserId());</span>
+<span class="nc" id="L510">                    cf.receiveBinaryMessageLoad(msg);</span>
+<span class="nc" id="L511">                    return new ResultBean(true,IConstant.SUCCESS,null);</span>
+                }
+<span class="nc" id="L513">            } catch (RemoteException ex) {</span>
+                try {
+<span class="nc" id="L515">                    getLogger().log(Level.FINE,&quot;Exception happen, will logoff this user&quot;);</span>
+<span class="nc" id="L516">                    connectedClients.remove(msg.getToUserId());</span>
+<span class="nc" id="L517">                    connectedClientsIPs.remove(msg.getToUserId());</span>
+<span class="nc" id="L518">                    offlineStatus(msg.getToUserId());</span>
+<span class="nc" id="L519">                } catch (RemoteException ex1) {</span>
+<span class="nc" id="L520">                }</span>
+<span class="nc" id="L521">                return new ResultBean(false,IConstant.EXCEPTION,ex.getMessage());</span>
+            }
+        }
+    }
+    /**
+     * Send Binary message (files) but secure (files not secure)
+     * @param msg : the message to be send
+     * @return ResultBean include the status of message send or not.
+     * @throws RemoteException
+     */
+    public ResultBean sendSecureBinaryMessage(BinaryMessage msg) throws RemoteException {
+<span class="nc" id="L532">        ClientInterface cf=connectedClients.get(msg.getToUserId());</span>
+<span class="nc bnc" id="L533" title="All 2 branches missed.">        if(cf==null){</span>
+<span class="nc" id="L534">            return new ResultBean(false,IConstant.OFFLINE,null);</span>
+        }else{
+            try {
+                //online message, send it..
+<span class="nc bnc" id="L538" title="All 2 branches missed.">                if(msg.getAction()==IConstant.REQUEST) {</span>
+<span class="nc" id="L539">                    getLogger().log(Level.FINE,&quot;Request send&quot;);</span>
+<span class="nc" id="L540">                    return cf.receiveSecureBinaryMessageRequest(msg);</span>
+                }else{
+<span class="nc" id="L542">                    getLogger().log(Level.FINE,&quot;Online BinaryMessage size=&quot;+msg.getData().length+&quot; From=&quot;+msg.getFromUserId()+&quot; To=&quot;+msg.getToUserId());</span>
+<span class="nc" id="L543">                    cf.receiveSecureBinaryMessageLoad(msg);</span>
+<span class="nc" id="L544">                    return new ResultBean(true,IConstant.SUCCESS,null);</span>
+                }
+<span class="nc" id="L546">            } catch (RemoteException ex) {</span>
+                try {
+<span class="nc" id="L548">                    getLogger().log(Level.FINE,&quot;Exception happen, will logoff this user&quot;);</span>
+<span class="nc" id="L549">                    connectedClients.remove(msg.getToUserId());</span>
+<span class="nc" id="L550">                    connectedClientsIPs.remove(msg.getToUserId());</span>
+<span class="nc" id="L551">                    offlineStatus(msg.getToUserId());</span>
+<span class="nc" id="L552">                } catch (RemoteException ex1) {</span>
+<span class="nc" id="L553">                }</span>
+<span class="nc" id="L554">                return new ResultBean(false,IConstant.EXCEPTION,ex.getMessage());</span>
+            }
+        }
+    }
+    /**
+     * Send announcemnt.
+     * @param msg : the announcemnt to be send
+     * @throws RemoteException
+     */
+
+    public boolean sendTextAnnouncement(TextMessage msg) throws RemoteException {
+<span class="nc bnc" id="L565" title="All 2 branches missed.">        if (msg.getTargetType() == IConstant.USER_CHAT) {</span>
+<span class="nc" id="L566">            ClientInterface cf = connectedClients.get(msg.getToUserId());</span>
+<span class="nc" id="L567">            return sendTextAnnouncementToUser(msg, cf);</span>
+<span class="nc bnc" id="L568" title="All 2 branches missed.">        } else if (msg.getTargetType() == IConstant.GROUP_CHAT) {</span>
+<span class="nc" id="L569">            Vector&lt;User&gt; tempUsers = null;</span>
+<span class="nc" id="L570">            ClientInterface cf = null;</span>
+<span class="nc bnc" id="L571" title="All 2 branches missed.">            for (int i = 0; i &lt; getGroups().size(); i++) {</span>
+<span class="nc bnc" id="L572" title="All 2 branches missed.">                if (getGroups().get(i).getId() == msg.getToUserId()) {</span>
+<span class="nc" id="L573">                    tempUsers = getGroups().get(i).getUsers();</span>
+<span class="nc" id="L574">                    break;</span>
+                }
+            }
+<span class="nc bnc" id="L577" title="All 4 branches missed.">            if (tempUsers != null &amp;&amp; tempUsers.size() &gt; 0) {</span>
+                //loop on users
+<span class="nc" id="L579">                boolean deliverToAll=true;</span>
+<span class="nc bnc" id="L580" title="All 2 branches missed.">                for (int i = 0; i &lt; tempUsers.size(); i++) {</span>
+<span class="nc bnc" id="L581" title="All 2 branches missed.">                    if (tempUsers.get(i).getId() != msg.getFromUserId()) {</span>
+<span class="nc" id="L582">                        cf = connectedClients.get(tempUsers.get(i).getId());</span>
+<span class="nc bnc" id="L583" title="All 2 branches missed.">                        if(deliverToAll){</span>
+<span class="nc" id="L584">                            deliverToAll=sendTextAnnouncementToUser(msg, cf);</span>
+                        }else{
+<span class="nc" id="L586">                            sendTextAnnouncementToUser(msg, cf);</span>
+                        }
+                    }
+                }
+<span class="nc" id="L590">                return deliverToAll;</span>
+            }
+<span class="nc bnc" id="L592" title="All 2 branches missed.">        } else if (msg.getTargetType() == IConstant.ROOM_CHAT) {</span>
+<span class="nc" id="L593">            int[] tempUsers = null;</span>
+<span class="nc" id="L594">            ClientInterface cf = null;</span>
+<span class="nc bnc" id="L595" title="All 2 branches missed.">            for (int i = 0; i &lt; getRooms().size(); i++) {</span>
+<span class="nc bnc" id="L596" title="All 2 branches missed.">                if (getRooms().get(i).getId() == msg.getToUserId()) {</span>
+<span class="nc" id="L597">                    tempUsers = getRooms().get(i).getUserId();</span>
+<span class="nc" id="L598">                    break;</span>
+                }
+            }
+<span class="nc bnc" id="L601" title="All 4 branches missed.">            if (tempUsers != null &amp;&amp; tempUsers.length &gt; 0) {</span>
+                //loop on users
+<span class="nc" id="L603">                boolean deliverToAll=true;</span>
+<span class="nc bnc" id="L604" title="All 2 branches missed.">                for (int i = 0; i &lt; tempUsers.length; i++) {</span>
+<span class="nc bnc" id="L605" title="All 2 branches missed.">                    if (tempUsers[i] != msg.getFromUserId()) {</span>
+<span class="nc" id="L606">                        cf = connectedClients.get(tempUsers[i]);</span>
+<span class="nc bnc" id="L607" title="All 2 branches missed.">                        if(deliverToAll){</span>
+<span class="nc" id="L608">                            deliverToAll=sendTextAnnouncementToUser(msg, cf);</span>
+                        }else{
+<span class="nc" id="L610">                            sendTextAnnouncementToUser(msg, cf);</span>
+                        }
+                    }
+                }
+<span class="nc" id="L614">                return deliverToAll;</span>
+            }
+        }
+<span class="nc" id="L617">        return false;</span>
+    }
+    /**
+     * private method to send announcemnt
+     * @param msg : the announcemnt to send
+     * @param cf  : the user client interface.
+     */
+    private boolean sendTextAnnouncementToUser(TextMessage msg, ClientInterface cf) throws RemoteException {
+<span class="nc bnc" id="L625" title="All 2 branches missed.">        if (cf != null) {</span>
+            try {
+<span class="nc" id="L627">                getLogger().log(Level.FINE,&quot;Online Announcement=&quot; + msg.getMessage() + &quot; From=&quot; + msg.getFromUserId() + &quot; To=&quot; + msg.getToUserId());</span>
+                //online message, send it..
+<span class="nc" id="L629">                cf.receiveTextAnnouncement(msg);</span>
+<span class="nc" id="L630">                return true;</span>
+<span class="nc" id="L631">            } catch (RemoteException ex) {</span>
+                try {
+<span class="nc" id="L633">                    getLogger().log(Level.FINE,&quot;Exception happen, will logoff this user&quot;);</span>
+<span class="nc" id="L634">                    connectedClients.remove(msg.getToUserId());</span>
+<span class="nc" id="L635">                    connectedClientsIPs.remove(msg.getToUserId());</span>
+<span class="nc" id="L636">                    offlineStatus(msg.getToUserId());</span>
+<span class="nc" id="L637">                    return false;</span>
+<span class="nc" id="L638">                } catch (RemoteException ex1) {</span>
+<span class="nc" id="L639">                    return false;</span>
+                }
+            }
+        }else{
+<span class="nc" id="L643">            return false;</span>
+        }
+    }
+    /**
+     * Send announcemnt but securly (encrypted)
+     * @param msg : the announcemnt to be send
+     * @throws RemoteException
+     */
+    public boolean sendSecureTextAnnouncement(TextMessage msg) throws RemoteException {
+<span class="nc bnc" id="L652" title="All 2 branches missed.">        if (msg.getTargetType() == IConstant.USER_CHAT) {</span>
+<span class="nc" id="L653">            ClientInterface cf = connectedClients.get(msg.getToUserId());</span>
+<span class="nc" id="L654">            return sendSecureTextAnnouncementToUser(msg, cf);</span>
+<span class="nc bnc" id="L655" title="All 2 branches missed.">        } else if (msg.getTargetType() == IConstant.GROUP_CHAT) {</span>
+<span class="nc" id="L656">            Vector&lt;User&gt; tempUsers = null;</span>
+<span class="nc" id="L657">            ClientInterface cf = null;</span>
+<span class="nc bnc" id="L658" title="All 2 branches missed.">            for (int i = 0; i &lt; getGroups().size(); i++) {</span>
+<span class="nc bnc" id="L659" title="All 2 branches missed.">                if (getGroups().get(i).getId() == msg.getToUserId()) {</span>
+<span class="nc" id="L660">                    tempUsers = getGroups().get(i).getUsers();</span>
+<span class="nc" id="L661">                    break;</span>
+                }
+            }
+<span class="nc bnc" id="L664" title="All 4 branches missed.">            if (tempUsers != null &amp;&amp; tempUsers.size() &gt; 0) {</span>
+                //loop on users
+<span class="nc" id="L666">                boolean deliverToAll=true;</span>
+<span class="nc bnc" id="L667" title="All 2 branches missed.">                for (int i = 0; i &lt; tempUsers.size(); i++) {</span>
+<span class="nc bnc" id="L668" title="All 2 branches missed.">                    if (tempUsers.get(i).getId() != msg.getFromUserId()) {</span>
+<span class="nc" id="L669">                        cf = connectedClients.get(tempUsers.get(i).getId());</span>
+<span class="nc bnc" id="L670" title="All 2 branches missed.">                        if(deliverToAll){</span>
+<span class="nc" id="L671">                            deliverToAll=sendSecureTextAnnouncementToUser(msg, cf);</span>
+                        }else{
+<span class="nc" id="L673">                            sendSecureTextAnnouncementToUser(msg, cf);</span>
+                        }
+                    }
+                }
+<span class="nc" id="L677">                return deliverToAll;</span>
+            }
+<span class="nc bnc" id="L679" title="All 2 branches missed.">        } else if (msg.getTargetType() == IConstant.ROOM_CHAT) {</span>
+<span class="nc" id="L680">            int[] tempUsers = null;</span>
+<span class="nc" id="L681">            ClientInterface cf = null;</span>
+<span class="nc bnc" id="L682" title="All 2 branches missed.">            for (int i = 0; i &lt; getRooms().size(); i++) {</span>
+<span class="nc bnc" id="L683" title="All 2 branches missed.">                if (getRooms().get(i).getId() == msg.getToUserId()) {</span>
+<span class="nc" id="L684">                    tempUsers = getRooms().get(i).getUserId();</span>
+<span class="nc" id="L685">                    break;</span>
+                }
+            }
+<span class="nc bnc" id="L688" title="All 4 branches missed.">            if (tempUsers != null &amp;&amp; tempUsers.length &gt; 0) {</span>
+                //loop on users
+<span class="nc" id="L690">                boolean deliverToAll=true;</span>
+<span class="nc bnc" id="L691" title="All 2 branches missed.">                for (int i = 0; i &lt; tempUsers.length; i++) {</span>
+<span class="nc bnc" id="L692" title="All 2 branches missed.">                    if (tempUsers[i] != msg.getFromUserId()) {</span>
+<span class="nc" id="L693">                        cf = connectedClients.get(tempUsers[i]);</span>
+<span class="nc bnc" id="L694" title="All 2 branches missed.">                        if(deliverToAll){</span>
+<span class="nc" id="L695">                            deliverToAll=sendSecureTextAnnouncementToUser(msg, cf);</span>
+                        }else{
+<span class="nc" id="L697">                            sendSecureTextAnnouncementToUser(msg, cf);</span>
+                        }
+                    }
+                }
+<span class="nc" id="L701">                return deliverToAll;</span>
+            }
+        }
+<span class="nc" id="L704">        return false;</span>
+    }
+    /**
+     * private method to send announcemnt securly (encrypted)
+     * @param msg : the announcemnt to send
+     * @param cf  : the user client interface.
+     */
+    private boolean sendSecureTextAnnouncementToUser(TextMessage msg, ClientInterface cf) throws RemoteException {
+<span class="nc bnc" id="L712" title="All 2 branches missed.">        if (cf != null) {</span>
+            try {
+<span class="nc" id="L714">                getLogger().log(Level.FINE,&quot;Online Announcement=&quot; + msg.getMessage() + &quot; From=&quot; + msg.getFromUserId() + &quot; To=&quot; + msg.getToUserId());</span>
+                //online message, send it..
+<span class="nc" id="L716">                cf.receiveSecureTextAnnouncement(msg);</span>
+<span class="nc" id="L717">                return true;</span>
+<span class="nc" id="L718">            } catch (RemoteException ex) {</span>
+                try {
+<span class="nc" id="L720">                    getLogger().log(Level.FINE,&quot;Exception happen, will logoff this user&quot;);</span>
+<span class="nc" id="L721">                    connectedClients.remove(msg.getToUserId());</span>
+<span class="nc" id="L722">                    connectedClientsIPs.remove(msg.getToUserId());</span>
+<span class="nc" id="L723">                    offlineStatus(msg.getToUserId());</span>
+<span class="nc" id="L724">                    return false;</span>
+<span class="nc" id="L725">                } catch (RemoteException ex1) {</span>
+<span class="nc" id="L726">                    return false;</span>
+                }
+            }
+        }else{
+<span class="nc" id="L730">            return false;</span>
+        }
+    }
+    /**
+     * Method used to update user status
+     * @param updatedUser : the user with the new method included.
+     * @throws RemoteException
+     */
+    public void updateUserStatus(User updatedUser) throws RemoteException {
+<span class="nc" id="L739">        getLogger().log(Level.FINE,&quot;update user status for id=&quot; + updatedUser.getId() + &quot; in group_id=&quot; + updatedUser.getGroup_id() + &quot; with Status=&quot; + updatedUser.getStatus_id());</span>
+<span class="nc" id="L740">        boolean userFound = false;</span>
+<span class="nc" id="L741">        Vector&lt;User&gt; tempUsers=null;</span>
+<span class="nc bnc" id="L742" title="All 4 branches missed.">        if (updatedUser != null &amp;&amp; updatedUser.getId() &gt; 0) {</span>
+<span class="nc bnc" id="L743" title="All 2 branches missed.">            for (int i = 0; i &lt; getGroups().size(); i++) {</span>
+<span class="nc bnc" id="L744" title="All 2 branches missed.">                if (updatedUser.getGroup_id() == getGroups().get(i).getId()) {</span>
+<span class="nc" id="L745">                    tempUsers = getGroups().get(i).getUsers();</span>
+<span class="nc" id="L746">                    break;</span>
+                }
+            }
+        }
+<span class="nc bnc" id="L750" title="All 4 branches missed.">        if (tempUsers != null &amp;&amp; tempUsers.size() &gt; 0) {</span>
+<span class="nc bnc" id="L751" title="All 2 branches missed.">            for (int n = 0; n &lt; tempUsers.size(); n++) {</span>
+<span class="nc bnc" id="L752" title="All 2 branches missed.">                if (updatedUser.getId() == tempUsers.get(n).getId()) {</span>
+<span class="nc" id="L753">                    tempUsers.get(n).setStatus_id(updatedUser.getStatus_id());</span>
+<span class="nc" id="L754">                    userFound = true;</span>
+<span class="nc" id="L755">                    break;</span>
+                }
+            }
+        }
+<span class="nc bnc" id="L759" title="All 2 branches missed.">        if (userFound) {</span>
+<span class="nc" id="L760">            getLogger().log(Level.FINE,&quot;sending the status of the user to around &quot; + connectedClients.size() + &quot; user(s)&quot;);</span>
+<span class="nc" id="L761">            Enumeration&lt;ClientInterface&gt; allCF = connectedClients.elements();</span>
+<span class="nc bnc" id="L762" title="All 2 branches missed.">            while (allCF.hasMoreElements()) {</span>
+<span class="nc" id="L763">                SendUserUpdatedStatusThread sendUserUpdatedStatusThread=new SendUserUpdatedStatusThread(allCF.nextElement(),updatedUser);</span>
+<span class="nc" id="L764">                sendUserUpdatedStatusThread.start();</span>
+<span class="nc" id="L765">            }</span>
+        }
+<span class="nc" id="L767">        System.gc();</span>
+<span class="nc" id="L768">    }</span>
+    /**
+     * return user rooms
+     * @param user
+     * @return : Vector of rooms where this user is memeber of them.
+     * @throws RemoteException
+     */
+    public Vector&lt;Room&gt; getMyRooms(User user,String authToken) throws RemoteException {
+<span class="nc bnc" id="L776" title="All 2 branches missed.">        if(!this.clientAuthToken.equals(authToken)){</span>
+<span class="nc" id="L777">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L779">        Vector&lt;Room&gt; myRooms = new Vector&lt;Room&gt;(0);</span>
+<span class="nc bnc" id="L780" title="All 2 branches missed.">        for (int i = 0; i &lt; getRooms().size(); i++) {</span>
+<span class="nc" id="L781">            int[] temp = getRooms().get(i).getUserId();</span>
+<span class="nc bnc" id="L782" title="All 2 branches missed.">            if (temp != null) {</span>
+<span class="nc bnc" id="L783" title="All 2 branches missed.">                for (int n = 0; n &lt; temp.length; n++) {</span>
+<span class="nc bnc" id="L784" title="All 2 branches missed.">                    if (user.getId() == temp[n]) {</span>
+<span class="nc" id="L785">                        myRooms.add(getRooms().get(i));</span>
+<span class="nc" id="L786">                        break;</span>
+                    }
+                }
+            }
+        }
+<span class="nc" id="L791">        return myRooms;</span>
+    }
+    /**
+     * Run method to periodic ping all user to check if any user lost the connection with the server
+     * so the server offline his/her status.
+     * It run each 5 minutes.
+     */
+    public void run() {
+<span class="nc bnc" id="L799" title="All 2 branches missed.">        while (serverRunning) {</span>
+            try {
+<span class="nc" id="L801">                Thread.sleep(5 * 60 * 1000);</span>
+<span class="nc" id="L802">            } catch (InterruptedException ex) {</span>
+<span class="nc" id="L803">                ex.printStackTrace();</span>
+<span class="nc" id="L804">            }</span>
+<span class="nc" id="L805">            getLogger().log(Level.FINE,&quot;sending ping to all users to ensure they are still connected!&quot;);</span>
+<span class="nc" id="L806">            getLogger().log(Level.FINE,&quot;size before ping=&quot; + connectedClients.size() + &quot; user(s)&quot;);</span>
+<span class="nc bnc" id="L807" title="All 2 branches missed.">            if(connectedClients.size()&gt;0){</span>
+<span class="nc" id="L808">                int n = 0;</span>
+<span class="nc" id="L809">                ClientInterface cf = null;</span>
+<span class="nc" id="L810">                Enumeration&lt;Integer&gt; listOfUserIds = connectedClients.keys();</span>
+<span class="nc bnc" id="L811" title="All 2 branches missed.">                while (listOfUserIds.hasMoreElements()) {</span>
+<span class="nc" id="L812">                    n = listOfUserIds.nextElement();</span>
+<span class="nc" id="L813">                    cf = connectedClients.get(n);</span>
+                    try {
+<span class="nc bnc" id="L815" title="All 2 branches missed.">                        if (cf.ping() == false) {</span>
+<span class="nc" id="L816">                            connectedClients.remove(n);</span>
+<span class="nc" id="L817">                            connectedClientsIPs.remove(n);</span>
+<span class="nc" id="L818">                            offlineStatus(n);</span>
+                        }
+<span class="nc" id="L820">                    } catch (Throwable e) {</span>
+<span class="nc" id="L821">                        connectedClients.remove(n);</span>
+<span class="nc" id="L822">                        connectedClientsIPs.remove(n);</span>
+                        try {
+<span class="nc" id="L824">                            offlineStatus(n);</span>
+<span class="nc" id="L825">                        } catch (Throwable ex) {</span>
+<span class="nc" id="L826">                        }</span>
+<span class="nc" id="L827">                    }</span>
+                }
+<span class="nc" id="L829">            }else{</span>
+<span class="nc" id="L830">                synchronized(connectedClients){</span>
+<span class="nc" id="L831">                    secToken=&quot;F&quot;+Calendar.getInstance().getTimeInMillis();</span>
+<span class="nc" id="L832">                }</span>
+            }
+<span class="nc" id="L834">            getLogger().log(Level.FINE,&quot;size after ping=&quot; + connectedClients.size() + &quot; user(s)&quot;);</span>
+<span class="nc" id="L835">            System.gc();</span>
+        }
+<span class="nc" id="L837">    }</span>
+    /**
+     * private method to offline user status and update other users with the user new status (offline)
+     * @param userId
+     * @throws RemoteException
+     */
+    private void offlineStatus(int userId) throws RemoteException {
+<span class="nc" id="L844">        getLogger().log(Level.FINE,&quot;will switch status to be sign off , for userID=&quot; + userId);</span>
+<span class="nc bnc" id="L845" title="All 2 branches missed.">        for (int i = 0; i &lt; getGroups().size(); i++) {</span>
+<span class="nc" id="L846">            Vector&lt;User&gt; tempUsers = getGroups().get(i).getUsers();</span>
+<span class="nc bnc" id="L847" title="All 4 branches missed.">            if (tempUsers != null &amp;&amp; tempUsers.size() &gt; 0) {</span>
+<span class="nc bnc" id="L848" title="All 2 branches missed.">                for (int n = 0; n &lt; tempUsers.size(); n++) {</span>
+<span class="nc bnc" id="L849" title="All 2 branches missed.">                    if (userId == tempUsers.get(n).getId()) {</span>
+<span class="nc" id="L850">                        tempUsers.get(n).setStatus_id(IConstant.SIGN_OUT);</span>
+<span class="nc" id="L851">                        updateUserStatus(tempUsers.get(n));</span>
+<span class="nc" id="L852">                        break;</span>
+                    }
+                }
+            }
+        }
+<span class="nc" id="L857">    }</span>
+    /**
+     * private method to offline user status and NOT update other users with the user new status (offline)
+     * Typically used when shutdown the server, don't care about informing users with the new status.
+     * @param userId
+     * @throws RemoteException
+     */
+    private void offlineStatusAndNoUpdate(int userId) throws RemoteException {
+<span class="nc" id="L865">        getLogger().log(Level.FINE,&quot;will switch status to be sign off , for userID=&quot; + userId);</span>
+<span class="nc bnc" id="L866" title="All 2 branches missed.">        for (int i = 0; i &lt; getGroups().size(); i++) {</span>
+<span class="nc" id="L867">            Vector&lt;User&gt; tempUsers = getGroups().get(i).getUsers();</span>
+<span class="nc bnc" id="L868" title="All 4 branches missed.">            if (tempUsers != null &amp;&amp; tempUsers.size() &gt; 0) {</span>
+<span class="nc bnc" id="L869" title="All 2 branches missed.">                for (int n = 0; n &lt; tempUsers.size(); n++) {</span>
+<span class="nc bnc" id="L870" title="All 2 branches missed.">                    if (userId == tempUsers.get(n).getId()) {</span>
+<span class="nc" id="L871">                        tempUsers.get(n).setStatus_id(IConstant.SIGN_OUT);</span>
+<span class="nc" id="L872">                        break;</span>
+                    }
+                }
+            }
+        }
+<span class="nc" id="L877">    }</span>
+    /**
+     * private method to authenticate the user and return its full detailed bean.
+     * @param emailAddr : email of the user
+     * @param password  : password of the user.
+     * @return User or Null according to the authentication results.
+     */
+    private User authenticateUser(String emailAddr, String password) {
+        //User user = null;
+<span class="nc" id="L886">        getLogger().log(Level.FINE,&quot;authenticate the user....&quot;);</span>
+<span class="nc bnc" id="L887" title="All 2 branches missed.">        for(int i=0;i&lt;groups.size();i++){</span>
+<span class="nc" id="L888">            Vector&lt;User&gt; tempUsers=groups.get(i).getUsers();</span>
+<span class="nc bnc" id="L889" title="All 2 branches missed.">            for(int n=0;n&lt;tempUsers.size();n++){</span>
+<span class="nc bnc" id="L890" title="All 2 branches missed.">                if(emailAddr.equals(tempUsers.get(n).getEmail())){</span>
+<span class="nc" id="L891">                    String orignalPass=passwordEnc.decrypt(passwords.get(tempUsers.get(n).getId()));</span>
+                    //System.out.println(&quot;original pass=&quot;+orignalPass);
+<span class="nc" id="L893">                    password=StringEncrypter.getInstance(orignalPass).decrypt(password);</span>
+                    //System.out.println(&quot;send pass=&quot;+password);
+<span class="nc bnc" id="L895" title="All 4 branches missed.">                    if(password!=null &amp;&amp; password.equals(orignalPass)){</span>
+<span class="nc" id="L896">                        return tempUsers.get(n);</span>
+                    }else{
+                        //failed authentication
+<span class="nc" id="L899">                        return null;</span>
+                    }
+                }
+            }
+        }
+<span class="nc" id="L904">        return null;</span>
+    }
+
+    /**
+     * @return the groups
+     */
+    public Vector&lt;Group&gt; getGroups() {
+<span class="nc" id="L911">        return groups;</span>
+    }
+
+    /**
+     * @return the rooms
+     */
+    public Vector&lt;Room&gt; getRooms() {
+<span class="nc" id="L918">        return rooms;</span>
+    }
+    /**
+     * public method to create new user , used by the admin user
+     * @param user : the user details
+     * @return User : with the user Id included or null if failed to create it.
+     * @throws RemoteException
+     */
+    public User createUser(User user,String authToken) throws RemoteException {
+<span class="nc bnc" id="L927" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L928">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L930">        user=userBD.createUser(user);</span>
+<span class="nc bnc" id="L931" title="All 2 branches missed.">        if(user!=null){</span>
+<span class="nc" id="L932">            passwords.put(user.getId(), serverSettingBean.getDefualtPassword());</span>
+<span class="nc" id="L933">            return user;</span>
+        }else{
+<span class="nc" id="L935">            return null;</span>
+        }
+    }
+    /**
+     * public method to create new group , used by the admin user
+     * @param Group : the group details
+     * @return Group : with the group Id included or null if failed to create it.
+     * @throws RemoteException
+     */
+
+    public Group createGroup(Group group,String authToken) throws RemoteException {
+<span class="nc bnc" id="L946" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L947">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L949">        return userBD.createGroup(group);</span>
+    }
+    /**
+     * public method to create new room , used by the admin user
+     * @param room : the room details
+     * @return Room : with room id or null if failed to create it.
+     * @throws RemoteException
+     */
+    public Room createRoom(Room room,String authToken) throws RemoteException {
+<span class="nc bnc" id="L958" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L959">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L961">        return userBD.createRoom(room);</span>
+    }
+    /**
+     * method to delete user
+     * @param user : to be deleted
+     * @return User
+     * @throws RemoteException
+     */
+    public User delUser(User user,String authToken) throws RemoteException {
+<span class="nc bnc" id="L970" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L971">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L973">        return userBD.delUser(user);</span>
+    }
+    /**
+     * method to delete Group
+     * @param Group : to be deleted
+     * @return Group
+     * @throws RemoteException
+     */
+
+    public Group delGroup(Group group,String authToken) throws RemoteException {
+<span class="nc bnc" id="L983" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L984">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L986">        return userBD.delGroup(group);</span>
+    }
+    /**
+     * method to delete Room
+     * @param Room : to be deleted
+     * @return Room
+     * @throws RemoteException
+     */
+
+    public Room delRoom(Room room,String authToken) throws RemoteException {
+<span class="nc bnc" id="L996" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L997">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L999">        return userBD.delRoom(room);</span>
+    }
+    /**
+     * method to update user
+     * @param user to be updated
+     * @return User after updated or null if failed to update it
+     * @throws RemoteException
+     */
+    public User updateUser(User user,String authToken) throws RemoteException {
+<span class="nc bnc" id="L1008" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1009">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L1011">        return userBD.updateUser(user);</span>
+    }
+    /**
+     * method to update Group
+     * @param Group to be updated
+     * @return Group after updated or null if failed to update it
+     * @throws RemoteException
+     */
+    public Group updateGroup(Group group,String authToken) throws RemoteException {
+<span class="nc bnc" id="L1020" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1021">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L1023">        return userBD.updateGroup(group);</span>
+    }
+    /**
+     * method to update Room
+     * @param Room to be updated
+     * @return Room after updated or null if failed to update it
+     * @throws RemoteException
+     */
+    public Room updateRoom(Room room,String authToken) throws RemoteException {
+<span class="nc bnc" id="L1032" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1033">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L1035">        return userBD.updateRoom(room);</span>
+    }
+    /**
+     * public method to shutdown the server, it will include kick off of all users.
+     * @throws RemoteException
+     */
+    public void shutdownServer(String justification,String authToken) throws RemoteException {
+<span class="nc bnc" id="L1042" title="All 4 branches missed.">        if(this.authToken.equals(authToken) || &quot;FIM&quot;.equals(authToken)){</span>
+<span class="nc" id="L1043">            getLogger().log(Level.SEVERE,&quot;Shutdown Server by the admin&quot;);</span>
+<span class="nc bnc" id="L1044" title="All 2 branches missed.">            for(int i=0;i&lt;groups.size();i++){</span>
+<span class="nc" id="L1045">                Vector&lt;User&gt; tempUsers=groups.get(i).getUsers();</span>
+<span class="nc bnc" id="L1046" title="All 2 branches missed.">                for(int n=0;n&lt;tempUsers.size();n++){</span>
+<span class="nc" id="L1047">                    SendKickOffMessageThread sendKickOffMessageThread=new SendKickOffMessageThread(connectedClients.get(tempUsers.get(n).getId()),justification);</span>
+<span class="nc" id="L1048">                    sendKickOffMessageThread.start();</span>
+                }
+            }
+            try {
+<span class="nc" id="L1052">                Thread.sleep(500 * 1);</span>
+<span class="nc" id="L1053">            } catch (InterruptedException ex) {</span>
+                //do no thing!
+<span class="nc" id="L1055">            }</span>
+<span class="nc" id="L1056">            System.exit(-1);</span>
+        }else{
+<span class="nc" id="L1058">            getLogger().log(Level.SEVERE,&quot;Invalid authentication token!&quot;);</span>
+<span class="nc" id="L1059">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L1061">    }</span>
+    /**
+     * public method to kick of all users
+     * @return boolean true after kicking off all users
+     * @throws RemoteException
+     */
+    public boolean kickOffUsers(String justification,String authToken) throws RemoteException {
+<span class="nc bnc" id="L1068" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1069">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L1071">        getLogger().log(Level.SEVERE,&quot;Kick Off All Users Server by the admin&quot;);</span>
+<span class="nc" id="L1072">        ClientInterface cf = null;</span>
+<span class="nc" id="L1073">        Enumeration&lt;Integer&gt; listOfUserIds = connectedClients.keys();</span>
+<span class="nc bnc" id="L1074" title="All 2 branches missed.">        while (listOfUserIds.hasMoreElements()) {</span>
+<span class="nc" id="L1075">            int n = listOfUserIds.nextElement();</span>
+<span class="nc" id="L1076">            cf = connectedClients.get(n);</span>
+<span class="nc" id="L1077">            SendKickOffMessageThread sendKickOffMessageThread=new SendKickOffMessageThread(cf,justification);</span>
+<span class="nc" id="L1078">            sendKickOffMessageThread.start();</span>
+<span class="nc" id="L1079">            offlineStatusAndNoUpdate(n);</span>
+<span class="nc" id="L1080">        }</span>
+<span class="nc" id="L1081">        connectedClients.clear();</span>
+<span class="nc" id="L1082">        connectedClientsIPs.clear();</span>
+<span class="nc" id="L1083">        return true;</span>
+    }
+    /**
+     * return all rooms
+     * @return : Vector of all rooms
+     * @throws RemoteException
+     */
+    public Vector&lt;Room&gt; loadRooms(String authToken) throws RemoteException {
+<span class="nc bnc" id="L1091" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1092">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L1094">        return rooms;</span>
+    }
+    /**
+     * method used for sign in by the admin user
+     * @param emailAddr : email of the admin user
+     * @param password  : password of the admin user.
+     * @return User either adminUser object or null if authentication failed.
+     * @throws RemoteException
+     */
+    public LoginBean signInAsAdmin(String emailAddr, String password) throws RemoteException {
+        //authenticate User
+        //DB authentication....
+<span class="nc bnc" id="L1106" title="All 4 branches missed.">        if (emailAddr != null &amp;&amp; password != null) {</span>
+<span class="nc" id="L1107">            String email=StringEncoder64.decodeStringUTF8(emailAddr);</span>
+<span class="nc" id="L1108">            User user=null;</span>
+<span class="nc" id="L1109">            String orignalPass=passwordEnc.decrypt(passwords.get(1000));</span>
+<span class="nc" id="L1110">            password=StringEncrypter.getInstance(orignalPass).decrypt(password);</span>
+<span class="nc bnc" id="L1111" title="All 6 branches missed.">            if(email.equalsIgnoreCase(getAdminUser().getEmail()) &amp;&amp; password!=null &amp;&amp; password.equals(orignalPass)){</span>
+<span class="nc" id="L1112">                user=getAdminUser();</span>
+            }
+<span class="nc bnc" id="L1114" title="All 2 branches missed.">            if (user != null) {</span>
+<span class="nc" id="L1115">                getLogger().log(Level.FINE, &quot;User &quot; + email + &quot; has logged in.&quot;);</span>
+<span class="nc" id="L1116">                authToken=&quot;FIM&quot;+Calendar.getInstance().getTimeInMillis();</span>
+<span class="nc" id="L1117">                LoginBean loginBean=new LoginBean();</span>
+<span class="nc" id="L1118">                loginBean.setUser(adminUser);</span>
+<span class="nc" id="L1119">                loginBean.setAuthToken(authToken);</span>
+<span class="nc" id="L1120">                String tokenUsed=StringEncrypter.getInstance(orignalPass).encrypt(secToken);</span>
+<span class="nc" id="L1121">                loginBean.setSecureToken(tokenUsed);</span>
+<span class="nc" id="L1122">                return loginBean;</span>
+            } else {
+<span class="nc" id="L1124">                getLogger().log(Level.FINE, &quot;User &quot; + email + &quot; is not valid!&quot;);</span>
+<span class="nc" id="L1125">                return null;</span>
+            }
+        } else {
+<span class="nc" id="L1128">            getLogger().log(Level.WARNING, &quot;Credentials is null!&quot;);</span>
+<span class="nc" id="L1129">            return null;</span>
+        }
+    }
+    /**
+     * public method to set a new default password for newly created users
+     * @param newPass : the new default password.
+     * @return true after set the new default password.
+     * @throws RemoteException
+     */
+    public boolean setNewDefaultPassword(String newPass,String authToken) throws RemoteException {
+<span class="nc bnc" id="L1139" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1140">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L1142">        newPass=StringEncrypter.getInstance(secToken).decrypt(newPass);</span>
+<span class="nc" id="L1143">        newPass=passwordEnc.encrypt(newPass);</span>
+<span class="nc" id="L1144">        getServerSettingBean().setDefualtPassword(newPass);</span>
+<span class="nc" id="L1145">        getServerSettingBean().updateSettings();</span>
+<span class="nc" id="L1146">        return true;</span>
+    }
+    /**
+     * public method to reset user password , used by the admin user to reset user password.
+     * @param user : to reset its password.
+     * @return User or null if failed to reset his/her password.
+     * @throws RemoteException
+     */
+    public User resetUserPass(User user,String authToken) throws RemoteException {
+<span class="nc bnc" id="L1155" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1156">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc bnc" id="L1158" title="All 2 branches missed.">        if(user!=null){</span>
+<span class="nc" id="L1159">            getLogger().log(Level.FINE, &quot;Reset User &quot; + user.getId() + &quot; password!&quot;);</span>
+<span class="nc" id="L1160">            user=userBD.resetUserPass(user);</span>
+<span class="nc bnc" id="L1161" title="All 2 branches missed.">            if(user!=null){</span>
+<span class="nc" id="L1162">                passwords.put(user.getId(), serverSettingBean.getDefualtPassword());</span>
+<span class="nc" id="L1163">                return user;</span>
+            }else{
+<span class="nc" id="L1165">                return null;</span>
+            }
+        }else{
+<span class="nc" id="L1168">            return null;</span>
+        }
+    }
+
+    /**
+     * @return the serverSettingBean
+     */
+    public ServerSettingBean getServerSettingBean() {
+<span class="nc" id="L1176">        return serverSettingBean;</span>
+    }
+    /**
+     * public method to move user from a group into another group
+     * @param user : to be moved included the group id of the new group
+     * @return User or null if failed to move this user.
+     * @throws RemoteException
+     */
+    public User updateUserGroup(User user,String authToken) throws RemoteException {
+<span class="nc bnc" id="L1185" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1186">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L1188">        return userBD.updateUserGroup(user);</span>
+    }
+    /**
+     * public method to set the log level of the server.
+     * @param level integer from 0 - 5 (0 = no logging , 5 = All)
+     * @param saveValue , save the log level or just set it without saving it.
+     * @return true after set it.
+     * @throws RemoteException
+     */
+    public boolean setLogLevel(int level,boolean saveValue,String authToken) throws RemoteException {
+<span class="nc bnc" id="L1198" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1199">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc bnc" id="L1201" title="All 7 branches missed.">        switch(level){</span>
+            case 0:
+<span class="nc" id="L1203">                getLogger().setLevel(Level.OFF);</span>
+<span class="nc" id="L1204">                break;</span>
+            case 1:
+<span class="nc" id="L1206">                getLogger().setLevel(Level.SEVERE);</span>
+<span class="nc" id="L1207">                break;</span>
+            case 2:
+<span class="nc" id="L1209">                getLogger().setLevel(Level.WARNING);</span>
+<span class="nc" id="L1210">                break;</span>
+            case 3:
+<span class="nc" id="L1212">                getLogger().setLevel(Level.INFO);</span>
+<span class="nc" id="L1213">                break;</span>
+            case 4:
+<span class="nc" id="L1215">                getLogger().setLevel(Level.FINE);</span>
+<span class="nc" id="L1216">                break;</span>
+            case 5:
+<span class="nc" id="L1218">                getLogger().setLevel(Level.ALL);</span>
+                break;
+        }
+<span class="nc bnc" id="L1221" title="All 2 branches missed.">        if(saveValue){</span>
+<span class="nc" id="L1222">            serverSettingBean.setLogLevel(&quot;&quot;+level);</span>
+<span class="nc" id="L1223">            serverSettingBean.updateSettings();</span>
+        }
+<span class="nc" id="L1225">        return true;</span>
+
+    }
+    /**
+     * public method to return online users ips
+     * @return Hashtable of the online users ips
+     * @throws RemoteException
+     */
+    public Hashtable&lt;Integer, String&gt; returnOnlineIPs(String authToken) throws RemoteException {
+<span class="nc bnc" id="L1234" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1235">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L1237">        return connectedClientsIPs;</span>
+    }
+    /**
+     * public method to get security mode
+     * @return int the security level.
+     * @throws RemoteException
+     */
+    public int getSecurityMode(String authToken) throws RemoteException {
+<span class="nc bnc" id="L1245" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1246">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L1248">        return securityMode;</span>
+    }
+    /**
+     * public method to kick off a user
+     * @param userId : of the user to be kicked off
+     * @return true when the user kicked off
+     * @throws RemoteException
+     */
+    public boolean kickOffUser(int userId,String authToken) throws RemoteException {
+<span class="nc bnc" id="L1257" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1258">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L1260">        getLogger().log(Level.SEVERE,&quot;Kick Off User by the admin&quot;);</span>
+<span class="nc" id="L1261">        SendKickOffMessageThread sendKickOffMessageThread=new SendKickOffMessageThread(connectedClients.get(userId),&quot;&quot;);</span>
+<span class="nc" id="L1262">        sendKickOffMessageThread.start();</span>
+<span class="nc bnc" id="L1263" title="All 2 branches missed.">        if(connectedClients.get(userId)!=null) offlineStatus(userId);</span>
+<span class="nc" id="L1264">        connectedClients.remove(userId);</span>
+<span class="nc" id="L1265">        connectedClientsIPs.remove(userId);</span>
+<span class="nc" id="L1266">        return true;</span>
+    }
+    /**
+     * public method to set the security level
+     * @param level : either : 0= encrypt email/password, 1=encrypt titles, 2=encrypt also files.
+     * @return int of the security level after set the level
+     * @throws RemoteException
+     */
+    public int setSecurityMode(int level,String authToken) throws RemoteException {
+<span class="nc bnc" id="L1275" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1276">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L1278">        serverSettingBean.setSecureMode(&quot;&quot;+level);</span>
+<span class="nc" id="L1279">        serverSettingBean.updateSettings();</span>
+<span class="nc" id="L1280">        securityMode=level;</span>
+<span class="nc" id="L1281">        return securityMode;</span>
+    }
+    /**
+     * public method to get log level
+     * @return int of the got level
+     * @throws RemoteException
+     */
+    public int getLogLevel(String authToken) throws RemoteException {
+<span class="nc bnc" id="L1289" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1290">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L1292">        return Integer.parseInt(serverSettingBean.getLogLevel());</span>
+    }
+
+    /**
+     * @return the adminUser
+     */
+    public User getAdminUser() {
+<span class="nc" id="L1299">        return adminUser;</span>
+    }
+
+    public String getRootNode(String authToken) throws RemoteException {
+<span class="nc bnc" id="L1303" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1304">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L1306">        return serverSettingBean.getRootNode();</span>
+    }
+
+    public boolean setRootNode(String rootNode,String authToken) throws RemoteException {
+<span class="nc bnc" id="L1310" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1311">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L1313">        serverSettingBean.setRootNode(rootNode);</span>
+<span class="nc" id="L1314">        serverSettingBean.updateSettings();</span>
+<span class="nc" id="L1315">        return true;</span>
+    }
+
+    public boolean sendGlobalTextAnn(String msg,String authToken) throws RemoteException {
+<span class="nc bnc" id="L1319" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1320">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L1322">        getLogger().log(Level.SEVERE,&quot;Send Global Text Announcement by the admin&quot;);</span>
+<span class="nc" id="L1323">        TextMessage tm=new TextMessage();</span>
+<span class="nc" id="L1324">        tm.setFromUserId(0);</span>
+<span class="nc" id="L1325">        tm.setTitle(&quot;System Admin&quot;);</span>
+<span class="nc" id="L1326">        tm.setMessage(msg);</span>
+<span class="nc" id="L1327">        ClientInterface cf = null;</span>
+<span class="nc" id="L1328">        Enumeration&lt;Integer&gt; listOfUserIds = connectedClients.keys();</span>
+<span class="nc bnc" id="L1329" title="All 2 branches missed.">        while (listOfUserIds.hasMoreElements()) {</span>
+<span class="nc" id="L1330">            int n = listOfUserIds.nextElement();</span>
+<span class="nc" id="L1331">            cf = connectedClients.get(n);</span>
+<span class="nc" id="L1332">            sendTextAnnouncementToUser(tm, cf);</span>
+<span class="nc" id="L1333">        }</span>
+<span class="nc" id="L1334">        return true;</span>
+    }
+
+    public boolean sendGlobalSecureTextAnn(String msg,String authToken) throws RemoteException {
+<span class="nc bnc" id="L1338" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1339">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L1341">        getLogger().log(Level.SEVERE,&quot;Send Global Secure Text Announcement by the admin&quot;);</span>
+<span class="nc" id="L1342">        TextMessage tm=new TextMessage();</span>
+<span class="nc" id="L1343">        tm.setFromUserId(0);</span>
+<span class="nc" id="L1344">        tm.setTitle(StringEncrypter.getInstance(secToken).encrypt(&quot;System Admin&quot;));</span>
+<span class="nc" id="L1345">        tm.setMessage(msg);</span>
+<span class="nc" id="L1346">        ClientInterface cf = null;</span>
+<span class="nc" id="L1347">        Enumeration&lt;Integer&gt; listOfUserIds = connectedClients.keys();</span>
+<span class="nc bnc" id="L1348" title="All 2 branches missed.">        while (listOfUserIds.hasMoreElements()) {</span>
+<span class="nc" id="L1349">            int n = listOfUserIds.nextElement();</span>
+<span class="nc" id="L1350">            cf = connectedClients.get(n);</span>
+<span class="nc" id="L1351">            sendSecureTextAnnouncementToUser(tm, cf);</span>
+<span class="nc" id="L1352">        }</span>
+<span class="nc" id="L1353">        return true;</span>
+    }
+
+    public int getSecurityMode() throws RemoteException {
+<span class="nc" id="L1357">        return securityMode;</span>
+    }
+
+    public String getRootNode() throws RemoteException {
+<span class="nc" id="L1361">        return serverSettingBean.getRootNode();</span>
+    }
+    public boolean refreshContactList(String authToken) throws RemoteException {
+<span class="nc bnc" id="L1364" title="All 2 branches missed.">        if(!this.authToken.equals(authToken)){</span>
+<span class="nc" id="L1365">            throw new RemoteException(&quot;Invalid Login Token&quot;);</span>
+        }
+<span class="nc" id="L1367">        getLogger().log(Level.SEVERE,&quot;Refresh Users contact list by admin&quot;);</span>
+<span class="nc" id="L1368">        ClientInterface cf = null;</span>
+<span class="nc" id="L1369">        Enumeration&lt;Integer&gt; listOfUserIds = connectedClients.keys();</span>
+<span class="nc bnc" id="L1370" title="All 2 branches missed.">        while (listOfUserIds.hasMoreElements()) {</span>
+<span class="nc" id="L1371">            int n = listOfUserIds.nextElement();</span>
+<span class="nc" id="L1372">            cf = connectedClients.get(n);</span>
+<span class="nc" id="L1373">            SendRefreshContactThread sendRefreshContactThread=new SendRefreshContactThread(cf,groups);</span>
+<span class="nc" id="L1374">            sendRefreshContactThread.start();</span>
+<span class="nc" id="L1375">        }</span>
+<span class="nc" id="L1376">        return true;</span>
+    }
+
+    /**
+     * @return the passwordEnc
+     */
+    public StringEncrypter getPasswordEnc() {
+<span class="nc" id="L1383">        return passwordEnc;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,1993 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HttpAnalyzerView.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">32_httpanalyzer</a> &gt; <a href="index.source.html" class="el_package">httpanalyzer</a> &gt; <span class="el_source">HttpAnalyzerView.java</span></div><h1>HttpAnalyzerView.java</h1><pre class="source lang-java linenums">/*
+ * GNU GENERAL PUBLIC LICENSE
+ * Version 3, 29 June 2007
+ *
+ * Copyright (C) 2010, vlad
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see &lt;http://www.gnu.org/licenses/&gt;.
+ *
+ *
+ * HttpAnalyzerView.java
+ */
+package httpanalyzer;
+
+import java.awt.Toolkit;
+import java.awt.datatransfer.Clipboard;
+import java.awt.datatransfer.StringSelection;
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import org.jdesktop.application.Action;
+import org.jdesktop.application.ResourceMap;
+import org.jdesktop.application.SingleFrameApplication;
+import org.jdesktop.application.FrameView;
+import org.jdesktop.application.TaskMonitor;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.event.ItemEvent;
+import java.net.Authenticator;
+import java.net.PasswordAuthentication;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.Date;
+import java.util.List;
+import javax.swing.Timer;
+import javax.swing.Icon;
+import javax.swing.JDialog;
+import javax.swing.JFrame;
+import javax.swing.SwingUtilities;
+import org.apache.http.*;
+import org.apache.http.NameValuePair;
+import org.apache.http.auth.AuthScope;
+import org.apache.http.auth.UsernamePasswordCredentials;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpHead;
+import org.apache.http.client.utils.URIUtils;
+import org.apache.http.client.utils.URLEncodedUtils;
+import org.apache.http.conn.params.ConnRoutePNames;
+import org.apache.http.entity.ByteArrayEntity;
+import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.params.BasicHttpParams;
+import org.apache.http.params.HttpParams;
+import org.jdesktop.application.Task;
+
+/**
+ * The application's main frame.
+ */
+public class HttpAnalyzerView extends FrameView {
+
+    HttpResponse httpResponse;
+    String targetHost;      // Hostname
+    int targetPort;
+    String targetPath;
+    String referer;
+    String proxyHost;
+    int proxyPort;
+
+    public HttpAnalyzerView(SingleFrameApplication app) {
+<span class="fc" id="L81">        super(app);</span>
+
+<span class="nc" id="L83">        initComponents();</span>
+
+        // status bar initialization - message timeout, idle icon and busy animation, etc
+<span class="nc" id="L86">        ResourceMap resourceMap = getResourceMap();</span>
+<span class="nc" id="L87">        int messageTimeout = resourceMap.getInteger(&quot;StatusBar.messageTimeout&quot;);</span>
+<span class="nc" id="L88">        messageTimer = new Timer(messageTimeout, new ActionListener() {</span>
+
+            public void actionPerformed(ActionEvent e) {
+<span class="nc" id="L91">                statusMessageLabel.setText(&quot;&quot;);</span>
+<span class="nc" id="L92">            }</span>
+        });
+<span class="nc" id="L94">        messageTimer.setRepeats(false);</span>
+<span class="nc" id="L95">        int busyAnimationRate = resourceMap.getInteger(&quot;StatusBar.busyAnimationRate&quot;);</span>
+<span class="nc bnc" id="L96" title="All 2 branches missed.">        for (int i = 0; i &lt; busyIcons.length; i++) {</span>
+<span class="nc" id="L97">            busyIcons[i] = resourceMap.getIcon(&quot;StatusBar.busyIcons[&quot; + i + &quot;]&quot;);</span>
+        }
+<span class="nc" id="L99">        busyIconTimer = new Timer(busyAnimationRate, new ActionListener() {</span>
+
+            public void actionPerformed(ActionEvent e) {
+<span class="nc" id="L102">                busyIconIndex = (busyIconIndex + 1) % busyIcons.length;</span>
+<span class="nc" id="L103">                statusAnimationLabel.setIcon(busyIcons[busyIconIndex]);</span>
+<span class="nc" id="L104">            }</span>
+        });
+<span class="nc" id="L106">        idleIcon = resourceMap.getIcon(&quot;StatusBar.idleIcon&quot;);</span>
+<span class="nc" id="L107">        statusAnimationLabel.setIcon(idleIcon);</span>
+<span class="nc" id="L108">        progressBar.setVisible(false);</span>
+
+        // connecting action tasks to status bar via TaskMonitor
+<span class="nc" id="L111">        TaskMonitor taskMonitor = new TaskMonitor(getApplication().getContext());</span>
+<span class="nc" id="L112">        taskMonitor.addPropertyChangeListener(new java.beans.PropertyChangeListener() {</span>
+
+            public void propertyChange(java.beans.PropertyChangeEvent evt) {
+<span class="nc" id="L115">                String propertyName = evt.getPropertyName();</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">                if (&quot;started&quot;.equals(propertyName)) {</span>
+<span class="nc bnc" id="L117" title="All 2 branches missed.">                    if (!busyIconTimer.isRunning()) {</span>
+<span class="nc" id="L118">                        statusAnimationLabel.setIcon(busyIcons[0]);</span>
+<span class="nc" id="L119">                        busyIconIndex = 0;</span>
+<span class="nc" id="L120">                        busyIconTimer.start();</span>
+                    }
+<span class="nc" id="L122">                    progressBar.setVisible(true);</span>
+<span class="nc" id="L123">                    progressBar.setIndeterminate(true);</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">                } else if (&quot;done&quot;.equals(propertyName)) {</span>
+<span class="nc" id="L125">                    busyIconTimer.stop();</span>
+<span class="nc" id="L126">                    statusAnimationLabel.setIcon(idleIcon);</span>
+<span class="nc" id="L127">                    progressBar.setVisible(false);</span>
+<span class="nc" id="L128">                    progressBar.setValue(0);</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">                } else if (&quot;message&quot;.equals(propertyName)) {</span>
+<span class="nc" id="L130">                    String text = (String) (evt.getNewValue());</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">                    statusMessageLabel.setText((text == null) ? &quot;&quot; : text);</span>
+<span class="nc" id="L132">                    messageTimer.restart();</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">                } else if (&quot;progress&quot;.equals(propertyName)) {</span>
+<span class="nc" id="L134">                    int value = (Integer) (evt.getNewValue());</span>
+<span class="nc" id="L135">                    progressBar.setVisible(true);</span>
+<span class="nc" id="L136">                    progressBar.setIndeterminate(false);</span>
+<span class="nc" id="L137">                    progressBar.setValue(value);</span>
+                }
+<span class="nc" id="L139">            }</span>
+        });
+        // My pre-init
+<span class="nc" id="L142">        String proxyEnv = new InitBasicParams().getProxyEnv();</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">        if (proxyEnv != null) {</span>
+<span class="nc" id="L144">            proxyField.setText(proxyEnv);</span>
+        }
+<span class="nc" id="L146">        initRequestHeaders();</span>
+<span class="nc" id="L147">    }</span>
+
+    @Action
+    public void showAboutBox() {
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        if (aboutBox == null) {</span>
+<span class="nc" id="L152">            JFrame mainFrame = HttpAnalyzerApp.getApplication().getMainFrame();</span>
+<span class="nc" id="L153">            aboutBox = new HttpAnalyzerAboutBox(mainFrame);</span>
+<span class="nc" id="L154">            aboutBox.setLocationRelativeTo(mainFrame);</span>
+        }
+<span class="nc" id="L156">        HttpAnalyzerApp.getApplication().show(aboutBox);</span>
+<span class="nc" id="L157">    }</span>
+
+    /** This method is called from within the constructor to
+     * initialize the form.
+     * WARNING: Do NOT modify this code. The content of this method is
+     * always regenerated by the Form Editor.
+     */
+    @SuppressWarnings(&quot;unchecked&quot;)
+    // &lt;editor-fold defaultstate=&quot;collapsed&quot; desc=&quot;Generated Code&quot;&gt;//GEN-BEGIN:initComponents
+    private void initComponents() {
+<span class="fc" id="L167">        bindingGroup = new org.jdesktop.beansbinding.BindingGroup();</span>
+
+<span class="fc" id="L169">        mainPanel = new javax.swing.JPanel();</span>
+<span class="fc" id="L170">        urlLabel = new javax.swing.JLabel();</span>
+<span class="fc" id="L171">        urlCombo = new javax.swing.JComboBox();</span>
+<span class="fc" id="L172">        goButton = new javax.swing.JButton();</span>
+<span class="fc" id="L173">        clearButton = new javax.swing.JButton();</span>
+<span class="fc" id="L174">        saveButton = new javax.swing.JButton();</span>
+<span class="fc" id="L175">        methodPanel = new javax.swing.JPanel();</span>
+<span class="fc" id="L176">        getRadio = new javax.swing.JRadioButton();</span>
+<span class="fc" id="L177">        postRadio = new javax.swing.JRadioButton();</span>
+<span class="fc" id="L178">        headRadio = new javax.swing.JRadioButton();</span>
+<span class="fc" id="L179">        paramsButton = new javax.swing.JButton();</span>
+<span class="fc" id="L180">        clearURL = new javax.swing.JButton();</span>
+<span class="fc" id="L181">        mainTabbedPane = new javax.swing.JTabbedPane();</span>
+<span class="fc" id="L182">        replayDataScrollPane = new javax.swing.JScrollPane();</span>
+<span class="fc" id="L183">        replayDataPane = new javax.swing.JTextPane();</span>
+<span class="fc" id="L184">        optionsPanel = new javax.swing.JPanel();</span>
+<span class="fc" id="L185">        proxyTypesPanel = new javax.swing.JPanel();</span>
+<span class="fc" id="L186">        proxyNoneRadioButton = new javax.swing.JRadioButton();</span>
+<span class="fc" id="L187">        proxyHttpRadioButton = new javax.swing.JRadioButton();</span>
+<span class="fc" id="L188">        proxySocksRadioButton = new javax.swing.JRadioButton();</span>
+<span class="fc" id="L189">        proxySetsPanel = new javax.swing.JPanel();</span>
+<span class="fc" id="L190">        proxyField = new javax.swing.JTextField();</span>
+<span class="fc" id="L191">        proxyHostLabel = new javax.swing.JLabel();</span>
+<span class="fc" id="L192">        proxyUserLabel = new javax.swing.JLabel();</span>
+<span class="fc" id="L193">        proxyAuthCheckBox = new javax.swing.JCheckBox();</span>
+<span class="fc" id="L194">        proxyPassLabel = new javax.swing.JLabel();</span>
+<span class="fc" id="L195">        proxyUserTextField = new javax.swing.JTextField();</span>
+<span class="fc" id="L196">        proxyPassPasswordField = new javax.swing.JPasswordField();</span>
+<span class="fc" id="L197">        httpOptionsPanel = new javax.swing.JPanel();</span>
+<span class="fc" id="L198">        httpVerLabel = new javax.swing.JLabel();</span>
+<span class="fc" id="L199">        httpVersionComboBox = new javax.swing.JComboBox();</span>
+<span class="fc" id="L200">        httpUserLabel = new javax.swing.JLabel();</span>
+<span class="fc" id="L201">        httpPassLabel = new javax.swing.JLabel();</span>
+<span class="fc" id="L202">        httpPassPasswordField = new javax.swing.JPasswordField();</span>
+<span class="fc" id="L203">        httpUserTextField = new javax.swing.JTextField();</span>
+<span class="fc" id="L204">        httpAuthCheckBox = new javax.swing.JCheckBox();</span>
+<span class="fc" id="L205">        basicHeadersPanel = new javax.swing.JPanel();</span>
+<span class="fc" id="L206">        customRefererCheckBox = new javax.swing.JCheckBox();</span>
+<span class="fc" id="L207">        customRefererTextField = new javax.swing.JTextField();</span>
+<span class="fc" id="L208">        customCookieCheckBox = new javax.swing.JCheckBox();</span>
+<span class="fc" id="L209">        customCookieTextField = new javax.swing.JTextField();</span>
+<span class="fc" id="L210">        agentsSeparator = new javax.swing.JSeparator();</span>
+<span class="fc" id="L211">        agentsLabel = new javax.swing.JLabel();</span>
+<span class="fc" id="L212">        firefoxRadioButton = new javax.swing.JRadioButton();</span>
+<span class="fc" id="L213">        ie6RadioButton = new javax.swing.JRadioButton();</span>
+<span class="fc" id="L214">        ie7RadioButton = new javax.swing.JRadioButton();</span>
+<span class="fc" id="L215">        ie8RadioButton = new javax.swing.JRadioButton();</span>
+<span class="fc" id="L216">        iPhoneRadioButton = new javax.swing.JRadioButton();</span>
+<span class="fc" id="L217">        googleBotRadioButton = new javax.swing.JRadioButton();</span>
+<span class="fc" id="L218">        msnRadioButton = new javax.swing.JRadioButton();</span>
+<span class="fc" id="L219">        yahooRadioButton = new javax.swing.JRadioButton();</span>
+<span class="fc" id="L220">        customHeaderPanel = new javax.swing.JPanel();</span>
+<span class="fc" id="L221">        customHeadersScrollPane = new javax.swing.JScrollPane();</span>
+<span class="fc" id="L222">        customHeaders = new javax.swing.JTextArea();</span>
+<span class="fc" id="L223">        useCustomHeadersCheckBox = new javax.swing.JCheckBox();</span>
+<span class="fc" id="L224">        debugPanel = new javax.swing.JPanel();</span>
+<span class="fc" id="L225">        debugDataScrollPane = new javax.swing.JScrollPane();</span>
+<span class="fc" id="L226">        debugDataPane = new javax.swing.JTextPane();</span>
+<span class="fc" id="L227">        upButton = new javax.swing.JButton();</span>
+<span class="fc" id="L228">        downButton = new javax.swing.JButton();</span>
+<span class="fc" id="L229">        clearParams = new javax.swing.JButton();</span>
+<span class="fc" id="L230">        clipboardButton = new javax.swing.JButton();</span>
+<span class="fc" id="L231">        paramsComboBox = new javax.swing.JComboBox();</span>
+<span class="fc" id="L232">        paramsLabel = new javax.swing.JLabel();</span>
+<span class="fc" id="L233">        mainSeparator = new javax.swing.JSeparator();</span>
+<span class="fc" id="L234">        intelSaveCheckBox = new javax.swing.JCheckBox();</span>
+<span class="fc" id="L235">        toFileTextField = new javax.swing.JTextField();</span>
+<span class="fc" id="L236">        toFileButton = new javax.swing.JButton();</span>
+<span class="fc" id="L237">        toFileCheckBox = new javax.swing.JCheckBox();</span>
+<span class="fc" id="L238">        mainMenuBar = new javax.swing.JMenuBar();</span>
+<span class="fc" id="L239">        javax.swing.JMenu fileMenu = new javax.swing.JMenu();</span>
+<span class="fc" id="L240">        saveMenuItem = new javax.swing.JMenuItem();</span>
+<span class="fc" id="L241">        clearMenuItem1 = new javax.swing.JMenuItem();</span>
+<span class="fc" id="L242">        filesSeparator1 = new javax.swing.JPopupMenu.Separator();</span>
+<span class="fc" id="L243">        saveTemplateItem = new javax.swing.JMenuItem();</span>
+<span class="fc" id="L244">        loadTemplateItem = new javax.swing.JMenuItem();</span>
+<span class="fc" id="L245">        filesSeparator2 = new javax.swing.JPopupMenu.Separator();</span>
+<span class="fc" id="L246">        javax.swing.JMenuItem exitMenuItem = new javax.swing.JMenuItem();</span>
+<span class="fc" id="L247">        toolsMenu = new javax.swing.JMenu();</span>
+<span class="fc" id="L248">        notesMenuItem = new javax.swing.JMenuItem();</span>
+<span class="fc" id="L249">        toolsSeparator = new javax.swing.JPopupMenu.Separator();</span>
+<span class="fc" id="L250">        cryptMenuItem = new javax.swing.JMenuItem();</span>
+<span class="fc" id="L251">        md5MenuItem = new javax.swing.JMenuItem();</span>
+<span class="fc" id="L252">        base64MenuItem = new javax.swing.JMenuItem();</span>
+<span class="fc" id="L253">        toolsSeparator2 = new javax.swing.JPopupMenu.Separator();</span>
+<span class="fc" id="L254">        optionsMenu = new javax.swing.JMenu();</span>
+<span class="fc" id="L255">        mergeInfoCheckBox = new javax.swing.JCheckBoxMenuItem();</span>
+<span class="fc" id="L256">        javax.swing.JMenu helpMenu = new javax.swing.JMenu();</span>
+<span class="fc" id="L257">        javax.swing.JMenuItem aboutMenuItem = new javax.swing.JMenuItem();</span>
+<span class="fc" id="L258">        statusPanel = new javax.swing.JPanel();</span>
+<span class="fc" id="L259">        javax.swing.JSeparator statusPanelSeparator = new javax.swing.JSeparator();</span>
+<span class="fc" id="L260">        statusMessageLabel = new javax.swing.JLabel();</span>
+<span class="fc" id="L261">        statusAnimationLabel = new javax.swing.JLabel();</span>
+<span class="fc" id="L262">        progressBar = new javax.swing.JProgressBar();</span>
+<span class="fc" id="L263">        methodGroups = new javax.swing.ButtonGroup();</span>
+<span class="fc" id="L264">        proxyTypesGroup = new javax.swing.ButtonGroup();</span>
+<span class="fc" id="L265">        userAgentsGroup = new javax.swing.ButtonGroup();</span>
+
+<span class="fc" id="L267">        mainPanel.setName(&quot;mainPanel&quot;); // NOI18N</span>
+
+<span class="fc" id="L269">        org.jdesktop.application.ResourceMap resourceMap = org.jdesktop.application.Application.getInstance(httpanalyzer.HttpAnalyzerApp.class).getContext().getResourceMap(HttpAnalyzerView.class);</span>
+<span class="fc" id="L270">        urlLabel.setFont(resourceMap.getFont(&quot;urlLabel.font&quot;)); // NOI18N</span>
+<span class="fc" id="L271">        urlLabel.setText(resourceMap.getString(&quot;urlLabel.text&quot;)); // NOI18N</span>
+<span class="fc" id="L272">        urlLabel.setFocusable(false);</span>
+<span class="fc" id="L273">        urlLabel.setName(&quot;urlLabel&quot;); // NOI18N</span>
+
+<span class="fc" id="L275">        urlCombo.setEditable(true);</span>
+<span class="fc" id="L276">        urlCombo.setFont(resourceMap.getFont(&quot;urlCombo.font&quot;)); // NOI18N</span>
+<span class="fc" id="L277">        urlCombo.setToolTipText(resourceMap.getString(&quot;urlCombo.toolTipText&quot;)); // NOI18N</span>
+<span class="fc" id="L278">        urlCombo.setBorder(javax.swing.BorderFactory.createEmptyBorder(1, 1, 1, 1));</span>
+<span class="fc" id="L279">        urlCombo.setCursor(new java.awt.Cursor(java.awt.Cursor.DEFAULT_CURSOR));</span>
+<span class="fc" id="L280">        urlCombo.setName(&quot;urlCombo&quot;); // NOI18N</span>
+<span class="fc" id="L281">        urlCombo.setNextFocusableComponent(paramsComboBox);</span>
+<span class="fc" id="L282">        urlCombo.addItemListener(new java.awt.event.ItemListener() {</span>
+            public void itemStateChanged(java.awt.event.ItemEvent evt) {
+<span class="nc" id="L284">                urlComboItemStateChanged(evt);</span>
+<span class="nc" id="L285">            }</span>
+        });
+<span class="fc" id="L287">        urlCombo.addActionListener(new java.awt.event.ActionListener() {</span>
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+<span class="nc" id="L289">                urlComboActionPerformed(evt);</span>
+<span class="nc" id="L290">            }</span>
+        });
+
+<span class="nc" id="L293">        javax.swing.ActionMap actionMap = org.jdesktop.application.Application.getInstance(httpanalyzer.HttpAnalyzerApp.class).getContext().getActionMap(HttpAnalyzerView.class, this);</span>
+<span class="nc" id="L294">        goButton.setAction(actionMap.get(&quot;RequestRun&quot;)); // NOI18N</span>
+<span class="nc" id="L295">        goButton.setFont(resourceMap.getFont(&quot;goButton.font&quot;)); // NOI18N</span>
+<span class="nc" id="L296">        goButton.setIcon(resourceMap.getIcon(&quot;goButton.icon&quot;)); // NOI18N</span>
+<span class="nc" id="L297">        goButton.setText(resourceMap.getString(&quot;goButton.text&quot;)); // NOI18N</span>
+<span class="nc" id="L298">        goButton.setName(&quot;goButton&quot;); // NOI18N</span>
+
+<span class="nc" id="L300">        clearButton.setAction(actionMap.get(&quot;ClearDataPanel&quot;)); // NOI18N</span>
+<span class="nc" id="L301">        clearButton.setFont(resourceMap.getFont(&quot;clearButton.font&quot;)); // NOI18N</span>
+<span class="nc" id="L302">        clearButton.setIcon(resourceMap.getIcon(&quot;clearButton.icon&quot;)); // NOI18N</span>
+<span class="nc" id="L303">        clearButton.setText(resourceMap.getString(&quot;clearButton.text&quot;)); // NOI18N</span>
+<span class="nc" id="L304">        clearButton.setToolTipText(resourceMap.getString(&quot;clearButton.toolTipText&quot;)); // NOI18N</span>
+<span class="nc" id="L305">        clearButton.setName(&quot;clearButton&quot;); // NOI18N</span>
+
+<span class="nc" id="L307">        saveButton.setAction(actionMap.get(&quot;fileChoose&quot;)); // NOI18N</span>
+<span class="nc" id="L308">        saveButton.setFont(resourceMap.getFont(&quot;saveButton.font&quot;)); // NOI18N</span>
+<span class="nc" id="L309">        saveButton.setIcon(resourceMap.getIcon(&quot;saveButton.icon&quot;)); // NOI18N</span>
+<span class="nc" id="L310">        saveButton.setText(resourceMap.getString(&quot;saveButton.text&quot;)); // NOI18N</span>
+<span class="nc" id="L311">        saveButton.setToolTipText(resourceMap.getString(&quot;saveButton.toolTipText&quot;)); // NOI18N</span>
+<span class="nc" id="L312">        saveButton.setName(&quot;saveButton&quot;); // NOI18N</span>
+
+<span class="nc" id="L314">        methodPanel.setBorder(javax.swing.BorderFactory.createTitledBorder(new javax.swing.border.LineBorder(new java.awt.Color(0, 0, 0), 1, true), resourceMap.getString(&quot;methodPanel.border.title&quot;), javax.swing.border.TitledBorder.DEFAULT_JUSTIFICATION, javax.swing.border.TitledBorder.TOP, resourceMap.getFont(&quot;methodPanel.border.titleFont&quot;))); // NOI18N</span>
+<span class="nc" id="L315">        methodPanel.setName(&quot;methodPanel&quot;); // NOI18N</span>
+
+<span class="nc" id="L317">        methodGroups.add(getRadio);</span>
+<span class="nc" id="L318">        getRadio.setFont(resourceMap.getFont(&quot;headRadio.font&quot;)); // NOI18N</span>
+<span class="nc" id="L319">        getRadio.setSelected(true);</span>
+<span class="nc" id="L320">        getRadio.setText(resourceMap.getString(&quot;getRadio.text&quot;)); // NOI18N</span>
+<span class="nc" id="L321">        getRadio.setBorder(null);</span>
+<span class="nc" id="L322">        getRadio.setName(&quot;getRadio&quot;); // NOI18N</span>
+
+<span class="nc" id="L324">        methodGroups.add(postRadio);</span>
+<span class="nc" id="L325">        postRadio.setFont(resourceMap.getFont(&quot;headRadio.font&quot;)); // NOI18N</span>
+<span class="nc" id="L326">        postRadio.setText(resourceMap.getString(&quot;postRadio.text&quot;)); // NOI18N</span>
+<span class="nc" id="L327">        postRadio.setBorder(null);</span>
+<span class="nc" id="L328">        postRadio.setName(&quot;postRadio&quot;); // NOI18N</span>
+
+<span class="nc" id="L330">        methodGroups.add(headRadio);</span>
+<span class="nc" id="L331">        headRadio.setFont(resourceMap.getFont(&quot;headRadio.font&quot;)); // NOI18N</span>
+<span class="nc" id="L332">        headRadio.setText(resourceMap.getString(&quot;headRadio.text&quot;)); // NOI18N</span>
+<span class="nc" id="L333">        headRadio.setBorder(null);</span>
+<span class="nc" id="L334">        headRadio.setName(&quot;headRadio&quot;); // NOI18N</span>
+
+<span class="nc" id="L336">        javax.swing.GroupLayout methodPanelLayout = new javax.swing.GroupLayout(methodPanel);</span>
+<span class="nc" id="L337">        methodPanel.setLayout(methodPanelLayout);</span>
+<span class="nc" id="L338">        methodPanelLayout.setHorizontalGroup(</span>
+<span class="nc" id="L339">            methodPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L340">            .addGroup(methodPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L341">                .addGroup(methodPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)</span>
+<span class="nc" id="L342">                    .addComponent(getRadio)</span>
+<span class="nc" id="L343">                    .addComponent(postRadio)</span>
+<span class="nc" id="L344">                    .addComponent(headRadio))</span>
+<span class="nc" id="L345">                .addContainerGap(4, Short.MAX_VALUE))</span>
+        );
+<span class="nc" id="L347">        methodPanelLayout.setVerticalGroup(</span>
+<span class="nc" id="L348">            methodPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L349">            .addGroup(methodPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L350">                .addComponent(getRadio)</span>
+<span class="nc" id="L351">                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L352">                .addComponent(postRadio)</span>
+<span class="nc" id="L353">                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L354">                .addComponent(headRadio))</span>
+        );
+
+<span class="nc" id="L357">        paramsButton.setFont(resourceMap.getFont(&quot;paramsButton.font&quot;)); // NOI18N</span>
+<span class="nc" id="L358">        paramsButton.setText(resourceMap.getString(&quot;paramsButton.text&quot;)); // NOI18N</span>
+<span class="nc" id="L359">        paramsButton.setToolTipText(resourceMap.getString(&quot;paramsButton.toolTipText&quot;)); // NOI18N</span>
+<span class="nc" id="L360">        paramsButton.setName(&quot;paramsButton&quot;); // NOI18N</span>
+<span class="nc" id="L361">        paramsButton.addActionListener(new java.awt.event.ActionListener() {</span>
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+<span class="nc" id="L363">                paramsButtonActionPerformed(evt);</span>
+<span class="nc" id="L364">            }</span>
+        });
+
+<span class="nc" id="L367">        clearURL.setFont(resourceMap.getFont(&quot;clearURL.font&quot;)); // NOI18N</span>
+<span class="nc" id="L368">        clearURL.setText(resourceMap.getString(&quot;clearURL.text&quot;)); // NOI18N</span>
+<span class="nc" id="L369">        clearURL.setToolTipText(resourceMap.getString(&quot;clearURL.toolTipText&quot;)); // NOI18N</span>
+<span class="nc" id="L370">        clearURL.setBorder(javax.swing.BorderFactory.createLineBorder(new java.awt.Color(0, 0, 0)));</span>
+<span class="nc" id="L371">        clearURL.setName(&quot;clearURL&quot;); // NOI18N</span>
+<span class="nc" id="L372">        clearURL.setNextFocusableComponent(urlCombo);</span>
+<span class="nc" id="L373">        clearURL.addActionListener(new java.awt.event.ActionListener() {</span>
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+<span class="nc" id="L375">                clearURLActionPerformed(evt);</span>
+<span class="nc" id="L376">            }</span>
+        });
+
+<span class="nc" id="L379">        mainTabbedPane.setFont(resourceMap.getFont(&quot;mainTabbedPane.font&quot;)); // NOI18N</span>
+<span class="nc" id="L380">        mainTabbedPane.setName(&quot;mainTabbedPane&quot;); // NOI18N</span>
+
+<span class="nc" id="L382">        replayDataScrollPane.setBorder(javax.swing.BorderFactory.createTitledBorder(new javax.swing.border.LineBorder(new java.awt.Color(0, 0, 0), 1, true), resourceMap.getString(&quot;replayDataScrollPane.border.title&quot;), javax.swing.border.TitledBorder.DEFAULT_JUSTIFICATION, javax.swing.border.TitledBorder.ABOVE_TOP, resourceMap.getFont(&quot;replayDataScrollPane.border.titleFont&quot;))); // NOI18N</span>
+<span class="nc" id="L383">        replayDataScrollPane.setName(&quot;replayDataScrollPane&quot;); // NOI18N</span>
+
+<span class="nc" id="L385">        replayDataPane.setBackground(resourceMap.getColor(&quot;replayDataPane.background&quot;)); // NOI18N</span>
+<span class="nc" id="L386">        replayDataPane.setName(&quot;replayDataPane&quot;); // NOI18N</span>
+<span class="nc" id="L387">        replayDataScrollPane.setViewportView(replayDataPane);</span>
+
+<span class="nc" id="L389">        mainTabbedPane.addTab(resourceMap.getString(&quot;replayDataScrollPane.TabConstraints.tabTitle&quot;), replayDataScrollPane); // NOI18N</span>
+
+<span class="nc" id="L391">        optionsPanel.setName(&quot;optionsPanel&quot;); // NOI18N</span>
+
+<span class="nc" id="L393">        proxyTypesPanel.setBorder(javax.swing.BorderFactory.createTitledBorder(javax.swing.BorderFactory.createEtchedBorder(), resourceMap.getString(&quot;proxyTypesPanel.border.title&quot;), javax.swing.border.TitledBorder.DEFAULT_JUSTIFICATION, javax.swing.border.TitledBorder.TOP, resourceMap.getFont(&quot;proxyTypesPanel.border.titleFont&quot;))); // NOI18N</span>
+<span class="nc" id="L394">        proxyTypesPanel.setName(&quot;proxyTypesPanel&quot;); // NOI18N</span>
+
+<span class="nc" id="L396">        proxyTypesGroup.add(proxyNoneRadioButton);</span>
+<span class="nc" id="L397">        proxyNoneRadioButton.setFont(resourceMap.getFont(&quot;proxySocksRadioButton.font&quot;)); // NOI18N</span>
+<span class="nc" id="L398">        proxyNoneRadioButton.setSelected(true);</span>
+<span class="nc" id="L399">        proxyNoneRadioButton.setText(resourceMap.getString(&quot;proxyNoneRadioButton.text&quot;)); // NOI18N</span>
+<span class="nc" id="L400">        proxyNoneRadioButton.setName(&quot;proxyNoneRadioButton&quot;); // NOI18N</span>
+
+<span class="nc" id="L402">        proxyTypesGroup.add(proxyHttpRadioButton);</span>
+<span class="nc" id="L403">        proxyHttpRadioButton.setFont(resourceMap.getFont(&quot;proxySocksRadioButton.font&quot;)); // NOI18N</span>
+<span class="nc" id="L404">        proxyHttpRadioButton.setText(resourceMap.getString(&quot;proxyHttpRadioButton.text&quot;)); // NOI18N</span>
+<span class="nc" id="L405">        proxyHttpRadioButton.setName(&quot;proxyHttpRadioButton&quot;); // NOI18N</span>
+
+<span class="nc" id="L407">        proxyTypesGroup.add(proxySocksRadioButton);</span>
+<span class="nc" id="L408">        proxySocksRadioButton.setFont(resourceMap.getFont(&quot;proxySocksRadioButton.font&quot;)); // NOI18N</span>
+<span class="nc" id="L409">        proxySocksRadioButton.setText(resourceMap.getString(&quot;proxySocksRadioButton.text&quot;)); // NOI18N</span>
+<span class="nc" id="L410">        proxySocksRadioButton.setName(&quot;proxySocksRadioButton&quot;); // NOI18N</span>
+
+<span class="nc" id="L412">        javax.swing.GroupLayout proxyTypesPanelLayout = new javax.swing.GroupLayout(proxyTypesPanel);</span>
+<span class="nc" id="L413">        proxyTypesPanel.setLayout(proxyTypesPanelLayout);</span>
+<span class="nc" id="L414">        proxyTypesPanelLayout.setHorizontalGroup(</span>
+<span class="nc" id="L415">            proxyTypesPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L416">            .addGroup(proxyTypesPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L417">                .addContainerGap()</span>
+<span class="nc" id="L418">                .addGroup(proxyTypesPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L419">                    .addComponent(proxyNoneRadioButton)</span>
+<span class="nc" id="L420">                    .addComponent(proxyHttpRadioButton)</span>
+<span class="nc" id="L421">                    .addComponent(proxySocksRadioButton))</span>
+<span class="nc" id="L422">                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))</span>
+        );
+<span class="nc" id="L424">        proxyTypesPanelLayout.setVerticalGroup(</span>
+<span class="nc" id="L425">            proxyTypesPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L426">            .addGroup(proxyTypesPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L427">                .addComponent(proxyNoneRadioButton)</span>
+<span class="nc" id="L428">                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)</span>
+<span class="nc" id="L429">                .addComponent(proxyHttpRadioButton)</span>
+<span class="nc" id="L430">                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)</span>
+<span class="nc" id="L431">                .addComponent(proxySocksRadioButton)</span>
+<span class="nc" id="L432">                .addContainerGap(4, Short.MAX_VALUE))</span>
+        );
+
+<span class="nc" id="L435">        proxySetsPanel.setBorder(javax.swing.BorderFactory.createTitledBorder(javax.swing.BorderFactory.createEtchedBorder(), resourceMap.getString(&quot;proxySetsPanel.border.title&quot;), javax.swing.border.TitledBorder.DEFAULT_JUSTIFICATION, javax.swing.border.TitledBorder.DEFAULT_POSITION, resourceMap.getFont(&quot;proxySetsPanel.border.titleFont&quot;))); // NOI18N</span>
+<span class="nc" id="L436">        proxySetsPanel.setName(&quot;proxySetsPanel&quot;); // NOI18N</span>
+
+<span class="nc" id="L438">        proxyField.setText(resourceMap.getString(&quot;proxyField.text&quot;)); // NOI18N</span>
+<span class="nc" id="L439">        proxyField.setCursor(new java.awt.Cursor(java.awt.Cursor.TEXT_CURSOR));</span>
+<span class="nc" id="L440">        proxyField.setName(&quot;proxyField&quot;); // NOI18N</span>
+
+<span class="nc" id="L442">        org.jdesktop.beansbinding.Binding binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, proxyNoneRadioButton, org.jdesktop.beansbinding.ELProperty.create(&quot;${!selected}&quot;), proxyField, org.jdesktop.beansbinding.BeanProperty.create(&quot;editable&quot;));</span>
+<span class="nc" id="L443">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L445">        proxyHostLabel.setFont(resourceMap.getFont(&quot;proxyHostLabel.font&quot;)); // NOI18N</span>
+<span class="nc" id="L446">        proxyHostLabel.setText(resourceMap.getString(&quot;proxyHostLabel.text&quot;)); // NOI18N</span>
+<span class="nc" id="L447">        proxyHostLabel.setName(&quot;proxyHostLabel&quot;); // NOI18N</span>
+
+<span class="nc" id="L449">        proxyUserLabel.setFont(resourceMap.getFont(&quot;proxyUserLabel.font&quot;)); // NOI18N</span>
+<span class="nc" id="L450">        proxyUserLabel.setText(resourceMap.getString(&quot;proxyUserLabel.text&quot;)); // NOI18N</span>
+<span class="nc" id="L451">        proxyUserLabel.setName(&quot;proxyUserLabel&quot;); // NOI18N</span>
+
+<span class="nc" id="L453">        proxyAuthCheckBox.setFont(resourceMap.getFont(&quot;proxyAuthCheckBox.font&quot;)); // NOI18N</span>
+<span class="nc" id="L454">        proxyAuthCheckBox.setText(resourceMap.getString(&quot;proxyAuthCheckBox.text&quot;)); // NOI18N</span>
+<span class="nc" id="L455">        proxyAuthCheckBox.setToolTipText(resourceMap.getString(&quot;proxyAuthCheckBox.toolTipText&quot;)); // NOI18N</span>
+<span class="nc" id="L456">        proxyAuthCheckBox.setName(&quot;proxyAuthCheckBox&quot;); // NOI18N</span>
+
+<span class="nc" id="L458">        proxyPassLabel.setFont(resourceMap.getFont(&quot;proxyPassLabel.font&quot;)); // NOI18N</span>
+<span class="nc" id="L459">        proxyPassLabel.setText(resourceMap.getString(&quot;proxyPassLabel.text&quot;)); // NOI18N</span>
+<span class="nc" id="L460">        proxyPassLabel.setName(&quot;proxyPassLabel&quot;); // NOI18N</span>
+
+<span class="nc" id="L462">        proxyUserTextField.setText(resourceMap.getString(&quot;proxyUserTextField.text&quot;)); // NOI18N</span>
+<span class="nc" id="L463">        proxyUserTextField.setName(&quot;proxyUserTextField&quot;); // NOI18N</span>
+
+<span class="nc" id="L465">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, proxyAuthCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${selected}&quot;), proxyUserTextField, org.jdesktop.beansbinding.BeanProperty.create(&quot;editable&quot;));</span>
+<span class="nc" id="L466">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L468">        proxyPassPasswordField.setText(resourceMap.getString(&quot;proxyPassPasswordField.text&quot;)); // NOI18N</span>
+<span class="nc" id="L469">        proxyPassPasswordField.setName(&quot;proxyPassPasswordField&quot;); // NOI18N</span>
+
+<span class="nc" id="L471">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, proxyAuthCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${selected}&quot;), proxyPassPasswordField, org.jdesktop.beansbinding.BeanProperty.create(&quot;editable&quot;));</span>
+<span class="nc" id="L472">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L474">        javax.swing.GroupLayout proxySetsPanelLayout = new javax.swing.GroupLayout(proxySetsPanel);</span>
+<span class="nc" id="L475">        proxySetsPanel.setLayout(proxySetsPanelLayout);</span>
+<span class="nc" id="L476">        proxySetsPanelLayout.setHorizontalGroup(</span>
+<span class="nc" id="L477">            proxySetsPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L478">            .addGroup(proxySetsPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L479">                .addContainerGap()</span>
+<span class="nc" id="L480">                .addGroup(proxySetsPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L481">                    .addGroup(proxySetsPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L482">                        .addGroup(proxySetsPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L483">                            .addComponent(proxyHostLabel)</span>
+<span class="nc" id="L484">                            .addComponent(proxyAuthCheckBox))</span>
+<span class="nc" id="L485">                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L486">                        .addGroup(proxySetsPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L487">                            .addGroup(proxySetsPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L488">                                .addComponent(proxyUserLabel)</span>
+<span class="nc" id="L489">                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L490">                                .addComponent(proxyUserTextField, javax.swing.GroupLayout.DEFAULT_SIZE, 138, Short.MAX_VALUE))</span>
+<span class="nc" id="L491">                            .addComponent(proxyField, javax.swing.GroupLayout.DEFAULT_SIZE, 183, Short.MAX_VALUE)))</span>
+<span class="nc" id="L492">                    .addGroup(proxySetsPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L493">                        .addComponent(proxyPassLabel)</span>
+<span class="nc" id="L494">                        .addGap(21, 21, 21)</span>
+<span class="nc" id="L495">                        .addComponent(proxyPassPasswordField, javax.swing.GroupLayout.DEFAULT_SIZE, 154, Short.MAX_VALUE)))</span>
+<span class="nc" id="L496">                .addContainerGap())</span>
+        );
+<span class="nc" id="L498">        proxySetsPanelLayout.setVerticalGroup(</span>
+<span class="nc" id="L499">            proxySetsPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L500">            .addGroup(proxySetsPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L501">                .addGroup(proxySetsPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)</span>
+<span class="nc" id="L502">                    .addComponent(proxyField, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)</span>
+<span class="nc" id="L503">                    .addComponent(proxyHostLabel))</span>
+<span class="nc" id="L504">                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L505">                .addGroup(proxySetsPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)</span>
+<span class="nc" id="L506">                    .addComponent(proxyUserLabel)</span>
+<span class="nc" id="L507">                    .addComponent(proxyAuthCheckBox)</span>
+<span class="nc" id="L508">                    .addComponent(proxyUserTextField, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))</span>
+<span class="nc" id="L509">                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L510">                .addGroup(proxySetsPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)</span>
+<span class="nc" id="L511">                    .addComponent(proxyPassPasswordField, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)</span>
+<span class="nc" id="L512">                    .addComponent(proxyPassLabel))</span>
+<span class="nc" id="L513">                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))</span>
+        );
+
+<span class="nc" id="L516">        httpOptionsPanel.setBorder(javax.swing.BorderFactory.createTitledBorder(javax.swing.BorderFactory.createEtchedBorder()));</span>
+<span class="nc" id="L517">        httpOptionsPanel.setName(&quot;httpOptionsPanel&quot;); // NOI18N</span>
+
+<span class="nc" id="L519">        httpVerLabel.setFont(resourceMap.getFont(&quot;httpVerLabel.font&quot;)); // NOI18N</span>
+<span class="nc" id="L520">        httpVerLabel.setText(resourceMap.getString(&quot;httpVerLabel.text&quot;)); // NOI18N</span>
+<span class="nc" id="L521">        httpVerLabel.setName(&quot;httpVerLabel&quot;); // NOI18N</span>
+
+<span class="nc" id="L523">        httpVersionComboBox.setFont(resourceMap.getFont(&quot;httpVersionComboBox.font&quot;)); // NOI18N</span>
+<span class="nc" id="L524">        httpVersionComboBox.setModel(new javax.swing.DefaultComboBoxModel(new String[] { &quot;1.1&quot;, &quot;1.0&quot; }));</span>
+<span class="nc" id="L525">        httpVersionComboBox.setName(&quot;httpVersionComboBox&quot;); // NOI18N</span>
+
+<span class="nc" id="L527">        httpUserLabel.setFont(resourceMap.getFont(&quot;httpUserLabel.font&quot;)); // NOI18N</span>
+<span class="nc" id="L528">        httpUserLabel.setText(resourceMap.getString(&quot;httpUserLabel.text&quot;)); // NOI18N</span>
+<span class="nc" id="L529">        httpUserLabel.setName(&quot;httpUserLabel&quot;); // NOI18N</span>
+
+<span class="nc" id="L531">        httpPassLabel.setFont(resourceMap.getFont(&quot;httpPassLabel.font&quot;)); // NOI18N</span>
+<span class="nc" id="L532">        httpPassLabel.setText(resourceMap.getString(&quot;httpPassLabel.text&quot;)); // NOI18N</span>
+<span class="nc" id="L533">        httpPassLabel.setName(&quot;httpPassLabel&quot;); // NOI18N</span>
+
+<span class="nc" id="L535">        httpPassPasswordField.setName(&quot;httpPassPasswordField&quot;); // NOI18N</span>
+
+<span class="nc" id="L537">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, httpAuthCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${selected}&quot;), httpPassPasswordField, org.jdesktop.beansbinding.BeanProperty.create(&quot;editable&quot;));</span>
+<span class="nc" id="L538">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L540">        httpUserTextField.setName(&quot;httpUserTextField&quot;); // NOI18N</span>
+
+<span class="nc" id="L542">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, httpAuthCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${selected}&quot;), httpUserTextField, org.jdesktop.beansbinding.BeanProperty.create(&quot;editable&quot;));</span>
+<span class="nc" id="L543">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L545">        httpAuthCheckBox.setFont(resourceMap.getFont(&quot;httpAuthCheckBox.font&quot;)); // NOI18N</span>
+<span class="nc" id="L546">        httpAuthCheckBox.setText(resourceMap.getString(&quot;httpAuthCheckBox.text&quot;)); // NOI18N</span>
+<span class="nc" id="L547">        httpAuthCheckBox.setFocusable(false);</span>
+<span class="nc" id="L548">        httpAuthCheckBox.setName(&quot;httpAuthCheckBox&quot;); // NOI18N</span>
+
+<span class="nc" id="L550">        basicHeadersPanel.setBorder(javax.swing.BorderFactory.createTitledBorder(javax.swing.BorderFactory.createEtchedBorder(), resourceMap.getString(&quot;basicHeadersPanel.border.title&quot;), javax.swing.border.TitledBorder.DEFAULT_JUSTIFICATION, javax.swing.border.TitledBorder.DEFAULT_POSITION, resourceMap.getFont(&quot;basicHeadersPanel.border.titleFont&quot;))); // NOI18N</span>
+<span class="nc" id="L551">        basicHeadersPanel.setName(&quot;basicHeadersPanel&quot;); // NOI18N</span>
+
+<span class="nc" id="L553">        customRefererCheckBox.setFont(resourceMap.getFont(&quot;customRefererCheckBox.font&quot;)); // NOI18N</span>
+<span class="nc" id="L554">        customRefererCheckBox.setText(resourceMap.getString(&quot;customRefererCheckBox.text&quot;)); // NOI18N</span>
+<span class="nc" id="L555">        customRefererCheckBox.setName(&quot;customRefererCheckBox&quot;); // NOI18N</span>
+
+<span class="nc" id="L557">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, useCustomHeadersCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${!selected}&quot;), customRefererCheckBox, org.jdesktop.beansbinding.BeanProperty.create(&quot;enabled&quot;));</span>
+<span class="nc" id="L558">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L560">        customRefererTextField.setText(resourceMap.getString(&quot;customRefererTextField.text&quot;)); // NOI18N</span>
+<span class="nc" id="L561">        customRefererTextField.setName(&quot;customRefererTextField&quot;); // NOI18N</span>
+
+<span class="nc" id="L563">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, customRefererCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${selected}&quot;), customRefererTextField, org.jdesktop.beansbinding.BeanProperty.create(&quot;editable&quot;));</span>
+<span class="nc" id="L564">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L566">        customCookieCheckBox.setFont(resourceMap.getFont(&quot;customCookieCheckBox.font&quot;)); // NOI18N</span>
+<span class="nc" id="L567">        customCookieCheckBox.setText(resourceMap.getString(&quot;customCookieCheckBox.text&quot;)); // NOI18N</span>
+<span class="nc" id="L568">        customCookieCheckBox.setName(&quot;customCookieCheckBox&quot;); // NOI18N</span>
+
+<span class="nc" id="L570">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, useCustomHeadersCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${!selected}&quot;), customCookieCheckBox, org.jdesktop.beansbinding.BeanProperty.create(&quot;enabled&quot;));</span>
+<span class="nc" id="L571">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L573">        customCookieTextField.setName(&quot;customCookieTextField&quot;); // NOI18N</span>
+
+<span class="nc" id="L575">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, customCookieCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${selected}&quot;), customCookieTextField, org.jdesktop.beansbinding.BeanProperty.create(&quot;editable&quot;));</span>
+<span class="nc" id="L576">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L578">        agentsSeparator.setName(&quot;agentsSeparator&quot;); // NOI18N</span>
+
+<span class="nc" id="L580">        agentsLabel.setFont(resourceMap.getFont(&quot;agentsLabel.font&quot;)); // NOI18N</span>
+<span class="nc" id="L581">        agentsLabel.setText(resourceMap.getString(&quot;agentsLabel.text&quot;)); // NOI18N</span>
+<span class="nc" id="L582">        agentsLabel.setName(&quot;agentsLabel&quot;); // NOI18N</span>
+
+<span class="nc" id="L584">        userAgentsGroup.add(firefoxRadioButton);</span>
+<span class="nc" id="L585">        firefoxRadioButton.setFont(resourceMap.getFont(&quot;googleBotRadioButton.font&quot;)); // NOI18N</span>
+<span class="nc" id="L586">        firefoxRadioButton.setText(resourceMap.getString(&quot;firefoxRadioButton.text&quot;)); // NOI18N</span>
+<span class="nc" id="L587">        firefoxRadioButton.setName(&quot;firefoxRadioButton&quot;); // NOI18N</span>
+
+<span class="nc" id="L589">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, useCustomHeadersCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${!selected}&quot;), firefoxRadioButton, org.jdesktop.beansbinding.BeanProperty.create(&quot;enabled&quot;));</span>
+<span class="nc" id="L590">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L592">        userAgentsGroup.add(ie6RadioButton);</span>
+<span class="nc" id="L593">        ie6RadioButton.setFont(resourceMap.getFont(&quot;ie6RadioButton.font&quot;)); // NOI18N</span>
+<span class="nc" id="L594">        ie6RadioButton.setSelected(true);</span>
+<span class="nc" id="L595">        ie6RadioButton.setText(resourceMap.getString(&quot;ie6RadioButton.text&quot;)); // NOI18N</span>
+<span class="nc" id="L596">        ie6RadioButton.setName(&quot;ie6RadioButton&quot;); // NOI18N</span>
+
+<span class="nc" id="L598">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, useCustomHeadersCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${!selected}&quot;), ie6RadioButton, org.jdesktop.beansbinding.BeanProperty.create(&quot;enabled&quot;));</span>
+<span class="nc" id="L599">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L601">        userAgentsGroup.add(ie7RadioButton);</span>
+<span class="nc" id="L602">        ie7RadioButton.setFont(resourceMap.getFont(&quot;googleBotRadioButton.font&quot;)); // NOI18N</span>
+<span class="nc" id="L603">        ie7RadioButton.setText(resourceMap.getString(&quot;ie7RadioButton.text&quot;)); // NOI18N</span>
+<span class="nc" id="L604">        ie7RadioButton.setName(&quot;ie7RadioButton&quot;); // NOI18N</span>
+
+<span class="nc" id="L606">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, useCustomHeadersCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${!selected}&quot;), ie7RadioButton, org.jdesktop.beansbinding.BeanProperty.create(&quot;enabled&quot;));</span>
+<span class="nc" id="L607">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L609">        userAgentsGroup.add(ie8RadioButton);</span>
+<span class="nc" id="L610">        ie8RadioButton.setFont(resourceMap.getFont(&quot;googleBotRadioButton.font&quot;)); // NOI18N</span>
+<span class="nc" id="L611">        ie8RadioButton.setText(resourceMap.getString(&quot;ie8RadioButton.text&quot;)); // NOI18N</span>
+<span class="nc" id="L612">        ie8RadioButton.setName(&quot;ie8RadioButton&quot;); // NOI18N</span>
+
+<span class="nc" id="L614">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, useCustomHeadersCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${!selected}&quot;), ie8RadioButton, org.jdesktop.beansbinding.BeanProperty.create(&quot;enabled&quot;));</span>
+<span class="nc" id="L615">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L617">        userAgentsGroup.add(iPhoneRadioButton);</span>
+<span class="nc" id="L618">        iPhoneRadioButton.setFont(resourceMap.getFont(&quot;googleBotRadioButton.font&quot;)); // NOI18N</span>
+<span class="nc" id="L619">        iPhoneRadioButton.setText(resourceMap.getString(&quot;iPhoneRadioButton.text&quot;)); // NOI18N</span>
+<span class="nc" id="L620">        iPhoneRadioButton.setName(&quot;iPhoneRadioButton&quot;); // NOI18N</span>
+
+<span class="nc" id="L622">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, useCustomHeadersCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${!selected}&quot;), iPhoneRadioButton, org.jdesktop.beansbinding.BeanProperty.create(&quot;enabled&quot;));</span>
+<span class="nc" id="L623">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L625">        userAgentsGroup.add(googleBotRadioButton);</span>
+<span class="nc" id="L626">        googleBotRadioButton.setFont(resourceMap.getFont(&quot;googleBotRadioButton.font&quot;)); // NOI18N</span>
+<span class="nc" id="L627">        googleBotRadioButton.setText(resourceMap.getString(&quot;googleBotRadioButton.text&quot;)); // NOI18N</span>
+<span class="nc" id="L628">        googleBotRadioButton.setName(&quot;googleBotRadioButton&quot;); // NOI18N</span>
+
+<span class="nc" id="L630">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, useCustomHeadersCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${!selected}&quot;), googleBotRadioButton, org.jdesktop.beansbinding.BeanProperty.create(&quot;enabled&quot;));</span>
+<span class="nc" id="L631">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L633">        userAgentsGroup.add(msnRadioButton);</span>
+<span class="nc" id="L634">        msnRadioButton.setFont(resourceMap.getFont(&quot;msnRadioButton.font&quot;)); // NOI18N</span>
+<span class="nc" id="L635">        msnRadioButton.setText(resourceMap.getString(&quot;msnRadioButton.text&quot;)); // NOI18N</span>
+<span class="nc" id="L636">        msnRadioButton.setName(&quot;msnRadioButton&quot;); // NOI18N</span>
+
+<span class="nc" id="L638">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, useCustomHeadersCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${!selected}&quot;), msnRadioButton, org.jdesktop.beansbinding.BeanProperty.create(&quot;enabled&quot;));</span>
+<span class="nc" id="L639">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L641">        userAgentsGroup.add(yahooRadioButton);</span>
+<span class="nc" id="L642">        yahooRadioButton.setFont(resourceMap.getFont(&quot;yahooRadioButton.font&quot;)); // NOI18N</span>
+<span class="nc" id="L643">        yahooRadioButton.setText(resourceMap.getString(&quot;yahooRadioButton.text&quot;)); // NOI18N</span>
+<span class="nc" id="L644">        yahooRadioButton.setName(&quot;yahooRadioButton&quot;); // NOI18N</span>
+
+<span class="nc" id="L646">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, useCustomHeadersCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${!selected}&quot;), yahooRadioButton, org.jdesktop.beansbinding.BeanProperty.create(&quot;enabled&quot;));</span>
+<span class="nc" id="L647">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L649">        javax.swing.GroupLayout basicHeadersPanelLayout = new javax.swing.GroupLayout(basicHeadersPanel);</span>
+<span class="nc" id="L650">        basicHeadersPanel.setLayout(basicHeadersPanelLayout);</span>
+<span class="nc" id="L651">        basicHeadersPanelLayout.setHorizontalGroup(</span>
+<span class="nc" id="L652">            basicHeadersPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L653">            .addGroup(basicHeadersPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L654">                .addGroup(basicHeadersPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L655">                    .addGroup(basicHeadersPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L656">                        .addContainerGap()</span>
+<span class="nc" id="L657">                        .addGroup(basicHeadersPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L658">                            .addComponent(customCookieCheckBox)</span>
+<span class="nc" id="L659">                            .addComponent(customRefererCheckBox))</span>
+<span class="nc" id="L660">                        .addGroup(basicHeadersPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L661">                            .addGroup(basicHeadersPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L662">                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L663">                                .addComponent(customRefererTextField, javax.swing.GroupLayout.DEFAULT_SIZE, 205, Short.MAX_VALUE))</span>
+<span class="nc" id="L664">                            .addGroup(basicHeadersPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L665">                                .addGap(12, 12, 12)</span>
+<span class="nc" id="L666">                                .addComponent(customCookieTextField, javax.swing.GroupLayout.DEFAULT_SIZE, 195, Short.MAX_VALUE))))</span>
+<span class="nc" id="L667">                    .addGroup(basicHeadersPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L668">                        .addComponent(agentsLabel)</span>
+<span class="nc" id="L669">                        .addGap(18, 18, 18)</span>
+<span class="nc" id="L670">                        .addComponent(agentsSeparator, javax.swing.GroupLayout.DEFAULT_SIZE, 268, Short.MAX_VALUE))</span>
+<span class="nc" id="L671">                    .addGroup(basicHeadersPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L672">                        .addGroup(basicHeadersPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L673">                            .addComponent(ie6RadioButton)</span>
+<span class="nc" id="L674">                            .addComponent(ie7RadioButton)</span>
+<span class="nc" id="L675">                            .addComponent(firefoxRadioButton))</span>
+<span class="nc" id="L676">                        .addGap(18, 18, 18)</span>
+<span class="nc" id="L677">                        .addGroup(basicHeadersPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L678">                            .addComponent(googleBotRadioButton)</span>
+<span class="nc" id="L679">                            .addComponent(ie8RadioButton))</span>
+<span class="nc" id="L680">                        .addGap(2, 2, 2)</span>
+<span class="nc" id="L681">                        .addGroup(basicHeadersPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L682">                            .addComponent(yahooRadioButton)</span>
+<span class="nc" id="L683">                            .addComponent(iPhoneRadioButton)))</span>
+<span class="nc" id="L684">                    .addGroup(basicHeadersPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L685">                        .addGap(84, 84, 84)</span>
+<span class="nc" id="L686">                        .addComponent(msnRadioButton)</span>
+<span class="nc" id="L687">                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, 187, Short.MAX_VALUE)))</span>
+<span class="nc" id="L688">                .addContainerGap())</span>
+        );
+<span class="nc" id="L690">        basicHeadersPanelLayout.setVerticalGroup(</span>
+<span class="nc" id="L691">            basicHeadersPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L692">            .addGroup(basicHeadersPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L693">                .addGroup(basicHeadersPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)</span>
+<span class="nc" id="L694">                    .addComponent(customRefererCheckBox)</span>
+<span class="nc" id="L695">                    .addComponent(customRefererTextField, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))</span>
+<span class="nc" id="L696">                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L697">                .addGroup(basicHeadersPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)</span>
+<span class="nc" id="L698">                    .addComponent(customCookieTextField, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)</span>
+<span class="nc" id="L699">                    .addComponent(customCookieCheckBox))</span>
+<span class="nc" id="L700">                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L701">                .addGroup(basicHeadersPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L702">                    .addComponent(agentsLabel)</span>
+<span class="nc" id="L703">                    .addComponent(agentsSeparator, javax.swing.GroupLayout.PREFERRED_SIZE, 10, javax.swing.GroupLayout.PREFERRED_SIZE))</span>
+<span class="nc" id="L704">                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L705">                .addGroup(basicHeadersPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L706">                    .addGroup(basicHeadersPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L707">                        .addComponent(ie8RadioButton)</span>
+<span class="nc" id="L708">                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L709">                        .addGroup(basicHeadersPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)</span>
+<span class="nc" id="L710">                            .addComponent(googleBotRadioButton)</span>
+<span class="nc" id="L711">                            .addComponent(yahooRadioButton))</span>
+<span class="nc" id="L712">                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L713">                        .addComponent(msnRadioButton))</span>
+<span class="nc" id="L714">                    .addGroup(basicHeadersPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L715">                        .addComponent(firefoxRadioButton)</span>
+<span class="nc" id="L716">                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L717">                        .addComponent(ie6RadioButton)</span>
+<span class="nc" id="L718">                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L719">                        .addComponent(ie7RadioButton))</span>
+<span class="nc" id="L720">                    .addComponent(iPhoneRadioButton))</span>
+<span class="nc" id="L721">                .addContainerGap())</span>
+        );
+
+<span class="nc" id="L724">        javax.swing.GroupLayout httpOptionsPanelLayout = new javax.swing.GroupLayout(httpOptionsPanel);</span>
+<span class="nc" id="L725">        httpOptionsPanel.setLayout(httpOptionsPanelLayout);</span>
+<span class="nc" id="L726">        httpOptionsPanelLayout.setHorizontalGroup(</span>
+<span class="nc" id="L727">            httpOptionsPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L728">            .addGroup(httpOptionsPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L729">                .addContainerGap()</span>
+<span class="nc" id="L730">                .addGroup(httpOptionsPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L731">                    .addComponent(basicHeadersPanel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)</span>
+<span class="nc" id="L732">                    .addGroup(httpOptionsPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L733">                        .addComponent(httpVerLabel)</span>
+<span class="nc" id="L734">                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L735">                        .addComponent(httpVersionComboBox, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)</span>
+<span class="nc" id="L736">                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)</span>
+<span class="nc" id="L737">                        .addComponent(httpUserLabel)</span>
+<span class="nc" id="L738">                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L739">                        .addComponent(httpUserTextField, javax.swing.GroupLayout.DEFAULT_SIZE, 154, Short.MAX_VALUE))</span>
+<span class="nc" id="L740">                    .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, httpOptionsPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L741">                        .addComponent(httpAuthCheckBox)</span>
+<span class="nc" id="L742">                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L743">                        .addComponent(httpPassLabel)</span>
+<span class="nc" id="L744">                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L745">                        .addComponent(httpPassPasswordField, javax.swing.GroupLayout.DEFAULT_SIZE, 175, Short.MAX_VALUE)))</span>
+<span class="nc" id="L746">                .addContainerGap())</span>
+        );
+<span class="nc" id="L748">        httpOptionsPanelLayout.setVerticalGroup(</span>
+<span class="nc" id="L749">            httpOptionsPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L750">            .addGroup(httpOptionsPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L751">                .addGroup(httpOptionsPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)</span>
+<span class="nc" id="L752">                    .addComponent(httpVerLabel)</span>
+<span class="nc" id="L753">                    .addComponent(httpVersionComboBox, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)</span>
+<span class="nc" id="L754">                    .addComponent(httpUserLabel)</span>
+<span class="nc" id="L755">                    .addComponent(httpUserTextField, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))</span>
+<span class="nc" id="L756">                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L757">                .addGroup(httpOptionsPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)</span>
+<span class="nc" id="L758">                    .addComponent(httpPassPasswordField, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)</span>
+<span class="nc" id="L759">                    .addComponent(httpPassLabel)</span>
+<span class="nc" id="L760">                    .addComponent(httpAuthCheckBox))</span>
+<span class="nc" id="L761">                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)</span>
+<span class="nc" id="L762">                .addComponent(basicHeadersPanel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)</span>
+<span class="nc" id="L763">                .addContainerGap())</span>
+        );
+
+<span class="nc" id="L766">        javax.swing.GroupLayout optionsPanelLayout = new javax.swing.GroupLayout(optionsPanel);</span>
+<span class="nc" id="L767">        optionsPanel.setLayout(optionsPanelLayout);</span>
+<span class="nc" id="L768">        optionsPanelLayout.setHorizontalGroup(</span>
+<span class="nc" id="L769">            optionsPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L770">            .addGroup(optionsPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L771">                .addContainerGap()</span>
+<span class="nc" id="L772">                .addGroup(optionsPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L773">                    .addComponent(httpOptionsPanel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)</span>
+<span class="nc" id="L774">                    .addGroup(optionsPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L775">                        .addComponent(proxyTypesPanel, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)</span>
+<span class="nc" id="L776">                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L777">                        .addComponent(proxySetsPanel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)))</span>
+<span class="nc" id="L778">                .addContainerGap())</span>
+        );
+<span class="nc" id="L780">        optionsPanelLayout.setVerticalGroup(</span>
+<span class="nc" id="L781">            optionsPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L782">            .addGroup(optionsPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L783">                .addGroup(optionsPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)</span>
+<span class="nc" id="L784">                    .addComponent(proxyTypesPanel, 0, 106, Short.MAX_VALUE)</span>
+<span class="nc" id="L785">                    .addComponent(proxySetsPanel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))</span>
+<span class="nc" id="L786">                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)</span>
+<span class="nc" id="L787">                .addComponent(httpOptionsPanel, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)</span>
+<span class="nc" id="L788">                .addContainerGap())</span>
+        );
+
+<span class="nc" id="L791">        mainTabbedPane.addTab(resourceMap.getString(&quot;optionsPanel.TabConstraints.tabTitle&quot;), optionsPanel); // NOI18N</span>
+
+<span class="nc" id="L793">        customHeaderPanel.setName(&quot;customHeaderPanel&quot;); // NOI18N</span>
+<span class="nc" id="L794">        customHeaderPanel.addComponentListener(new java.awt.event.ComponentAdapter() {</span>
+            public void componentShown(java.awt.event.ComponentEvent evt) {
+<span class="nc" id="L796">                customHeaderPanelComponentShown(evt);</span>
+<span class="nc" id="L797">            }</span>
+        });
+
+<span class="nc" id="L800">        customHeadersScrollPane.setName(&quot;customHeadersScrollPane&quot;); // NOI18N</span>
+
+<span class="nc" id="L802">        customHeaders.setColumns(20);</span>
+<span class="nc" id="L803">        customHeaders.setFont(resourceMap.getFont(&quot;customHeaders.font&quot;)); // NOI18N</span>
+<span class="nc" id="L804">        customHeaders.setLineWrap(true);</span>
+<span class="nc" id="L805">        customHeaders.setRows(5);</span>
+<span class="nc" id="L806">        customHeaders.setText(resourceMap.getString(&quot;customHeaders.text&quot;)); // NOI18N</span>
+<span class="nc" id="L807">        customHeaders.setName(&quot;customHeaders&quot;); // NOI18N</span>
+
+<span class="nc" id="L809">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, useCustomHeadersCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${selected}&quot;), customHeaders, org.jdesktop.beansbinding.BeanProperty.create(&quot;enabled&quot;));</span>
+<span class="nc" id="L810">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L812">        customHeadersScrollPane.setViewportView(customHeaders);</span>
+
+<span class="nc" id="L814">        useCustomHeadersCheckBox.setFont(resourceMap.getFont(&quot;useCustomHeadersCheckBox.font&quot;)); // NOI18N</span>
+<span class="nc" id="L815">        useCustomHeadersCheckBox.setText(resourceMap.getString(&quot;useCustomHeadersCheckBox.text&quot;)); // NOI18N</span>
+<span class="nc" id="L816">        useCustomHeadersCheckBox.setFocusable(false);</span>
+<span class="nc" id="L817">        useCustomHeadersCheckBox.setName(&quot;useCustomHeadersCheckBox&quot;); // NOI18N</span>
+
+<span class="nc" id="L819">        javax.swing.GroupLayout customHeaderPanelLayout = new javax.swing.GroupLayout(customHeaderPanel);</span>
+<span class="nc" id="L820">        customHeaderPanel.setLayout(customHeaderPanelLayout);</span>
+<span class="nc" id="L821">        customHeaderPanelLayout.setHorizontalGroup(</span>
+<span class="nc" id="L822">            customHeaderPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L823">            .addGroup(customHeaderPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L824">                .addContainerGap()</span>
+<span class="nc" id="L825">                .addGroup(customHeaderPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L826">                    .addComponent(customHeadersScrollPane, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.DEFAULT_SIZE, 371, Short.MAX_VALUE)</span>
+<span class="nc" id="L827">                    .addComponent(useCustomHeadersCheckBox))</span>
+<span class="nc" id="L828">                .addContainerGap())</span>
+        );
+<span class="nc" id="L830">        customHeaderPanelLayout.setVerticalGroup(</span>
+<span class="nc" id="L831">            customHeaderPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L832">            .addGroup(customHeaderPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L833">                .addComponent(useCustomHeadersCheckBox)</span>
+<span class="nc" id="L834">                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)</span>
+<span class="nc" id="L835">                .addComponent(customHeadersScrollPane, javax.swing.GroupLayout.PREFERRED_SIZE, 272, javax.swing.GroupLayout.PREFERRED_SIZE)</span>
+<span class="nc" id="L836">                .addContainerGap(73, Short.MAX_VALUE))</span>
+        );
+
+<span class="nc" id="L839">        mainTabbedPane.addTab(resourceMap.getString(&quot;customHeaderPanel.TabConstraints.tabTitle&quot;), customHeaderPanel); // NOI18N</span>
+
+<span class="nc" id="L841">        debugPanel.setName(&quot;debugPanel&quot;); // NOI18N</span>
+
+<span class="nc" id="L843">        debugDataScrollPane.setBorder(javax.swing.BorderFactory.createTitledBorder(new javax.swing.border.LineBorder(new java.awt.Color(0, 0, 0), 1, true), resourceMap.getString(&quot;debugDataScrollPane.border.title&quot;), javax.swing.border.TitledBorder.DEFAULT_JUSTIFICATION, javax.swing.border.TitledBorder.ABOVE_TOP, resourceMap.getFont(&quot;debugDataScrollPane.border.titleFont&quot;))); // NOI18N</span>
+<span class="nc" id="L844">        debugDataScrollPane.setName(&quot;debugDataScrollPane&quot;); // NOI18N</span>
+
+<span class="nc" id="L846">        debugDataPane.setBackground(resourceMap.getColor(&quot;debugDataPane.background&quot;)); // NOI18N</span>
+<span class="nc" id="L847">        debugDataPane.setName(&quot;debugDataPane&quot;); // NOI18N</span>
+
+<span class="nc" id="L849">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, mergeInfoCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${!selected}&quot;), debugDataPane, org.jdesktop.beansbinding.BeanProperty.create(&quot;enabled&quot;));</span>
+<span class="nc" id="L850">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L852">        debugDataScrollPane.setViewportView(debugDataPane);</span>
+
+<span class="nc" id="L854">        javax.swing.GroupLayout debugPanelLayout = new javax.swing.GroupLayout(debugPanel);</span>
+<span class="nc" id="L855">        debugPanel.setLayout(debugPanelLayout);</span>
+<span class="nc" id="L856">        debugPanelLayout.setHorizontalGroup(</span>
+<span class="nc" id="L857">            debugPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L858">            .addGap(0, 395, Short.MAX_VALUE)</span>
+<span class="nc" id="L859">            .addGroup(debugPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L860">                .addComponent(debugDataScrollPane, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.DEFAULT_SIZE, 395, Short.MAX_VALUE))</span>
+        );
+<span class="nc" id="L862">        debugPanelLayout.setVerticalGroup(</span>
+<span class="nc" id="L863">            debugPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L864">            .addGap(0, 374, Short.MAX_VALUE)</span>
+<span class="nc" id="L865">            .addGroup(debugPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L866">                .addComponent(debugDataScrollPane, javax.swing.GroupLayout.DEFAULT_SIZE, 374, Short.MAX_VALUE))</span>
+        );
+
+<span class="nc" id="L869">        mainTabbedPane.addTab(resourceMap.getString(&quot;debugPanel.TabConstraints.tabTitle&quot;), debugPanel); // NOI18N</span>
+
+<span class="nc" id="L871">        upButton.setFont(resourceMap.getFont(&quot;upButton.font&quot;)); // NOI18N</span>
+<span class="nc" id="L872">        upButton.setIcon(resourceMap.getIcon(&quot;upButton.icon&quot;)); // NOI18N</span>
+<span class="nc" id="L873">        upButton.setText(resourceMap.getString(&quot;upButton.text&quot;)); // NOI18N</span>
+<span class="nc" id="L874">        upButton.setName(&quot;upButton&quot;); // NOI18N</span>
+<span class="nc" id="L875">        upButton.setNextFocusableComponent(replayDataPane);</span>
+<span class="nc" id="L876">        upButton.addActionListener(new java.awt.event.ActionListener() {</span>
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+<span class="nc" id="L878">                upButtonActionPerformed(evt);</span>
+<span class="nc" id="L879">            }</span>
+        });
+
+<span class="nc" id="L882">        downButton.setFont(resourceMap.getFont(&quot;downButton.font&quot;)); // NOI18N</span>
+<span class="nc" id="L883">        downButton.setIcon(resourceMap.getIcon(&quot;downButton.icon&quot;)); // NOI18N</span>
+<span class="nc" id="L884">        downButton.setName(&quot;downButton&quot;); // NOI18N</span>
+<span class="nc" id="L885">        downButton.setNextFocusableComponent(replayDataPane);</span>
+<span class="nc" id="L886">        downButton.addActionListener(new java.awt.event.ActionListener() {</span>
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+<span class="nc" id="L888">                downButtonActionPerformed(evt);</span>
+<span class="nc" id="L889">            }</span>
+        });
+
+<span class="nc" id="L892">        clearParams.setFont(resourceMap.getFont(&quot;clearParams.font&quot;)); // NOI18N</span>
+<span class="nc" id="L893">        clearParams.setText(resourceMap.getString(&quot;clearParams.text&quot;)); // NOI18N</span>
+<span class="nc" id="L894">        clearParams.setToolTipText(resourceMap.getString(&quot;clearParams.toolTipText&quot;)); // NOI18N</span>
+<span class="nc" id="L895">        clearParams.setBorder(javax.swing.BorderFactory.createLineBorder(new java.awt.Color(0, 0, 0)));</span>
+<span class="nc" id="L896">        clearParams.setName(&quot;clearParams&quot;); // NOI18N</span>
+<span class="nc" id="L897">        clearParams.setNextFocusableComponent(paramsComboBox);</span>
+<span class="nc" id="L898">        clearParams.addActionListener(new java.awt.event.ActionListener() {</span>
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+<span class="nc" id="L900">                clearParamsActionPerformed(evt);</span>
+<span class="nc" id="L901">            }</span>
+        });
+
+<span class="nc" id="L904">        clipboardButton.setIcon(resourceMap.getIcon(&quot;clipboardButton.icon&quot;)); // NOI18N</span>
+<span class="nc" id="L905">        clipboardButton.setToolTipText(resourceMap.getString(&quot;clipboardButton.toolTipText&quot;)); // NOI18N</span>
+<span class="nc" id="L906">        clipboardButton.setName(&quot;clipboardButton&quot;); // NOI18N</span>
+<span class="nc" id="L907">        clipboardButton.addActionListener(new java.awt.event.ActionListener() {</span>
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+<span class="nc" id="L909">                clipboardButtonActionPerformed(evt);</span>
+<span class="nc" id="L910">            }</span>
+        });
+
+<span class="nc" id="L913">        paramsComboBox.setEditable(true);</span>
+<span class="nc" id="L914">        paramsComboBox.setFont(resourceMap.getFont(&quot;paramsComboBox.font&quot;)); // NOI18N</span>
+<span class="nc" id="L915">        paramsComboBox.setMaximumRowCount(10);</span>
+<span class="nc" id="L916">        paramsComboBox.setModel(new javax.swing.DefaultComboBoxModel(new String[] { &quot;&quot; }));</span>
+<span class="nc" id="L917">        paramsComboBox.setName(&quot;paramsComboBox&quot;); // NOI18N</span>
+<span class="nc" id="L918">        paramsComboBox.addItemListener(new java.awt.event.ItemListener() {</span>
+            public void itemStateChanged(java.awt.event.ItemEvent evt) {
+<span class="nc" id="L920">                paramsComboBoxItemStateChanged(evt);</span>
+<span class="nc" id="L921">            }</span>
+        });
+<span class="nc" id="L923">        paramsComboBox.addActionListener(new java.awt.event.ActionListener() {</span>
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+<span class="nc" id="L925">                paramsComboBoxActionPerformed(evt);</span>
+<span class="nc" id="L926">            }</span>
+        });
+
+<span class="nc" id="L929">        paramsLabel.setFont(resourceMap.getFont(&quot;paramsLabel.font&quot;)); // NOI18N</span>
+<span class="nc" id="L930">        paramsLabel.setText(resourceMap.getString(&quot;paramsLabel.text&quot;)); // NOI18N</span>
+<span class="nc" id="L931">        paramsLabel.setFocusable(false);</span>
+<span class="nc" id="L932">        paramsLabel.setName(&quot;paramsLabel&quot;); // NOI18N</span>
+
+<span class="nc" id="L934">        mainSeparator.setName(&quot;mainSeparator&quot;); // NOI18N</span>
+
+<span class="nc" id="L936">        intelSaveCheckBox.setFont(resourceMap.getFont(&quot;intelSaveCheckBox.font&quot;)); // NOI18N</span>
+<span class="nc" id="L937">        intelSaveCheckBox.setText(resourceMap.getString(&quot;intelSaveCheckBox.text&quot;)); // NOI18N</span>
+<span class="nc" id="L938">        intelSaveCheckBox.setToolTipText(resourceMap.getString(&quot;intelSaveCheckBox.toolTipText&quot;)); // NOI18N</span>
+<span class="nc" id="L939">        intelSaveCheckBox.setName(&quot;intelSaveCheckBox&quot;); // NOI18N</span>
+
+<span class="nc" id="L941">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, toFileCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${!selected}&quot;), intelSaveCheckBox, org.jdesktop.beansbinding.BeanProperty.create(&quot;enabled&quot;));</span>
+<span class="nc" id="L942">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L944">        toFileTextField.setText(resourceMap.getString(&quot;toFileTextField.text&quot;)); // NOI18N</span>
+<span class="nc" id="L945">        toFileTextField.setName(&quot;toFileTextField&quot;); // NOI18N</span>
+
+<span class="nc" id="L947">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, intelSaveCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${!selected}&quot;), toFileTextField, org.jdesktop.beansbinding.BeanProperty.create(&quot;editable&quot;));</span>
+<span class="nc" id="L948">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L950">        toFileButton.setFont(resourceMap.getFont(&quot;toFileButton.font&quot;)); // NOI18N</span>
+<span class="nc" id="L951">        toFileButton.setText(resourceMap.getString(&quot;toFileButton.text&quot;)); // NOI18N</span>
+<span class="nc" id="L952">        toFileButton.setToolTipText(resourceMap.getString(&quot;toFileButton.toolTipText&quot;)); // NOI18N</span>
+<span class="nc" id="L953">        toFileButton.setBorder(javax.swing.BorderFactory.createLineBorder(new java.awt.Color(0, 0, 0)));</span>
+<span class="nc" id="L954">        toFileButton.setFocusable(false);</span>
+<span class="nc" id="L955">        toFileButton.setName(&quot;toFileButton&quot;); // NOI18N</span>
+
+<span class="nc" id="L957">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, intelSaveCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${!selected}&quot;), toFileButton, org.jdesktop.beansbinding.BeanProperty.create(&quot;enabled&quot;));</span>
+<span class="nc" id="L958">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L960">        toFileButton.addActionListener(new java.awt.event.ActionListener() {</span>
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+<span class="nc" id="L962">                toFileButtonActionPerformed(evt);</span>
+<span class="nc" id="L963">            }</span>
+        });
+
+<span class="nc" id="L966">        toFileCheckBox.setFont(resourceMap.getFont(&quot;toFileCheckBox.font&quot;)); // NOI18N</span>
+<span class="nc" id="L967">        toFileCheckBox.setText(resourceMap.getString(&quot;toFileCheckBox.text&quot;)); // NOI18N</span>
+<span class="nc" id="L968">        toFileCheckBox.setToolTipText(resourceMap.getString(&quot;toFileCheckBox.toolTipText&quot;)); // NOI18N</span>
+<span class="nc" id="L969">        toFileCheckBox.setName(&quot;toFileCheckBox&quot;); // NOI18N</span>
+
+<span class="nc" id="L971">        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, intelSaveCheckBox, org.jdesktop.beansbinding.ELProperty.create(&quot;${!selected}&quot;), toFileCheckBox, org.jdesktop.beansbinding.BeanProperty.create(&quot;enabled&quot;));</span>
+<span class="nc" id="L972">        bindingGroup.addBinding(binding);</span>
+
+<span class="nc" id="L974">        javax.swing.GroupLayout mainPanelLayout = new javax.swing.GroupLayout(mainPanel);</span>
+<span class="nc" id="L975">        mainPanel.setLayout(mainPanelLayout);</span>
+<span class="nc" id="L976">        mainPanelLayout.setHorizontalGroup(</span>
+<span class="nc" id="L977">            mainPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L978">            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, mainPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L979">                .addContainerGap()</span>
+<span class="nc" id="L980">                .addGroup(mainPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)</span>
+<span class="nc" id="L981">                    .addComponent(mainSeparator, javax.swing.GroupLayout.DEFAULT_SIZE, 463, Short.MAX_VALUE)</span>
+<span class="nc" id="L982">                    .addGroup(mainPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L983">                        .addGroup(mainPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L984">                            .addComponent(mainTabbedPane, javax.swing.GroupLayout.DEFAULT_SIZE, 400, Short.MAX_VALUE)</span>
+<span class="nc" id="L985">                            .addGroup(mainPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L986">                                .addComponent(urlLabel)</span>
+<span class="nc" id="L987">                                .addGap(10, 10, 10)</span>
+<span class="nc" id="L988">                                .addComponent(clearURL)</span>
+<span class="nc" id="L989">                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L990">                                .addComponent(urlCombo, 0, 349, Short.MAX_VALUE))</span>
+<span class="nc" id="L991">                            .addGroup(mainPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L992">                                .addComponent(paramsLabel)</span>
+<span class="nc" id="L993">                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L994">                                .addComponent(clearParams)</span>
+<span class="nc" id="L995">                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L996">                                .addComponent(paramsComboBox, 0, 330, Short.MAX_VALUE))</span>
+<span class="nc" id="L997">                            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, mainPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L998">                                .addComponent(toFileCheckBox)</span>
+<span class="nc" id="L999">                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L1000">                                .addComponent(toFileTextField, javax.swing.GroupLayout.DEFAULT_SIZE, 243, Short.MAX_VALUE)</span>
+<span class="nc" id="L1001">                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L1002">                                .addComponent(toFileButton)</span>
+<span class="nc" id="L1003">                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L1004">                                .addComponent(intelSaveCheckBox)))</span>
+<span class="nc" id="L1005">                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L1006">                        .addGroup(mainPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L1007">                            .addComponent(goButton, javax.swing.GroupLayout.Alignment.TRAILING)</span>
+<span class="nc" id="L1008">                            .addComponent(saveButton, javax.swing.GroupLayout.Alignment.TRAILING)</span>
+<span class="nc" id="L1009">                            .addComponent(paramsButton, javax.swing.GroupLayout.Alignment.TRAILING)</span>
+<span class="nc" id="L1010">                            .addComponent(methodPanel, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.PREFERRED_SIZE, 57, javax.swing.GroupLayout.PREFERRED_SIZE)</span>
+<span class="nc" id="L1011">                            .addComponent(clearButton, javax.swing.GroupLayout.Alignment.TRAILING)</span>
+<span class="nc" id="L1012">                            .addComponent(upButton, javax.swing.GroupLayout.Alignment.TRAILING)</span>
+<span class="nc" id="L1013">                            .addComponent(downButton, javax.swing.GroupLayout.Alignment.TRAILING)</span>
+<span class="nc" id="L1014">                            .addComponent(clipboardButton, javax.swing.GroupLayout.Alignment.TRAILING))))</span>
+<span class="nc" id="L1015">                .addContainerGap())</span>
+        );
+<span class="nc" id="L1017">        mainPanelLayout.setVerticalGroup(</span>
+<span class="nc" id="L1018">            mainPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L1019">            .addGroup(mainPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L1020">                .addContainerGap()</span>
+<span class="nc" id="L1021">                .addGroup(mainPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)</span>
+<span class="nc" id="L1022">                    .addComponent(goButton)</span>
+<span class="nc" id="L1023">                    .addComponent(urlCombo, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)</span>
+<span class="nc" id="L1024">                    .addComponent(urlLabel)</span>
+<span class="nc" id="L1025">                    .addComponent(clearURL, javax.swing.GroupLayout.PREFERRED_SIZE, 22, javax.swing.GroupLayout.PREFERRED_SIZE))</span>
+<span class="nc" id="L1026">                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L1027">                .addGroup(mainPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)</span>
+<span class="nc" id="L1028">                    .addGroup(mainPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)</span>
+<span class="nc" id="L1029">                        .addComponent(paramsComboBox, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)</span>
+<span class="nc" id="L1030">                        .addComponent(paramsLabel)</span>
+<span class="nc" id="L1031">                        .addComponent(clearParams, javax.swing.GroupLayout.PREFERRED_SIZE, 22, javax.swing.GroupLayout.PREFERRED_SIZE))</span>
+<span class="nc" id="L1032">                    .addComponent(paramsButton))</span>
+<span class="nc" id="L1033">                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L1034">                .addComponent(mainSeparator, javax.swing.GroupLayout.PREFERRED_SIZE, 10, javax.swing.GroupLayout.PREFERRED_SIZE)</span>
+<span class="nc" id="L1035">                .addGap(1, 1, 1)</span>
+<span class="nc" id="L1036">                .addGroup(mainPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L1037">                    .addGroup(mainPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L1038">                        .addComponent(methodPanel, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)</span>
+<span class="nc" id="L1039">                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L1040">                        .addComponent(saveButton)</span>
+<span class="nc" id="L1041">                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L1042">                        .addComponent(clearButton)</span>
+<span class="nc" id="L1043">                        .addGap(18, 18, 18)</span>
+<span class="nc" id="L1044">                        .addComponent(upButton)</span>
+<span class="nc" id="L1045">                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L1046">                        .addComponent(downButton)</span>
+<span class="nc" id="L1047">                        .addGap(18, 18, 18)</span>
+<span class="nc" id="L1048">                        .addComponent(clipboardButton)</span>
+<span class="nc" id="L1049">                        .addGap(159, 159, 159))</span>
+<span class="nc" id="L1050">                    .addGroup(mainPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L1051">                        .addGroup(mainPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)</span>
+<span class="nc" id="L1052">                            .addComponent(intelSaveCheckBox)</span>
+<span class="nc" id="L1053">                            .addComponent(toFileTextField, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)</span>
+<span class="nc" id="L1054">                            .addComponent(toFileButton, javax.swing.GroupLayout.PREFERRED_SIZE, 22, javax.swing.GroupLayout.PREFERRED_SIZE)</span>
+<span class="nc" id="L1055">                            .addComponent(toFileCheckBox))</span>
+<span class="nc" id="L1056">                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L1057">                        .addComponent(mainTabbedPane, javax.swing.GroupLayout.DEFAULT_SIZE, 401, Short.MAX_VALUE))))</span>
+        );
+
+<span class="nc" id="L1060">        mainMenuBar.setFont(resourceMap.getFont(&quot;mainMenuBar.font&quot;)); // NOI18N</span>
+<span class="nc" id="L1061">        mainMenuBar.setName(&quot;mainMenuBar&quot;); // NOI18N</span>
+
+<span class="nc" id="L1063">        fileMenu.setAction(actionMap.get(&quot;fileChoose&quot;)); // NOI18N</span>
+<span class="nc" id="L1064">        fileMenu.setText(resourceMap.getString(&quot;fileMenu.text&quot;)); // NOI18N</span>
+<span class="nc" id="L1065">        fileMenu.setFont(resourceMap.getFont(&quot;fileMenu.font&quot;)); // NOI18N</span>
+<span class="nc" id="L1066">        fileMenu.setName(&quot;fileMenu&quot;); // NOI18N</span>
+
+<span class="nc" id="L1068">        saveMenuItem.setAction(actionMap.get(&quot;fileChoose&quot;)); // NOI18N</span>
+<span class="nc" id="L1069">        saveMenuItem.setFont(resourceMap.getFont(&quot;saveMenuItem.font&quot;)); // NOI18N</span>
+<span class="nc" id="L1070">        saveMenuItem.setText(resourceMap.getString(&quot;saveMenuItem.text&quot;)); // NOI18N</span>
+<span class="nc" id="L1071">        saveMenuItem.setName(&quot;saveMenuItem&quot;); // NOI18N</span>
+<span class="nc" id="L1072">        fileMenu.add(saveMenuItem);</span>
+
+<span class="nc" id="L1074">        clearMenuItem1.setAction(actionMap.get(&quot;ClearDataPanel&quot;)); // NOI18N</span>
+<span class="nc" id="L1075">        clearMenuItem1.setFont(resourceMap.getFont(&quot;clearMenuItem1.font&quot;)); // NOI18N</span>
+<span class="nc" id="L1076">        clearMenuItem1.setText(resourceMap.getString(&quot;clearMenuItem1.text&quot;)); // NOI18N</span>
+<span class="nc" id="L1077">        clearMenuItem1.setName(&quot;clearMenuItem1&quot;); // NOI18N</span>
+<span class="nc" id="L1078">        fileMenu.add(clearMenuItem1);</span>
+
+<span class="nc" id="L1080">        filesSeparator1.setName(&quot;filesSeparator1&quot;); // NOI18N</span>
+<span class="nc" id="L1081">        fileMenu.add(filesSeparator1);</span>
+
+<span class="nc" id="L1083">        saveTemplateItem.setFont(resourceMap.getFont(&quot;saveTemplateItem.font&quot;)); // NOI18N</span>
+<span class="nc" id="L1084">        saveTemplateItem.setText(resourceMap.getString(&quot;saveTemplateItem.text&quot;)); // NOI18N</span>
+<span class="nc" id="L1085">        saveTemplateItem.setName(&quot;saveTemplateItem&quot;); // NOI18N</span>
+<span class="nc" id="L1086">        saveTemplateItem.addActionListener(new java.awt.event.ActionListener() {</span>
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+<span class="nc" id="L1088">                saveTemplateItemActionPerformed(evt);</span>
+<span class="nc" id="L1089">            }</span>
+        });
+<span class="nc" id="L1091">        fileMenu.add(saveTemplateItem);</span>
+
+<span class="nc" id="L1093">        loadTemplateItem.setFont(resourceMap.getFont(&quot;saveTemplateItem.font&quot;)); // NOI18N</span>
+<span class="nc" id="L1094">        loadTemplateItem.setText(resourceMap.getString(&quot;loadTemplateItem.text&quot;)); // NOI18N</span>
+<span class="nc" id="L1095">        loadTemplateItem.setName(&quot;loadTemplateItem&quot;); // NOI18N</span>
+<span class="nc" id="L1096">        loadTemplateItem.addActionListener(new java.awt.event.ActionListener() {</span>
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+<span class="nc" id="L1098">                loadTemplateItemActionPerformed(evt);</span>
+<span class="nc" id="L1099">            }</span>
+        });
+<span class="nc" id="L1101">        fileMenu.add(loadTemplateItem);</span>
+
+<span class="nc" id="L1103">        filesSeparator2.setName(&quot;filesSeparator2&quot;); // NOI18N</span>
+<span class="nc" id="L1104">        fileMenu.add(filesSeparator2);</span>
+
+<span class="nc" id="L1106">        exitMenuItem.setAction(actionMap.get(&quot;quit&quot;)); // NOI18N</span>
+<span class="nc" id="L1107">        exitMenuItem.setFont(resourceMap.getFont(&quot;exitMenuItem.font&quot;)); // NOI18N</span>
+<span class="nc" id="L1108">        exitMenuItem.setName(&quot;exitMenuItem&quot;); // NOI18N</span>
+<span class="nc" id="L1109">        fileMenu.add(exitMenuItem);</span>
+
+<span class="nc" id="L1111">        mainMenuBar.add(fileMenu);</span>
+
+<span class="nc" id="L1113">        toolsMenu.setText(resourceMap.getString(&quot;toolsMenu.text&quot;)); // NOI18N</span>
+<span class="nc" id="L1114">        toolsMenu.setFont(resourceMap.getFont(&quot;toolsMenu.font&quot;)); // NOI18N</span>
+<span class="nc" id="L1115">        toolsMenu.setName(&quot;toolsMenu&quot;); // NOI18N</span>
+
+<span class="nc" id="L1117">        notesMenuItem.setFont(resourceMap.getFont(&quot;notesMenuItem.font&quot;)); // NOI18N</span>
+<span class="nc" id="L1118">        notesMenuItem.setMnemonic('n');</span>
+<span class="nc" id="L1119">        notesMenuItem.setText(resourceMap.getString(&quot;notesMenuItem.text&quot;)); // NOI18N</span>
+<span class="nc" id="L1120">        notesMenuItem.setToolTipText(resourceMap.getString(&quot;notesMenuItem.toolTipText&quot;)); // NOI18N</span>
+<span class="nc" id="L1121">        notesMenuItem.setName(&quot;notesMenuItem&quot;); // NOI18N</span>
+<span class="nc" id="L1122">        notesMenuItem.addActionListener(new java.awt.event.ActionListener() {</span>
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+<span class="nc" id="L1124">                notesMenuItemActionPerformed(evt);</span>
+<span class="nc" id="L1125">            }</span>
+        });
+<span class="nc" id="L1127">        toolsMenu.add(notesMenuItem);</span>
+
+<span class="nc" id="L1129">        toolsSeparator.setName(&quot;toolsSeparator&quot;); // NOI18N</span>
+<span class="nc" id="L1130">        toolsMenu.add(toolsSeparator);</span>
+
+<span class="nc" id="L1132">        cryptMenuItem.setFont(resourceMap.getFont(&quot;cryptMenuItem.font&quot;)); // NOI18N</span>
+<span class="nc" id="L1133">        cryptMenuItem.setMnemonic('d');</span>
+<span class="nc" id="L1134">        cryptMenuItem.setText(resourceMap.getString(&quot;cryptMenuItem.text&quot;)); // NOI18N</span>
+<span class="nc" id="L1135">        cryptMenuItem.setToolTipText(resourceMap.getString(&quot;cryptMenuItem.toolTipText&quot;)); // NOI18N</span>
+<span class="nc" id="L1136">        cryptMenuItem.setName(&quot;cryptMenuItem&quot;); // NOI18N</span>
+<span class="nc" id="L1137">        cryptMenuItem.addActionListener(new java.awt.event.ActionListener() {</span>
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+<span class="nc" id="L1139">                cryptMenuItemActionPerformed(evt);</span>
+<span class="nc" id="L1140">            }</span>
+        });
+<span class="nc" id="L1142">        toolsMenu.add(cryptMenuItem);</span>
+
+<span class="nc" id="L1144">        md5MenuItem.setFont(resourceMap.getFont(&quot;md5MenuItem.font&quot;)); // NOI18N</span>
+<span class="nc" id="L1145">        md5MenuItem.setMnemonic('m');</span>
+<span class="nc" id="L1146">        md5MenuItem.setText(resourceMap.getString(&quot;md5MenuItem.text&quot;)); // NOI18N</span>
+<span class="nc" id="L1147">        md5MenuItem.setToolTipText(resourceMap.getString(&quot;md5MenuItem.toolTipText&quot;)); // NOI18N</span>
+<span class="nc" id="L1148">        md5MenuItem.setName(&quot;md5MenuItem&quot;); // NOI18N</span>
+<span class="nc" id="L1149">        md5MenuItem.addActionListener(new java.awt.event.ActionListener() {</span>
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+<span class="nc" id="L1151">                md5MenuItemActionPerformed(evt);</span>
+<span class="nc" id="L1152">            }</span>
+        });
+<span class="nc" id="L1154">        toolsMenu.add(md5MenuItem);</span>
+
+<span class="nc" id="L1156">        base64MenuItem.setFont(resourceMap.getFont(&quot;notesMenuItem.font&quot;)); // NOI18N</span>
+<span class="nc" id="L1157">        base64MenuItem.setMnemonic('b');</span>
+<span class="nc" id="L1158">        base64MenuItem.setText(resourceMap.getString(&quot;base64MenuItem.text&quot;)); // NOI18N</span>
+<span class="nc" id="L1159">        base64MenuItem.setToolTipText(resourceMap.getString(&quot;base64MenuItem.toolTipText&quot;)); // NOI18N</span>
+<span class="nc" id="L1160">        base64MenuItem.setName(&quot;base64MenuItem&quot;); // NOI18N</span>
+<span class="nc" id="L1161">        base64MenuItem.addActionListener(new java.awt.event.ActionListener() {</span>
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+<span class="nc" id="L1163">                base64MenuItemActionPerformed(evt);</span>
+<span class="nc" id="L1164">            }</span>
+        });
+<span class="nc" id="L1166">        toolsMenu.add(base64MenuItem);</span>
+
+<span class="nc" id="L1168">        toolsSeparator2.setName(&quot;toolsSeparator2&quot;); // NOI18N</span>
+<span class="nc" id="L1169">        toolsMenu.add(toolsSeparator2);</span>
+
+<span class="nc" id="L1171">        optionsMenu.setMnemonic('o');</span>
+<span class="nc" id="L1172">        optionsMenu.setText(resourceMap.getString(&quot;optionsMenu.text&quot;)); // NOI18N</span>
+<span class="nc" id="L1173">        optionsMenu.setFont(resourceMap.getFont(&quot;optionsMenu.font&quot;)); // NOI18N</span>
+<span class="nc" id="L1174">        optionsMenu.setName(&quot;optionsMenu&quot;); // NOI18N</span>
+
+<span class="nc" id="L1176">        mergeInfoCheckBox.setFont(resourceMap.getFont(&quot;mergeInfoCheckBox.font&quot;)); // NOI18N</span>
+<span class="nc" id="L1177">        mergeInfoCheckBox.setText(resourceMap.getString(&quot;mergeInfoCheckBox.text&quot;)); // NOI18N</span>
+<span class="nc" id="L1178">        mergeInfoCheckBox.setToolTipText(resourceMap.getString(&quot;mergeInfoCheckBox.toolTipText&quot;)); // NOI18N</span>
+<span class="nc" id="L1179">        mergeInfoCheckBox.setName(&quot;mergeInfoCheckBox&quot;); // NOI18N</span>
+<span class="nc" id="L1180">        optionsMenu.add(mergeInfoCheckBox);</span>
+
+<span class="nc" id="L1182">        toolsMenu.add(optionsMenu);</span>
+
+<span class="nc" id="L1184">        mainMenuBar.add(toolsMenu);</span>
+
+<span class="nc" id="L1186">        helpMenu.setText(resourceMap.getString(&quot;helpMenu.text&quot;)); // NOI18N</span>
+<span class="nc" id="L1187">        helpMenu.setFont(resourceMap.getFont(&quot;helpMenu.font&quot;)); // NOI18N</span>
+<span class="nc" id="L1188">        helpMenu.setName(&quot;helpMenu&quot;); // NOI18N</span>
+
+<span class="nc" id="L1190">        aboutMenuItem.setAction(actionMap.get(&quot;showAboutBox&quot;)); // NOI18N</span>
+<span class="nc" id="L1191">        aboutMenuItem.setFont(resourceMap.getFont(&quot;aboutMenuItem.font&quot;)); // NOI18N</span>
+<span class="nc" id="L1192">        aboutMenuItem.setName(&quot;aboutMenuItem&quot;); // NOI18N</span>
+<span class="nc" id="L1193">        helpMenu.add(aboutMenuItem);</span>
+
+<span class="nc" id="L1195">        mainMenuBar.add(helpMenu);</span>
+
+<span class="nc" id="L1197">        statusPanel.setName(&quot;statusPanel&quot;); // NOI18N</span>
+
+<span class="nc" id="L1199">        statusPanelSeparator.setName(&quot;statusPanelSeparator&quot;); // NOI18N</span>
+
+<span class="nc" id="L1201">        statusMessageLabel.setName(&quot;statusMessageLabel&quot;); // NOI18N</span>
+
+<span class="nc" id="L1203">        statusAnimationLabel.setHorizontalAlignment(javax.swing.SwingConstants.LEFT);</span>
+<span class="nc" id="L1204">        statusAnimationLabel.setName(&quot;statusAnimationLabel&quot;); // NOI18N</span>
+
+<span class="nc" id="L1206">        progressBar.setName(&quot;progressBar&quot;); // NOI18N</span>
+
+<span class="nc" id="L1208">        javax.swing.GroupLayout statusPanelLayout = new javax.swing.GroupLayout(statusPanel);</span>
+<span class="nc" id="L1209">        statusPanel.setLayout(statusPanelLayout);</span>
+<span class="nc" id="L1210">        statusPanelLayout.setHorizontalGroup(</span>
+<span class="nc" id="L1211">            statusPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L1212">            .addComponent(statusPanelSeparator, javax.swing.GroupLayout.DEFAULT_SIZE, 487, Short.MAX_VALUE)</span>
+<span class="nc" id="L1213">            .addGroup(statusPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L1214">                .addContainerGap()</span>
+<span class="nc" id="L1215">                .addComponent(statusMessageLabel)</span>
+<span class="nc" id="L1216">                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, 303, Short.MAX_VALUE)</span>
+<span class="nc" id="L1217">                .addComponent(progressBar, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)</span>
+<span class="nc" id="L1218">                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)</span>
+<span class="nc" id="L1219">                .addComponent(statusAnimationLabel)</span>
+<span class="nc" id="L1220">                .addContainerGap())</span>
+        );
+<span class="nc" id="L1222">        statusPanelLayout.setVerticalGroup(</span>
+<span class="nc" id="L1223">            statusPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)</span>
+<span class="nc" id="L1224">            .addGroup(statusPanelLayout.createSequentialGroup()</span>
+<span class="nc" id="L1225">                .addComponent(statusPanelSeparator, javax.swing.GroupLayout.PREFERRED_SIZE, 2, javax.swing.GroupLayout.PREFERRED_SIZE)</span>
+<span class="nc" id="L1226">                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)</span>
+<span class="nc" id="L1227">                .addGroup(statusPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)</span>
+<span class="nc" id="L1228">                    .addComponent(statusMessageLabel)</span>
+<span class="nc" id="L1229">                    .addComponent(statusAnimationLabel)</span>
+<span class="nc" id="L1230">                    .addComponent(progressBar, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))</span>
+<span class="nc" id="L1231">                .addGap(3, 3, 3))</span>
+        );
+
+<span class="nc" id="L1234">        setComponent(mainPanel);</span>
+<span class="nc" id="L1235">        setMenuBar(mainMenuBar);</span>
+<span class="nc" id="L1236">        setStatusBar(statusPanel);</span>
+
+<span class="nc" id="L1238">        bindingGroup.bind();</span>
+<span class="nc" id="L1239">    }// &lt;/editor-fold&gt;//GEN-END:initComponents</span>
+
+    private void urlComboActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_urlComboActionPerformed
+        // TODO make Combo to work:
+<span class="nc bnc" id="L1243" title="All 2 branches missed.">        if (evt.getActionCommand().equals(&quot;comboBoxEdited&quot;)) {</span>
+            //Object item = urlCombo.getSelectedItem();
+            // 
+            // urlCombo.hidePopup();
+<span class="nc" id="L1247">            SwingTools urlCheck = new SwingTools(this.getFrame());</span>
+<span class="nc bnc" id="L1248" title="All 2 branches missed.">            if (!urlCheck.checkAddComboItem(urlCombo)) {</span>
+<span class="nc" id="L1249">                urlCombo.addItem(urlCombo.getSelectedItem());</span>
+            }
+        }
+
+<span class="nc" id="L1253">    }//GEN-LAST:event_urlComboActionPerformed</span>
+
+    private void formComponentHidden(java.awt.event.ComponentEvent evt) {
+        /*
+         * Copy information from ParamsDialog to
+         * ParamsTextField
+         */
+<span class="nc" id="L1260">        SwingUtilities.invokeLater(new Runnable() {</span>
+
+            @Override
+            public void run() {
+<span class="nc bnc" id="L1264" title="All 2 branches missed.">                if (RequestParamsDialog.isDataChanged()) {</span>
+<span class="nc" id="L1265">                    paramsComboBox.setSelectedItem(RequestParamsDialog.getRequestParams());</span>
+                }
+<span class="nc" id="L1267">            }</span>
+        });
+
+<span class="nc" id="L1270">    }</span>
+
+    private void paramsButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_paramsButtonActionPerformed
+        /*
+         * Show Params dialog
+         * and set listener in hidden event
+         */
+<span class="nc bnc" id="L1277" title="All 2 branches missed.">        if (requestParams == null) {</span>
+            // Initialize Options dialog
+<span class="nc" id="L1279">            JFrame mainFrame = HttpAnalyzerApp.getApplication().getMainFrame();</span>
+<span class="nc" id="L1280">            requestParams = new RequestParamsDialog(mainFrame, true);</span>
+
+<span class="nc" id="L1282">            SwingUtilities.invokeLater(new Runnable() {</span>
+                //SwingUtilities.invokeAndWait(new Runnable() {
+
+                public void run() {
+<span class="nc" id="L1286">                    requestParams.setVisible(true);</span>
+<span class="nc" id="L1287">                }</span>
+            });
+<span class="nc" id="L1289">            requestParams.addComponentListener(new java.awt.event.ComponentAdapter() {</span>
+
+                @Override
+                public void componentHidden(java.awt.event.ComponentEvent evt) {
+<span class="nc" id="L1293">                    formComponentHidden(evt);</span>
+<span class="nc" id="L1294">                }</span>
+            });
+<span class="nc" id="L1296">        } else {</span>
+<span class="nc" id="L1297">            requestParams.setVisible(true);</span>
+        }
+<span class="nc" id="L1299">    }//GEN-LAST:event_paramsButtonActionPerformed</span>
+
+    private void clearURLActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_clearURLActionPerformed
+        /* 
+         * Clear URL Combo
+         */
+<span class="nc" id="L1305">        urlCombo.setSelectedItem(&quot;&quot;);</span>
+<span class="nc" id="L1306">        clearURL.transferFocus();</span>
+<span class="nc" id="L1307">    }//GEN-LAST:event_clearURLActionPerformed</span>
+
+    private void upButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_upButtonActionPerformed
+        /*
+         * Move caret to top position
+         */
+<span class="nc" id="L1313">        upButton.transferFocus();</span>
+<span class="nc" id="L1314">        replayDataPane.setCaretPosition(0);</span>
+<span class="nc" id="L1315">    }//GEN-LAST:event_upButtonActionPerformed</span>
+
+    private void downButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_downButtonActionPerformed
+        /*
+         * Move caret to bottom position
+         */
+<span class="nc" id="L1321">        downButton.transferFocus();</span>
+<span class="nc" id="L1322">        replayDataPane.setCaretPosition(replayDataPane.getText().length());</span>
+<span class="nc" id="L1323">    }//GEN-LAST:event_downButtonActionPerformed</span>
+
+    private void notesMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_notesMenuItemActionPerformed
+        /*
+         * Show Note Dialog
+         */
+<span class="nc bnc" id="L1329" title="All 2 branches missed.">        if (notesDialog == null) {</span>
+            // Initialize Notes dialog
+<span class="nc" id="L1331">            JFrame mainFrame = HttpAnalyzerApp.getApplication().getMainFrame();</span>
+<span class="nc" id="L1332">            notesDialog = new NotesDialog(mainFrame, false);</span>
+
+<span class="nc" id="L1334">            SwingUtilities.invokeLater(new Runnable() {</span>
+                //SwingUtilities.invokeAndWait(new Runnable() {
+
+                @Override
+                public void run() {
+<span class="nc" id="L1339">                    notesDialog.setVisible(true);</span>
+<span class="nc" id="L1340">                }</span>
+            });
+<span class="nc" id="L1342">        } else {</span>
+<span class="nc" id="L1343">            notesDialog.setVisible(true);</span>
+        }
+<span class="nc" id="L1345">    }//GEN-LAST:event_notesMenuItemActionPerformed</span>
+
+    private void clearParamsActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_clearParamsActionPerformed
+        /*
+         * Clear Params (Text field)
+         */
+<span class="nc" id="L1351">        paramsComboBox.setSelectedItem(&quot;&quot;);</span>
+<span class="nc" id="L1352">        clearParams.transferFocus();</span>
+<span class="nc" id="L1353">    }//GEN-LAST:event_clearParamsActionPerformed</span>
+
+    private void customHeaderPanelComponentShown(java.awt.event.ComponentEvent evt) {//GEN-FIRST:event_customHeaderPanelComponentShown
+        /*
+         * Write headers options to CustomHeader (TextArea)
+         */
+<span class="nc" id="L1359">        initRequestHeaders();</span>
+<span class="nc" id="L1360">        customHeaders.setText(HeaderSettings.getHeaders());</span>
+<span class="nc" id="L1361">    }//GEN-LAST:event_customHeaderPanelComponentShown</span>
+
+    private void base64MenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_base64MenuItemActionPerformed
+        /*
+         * Show Base64 Dialog
+         */
+<span class="nc bnc" id="L1367" title="All 2 branches missed.">        if (base64Dialog == null) {</span>
+<span class="nc" id="L1368">            JFrame mainFrame = HttpAnalyzerApp.getApplication().getMainFrame();</span>
+<span class="nc" id="L1369">            base64Dialog = new Base64Transformer(mainFrame, false);</span>
+
+<span class="nc" id="L1371">            SwingUtilities.invokeLater(new Runnable() {</span>
+
+                @Override
+                public void run() {
+<span class="nc" id="L1375">                    base64Dialog.setVisible(true);</span>
+<span class="nc" id="L1376">                }</span>
+            });
+<span class="nc" id="L1378">        } else {</span>
+<span class="nc" id="L1379">            base64Dialog.setVisible(true);</span>
+        }
+
+<span class="nc" id="L1382">    }//GEN-LAST:event_base64MenuItemActionPerformed</span>
+
+    private void md5MenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_md5MenuItemActionPerformed
+        /*
+         * Show MD5 Dialog
+         */
+<span class="nc bnc" id="L1388" title="All 2 branches missed.">        if (md5Dialog == null) {</span>
+<span class="nc" id="L1389">            JFrame mainFrame = HttpAnalyzerApp.getApplication().getMainFrame();</span>
+<span class="nc" id="L1390">            md5Dialog = new MD5Dialog(mainFrame, false);</span>
+
+<span class="nc" id="L1392">            SwingUtilities.invokeLater(new Runnable() {</span>
+
+                @Override
+                public void run() {
+<span class="nc" id="L1396">                    md5Dialog.setVisible(true);</span>
+<span class="nc" id="L1397">                }</span>
+            });
+<span class="nc" id="L1399">        } else {</span>
+<span class="nc" id="L1400">            md5Dialog.setVisible(true);</span>
+        }
+<span class="nc" id="L1402">    }//GEN-LAST:event_md5MenuItemActionPerformed</span>
+
+    private void cryptMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_cryptMenuItemActionPerformed
+        /*
+         * Show Crypt/DES Dialog
+         */
+<span class="nc bnc" id="L1408" title="All 2 branches missed.">        if (desDialog == null) {</span>
+            // Initialize Options dialog
+<span class="nc" id="L1410">            JFrame mainFrame = HttpAnalyzerApp.getApplication().getMainFrame();</span>
+<span class="nc" id="L1411">            desDialog = new CryptDesDialog(mainFrame, false);</span>
+
+<span class="nc" id="L1413">            SwingUtilities.invokeLater(new Runnable() {</span>
+                //SwingUtilities.invokeAndWait(new Runnable() {
+
+                public void run() {
+<span class="nc" id="L1417">                    desDialog.setVisible(true);</span>
+<span class="nc" id="L1418">                }</span>
+            });
+<span class="nc" id="L1420">        } else {</span>
+<span class="nc" id="L1421">            desDialog.setVisible(true);</span>
+        }
+<span class="nc" id="L1423">    }//GEN-LAST:event_cryptMenuItemActionPerformed</span>
+
+    private void clipboardButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_clipboardButtonActionPerformed
+<span class="nc" id="L1426">        String seletedText = replayDataPane.getSelectedText();</span>
+<span class="nc" id="L1427">        StringSelection stringSelection = new StringSelection(seletedText);</span>
+<span class="nc" id="L1428">        Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();</span>
+<span class="nc" id="L1429">        clipboard.setContents(stringSelection, stringSelection);</span>
+<span class="nc" id="L1430">    }//GEN-LAST:event_clipboardButtonActionPerformed</span>
+
+    private void paramsComboBoxActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_paramsComboBoxActionPerformed
+<span class="nc bnc" id="L1433" title="All 2 branches missed.">        if (evt.getActionCommand().equals(&quot;comboBoxEdited&quot;)) {</span>
+            // urlCombo.hidePopup();
+<span class="nc" id="L1435">            SwingTools urlCheck = new SwingTools(this.getFrame());</span>
+<span class="nc bnc" id="L1436" title="All 2 branches missed.">            if (!urlCheck.checkAddComboItem(paramsComboBox)) {</span>
+<span class="nc" id="L1437">                paramsComboBox.addItem(paramsComboBox.getSelectedItem());</span>
+            }
+        }
+<span class="nc" id="L1440">    }//GEN-LAST:event_paramsComboBoxActionPerformed</span>
+
+    private void paramsComboBoxItemStateChanged(java.awt.event.ItemEvent evt) {//GEN-FIRST:event_paramsComboBoxItemStateChanged
+<span class="nc bnc" id="L1443" title="All 2 branches missed.">        if (evt.getStateChange() == ItemEvent.SELECTED) {</span>
+<span class="nc" id="L1444">            SwingTools urlCheck = new SwingTools(this.getFrame());</span>
+<span class="nc bnc" id="L1445" title="All 2 branches missed.">            if (!urlCheck.checkAddComboItem(paramsComboBox)) {</span>
+<span class="nc" id="L1446">                paramsComboBox.addItem(paramsComboBox.getSelectedItem());</span>
+            }
+        }
+<span class="nc" id="L1449">    }//GEN-LAST:event_paramsComboBoxItemStateChanged</span>
+
+    private void urlComboItemStateChanged(java.awt.event.ItemEvent evt) {//GEN-FIRST:event_urlComboItemStateChanged
+<span class="nc bnc" id="L1452" title="All 2 branches missed.">        if (evt.getStateChange() == ItemEvent.SELECTED) {</span>
+<span class="nc" id="L1453">            SwingTools urlCheck = new SwingTools(this.getFrame());</span>
+<span class="nc bnc" id="L1454" title="All 2 branches missed.">            if (!urlCheck.checkAddComboItem(urlCombo)) {</span>
+<span class="nc" id="L1455">                urlCombo.addItem(urlCombo.getSelectedItem());</span>
+            }
+        }
+<span class="nc" id="L1458">    }//GEN-LAST:event_urlComboItemStateChanged</span>
+
+    private void toFileButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_toFileButtonActionPerformed
+<span class="nc" id="L1461">        HttpFileUtils yourChoice = new HttpFileUtils();</span>
+<span class="nc" id="L1462">        yourChoice.fillToFileField(this, this.getFrame());</span>
+<span class="nc" id="L1463">    }//GEN-LAST:event_toFileButtonActionPerformed</span>
+
+    private void loadTemplateItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_loadTemplateItemActionPerformed
+<span class="nc" id="L1466">        HttpPreference myPrefs = new HttpPreference();</span>
+<span class="nc bnc" id="L1467" title="All 2 branches missed.">        if (notesDialog != null) {</span>
+<span class="nc" id="L1468">            notesDialog.putNotes(myPrefs.loadPreference(this, this.getFrame()));</span>
+        } else {
+<span class="nc" id="L1470">            JFrame mainFrame = HttpAnalyzerApp.getApplication().getMainFrame();</span>
+<span class="nc" id="L1471">            notesDialog = new NotesDialog(mainFrame, false);</span>
+<span class="nc" id="L1472">            notesDialog.putNotes(myPrefs.loadPreference(this, this.getFrame()));</span>
+            /*SwingUtilities.invokeLater(new Runnable() {
+            //SwingUtilities.invokeAndWait(new Runnable() {
+
+            @Override
+            public void run() {
+            notesDialog.setVisible(false);
+            }
+            });*/
+        }
+
+<span class="nc" id="L1483">    }//GEN-LAST:event_loadTemplateItemActionPerformed</span>
+
+    private void saveTemplateItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_saveTemplateItemActionPerformed
+<span class="nc" id="L1486">        initRequestHeaders();</span>
+<span class="nc" id="L1487">        customHeaders.setText(HeaderSettings.getHeaders());</span>
+<span class="nc" id="L1488">        HttpPreference myPrefs = new HttpPreference();</span>
+<span class="nc bnc" id="L1489" title="All 2 branches missed.">        if (notesDialog != null) {</span>
+<span class="nc" id="L1490">            myPrefs.savePreference(this, this.getFrame(), notesDialog.getNotes());</span>
+        } else {
+<span class="nc" id="L1492">            myPrefs.savePreference(this, this.getFrame(), null);</span>
+        }
+<span class="nc" id="L1494">    }//GEN-LAST:event_saveTemplateItemActionPerformed</span>
+
+    private void initRequestHeaders() {
+<span class="nc bnc" id="L1497" title="All 2 branches missed.">        if (customRefererCheckBox.isSelected()) {</span>
+<span class="nc" id="L1498">            referer = customRefererTextField.getText();</span>
+        } else {
+            try {
+<span class="nc" id="L1501">                referer = URIUtils.createURI(&quot;http&quot;, targetHost, targetPort, targetPath, null, null).toString();</span>
+<span class="nc" id="L1502">            } catch (URISyntaxException ex) {</span>
+<span class="nc" id="L1503">                Logger.getLogger(HttpAnalyzerView.class.getName()).log(Level.SEVERE, null, ex);</span>
+<span class="nc" id="L1504">                new SwingTools(this.getFrame()).showErrorDialog(&quot;Referer incorrect&quot;, ex.getLocalizedMessage());</span>
+<span class="nc" id="L1505">            }</span>
+        }
+<span class="nc bnc" id="L1507" title="All 2 branches missed.">        if (customCookieCheckBox.isSelected()) {</span>
+<span class="nc" id="L1508">            HeaderSettings.setCookie(customCookieTextField.getText());</span>
+        } else {
+<span class="nc" id="L1510">            HeaderSettings.clearCookie();</span>
+        }
+<span class="nc bnc" id="L1512" title="All 2 branches missed.">        if (useCustomHeadersCheckBox.isSelected()) {</span>
+<span class="nc" id="L1513">            HeaderSettings.initHeaders(customHeaders.getText());</span>
+<span class="nc bnc" id="L1514" title="All 2 branches missed.">        } else if (firefoxRadioButton.isSelected()) {</span>
+<span class="nc" id="L1515">            HeaderSettings.initHeaders(HeaderSettings.FIREFOX, referer);</span>
+<span class="nc bnc" id="L1516" title="All 2 branches missed.">        } else if (ie6RadioButton.isSelected()) {</span>
+<span class="nc" id="L1517">            HeaderSettings.initHeaders(HeaderSettings.IE6, referer);</span>
+<span class="nc bnc" id="L1518" title="All 2 branches missed.">        } else if (ie7RadioButton.isSelected()) {</span>
+<span class="nc" id="L1519">            HeaderSettings.initHeaders(HeaderSettings.IE7, referer);</span>
+<span class="nc bnc" id="L1520" title="All 2 branches missed.">        } else if (ie8RadioButton.isSelected()) {</span>
+<span class="nc" id="L1521">            HeaderSettings.initHeaders(HeaderSettings.IE8, referer);</span>
+<span class="nc bnc" id="L1522" title="All 2 branches missed.">        } else if (googleBotRadioButton.isSelected()) {</span>
+<span class="nc" id="L1523">            HeaderSettings.initHeaders(HeaderSettings.GOOGLEBOT, referer);</span>
+<span class="nc bnc" id="L1524" title="All 2 branches missed.">        } else if (msnRadioButton.isSelected()) {</span>
+<span class="nc" id="L1525">            HeaderSettings.initHeaders(HeaderSettings.MSNBOT, referer);</span>
+<span class="nc bnc" id="L1526" title="All 2 branches missed.">        } else if (iPhoneRadioButton.isSelected()) {</span>
+<span class="nc" id="L1527">            HeaderSettings.initHeaders(HeaderSettings.IPHONE, referer);</span>
+<span class="nc bnc" id="L1528" title="All 2 branches missed.">        } else if (yahooRadioButton.isSelected()) {</span>
+<span class="nc" id="L1529">            HeaderSettings.initHeaders(HeaderSettings.YAHOOBOT, referer);</span>
+        }
+<span class="nc" id="L1531">    }</span>
+
+    private String initUrl() {
+<span class="nc bnc" id="L1534" title="All 2 branches missed.">        if (urlCombo.getSelectedItem() != null) {</span>
+<span class="nc" id="L1535">            String url = urlCombo.getSelectedItem().toString();</span>
+<span class="nc bnc" id="L1536" title="All 4 branches missed.">            if ((url != null) &amp;&amp; (!url.isEmpty())) {</span>
+<span class="nc" id="L1537">                String[] partsUrl = new ParamsUrlTools().splitUrl(url, this.getFrame());</span>
+<span class="nc" id="L1538">                targetHost = partsUrl[0];</span>
+<span class="nc" id="L1539">                targetPort = Integer.decode(partsUrl[1]);</span>
+<span class="nc" id="L1540">                targetPath = partsUrl[2];</span>
+<span class="nc" id="L1541">                return partsUrl[3];</span>
+            }
+        }
+<span class="nc" id="L1544">        return null;</span>
+    }
+
+    public class ProxyAuth extends Authenticator {
+
+        private PasswordAuthentication auth;
+
+<span class="nc" id="L1551">        private ProxyAuth(String user, String password) {</span>
+<span class="nc bnc" id="L1552" title="All 2 branches missed.">            auth = new PasswordAuthentication(user, password == null ? new char[]{} : password.toCharArray());</span>
+<span class="nc" id="L1553">        }</span>
+
+        @Override
+        protected PasswordAuthentication getPasswordAuthentication() {
+<span class="nc" id="L1557">            return auth;</span>
+        }
+    }
+
+    /**
+     * Make connection use proxy server
+     * @param HttpClient
+     */
+    void setProxy(DefaultHttpClient myClient) {
+<span class="nc" id="L1566">        String textField = proxyField.getText();</span>
+<span class="nc" id="L1567">        int indexStr = textField.indexOf(&quot;:&quot;);</span>
+<span class="nc" id="L1568">        proxyHost = textField.substring(0, indexStr);</span>
+<span class="nc" id="L1569">        proxyPort = Integer.decode(textField.substring(indexStr + 1));</span>
+<span class="nc bnc" id="L1570" title="All 2 branches missed.">        if (proxyHttpRadioButton.isSelected()) {</span>
+<span class="nc" id="L1571">            System.setProperty(&quot;socksProxySet&quot;, &quot;false&quot;);</span>
+<span class="nc" id="L1572">            HttpHost proxy = new HttpHost(proxyHost, proxyPort);</span>
+<span class="nc" id="L1573">            myClient.getParams().setParameter(ConnRoutePNames.DEFAULT_PROXY, proxy);</span>
+            //Proxy Auth
+<span class="nc bnc" id="L1575" title="All 2 branches missed.">            if (proxyAuthCheckBox.isSelected()) {</span>
+<span class="nc" id="L1576">                String username = proxyUserTextField.getText();</span>
+<span class="nc" id="L1577">                String password = String.valueOf(proxyPassPasswordField.getPassword());</span>
+<span class="nc" id="L1578">                UsernamePasswordCredentials creds = new UsernamePasswordCredentials(username, password);</span>
+<span class="nc" id="L1579">                myClient.getCredentialsProvider().setCredentials(new AuthScope(proxyHost, proxyPort), creds);</span>
+            }
+<span class="nc bnc" id="L1581" title="All 2 branches missed.">        } else if (proxySocksRadioButton.isSelected()) {</span>
+            /*System.out.println(&quot;User =&quot; + System.getProperty(&quot;java.net.socks.username&quot;));
+            System.out.println(&quot;Pass =&quot; + System.getProperty(&quot;java.net.socks.password&quot;));*/
+<span class="nc" id="L1584">            System.setProperty(&quot;socksProxySet&quot;, &quot;true&quot;);</span>
+<span class="nc" id="L1585">            System.setProperty(&quot;socksProxyHost&quot;, proxyHost);</span>
+<span class="nc" id="L1586">            System.setProperty(&quot;socksProxyPort&quot;, Integer.toString(proxyPort));</span>
+<span class="nc" id="L1587">            String username = proxyUserTextField.getText();</span>
+<span class="nc" id="L1588">            String password = String.valueOf(proxyPassPasswordField.getPassword());</span>
+<span class="nc" id="L1589">            Authenticator.setDefault(new ProxyAuth(username, password));</span>
+            /*System.getProperties().put(&quot;socksProxyHost&quot;, proxyHost);
+            System.out.println(&quot;User =&quot;+System.getProperty(&quot;java.net.socks.username&quot;));
+            System.out.println(&quot;Pass =&quot;+System.getProperty(&quot;java.net.socks.password&quot;));*/
+        }
+<span class="nc" id="L1594">    }</span>
+
+    void showIntelSaveDialog(String message) {
+        /*
+         * Show intelligence save dialog
+         */
+<span class="nc bnc" id="L1600" title="All 2 branches missed.">        if (intelSaveDialog == null) {</span>
+            // Initialize Options dialog
+<span class="nc" id="L1602">            JFrame mainFrame = HttpAnalyzerApp.getApplication().getMainFrame();</span>
+<span class="nc" id="L1603">            intelSaveDialog = new IntelSaveDialog(mainFrame, true);</span>
+<span class="nc" id="L1604">            IntelSaveDialog.setMessage(message);</span>
+            try {
+<span class="nc" id="L1606">                SwingUtilities.invokeAndWait(new Runnable() {</span>
+
+                    @Override
+                    public void run() {
+<span class="nc" id="L1610">                        intelSaveDialog.setVisible(true);</span>
+<span class="nc" id="L1611">                    }</span>
+                });
+<span class="nc" id="L1613">            } catch (InterruptedException ex) {</span>
+<span class="nc" id="L1614">                Logger.getLogger(HttpAnalyzerView.class.getName()).log(Level.SEVERE, null, ex);</span>
+<span class="nc" id="L1615">            } catch (InvocationTargetException ex) {</span>
+<span class="nc" id="L1616">                Logger.getLogger(HttpAnalyzerView.class.getName()).log(Level.SEVERE, null, ex);</span>
+<span class="nc" id="L1617">            }</span>
+<span class="nc" id="L1618">        } else {</span>
+<span class="nc" id="L1619">            IntelSaveDialog.setMessage(message);</span>
+<span class="nc" id="L1620">            intelSaveDialog.setVisible(true);</span>
+        }
+<span class="nc" id="L1622">    }</span>
+
+    @Action
+    public Task RequestRun() {
+<span class="nc" id="L1626">        return new RequestRunTask(getApplication());</span>
+    }
+
+    private class RequestRunTask extends org.jdesktop.application.Task&lt;Object, Void&gt; {
+
+<span class="nc" id="L1631">        RequestRunTask(org.jdesktop.application.Application app) {</span>
+            // Runs on the EDT.  Copy GUI state that
+            // doInBackground() depends on from parameters
+            // to RequestRunTask fields, here.
+<span class="nc" id="L1635">            super(app);</span>
+<span class="nc" id="L1636">        }</span>
+
+        @Override
+        protected Object doInBackground() {
+            // Your Task's code here.  This method runs
+            // on a background thread, so don't reference
+            // the Swing GUI from here.
+            // Check URL
+<span class="nc" id="L1644">            String workURL = initUrl();</span>
+<span class="nc bnc" id="L1645" title="All 2 branches missed.">            if (workURL == null) {</span>
+<span class="nc" id="L1646">                return null;</span>
+            }
+
+<span class="nc" id="L1649">            setProgress(0, 0, 100);</span>
+            // Prepare HTTP method
+<span class="nc" id="L1651">            HttpParams httpParams = new BasicHttpParams();</span>
+<span class="nc" id="L1652">            InitBasicParams myInitParams = new InitBasicParams();</span>
+<span class="nc" id="L1653">            myInitParams.initHttpParams(httpParams, HttpAnalyzerView.this);</span>
+<span class="nc" id="L1654">            initRequestHeaders();</span>
+<span class="nc" id="L1655">            DefaultHttpClient httpClient = new DefaultHttpClient(httpParams);</span>
+<span class="nc" id="L1656">            setProxy(httpClient);</span>
+<span class="nc" id="L1657">            SwingTools swingTool = new SwingTools(HttpAnalyzerView.this, HttpAnalyzerApp.getApplication().getMainFrame());</span>
+<span class="nc" id="L1658">            swingTool.setColorTextDoc(new Date() + &quot;\n&quot;, swingTool.DATE_COLOR, true);</span>
+
+<span class="nc bnc" id="L1660" title="All 2 branches missed.">            if (!mergeInfoCheckBox.isSelected()) {</span>
+<span class="nc" id="L1661">                swingTool.setColorTextDoc(new Date() + &quot;\n&quot;, swingTool.DATE_COLOR, false);</span>
+            }
+<span class="nc" id="L1663">            setMessage(&quot;Connect to &quot; + targetHost);</span>
+<span class="nc" id="L1664">            goButton.setEnabled(false);</span>
+            // HTTP Auth
+<span class="nc bnc" id="L1666" title="All 2 branches missed.">            if (httpAuthCheckBox.isSelected()) {</span>
+<span class="nc" id="L1667">                String username = httpUserTextField.getText();</span>
+<span class="nc" id="L1668">                String password = String.valueOf(httpPassPasswordField.getPassword());</span>
+<span class="nc" id="L1669">                UsernamePasswordCredentials creds = new UsernamePasswordCredentials(username, password);</span>
+<span class="nc" id="L1670">                httpClient.getCredentialsProvider().setCredentials(AuthScope.ANY, creds);</span>
+            }
+
+            try {
+<span class="nc bnc" id="L1674" title="All 2 branches missed.">                if (getRadio.isSelected()) {</span>
+                    /*
+                     * GET Request section
+                     */
+<span class="nc" id="L1678">                    List&lt;NameValuePair&gt; qparams = null;</span>
+<span class="nc" id="L1679">                    URI uri = null;</span>
+<span class="nc bnc" id="L1680" title="All 2 branches missed.">                    if (!paramsComboBox.getSelectedItem().toString().isEmpty()) {</span>
+<span class="nc" id="L1681">                        qparams = new ParamsUrlTools().getPairParams(paramsComboBox.getSelectedItem().toString());</span>
+                        //qparams = RequestParamsDialog.getRequestParams();
+                        try {
+<span class="nc" id="L1684">                            uri = URIUtils.createURI(&quot;http&quot;, targetHost, targetPort, targetPath, URLEncodedUtils.format(qparams, &quot;UTF-8&quot;), null);</span>
+<span class="nc" id="L1685">                        } catch (URISyntaxException ex) {</span>
+<span class="nc" id="L1686">                            Logger.getLogger(HttpAnalyzerView.class.getName()).log(Level.SEVERE, null, ex);</span>
+<span class="nc" id="L1687">                        }</span>
+                    } else {
+                        try {
+<span class="nc" id="L1690">                            uri = URIUtils.createURI(&quot;http&quot;, targetHost, targetPort, targetPath, null, null);</span>
+<span class="nc" id="L1691">                        } catch (URISyntaxException ex) {</span>
+<span class="nc" id="L1692">                            Logger.getLogger(HttpAnalyzerView.class.getName()).log(Level.SEVERE, null, ex);</span>
+<span class="nc" id="L1693">                        }</span>
+                    }
+                    // HttpGet httpGet = new HttpGet(workURL);
+<span class="nc" id="L1696">                    HttpGet httpGet = new HttpGet(uri);</span>
+<span class="nc bnc" id="L1697" title="All 2 branches missed.">                    if (useCustomHeadersCheckBox.isSelected()) {</span>
+<span class="nc" id="L1698">                        System.out.println(&quot;Headers:\n&quot;);</span>
+                    }
+<span class="nc" id="L1700">                    httpGet.setHeaders(HeaderSettings.setHeaders());</span>
+                    // Show request
+<span class="nc" id="L1702">                    swingTool.spliterOut();</span>
+<span class="nc" id="L1703">                    String getRequest = httpGet.getMethod() + &quot; &quot; + httpGet.getURI() + &quot;\n&quot;;</span>
+<span class="nc" id="L1704">                    swingTool.setColorTextDoc(getRequest, swingTool.REQUEST_COLOR, true);</span>
+
+<span class="nc bnc" id="L1706" title="All 2 branches missed.">                    if (!mergeInfoCheckBox.isSelected()) {</span>
+<span class="nc" id="L1707">                        swingTool.setColorTextDoc(getRequest, swingTool.REQUEST_COLOR, false);</span>
+                    }
+<span class="nc" id="L1709">                    swingTool.setColorTextDoc(HeaderSettings.showHeaders(httpGet),</span>
+                            swingTool.REQUEST_COLOR, false);
+
+                    // Response header
+<span class="nc" id="L1713">                    setMessage(&quot;GET request to &quot; + targetHost);</span>
+<span class="nc" id="L1714">                    httpResponse = httpClient.execute(httpGet);</span>
+<span class="nc" id="L1715">                    setProgress(30, 0, 100);</span>
+<span class="nc bnc" id="L1716" title="All 2 branches missed.">                } else if (postRadio.isSelected()) {</span>
+                    /*
+                     * POST Request section
+                     */
+<span class="nc" id="L1720">                    HttpPost httpPost = new HttpPost(workURL);</span>
+<span class="nc" id="L1721">                    httpPost.setHeaders(HeaderSettings.setHeaders());</span>
+<span class="nc bnc" id="L1722" title="All 2 branches missed.">                    if (!paramsComboBox.getSelectedItem().toString().isEmpty()) {</span>
+<span class="nc" id="L1723">                        ByteArrayEntity postEntityParams = null;</span>
+<span class="nc" id="L1724">                        byte[] params = paramsComboBox.getSelectedItem().toString().getBytes();</span>
+<span class="nc" id="L1725">                        postEntityParams = new ByteArrayEntity(params);</span>
+<span class="nc" id="L1726">                        postEntityParams.setContentType(&quot;application/x-www-form-urlencoded&quot;);</span>
+<span class="nc" id="L1727">                        postEntityParams.setChunked(false);</span>
+<span class="nc" id="L1728">                        httpPost.setEntity(postEntityParams);</span>
+                    }
+                    // Show request
+<span class="nc" id="L1731">                    swingTool.spliterOut();</span>
+<span class="nc" id="L1732">                    String postRequest = httpPost.getMethod() + &quot; &quot; + httpPost.getURI() + &quot;\n&quot;;</span>
+<span class="nc" id="L1733">                    swingTool.setColorTextDoc(postRequest,</span>
+                            swingTool.REQUEST_COLOR, true);
+<span class="nc bnc" id="L1735" title="All 2 branches missed.">                    if (!mergeInfoCheckBox.isSelected()) {</span>
+<span class="nc" id="L1736">                        swingTool.setColorTextDoc(postRequest,</span>
+                                swingTool.REQUEST_COLOR, false);
+                    }
+<span class="nc" id="L1739">                    swingTool.setColorTextDoc(HeaderSettings.showHeaders(httpPost),</span>
+                            swingTool.REQUEST_COLOR, false);
+                    //spliterOut();
+                    //spliterOut();
+<span class="nc" id="L1743">                    setMessage(&quot;POST request to &quot; + targetHost);</span>
+<span class="nc" id="L1744">                    httpResponse = httpClient.execute(httpPost);</span>
+<span class="nc" id="L1745">                    setProgress(30, 0, 100);</span>
+<span class="nc bnc" id="L1746" title="All 2 branches missed.">                } else if (headRadio.isSelected()) {</span>
+                    /*
+                     * HEAD Request section
+                     */
+<span class="nc" id="L1750">                    HttpHead httpHead = new HttpHead(workURL);</span>
+<span class="nc" id="L1751">                    httpHead.setHeaders(HeaderSettings.setHeaders());</span>
+                    // Show request
+<span class="nc" id="L1753">                    swingTool.spliterOut();</span>
+<span class="nc" id="L1754">                    String headRequest = httpHead.getMethod() + &quot; &quot; + httpHead.getURI() + &quot;\n&quot;;</span>
+<span class="nc" id="L1755">                    swingTool.setColorTextDoc(headRequest, swingTool.REQUEST_COLOR, true);</span>
+<span class="nc bnc" id="L1756" title="All 2 branches missed.">                    if (!mergeInfoCheckBox.isSelected()) {</span>
+<span class="nc" id="L1757">                        swingTool.setColorTextDoc(headRequest, swingTool.REQUEST_COLOR, false);</span>
+                    }
+                    //spliterOut();
+                    //spliterOut();
+<span class="nc" id="L1761">                    swingTool.setColorTextDoc(HeaderSettings.showHeaders(httpHead),</span>
+                            swingTool.REQUEST_COLOR, false);
+
+                    //spliterOut();
+<span class="nc" id="L1765">                    setMessage(&quot;HEAD request to &quot; + targetHost);</span>
+<span class="nc" id="L1766">                    httpResponse = httpClient.execute(httpHead);</span>
+<span class="nc" id="L1767">                    setProgress(30, 0, 100);</span>
+                }
+<span class="nc" id="L1769">                setMessage(&quot;Wait answer ... &quot;);</span>
+<span class="nc" id="L1770">                swingTool.setColorTextDoc(httpResponse.getStatusLine().toString() + &quot;\n&quot;,</span>
+                        swingTool.RESPONSE_COLOR, true);
+<span class="nc" id="L1772">                swingTool.setColorTextDoc(HeaderSettings.showHeaders(httpResponse.getAllHeaders()) + &quot;\n&quot;,</span>
+                        swingTool.REQUEST_COLOR, true);
+<span class="nc" id="L1774">                HttpEntity entity = httpResponse.getEntity();</span>
+<span class="nc" id="L1775">                swingTool.spliterOut();</span>
+<span class="nc" id="L1776">                setProgress(50, 0, 100);</span>
+                // Response entity
+<span class="nc" id="L1778">                swingTool.spliterOut();</span>
+<span class="nc bnc" id="L1779" title="All 2 branches missed.">                if (entity != null) {</span>
+<span class="nc bnc" id="L1780" title="All 2 branches missed.">                    if (intelSaveCheckBox.isSelected()) {</span>
+                        // Intelligence mode is ON
+<span class="nc" id="L1782">                        setProgress(80, 0, 100);</span>
+<span class="nc" id="L1783">                        String contentType = entity.getContentType().getValue();</span>
+<span class="nc bnc" id="L1784" title="All 2 branches missed.">                        if (!contentType.startsWith(&quot;text/htm&quot;)) {</span>
+                            // Binary content
+<span class="nc" id="L1786">                            long sizeEntity = entity.getContentLength();</span>
+<span class="nc" id="L1787">                            String message = contentType + &quot;. Size is &quot; + sizeEntity</span>
+                                    + &quot; bytes.&quot;;
+<span class="nc" id="L1789">                            showIntelSaveDialog(message);</span>
+<span class="nc" id="L1790">                            int status = IntelSaveDialog.getStatus();</span>
+<span class="nc bnc" id="L1791" title="All 2 branches missed.">                            if (status == 2) {</span>
+<span class="nc" id="L1792">                                String filename = IntelSaveDialog.getFilename();</span>
+<span class="nc" id="L1793">                                HttpFileUtils myUtils = new HttpFileUtils();</span>
+<span class="nc" id="L1794">                                long size = myUtils.saveEntity(entity, filename);</span>
+<span class="nc" id="L1795">                                swingTool.setColorTextDoc(&quot;Save &quot; + size + &quot; bytes into &quot;</span>
+                                        + filename + &quot;\n&quot;, swingTool.DATE_COLOR, true);
+<span class="nc bnc" id="L1797" title="All 2 branches missed.">                            } else if (status == 1) {</span>
+<span class="nc" id="L1798">                                swingTool.showEntity(entity);</span>
+                            } else {
+<span class="nc" id="L1800">                                swingTool.setColorTextDoc(&quot;Entity is ignored\n&quot;,</span>
+                                        swingTool.DATE_COLOR, true);
+                            }
+<span class="nc" id="L1803">                            System.out.println(&quot;Status =&quot; + IntelSaveDialog.getStatus());</span>
+<span class="nc" id="L1804">                        } else {</span>
+<span class="nc" id="L1805">                            swingTool.showEntity(entity);</span>
+                        }
+<span class="nc bnc" id="L1807" title="All 2 branches missed.">                    } else if ((toFileCheckBox.isSelected())</span>
+<span class="nc bnc" id="L1808" title="All 2 branches missed.">                            &amp;&amp; (!toFileTextField.getText().isEmpty())) {</span>
+<span class="nc" id="L1809">                        setProgress(80, 0, 100);</span>
+<span class="nc" id="L1810">                        String filename = toFileTextField.getText();</span>
+<span class="nc" id="L1811">                        HttpFileUtils myUtils = new HttpFileUtils();</span>
+<span class="nc" id="L1812">                        System.out.println(&quot;Base Entity =&quot; + entity.getContentLength());</span>
+<span class="nc" id="L1813">                        long size = myUtils.saveEntity(entity, filename);</span>
+<span class="nc" id="L1814">                        swingTool.setColorTextDoc(&quot;Save &quot; + size + &quot; bytes into &quot;</span>
+                                + filename + &quot;\n&quot;, swingTool.DATE_COLOR, true);
+<span class="nc" id="L1816">                    } else {</span>
+<span class="nc" id="L1817">                        setProgress(80, 0, 100);</span>
+<span class="nc" id="L1818">                        swingTool.showEntity(entity);</span>
+                    }
+<span class="nc" id="L1820">                    swingTool.spliterOut();</span>
+                } else {
+<span class="nc" id="L1822">                    swingTool.setColorTextDoc(&quot;Entity is NULL\n&quot;,</span>
+                            swingTool.DATE_COLOR, true);
+                }
+<span class="nc" id="L1825">                setProgress(100, 0, 100);</span>
+<span class="nc" id="L1826">                replayDataPane.setCaretPosition(replayDataPane.getText().length());</span>
+<span class="nc" id="L1827">                setMessage(&quot;Done.&quot;);</span>
+<span class="nc" id="L1828">            } catch (IOException ex) {</span>
+<span class="nc" id="L1829">                Logger.getLogger(HttpAnalyzerView.class.getName()).log(Level.SEVERE, null, ex);</span>
+<span class="nc" id="L1830">                new SwingTools(HttpAnalyzerApp.getApplication().getMainFrame()).showErrorDialog(&quot;IO Error&quot;, ex.toString());</span>
+<span class="nc" id="L1831">                setMessage(&quot;&lt;html&gt;&lt;font color=#CC0000&gt;Error!&lt;/font&gt;&lt;/html&gt;&quot;);</span>
+            } finally {
+<span class="nc" id="L1833">                goButton.setEnabled(true);</span>
+                // When HttpClient instance is no longer needed,
+                // shut down the connection manager to ensure
+                // immediate deallocation of all system resources
+<span class="nc" id="L1837">                httpClient.getConnectionManager().shutdown();</span>
+            }
+<span class="nc" id="L1839">            return null;  // return your result</span>
+        }
+
+        @Override
+        protected void succeeded(Object result) {
+            // Runs on the EDT.  Update the GUI based on
+            // the result computed by doInBackground().
+<span class="nc" id="L1846">        }</span>
+    }
+
+    @Action
+    public Task ClearDataPanel() {
+<span class="nc" id="L1851">        return new ClearDataPanelTask(getApplication());</span>
+    }
+
+    private class ClearDataPanelTask extends org.jdesktop.application.Task&lt;Object, Void&gt; {
+
+<span class="nc" id="L1856">        ClearDataPanelTask(org.jdesktop.application.Application app) {</span>
+            // Runs on the EDT.  Copy GUI state that
+            // doInBackground() depends on from parameters
+            // to ClearDataPanelTask fields, here.
+<span class="nc" id="L1860">            super(app);</span>
+<span class="nc" id="L1861">            replayDataPane.setText(null);</span>
+<span class="nc" id="L1862">            replayDataPane.requestFocus();</span>
+<span class="nc" id="L1863">        }</span>
+
+        @Override
+        protected Object doInBackground() {
+            // Your Task's code here.  This method runs
+            // on a background thread, so don't reference
+            // the Swing GUI from here.
+<span class="nc" id="L1870">            return null;  // return your result</span>
+        }
+
+        @Override
+        protected void succeeded(Object result) {
+            // Runs on the EDT.  Update the GUI based on
+            // the result computed by doInBackground().
+<span class="nc" id="L1877">        }</span>
+    }
+
+    @Action
+    public void fileChoose() {
+<span class="nc" id="L1882">        HttpFileUtils infoSaver = new HttpFileUtils();</span>
+<span class="nc" id="L1883">        infoSaver.saveSessionInfo(this, this.getFrame());</span>
+<span class="nc" id="L1884">    }</span>
+    // Variables declaration - do not modify//GEN-BEGIN:variables
+    private javax.swing.JLabel agentsLabel;
+    private javax.swing.JSeparator agentsSeparator;
+    private javax.swing.JMenuItem base64MenuItem;
+    private javax.swing.JPanel basicHeadersPanel;
+    private javax.swing.JButton clearButton;
+    private javax.swing.JMenuItem clearMenuItem1;
+    private javax.swing.JButton clearParams;
+    private javax.swing.JButton clearURL;
+    private javax.swing.JButton clipboardButton;
+    private javax.swing.JMenuItem cryptMenuItem;
+    public javax.swing.JCheckBox customCookieCheckBox;
+    public javax.swing.JTextField customCookieTextField;
+    private javax.swing.JPanel customHeaderPanel;
+    public javax.swing.JTextArea customHeaders;
+    private javax.swing.JScrollPane customHeadersScrollPane;
+    public javax.swing.JCheckBox customRefererCheckBox;
+    public javax.swing.JTextField customRefererTextField;
+    public javax.swing.JTextPane debugDataPane;
+    private javax.swing.JScrollPane debugDataScrollPane;
+    private javax.swing.JPanel debugPanel;
+    private javax.swing.JButton downButton;
+    private javax.swing.JPopupMenu.Separator filesSeparator1;
+    private javax.swing.JPopupMenu.Separator filesSeparator2;
+    public javax.swing.JRadioButton firefoxRadioButton;
+    public javax.swing.JRadioButton getRadio;
+    private javax.swing.JButton goButton;
+    public javax.swing.JRadioButton googleBotRadioButton;
+    public javax.swing.JRadioButton headRadio;
+    public javax.swing.JCheckBox httpAuthCheckBox;
+    private javax.swing.JPanel httpOptionsPanel;
+    private javax.swing.JLabel httpPassLabel;
+    public javax.swing.JPasswordField httpPassPasswordField;
+    private javax.swing.JLabel httpUserLabel;
+    public javax.swing.JTextField httpUserTextField;
+    private javax.swing.JLabel httpVerLabel;
+    public javax.swing.JComboBox httpVersionComboBox;
+    public javax.swing.JRadioButton iPhoneRadioButton;
+    public javax.swing.JRadioButton ie6RadioButton;
+    public javax.swing.JRadioButton ie7RadioButton;
+    public javax.swing.JRadioButton ie8RadioButton;
+    public javax.swing.JCheckBox intelSaveCheckBox;
+    private javax.swing.JMenuItem loadTemplateItem;
+    private javax.swing.JMenuBar mainMenuBar;
+    private javax.swing.JPanel mainPanel;
+    private javax.swing.JSeparator mainSeparator;
+    private javax.swing.JTabbedPane mainTabbedPane;
+    private javax.swing.JMenuItem md5MenuItem;
+    public javax.swing.JCheckBoxMenuItem mergeInfoCheckBox;
+    private javax.swing.ButtonGroup methodGroups;
+    private javax.swing.JPanel methodPanel;
+    public javax.swing.JRadioButton msnRadioButton;
+    private javax.swing.JMenuItem notesMenuItem;
+    private javax.swing.JMenu optionsMenu;
+    private javax.swing.JPanel optionsPanel;
+    private javax.swing.JButton paramsButton;
+    public javax.swing.JComboBox paramsComboBox;
+    private javax.swing.JLabel paramsLabel;
+    public javax.swing.JRadioButton postRadio;
+    private javax.swing.JProgressBar progressBar;
+    public javax.swing.JCheckBox proxyAuthCheckBox;
+    public javax.swing.JTextField proxyField;
+    private javax.swing.JLabel proxyHostLabel;
+    public javax.swing.JRadioButton proxyHttpRadioButton;
+    public javax.swing.JRadioButton proxyNoneRadioButton;
+    private javax.swing.JLabel proxyPassLabel;
+    public javax.swing.JPasswordField proxyPassPasswordField;
+    private javax.swing.JPanel proxySetsPanel;
+    public javax.swing.JRadioButton proxySocksRadioButton;
+    private javax.swing.ButtonGroup proxyTypesGroup;
+    private javax.swing.JPanel proxyTypesPanel;
+    private javax.swing.JLabel proxyUserLabel;
+    public javax.swing.JTextField proxyUserTextField;
+    public javax.swing.JTextPane replayDataPane;
+    private javax.swing.JScrollPane replayDataScrollPane;
+    private javax.swing.JButton saveButton;
+    private javax.swing.JMenuItem saveMenuItem;
+    private javax.swing.JMenuItem saveTemplateItem;
+    private javax.swing.JLabel statusAnimationLabel;
+    private javax.swing.JLabel statusMessageLabel;
+    private javax.swing.JPanel statusPanel;
+    private javax.swing.JButton toFileButton;
+    public javax.swing.JCheckBox toFileCheckBox;
+    public javax.swing.JTextField toFileTextField;
+    private javax.swing.JMenu toolsMenu;
+    private javax.swing.JPopupMenu.Separator toolsSeparator;
+    private javax.swing.JPopupMenu.Separator toolsSeparator2;
+    private javax.swing.JButton upButton;
+    public javax.swing.JComboBox urlCombo;
+    private javax.swing.JLabel urlLabel;
+    public javax.swing.JCheckBox useCustomHeadersCheckBox;
+    private javax.swing.ButtonGroup userAgentsGroup;
+    public javax.swing.JRadioButton yahooRadioButton;
+    private org.jdesktop.beansbinding.BindingGroup bindingGroup;
+    // End of variables declaration//GEN-END:variables
+    private final Timer messageTimer;
+    private final Timer busyIconTimer;
+    private final Icon idleIcon;
+<span class="fc" id="L1983">    private final Icon[] busyIcons = new Icon[15];</span>
+<span class="fc" id="L1984">    private int busyIconIndex = 0;</span>
+    private JDialog aboutBox;
+    private RequestParamsDialog requestParams;
+    private NotesDialog notesDialog;
+    private Base64Transformer base64Dialog;
+    private MD5Dialog md5Dialog;
+    private CryptDesDialog desDialog;
+    private IntelSaveDialog intelSaveDialog;
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,676 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProxyGenerator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.plugins.proxygen</a> &gt; <span class="el_source">ProxyGenerator.java</span></div><h1>ProxyGenerator.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2003-2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: ProxyGenerator.java,v 1.6 2005/05/24 13:38:20 tanderson Exp $
+ */
+package org.exolab.jms.plugins.proxygen;
+
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.lang.reflect.Method;
+import java.rmi.RemoteException;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Iterator;
+
+
+/**
+ * Generates source code for a &lt;code&gt;Proxy&lt;/code&gt; implementation of a class.
+ *
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.6 $ $Date: 2005/05/24 13:38:20 $
+ */
+public class ProxyGenerator {
+
+    /**
+     * The class to generate a proxy source for.
+     */
+    private final Class _clazz;
+
+    /**
+     * The package.
+     */
+    private final String _package;
+
+    /**
+     * The class name.
+     */
+    private final String _className;
+
+    /**
+     * A map of adapters of {@link Throwable}. The key is the target
+     * exception type, the value the adapter class. The adapter class must
+     * implement &lt;code&gt;ThrowableAdapter&lt;/code&gt;. It is accessed via
+     * introspection to avoid circular build dependencies.
+     */
+<span class="nc" id="L87">    private HashMap _adapters = new HashMap();</span>
+
+    /**
+     * Interfaces implemented by the class.
+     */
+    private Class[] _interfaces;
+
+    /**
+     * The methods implemented by the class.
+     */
+    private Method[] _methods;
+
+    /**
+     * Primitive mappings.
+     */
+<span class="nc" id="L102">    private static final Class[][] MAPPINGS = new Class[][]{</span>
+        {boolean.class, Boolean.class},
+        {byte.class, Byte.class},
+        {short.class, Short.class},
+        {char.class, Character.class},
+        {int.class, Integer.class},
+        {long.class, Long.class},
+        {float.class, Float.class},
+        {double.class, Double.class}};
+
+    /**
+     * The fully qualified Delegate class name.
+     */
+    private static final String DELEGATE = &quot;org.exolab.jms.net.proxy.Delegate&quot;;
+
+    /**
+     * The fully qualified Proxy class name.
+     */
+    private static final String PROXY = &quot;org.exolab.jms.net.proxy.Proxy&quot;;
+
+    /**
+     * The suffix for generated proxies.
+     */
+    private static final String PROXY_SUFFIX = &quot;__Proxy&quot;;
+
+    /**
+     * The fully qualified RemoteInvocationException class name.
+     */
+    private static final String REMOTE_INVOCATION_EXCEPTION =
+            &quot;org.exolab.jms.net.proxy.RemoteInvocationException&quot;;
+
+    /**
+     * The fully qualified ThrowableAdapter class name.
+     */
+    private static final String THROWABLE_ADAPTER =
+            &quot;org.exolab.jms.net.proxy.ThrowableAdapter&quot;;
+
+
+    /**
+     * Construct a new &lt;code&gt;ProxyGenerator&lt;/code&gt;.
+     *
+     * @param clazz   the class to generate proxy code for
+     * @param adapters adapter classes for {@link RemoteException}. May be
+     *                &lt;code&gt;null&lt;/code&gt;
+     * @throws Exception if &lt;code&gt;adapter&lt;/code&gt; is specified but can't be
+     *                   instantiated
+     */
+    public ProxyGenerator(Class clazz, Class[] adapters)
+<span class="nc" id="L150">            throws Exception {</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        if (clazz == null) {</span>
+<span class="nc" id="L152">            throw new IllegalArgumentException(&quot;Argument 'clazz' is null&quot;);</span>
+        }
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        if (clazz.isArray()) {</span>
+<span class="nc" id="L155">            throw new IllegalArgumentException(</span>
+                    &quot;Can't generate proxies for array types&quot;);
+        }
+<span class="nc bnc" id="L158" title="All 2 branches missed.">        if (clazz.isPrimitive()) {</span>
+<span class="nc" id="L159">            throw new IllegalArgumentException(</span>
+                    &quot;Can't generate proxies for primitive types&quot;);
+        }
+<span class="nc" id="L162">        _clazz = clazz;</span>
+<span class="nc" id="L163">        _package = ClassHelper.getPackage(_clazz);</span>
+
+        String name;
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        if (_package != null) {</span>
+<span class="nc" id="L167">            name = _clazz.getName().substring(_package.length() + 1);</span>
+        } else {
+<span class="nc" id="L169">            name = _clazz.getName();</span>
+        }
+<span class="nc" id="L171">        _className = name + PROXY_SUFFIX;</span>
+
+<span class="nc" id="L173">        _interfaces = _clazz.getInterfaces();</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">        if (_interfaces.length == 0) {</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">            if (MethodHelper.getAllInterfaces(clazz).length == 0) {</span>
+<span class="nc" id="L176">                throw new IllegalArgumentException(</span>
+<span class="nc" id="L177">                        &quot;Cannot generate proxy for class &quot; + _clazz.getName()</span>
+                        + &quot;: class doesn't implement any interfaces&quot;);
+            }
+        }
+
+<span class="nc bnc" id="L182" title="All 4 branches missed.">        if (adapters != null &amp;&amp; adapters.length != 0) {</span>
+<span class="nc" id="L183">            _adapters = getAdapters(adapters);</span>
+        }
+
+<span class="nc" id="L186">        _methods = MethodHelper.getInterfaceMethods(_clazz);</span>
+<span class="nc" id="L187">        Arrays.sort(_methods, new MethodComparator());</span>
+<span class="nc" id="L188">    }</span>
+
+    /**
+     * Generates the code for the proxy implementation.
+     *
+     * @param stream the stream to write to
+     * @throws IOException for any I/O error
+     */
+    public void generate(OutputStream stream) throws IOException {
+<span class="nc" id="L197">        SourceWriter writer = new SourceWriter(new OutputStreamWriter(stream));</span>
+
+<span class="nc bnc" id="L199" title="All 2 branches missed.">        if (_package != null) {</span>
+<span class="nc" id="L200">            writer.writeln(&quot;package &quot; + _package + &quot;;&quot;);</span>
+        }
+
+<span class="nc" id="L203">        writer.writelnInc(&quot;public class &quot; + _className);</span>
+<span class="nc" id="L204">        writer.writeln(&quot;extends &quot; + getSuperclassProxy(_clazz));</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">        if (_interfaces.length != 0) {</span>
+<span class="nc" id="L206">            writer.write(&quot;implements &quot;);</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">            for (int i = 0; i &lt; _interfaces.length; ++i) {</span>
+<span class="nc bnc" id="L208" title="All 2 branches missed.">                if (i &gt; 0) {</span>
+<span class="nc" id="L209">                    writer.write(&quot;, &quot;);</span>
+                }
+<span class="nc" id="L211">                writer.write(_interfaces[i].getName());</span>
+            }
+        }
+<span class="nc" id="L214">        writer.writeln(&quot; {&quot;);</span>
+<span class="nc" id="L215">        generateStaticDeclarations(writer);</span>
+<span class="nc" id="L216">        generateConstructor(writer);</span>
+<span class="nc" id="L217">        generateMethods(writer);</span>
+<span class="nc" id="L218">        generateStaticInitialiser(writer);</span>
+<span class="nc" id="L219">        writer.writelnDec();</span>
+<span class="nc" id="L220">        writer.writeln(&quot;}&quot;);</span>
+<span class="nc" id="L221">        writer.flush();</span>
+<span class="nc" id="L222">    }</span>
+
+    /**
+     * Generates static declarations.
+     *
+     * @param writer the writer to write to
+     * @throws IOException for any I/O error
+     */
+    protected void generateStaticDeclarations(SourceWriter writer)
+            throws IOException {
+
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        if (_methods.length &gt; 0) {</span>
+<span class="nc" id="L234">            writer.writeln();</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">            for (int i = 0; i &lt; _methods.length; ++i) {</span>
+<span class="nc" id="L236">                Method method = _methods[i];</span>
+<span class="nc" id="L237">                String name = getMethodVarName(method);</span>
+<span class="nc" id="L238">                writer.writeln(&quot;private static final java.lang.reflect.Method &quot;</span>
+                               + name
+                               + &quot;;&quot;);
+            }
+<span class="nc" id="L242">            writer.writeln();</span>
+
+<span class="nc" id="L244">            Iterator iterator = _adapters.values().iterator();</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">            while (iterator.hasNext()) {</span>
+<span class="nc" id="L246">                Class adapter = (Class) iterator.next();</span>
+<span class="nc" id="L247">                String name = getAdapterInstanceName(adapter);</span>
+<span class="nc" id="L248">                writer.writeln(&quot;private static final &quot;</span>
+                               + THROWABLE_ADAPTER + &quot; &quot; + name
+<span class="nc" id="L250">                               + &quot; = new &quot; + adapter.getName()+ &quot;();&quot;);</span>
+<span class="nc" id="L251">            }</span>
+<span class="nc" id="L252">            writer.writeln();</span>
+        }
+<span class="nc" id="L254">    }</span>
+
+    /**
+     * Generates the constructor.
+     *
+     * @param writer the writer to write to
+     * @throws IOException for any I/O error
+     */
+    protected void generateConstructor(SourceWriter writer)
+            throws IOException {
+
+<span class="nc" id="L265">        writer.writelnInc(&quot;public &quot; + _className + &quot;(&quot; + DELEGATE</span>
+                          + &quot; delegate) {&quot;);
+<span class="nc" id="L267">        writer.writelnDec(&quot;super(delegate);&quot;);</span>
+<span class="nc" id="L268">        writer.writeln(&quot;}&quot;);</span>
+<span class="nc" id="L269">    }</span>
+
+    /**
+     * Generates the public methods.
+     *
+     * @param writer the writer to write to
+     * @throws IOException for any I/O error
+     */
+    protected void generateMethods(SourceWriter writer) throws IOException {
+<span class="nc bnc" id="L278" title="All 2 branches missed.">        for (int i = 0; i &lt; _methods.length; ++i) {</span>
+<span class="nc" id="L279">            writer.writeln();</span>
+<span class="nc" id="L280">            Method method = _methods[i];</span>
+<span class="nc" id="L281">            generateMethod(method, writer);</span>
+        }
+<span class="nc" id="L283">    }</span>
+
+    /**
+     * Generates a method.
+     *
+     * @param method the method to generate code for
+     * @param writer the writer to write to
+     * @throws IOException for any I/O error
+     */
+    protected void generateMethod(Method method, SourceWriter writer)
+            throws IOException {
+
+<span class="nc" id="L295">        Class returnType = method.getReturnType();</span>
+<span class="nc" id="L296">        Class[] argTypes = method.getParameterTypes();</span>
+<span class="nc" id="L297">        Class[] exceptionTypes = method.getExceptionTypes();</span>
+<span class="nc" id="L298">        boolean declaresThrowable = false;</span>
+<span class="nc" id="L299">        boolean declaresException = false;</span>
+<span class="nc" id="L300">        boolean declaresRuntimeException = false;</span>
+<span class="nc" id="L301">        boolean declaresRemoteException = false;</span>
+<span class="nc" id="L302">        boolean declaresRemoteInvocationException = false;</span>
+<span class="nc" id="L303">        boolean adaptThrowable = false;</span>
+<span class="nc" id="L304">        Class adaptType = null;</span>
+
+<span class="nc bnc" id="L306" title="All 2 branches missed.">        for (int i = 0; i &lt; exceptionTypes.length; ++i) {</span>
+<span class="nc" id="L307">            Class exceptionType = exceptionTypes[i];</span>
+<span class="nc bnc" id="L308" title="All 2 branches missed.">            if (exceptionType.equals(Throwable.class)) {</span>
+<span class="nc" id="L309">                declaresThrowable = true;</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">            } else if (exceptionType.equals(Exception.class)) {</span>
+<span class="nc" id="L311">                declaresException = true;</span>
+<span class="nc bnc" id="L312" title="All 2 branches missed.">            } else if (exceptionType.equals(RuntimeException.class)) {</span>
+<span class="nc" id="L313">                declaresRuntimeException = true;</span>
+<span class="nc bnc" id="L314" title="All 2 branches missed.">            } else if (exceptionType.equals(RemoteException.class)) {</span>
+<span class="nc" id="L315">                declaresRemoteException = true;</span>
+<span class="nc bnc" id="L316" title="All 2 branches missed.">            } else if (exceptionType.getName().equals(</span>
+                    REMOTE_INVOCATION_EXCEPTION)) {
+<span class="nc" id="L318">                declaresRemoteInvocationException = true;</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">            } else if (_adapters.get(exceptionType) != null) {</span>
+<span class="nc" id="L320">                adaptType = exceptionType;</span>
+            }
+        }
+
+<span class="nc bnc" id="L324" title="All 4 branches missed.">        if (!declaresThrowable &amp;&amp; adaptType != null) {</span>
+            // rethrow all uncaught exceptions as an instance of adaptType
+<span class="nc" id="L326">            adaptThrowable = true;</span>
+        }
+
+        // determine the set of exceptions to catch.
+<span class="nc" id="L330">        Class[] catchTypes = method.getExceptionTypes();</span>
+<span class="nc" id="L331">        Arrays.sort(catchTypes, new ClassComparator());</span>
+
+        // generate the method signature
+<span class="nc" id="L334">        String returnClass = ClassHelper.getQualifiedName(returnType);</span>
+<span class="nc" id="L335">        writer.write(&quot;public &quot; + returnClass + &quot; &quot; + method.getName() + &quot;(&quot;);</span>
+<span class="nc bnc" id="L336" title="All 2 branches missed.">        for (int i = 0; i &lt; argTypes.length; ++i) {</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">            if (i &gt; 0) {</span>
+<span class="nc" id="L338">                writer.write(&quot;, &quot;);</span>
+            }
+<span class="nc" id="L340">            String argClass = ClassHelper.getQualifiedName(argTypes[i]);</span>
+<span class="nc" id="L341">            writer.write(argClass + &quot; arg&quot; + i);</span>
+        }
+<span class="nc" id="L343">        writer.write(&quot;)&quot;);</span>
+
+        // generate throws clause
+<span class="nc bnc" id="L346" title="All 2 branches missed.">        if (exceptionTypes.length &gt; 0) {</span>
+<span class="nc" id="L347">            writer.writelnInc();</span>
+<span class="nc" id="L348">            writer.write(&quot;throws &quot;);</span>
+<span class="nc bnc" id="L349" title="All 2 branches missed.">            for (int i = 0; i &lt; exceptionTypes.length; ++i) {</span>
+<span class="nc bnc" id="L350" title="All 2 branches missed.">                if (i &gt; 0) {</span>
+<span class="nc" id="L351">                    writer.write(&quot;, &quot;);</span>
+                }
+<span class="nc" id="L353">                writer.write(exceptionTypes[i].getName());</span>
+            }
+<span class="nc" id="L355">            writer.writeln(&quot; { &quot;);</span>
+        } else {
+<span class="nc" id="L357">            writer.writelnInc(&quot; {&quot;);</span>
+        }
+
+        // generate the invocation arguments, if the method takes arguments
+<span class="nc" id="L361">        String argValue = null;</span>
+<span class="nc bnc" id="L362" title="All 2 branches missed.">        if (argTypes.length &gt; 0) {</span>
+<span class="nc" id="L363">            argValue = &quot;args&quot;;</span>
+<span class="nc" id="L364">            writer.write(&quot;Object[] &quot; + argValue + &quot; = new Object[] {&quot;);</span>
+<span class="nc bnc" id="L365" title="All 2 branches missed.">            for (int i = 0; i &lt; argTypes.length; ++i) {</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">                if (i &gt; 0) {</span>
+<span class="nc" id="L367">                    writer.write(&quot;, &quot;);</span>
+                }
+<span class="nc" id="L369">                Class arg = argTypes[i];</span>
+<span class="nc" id="L370">                String name = &quot;arg&quot; + i;</span>
+<span class="nc" id="L371">                writer.write(wrapArgument(arg, name));</span>
+            }
+<span class="nc" id="L373">            writer.writeln(&quot;};&quot;);</span>
+        } else {
+<span class="nc" id="L375">            argValue = &quot;null&quot;;</span>
+        }
+
+        // generate the invoke() call
+<span class="nc bnc" id="L379" title="All 2 branches missed.">        boolean hasReturn = (returnType != void.class);</span>
+<span class="nc bnc" id="L380" title="All 2 branches missed.">        if (hasReturn) {</span>
+<span class="nc" id="L381">            writer.writeln(&quot;Object result;&quot;);</span>
+        }
+
+<span class="nc" id="L384">        writer.writelnInc(&quot;try {&quot;);</span>
+
+<span class="nc bnc" id="L386" title="All 2 branches missed.">        if (hasReturn) {</span>
+<span class="nc" id="L387">            writer.write(&quot;result = &quot;);</span>
+        }
+<span class="nc" id="L389">        long methodId = MethodHelper.getMethodID(method);</span>
+<span class="nc" id="L390">        writer.writelnDec(&quot;invoke(&quot; + getMethodVarName(method) + &quot;, &quot;</span>
+<span class="nc" id="L391">                          + argValue + &quot;, 0x&quot; + Long.toHexString(methodId)</span>
+                          + &quot;L);&quot;);
+
+<span class="nc" id="L394">        boolean caughtRIE = false;</span>
+<span class="nc" id="L395">        boolean rethrowRIE = false;</span>
+<span class="nc bnc" id="L396" title="All 8 branches missed.">        if (!declaresThrowable &amp;&amp; !declaresException</span>
+                &amp;&amp; !declaresRuntimeException
+                &amp;&amp; !declaresRemoteInvocationException) {
+<span class="nc" id="L399">            rethrowRIE = true;</span>
+        }
+
+<span class="nc bnc" id="L402" title="All 2 branches missed.">        for (int i = 0; i &lt; catchTypes.length; ++i) {</span>
+<span class="nc" id="L403">            Class catchType = catchTypes[i];</span>
+<span class="nc bnc" id="L404" title="All 4 branches missed.">            if (rethrowRIE &amp;&amp; !caughtRIE) {</span>
+<span class="nc bnc" id="L405" title="All 2 branches missed.">                if (catchType.equals(Throwable.class)</span>
+<span class="nc bnc" id="L406" title="All 2 branches missed.">                    || catchType.equals(Exception.class)</span>
+<span class="nc bnc" id="L407" title="All 2 branches missed.">                    || catchType.equals(RuntimeException.class)) {</span>
+<span class="nc" id="L408">                    generateRethrow(writer, REMOTE_INVOCATION_EXCEPTION);</span>
+<span class="nc" id="L409">                    caughtRIE = true;</span>
+                }
+            }
+<span class="nc" id="L412">            generateRethrow(writer, catchType.getName());</span>
+        }
+<span class="nc bnc" id="L414" title="All 4 branches missed.">        if (rethrowRIE &amp;&amp; !caughtRIE) {</span>
+<span class="nc" id="L415">            generateRethrow(writer, REMOTE_INVOCATION_EXCEPTION);</span>
+        }
+<span class="nc bnc" id="L417" title="All 2 branches missed.">        if (!declaresThrowable) {</span>
+<span class="nc" id="L418">            writer.writelnInc(&quot;} catch (java.lang.Throwable exception) {&quot;);</span>
+<span class="nc bnc" id="L419" title="All 2 branches missed.">            if (adaptThrowable) {</span>
+<span class="nc" id="L420">                Class adapter = (Class) _adapters.get(adaptType);</span>
+<span class="nc" id="L421">                String instance = getAdapterInstanceName(adapter);</span>
+<span class="nc" id="L422">                writer.writeln(adaptType.getName() + &quot; error = (&quot;</span>
+<span class="nc" id="L423">                        + adaptType.getName() + &quot;) &quot; + instance</span>
+                               + &quot;.adapt(exception);&quot;);
+<span class="nc" id="L425">                writer.writelnDec(&quot;throw error;&quot;);</span>
+<span class="nc bnc" id="L426" title="All 2 branches missed.">            } else if (declaresRemoteException) {</span>
+<span class="nc" id="L427">                writer.writelnDec(&quot;throw new &quot;</span>
+<span class="nc" id="L428">                                  + RemoteException.class.getName()</span>
+                                  + &quot;(exception.getMessage(), exception);&quot;);
+            } else {
+<span class="nc" id="L431">                writer.writelnDec(&quot;throw new &quot; + REMOTE_INVOCATION_EXCEPTION</span>
+                                  + &quot;(exception);&quot;);
+            }
+        }
+<span class="nc" id="L435">        writer.writeln(&quot;}&quot;);</span>
+
+<span class="nc bnc" id="L437" title="All 2 branches missed.">        if (hasReturn) {</span>
+<span class="nc" id="L438">            writer.writelnDec(&quot;return &quot; + unwrapReturn(method.getReturnType(),</span>
+                                                       &quot;result&quot;));
+        } else {
+<span class="nc" id="L441">            writer.writelnDec();</span>
+        }
+<span class="nc" id="L443">        writer.writeln(&quot;}&quot;);</span>
+<span class="nc" id="L444">    }</span>
+
+    /**
+     * Generates the class static initialiser.
+     *
+     * @param writer the writer to write to
+     * @throws IOException for any I/O error
+     */
+    protected void generateStaticInitialiser(SourceWriter writer)
+            throws IOException {
+
+<span class="nc bnc" id="L455" title="All 2 branches missed.">        if (_methods.length &gt; 0) {</span>
+<span class="nc" id="L456">            writer.writeln();</span>
+<span class="nc" id="L457">            writer.writelnInc(&quot;static {&quot;);</span>
+<span class="nc" id="L458">            writer.writelnInc(&quot;try {&quot;);</span>
+<span class="nc bnc" id="L459" title="All 2 branches missed.">            for (int i = 0; i &lt; _methods.length; ++i) {</span>
+<span class="nc" id="L460">                Method method = _methods[i];</span>
+<span class="nc" id="L461">                String name = getMethodVarName(method);</span>
+<span class="nc" id="L462">                Class clazz = method.getDeclaringClass();</span>
+<span class="nc" id="L463">                writer.write(name + &quot; = &quot; + clazz.getName()</span>
+<span class="nc" id="L464">                             + &quot;.class.getMethod(\&quot;&quot; + method.getName()</span>
+                             + &quot;\&quot;, &quot; + &quot;new Class[] {&quot;);
+<span class="nc" id="L466">                Class[] args = method.getParameterTypes();</span>
+<span class="nc bnc" id="L467" title="All 2 branches missed.">                for (int j = 0; j &lt; args.length; ++j) {</span>
+<span class="nc bnc" id="L468" title="All 2 branches missed.">                    if (j &gt; 0) {</span>
+<span class="nc" id="L469">                        writer.write(&quot;, &quot;);</span>
+                    }
+<span class="nc" id="L471">                    writer.write(ClassHelper.getQualifiedName(args[j]) + &quot;.class&quot;);</span>
+                }
+<span class="nc" id="L473">                writer.writeln(&quot;});&quot;);</span>
+            }
+<span class="nc" id="L475">            writer.decIndent();</span>
+<span class="nc" id="L476">            writer.writelnInc(&quot;} catch (NoSuchMethodException exception) {&quot;);</span>
+<span class="nc" id="L477">            writer.writelnDec(</span>
+                    &quot;throw new NoSuchMethodError(exception.getMessage());&quot;);
+<span class="nc" id="L479">            writer.writelnDec(&quot;}&quot;);</span>
+<span class="nc" id="L480">            writer.writeln(&quot;}&quot;);</span>
+        }
+<span class="nc" id="L482">    }</span>
+
+    /**
+     * Generates a catch/rethrow clause.
+     *
+     * @param writer the writer to write to
+     * @param name   the type name catch
+     * @throws IOException for any I/O error
+     */
+    protected void generateRethrow(SourceWriter writer, String name)
+        throws IOException {
+<span class="nc" id="L493">        writer.writelnInc(&quot;} catch (&quot; + name + &quot; exception) {&quot;);</span>
+<span class="nc" id="L494">        writer.writelnDec(&quot;throw exception;&quot;);</span>
+<span class="nc" id="L495">    }</span>
+
+    /**
+     * Wraps primitive arguments into their objectified equivalents.
+     *
+     * @param clazz the argument class type
+     * @param name  the argument name
+     * @return the wrapped argument name, or &lt;code&gt;name&lt;/code&gt; if
+     *         &lt;code&gt;clazz&lt;/code&gt; isn't a primitive type
+     */
+    protected String wrapArgument(Class clazz, String name) {
+        String result;
+<span class="nc bnc" id="L507" title="All 2 branches missed.">        if (clazz.isPrimitive()) {</span>
+<span class="nc" id="L508">            Class wrapper = null;</span>
+<span class="nc bnc" id="L509" title="All 2 branches missed.">            for (int i = 0; i &lt; MAPPINGS.length; ++i) {</span>
+<span class="nc bnc" id="L510" title="All 2 branches missed.">                if (MAPPINGS[i][0] == clazz) {</span>
+<span class="nc" id="L511">                    wrapper = MAPPINGS[i][1];</span>
+                }
+            }
+<span class="nc" id="L514">            result = &quot;new &quot; + ClassHelper.getQualifiedName(wrapper)</span>
+                    + &quot;(&quot; + name + &quot;)&quot;;
+<span class="nc" id="L516">        } else {</span>
+<span class="nc" id="L517">            result = name;</span>
+        }
+<span class="nc" id="L519">        return result;</span>
+    }
+
+    /**
+     * Generates code to unwrap a return type If the return class type is a
+     * primitve, generates code to unbox the objectified primitve. If the return
+     * class type is an object, generates code to cast the variable name to that
+     * type.
+     *
+     * @param clazz the return class type
+     * @param name  the variable name
+     * @return code to unwrap the return type
+     */
+    protected String unwrapReturn(Class clazz, String name) {
+<span class="nc" id="L533">        String result = null;</span>
+<span class="nc bnc" id="L534" title="All 2 branches missed.">        if (clazz.isPrimitive()) {</span>
+<span class="nc" id="L535">            Class wrapper = null;</span>
+<span class="nc bnc" id="L536" title="All 2 branches missed.">            for (int i = 0; i &lt; MAPPINGS.length; ++i) {</span>
+<span class="nc bnc" id="L537" title="All 2 branches missed.">                if (MAPPINGS[i][0] == clazz) {</span>
+<span class="nc" id="L538">                    wrapper = MAPPINGS[i][1];</span>
+<span class="nc" id="L539">                    break;</span>
+                }
+            }
+<span class="nc" id="L542">            result = &quot;((&quot; + wrapper.getName() + &quot;) &quot; + name + &quot;).&quot;</span>
+<span class="nc" id="L543">                    + clazz.getName() + &quot;Value();&quot;;</span>
+<span class="nc" id="L544">        } else {</span>
+<span class="nc" id="L545">            result = &quot;(&quot; + ClassHelper.getQualifiedName(clazz) + &quot;) &quot; + name +</span>
+                    &quot;;&quot;;
+        }
+<span class="nc" id="L548">        return result;</span>
+    }
+
+    /**
+     * Generates a name for a static Method variable.
+     *
+     * @param method the method
+     * @return a name for the variable
+     */
+    protected String getMethodVarName(Method method) {
+<span class="nc" id="L558">        return method.getName().toUpperCase() + &quot;_&quot;</span>
+<span class="nc" id="L559">                + Long.toHexString(MethodHelper.getMethodID(method));</span>
+    }
+
+    /**
+     * Generates a unique instance name for an adapter.
+
+     * @param adapter the adapter class
+     * @return a unique instance name
+     */
+    protected String getAdapterInstanceName(Class adapter) {
+        // determine the class name, minus its package
+        String name;
+<span class="nc" id="L571">        String qualifiedName = adapter.getName();</span>
+<span class="nc" id="L572">        int lastDot = qualifiedName.lastIndexOf(&quot;.&quot;);</span>
+<span class="nc bnc" id="L573" title="All 2 branches missed.">        if (lastDot != -1) {</span>
+<span class="nc" id="L574">            name = qualifiedName.substring(lastDot + 1);</span>
+        } else {
+<span class="nc" id="L576">            name = qualifiedName;</span>
+        }
+<span class="nc" id="L578">        StringBuffer result = new StringBuffer(name.toUpperCase());</span>
+<span class="nc" id="L579">        result.append(&quot;_&quot;);</span>
+<span class="nc" id="L580">        result.append(Long.toHexString(qualifiedName.hashCode()));</span>
+<span class="nc" id="L581">        return result.toString();</span>
+    }
+
+    /**
+     * Returns a set of &lt;code&gt;ThrowableAdapter&lt;/code&gt;s.
+     */
+    private HashMap getAdapters(Class[] adapterClasses)
+            throws Exception {
+<span class="nc" id="L589">        HashMap result = new HashMap();</span>
+
+<span class="nc bnc" id="L591" title="All 2 branches missed.">        for (int i = 0; i &lt; adapterClasses.length; ++i) {</span>
+<span class="nc" id="L592">            Class adapterClass = adapterClasses[i];</span>
+<span class="nc" id="L593">            Object adapter = adapterClass.newInstance();</span>
+<span class="nc" id="L594">            Method method = adapterClass.getMethod(&quot;getTarget&quot;, new Class[0]);</span>
+<span class="nc" id="L595">            Class exceptionType = (Class) method.invoke(adapter, new Object[0]);</span>
+<span class="nc bnc" id="L596" title="All 2 branches missed.">            if (!Throwable.class.isAssignableFrom(exceptionType)) {</span>
+<span class="nc" id="L597">                throw new Exception(</span>
+<span class="nc" id="L598">                        &quot;Invalid exception class &quot; + exceptionType.getName()</span>
+                        + &quot;: class doesn't extend &quot; + Throwable.class);
+            }
+<span class="nc" id="L601">            result.put(exceptionType, adapterClass);</span>
+        }
+<span class="nc" id="L603">        return result;</span>
+    }
+
+    /**
+     * Returns the proxy superclass name for a given class.
+     *
+     * @param clazz the class
+     * @return the proxy superclass name
+     */
+    private static String getSuperclassProxy(Class clazz) {
+<span class="nc" id="L613">        String name = PROXY;</span>
+<span class="nc" id="L614">        Class superClass = clazz.getSuperclass();</span>
+<span class="nc bnc" id="L615" title="All 2 branches missed.">        if (superClass != null) {</span>
+<span class="nc bnc" id="L616" title="All 2 branches missed.">            if (superClass.getInterfaces().length != 0) {</span>
+<span class="nc" id="L617">                name = superClass.getName() + PROXY_SUFFIX;</span>
+            } else {
+<span class="nc" id="L619">                name = getSuperclassProxy(superClass);</span>
+            }
+        }
+<span class="nc" id="L622">        return name;</span>
+    }
+
+    /**
+     * Helper class to compare two classes.
+     */
+    private static class ClassComparator implements Comparator {
+
+        /**
+         * Compare two classes.
+         *
+         * @param o1 the first class
+         * @param o2 the second class
+         * @return a negative integer, zero, or a positive integer if the first
+         *         class is less than, equal to, or greater than the second.
+         */
+        public int compare(Object o1, Object o2) {
+            int result;
+<span class="nc" id="L640">            Class c1 = (Class) o1;</span>
+<span class="nc" id="L641">            Class c2 = (Class) o2;</span>
+<span class="nc bnc" id="L642" title="All 2 branches missed.">            if (c1 == c2) {</span>
+<span class="nc" id="L643">                result = 0;</span>
+<span class="nc bnc" id="L644" title="All 2 branches missed.">            } else if (c1.isAssignableFrom(c2)) {</span>
+<span class="nc" id="L645">                result = 1;</span>
+            } else {
+<span class="nc" id="L647">                result = -1;</span>
+            }
+<span class="nc" id="L649">            return result;</span>
+        }
+
+    }
+
+    /**
+     * Helper to compare two methods on their names.
+     */
+    private static class MethodComparator implements Comparator {
+
+        /**
+         * Compare two methods.
+         *
+         * @param o1 the first method
+         * @param o2 the second method
+         * @return a negative integer, zero, or a positive integer if the first
+         *         method is less than, equal to, or greater than the second.
+         */
+        public int compare(Object o1, Object o2) {
+<span class="nc" id="L668">            Method m1 = (Method) o1;</span>
+<span class="nc" id="L669">            Method m2 = (Method) o2;</span>
+<span class="nc" id="L670">            return m1.getName().compareTo(m2.getName());</span>
+        }
+
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

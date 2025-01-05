@@ -1,0 +1,452 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SQLChangeEventManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">69_lhamacaw</a> &gt; <a href="index.source.html" class="el_package">macaw.persistenceLayer.production</a> &gt; <span class="el_source">SQLChangeEventManager.java</span></div><h1>SQLChangeEventManager.java</h1><pre class="source lang-java linenums">package macaw.persistenceLayer.production;
+
+import macaw.businessLayer.SupportingDocument;
+import macaw.businessLayer.User;
+import macaw.businessLayer.Variable;
+import macaw.system.*;
+
+import java.sql.*;
+import java.util.ArrayList;
+
+/**
+ * A manager class that is called by various classes to make a record of editing changes
+ * made to instances of objects found in &lt;code&gt;macaw.model&lt;/code&gt;.  It stores records of 
+ * these changes in a MySQL database.
+ * &lt;hr&gt;
+ * Copyright 2010 Medical Research Council Unit for Lifelong Health and Ageing
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * Unless required by applicable law or agreed to in writing, software 
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.  
+ * &lt;hr&gt;
+ * @author Kevin Garwood (kgarwood@users.sourceforge.net)
+ * @version 1.0	
+ */
+
+/*
+ * Code Road Map:
+ * --------------
+ * Code is organised into the following sections.  Wherever possible, 
+ * methods are classified based on an order of precedence described in 
+ * parentheses (..).  For example, if you're trying to find a method 
+ * 'getName(...)' that is both an interface method and an accessor 
+ * method, the order tells you it should appear under interface.
+ * 
+ * Order of 
+ * Precedence     Section
+ * ==========     ======
+ * (1)            Section Constants
+ * (2)            Section Properties
+ * (3)            Section Construction
+ * (7)            Section Accessors and Mutators
+ * (6)            Section Errors and Validation
+ * (5)            Section Interfaces
+ * (4)            Section Overload
+ *
+ */
+
+public class SQLChangeEventManager {
+
+	// ==========================================
+	// Section Constants
+	// ==========================================
+
+	// ==========================================
+	// Section Properties
+	// ==========================================
+	private Log log;
+	
+	// ==========================================
+	// Section Construction
+	// ==========================================
+<span class="fc" id="L67">	public SQLChangeEventManager(Log log) {</span>
+<span class="fc" id="L68">		this.log = log;</span>
+<span class="fc" id="L69">	}</span>
+
+	public void createTable(Connection connection) throws MacawException {
+		
+<span class="nc" id="L73">		StringBuilder query = new StringBuilder();</span>
+<span class="nc" id="L74">		query.append(&quot;CREATE TABLE change_events (&quot;);</span>
+<span class="nc" id="L75">		query.append(&quot;identifier INT AUTO_INCREMENT NOT NULL,&quot;);</span>
+<span class="nc" id="L76">		query.append(&quot;date DATETIME NOT NULL,&quot;);</span>
+<span class="nc" id="L77">		query.append(&quot;message VARCHAR(255) NOT NULL,&quot;);</span>
+<span class="nc" id="L78">		query.append(&quot;user_id VARCHAR(255) NOT NULL,&quot;);</span>
+<span class="nc" id="L79">		query.append(&quot;owner_variable_id INT,&quot;);</span>
+<span class="nc" id="L80">		query.append(&quot;change_type VARCHAR(255) NOT NULL,&quot;);</span>
+<span class="nc" id="L81">		query.append(&quot;PRIMARY KEY(identifier));&quot;);</span>
+		
+<span class="nc" id="L83">		PreparedStatement statement = null;</span>
+		try {
+<span class="nc" id="L85">			statement</span>
+<span class="nc" id="L86">				= connection.prepareStatement(query.toString());</span>
+			
+<span class="nc" id="L88">			statement.executeUpdate();							</span>
+		}
+<span class="nc" id="L90">		catch(SQLException exception) {</span>
+<span class="nc" id="L91">			log.logException(exception);</span>
+<span class="nc" id="L92">			String errorMessage</span>
+<span class="nc" id="L93">				= MacawMessages.getMessage(&quot;sql.error.unableToCreateTables&quot;);</span>
+<span class="nc" id="L94">			MacawException macawException </span>
+				= new MacawException(MacawErrorType.UNABLE_TO_CREATE_TABLES,
+									 errorMessage);
+<span class="nc" id="L97">			throw macawException;</span>
+		}
+		finally {
+<span class="nc" id="L100">			SQLUtilities.closeStatementsWithCatch(statement, null);</span>
+		}
+<span class="nc" id="L102">	}</span>
+
+	// ==========================================
+	// Section Accessors and Mutators
+	// ==========================================
+
+	public void registerChangeEvent(Connection connection,
+									MacawChangeEvent changeEvent) throws MacawException {
+<span class="nc" id="L110">		ArrayList&lt;MacawChangeEvent&gt; changeEvents</span>
+			= new ArrayList&lt;MacawChangeEvent&gt;();
+<span class="nc" id="L112">		changeEvents.add(changeEvent);</span>
+<span class="nc" id="L113">		registerChangeEvents(connection,</span>
+							 changeEvents);
+<span class="nc" id="L115">	}</span>
+	
+	public void registerChangeEvents(Connection connection,
+									 ArrayList&lt;MacawChangeEvent&gt; changeEvents) throws MacawException {
+
+<span class="nc" id="L120">		StringBuilder query = new StringBuilder();</span>
+<span class="nc" id="L121">		query.append(&quot;INSERT INTO change_events &quot;);</span>
+<span class="nc" id="L122">		query.append(&quot;(date,&quot;);</span>
+<span class="nc" id="L123">		query.append(&quot;message,&quot;);</span>
+<span class="nc" id="L124">		query.append(&quot;user_id,&quot;);</span>
+<span class="nc" id="L125">		query.append(&quot;owner_variable_id,&quot;);</span>
+<span class="nc" id="L126">		query.append(&quot;change_type) &quot;);</span>
+<span class="nc" id="L127">		query.append(&quot;VALUES (NOW(), ?, ?, ?, ?);&quot;);</span>
+
+		
+<span class="nc" id="L130">		ResultSet resultSet = null;</span>
+<span class="nc" id="L131">		PreparedStatement statement = null;</span>
+		try {
+<span class="nc" id="L133">			statement</span>
+<span class="nc" id="L134">				= connection.prepareStatement(query.toString());</span>
+			
+<span class="nc bnc" id="L136" title="All 2 branches missed.">			for (MacawChangeEvent changeEvent : changeEvents) {</span>
+<span class="nc" id="L137">				java.util.Date utilDate = changeEvent.getDate();</span>
+				/*
+				if (utilDate == null) {
+					statement.setTime(1, null);					
+				}
+				else {
+				}
+				*/
+				
+				/**
+				 * FIX - When I use the code below I get an error
+				 * java.sql.SQLException: General error: Incorrect datetime value:
+				 * '10:13:34' for column 'date' at row 1.  
+				 * 
+				 * I don't understand why it doesn't like the millisecond date
+				 * I've provided it with the utilDate object.
+				 */
+				
+<span class="nc" id="L155">				String changeMessage = changeEvent.getChangeMessage();</span>
+<span class="nc bnc" id="L156" title="All 2 branches missed.">				if (changeMessage.length() &gt; 200) {</span>
+<span class="nc" id="L157">					changeMessage = changeMessage.substring(0, 100);</span>
+				}
+<span class="nc" id="L159">				statement.setString(1, changeMessage);</span>
+<span class="nc" id="L160">				statement.setString(2, changeEvent.getUserID());</span>
+<span class="nc" id="L161">				Integer ownerVariableID = changeEvent.getVariableOwnerID();</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">				if (ownerVariableID == null) {</span>
+<span class="nc" id="L163">					statement.setInt(3, 0);</span>
+				}
+				else {
+<span class="nc" id="L166">					statement.setInt(3, ownerVariableID.intValue());</span>
+				}
+<span class="nc" id="L168">				ChangeEventType changeType</span>
+<span class="nc" id="L169">					= changeEvent.getChangeType();</span>
+
+<span class="nc bnc" id="L171" title="All 2 branches missed.">				if (changeType == ChangeEventType.VARIABLE) {</span>
+<span class="nc" id="L172">					statement.setString(4, &quot;variable&quot;);					</span>
+				}
+<span class="nc bnc" id="L174" title="All 2 branches missed.">				else if (changeType == ChangeEventType.VALUE_LABEL) {</span>
+<span class="nc" id="L175">					statement.setString(4, &quot;value_label&quot;);					</span>
+				}
+<span class="nc bnc" id="L177" title="All 2 branches missed.">				else if (changeType == ChangeEventType.SUPPORTING_DOCUMENT) {</span>
+<span class="nc" id="L178">					statement.setString(4, &quot;supporting_document&quot;);					</span>
+				}
+				else {
+<span class="nc" id="L181">					statement.setString(4, &quot;list_choice&quot;);</span>
+				}
+				
+<span class="nc" id="L184">				statement.executeUpdate();</span>
+<span class="nc" id="L185">			}			</span>
+		}
+<span class="nc" id="L187">		catch(SQLException exception) {</span>
+<span class="nc" id="L188">			exception.printStackTrace(System.out);</span>
+
+<span class="nc" id="L190">			String errorMessage </span>
+<span class="nc" id="L191">				= MacawMessages.getMessage(&quot;sql.error.unableToRegisterChangeEvents&quot;);</span>
+<span class="nc" id="L192">			MacawException macawException</span>
+				= new MacawException(MacawErrorType.UNABLE_TO_REGISTER_CHANGE_EVENTS,
+									 errorMessage);
+<span class="nc" id="L195">			throw macawException;</span>
+		}
+		finally {
+<span class="nc" id="L198">			SQLUtilities.closeStatementsWithCatch(statement, resultSet);</span>
+		}
+<span class="nc" id="L200">	}</span>
+	
+	public ArrayList&lt;MacawChangeEvent&gt; getChangeHistoryForVariable(Connection connection,
+																   Variable variable) throws MacawException {
+
+<span class="nc" id="L205">		int parentVariableID = variable.getIdentifier();</span>
+																	   
+<span class="nc" id="L207">		StringBuilder query = new StringBuilder();</span>
+<span class="nc" id="L208">		query.append(&quot;SELECT date, message, user_id &quot;);</span>
+<span class="nc" id="L209">		query.append(&quot;FROM change_events &quot;);</span>
+<span class="nc" id="L210">		query.append(&quot;WHERE owner_variable_id=? &quot;);</span>
+<span class="nc" id="L211">		query.append(&quot;ORDER BY DATE DESC;&quot;);</span>
+		
+<span class="nc" id="L213">		ResultSet resultSet = null;</span>
+<span class="nc" id="L214">		PreparedStatement statement = null;</span>
+		try {
+<span class="nc" id="L216">			statement</span>
+<span class="nc" id="L217">				= connection.prepareStatement(query.toString());</span>
+<span class="nc" id="L218">			statement.setInt(1, parentVariableID);</span>
+<span class="nc" id="L219">			resultSet = statement.executeQuery();</span>
+<span class="nc" id="L220">			return getChangeEvents(resultSet);</span>
+		}
+<span class="nc" id="L222">		catch(SQLException exception) {</span>
+<span class="nc" id="L223">			log.logException(exception);</span>
+<span class="nc" id="L224">			String errorMessage</span>
+<span class="nc" id="L225">				= MacawMessages.getMessage(&quot;sql.error.changeHistory.unableToGetChangesForVariable&quot;,</span>
+<span class="nc" id="L226">											variable.getDisplayName());</span>
+<span class="nc" id="L227">			MacawException macawException </span>
+				= new MacawException(MacawErrorType.UNABLE_TO_GET_CHANGES_FOR_VARIABLE,
+									 errorMessage);
+<span class="nc" id="L230">			throw macawException;</span>
+		}	
+		finally {
+<span class="nc" id="L233">			SQLUtilities.closeStatementsWithCatch(statement, resultSet);</span>
+		}
+	}
+	
+	public ArrayList&lt;MacawChangeEvent&gt; getChangeHistoryForSupportingDocument(Connection connection,
+																			 SupportingDocument supportingDocument) throws MacawException {
+						 														 
+<span class="nc" id="L240">		int supportingDocumentID = supportingDocument.getIdentifier();</span>
+<span class="nc" id="L241">		StringBuilder query = new StringBuilder();</span>
+<span class="nc" id="L242">		query.append(&quot;SELECT date, message, user_id &quot;);</span>
+<span class="nc" id="L243">		query.append(&quot;FROM change_events &quot;);</span>
+<span class="nc" id="L244">		query.append(&quot;WHERE identifier=? AND change_type='supporting_document' &quot;);</span>
+<span class="nc" id="L245">		query.append(&quot;ORDER BY DATE DESC;&quot;);</span>
+
+<span class="nc" id="L247">		ResultSet resultSet = null;</span>
+<span class="nc" id="L248">		PreparedStatement statement = null;</span>
+		try {
+<span class="nc" id="L250">			statement</span>
+<span class="nc" id="L251">				= connection.prepareStatement(query.toString());</span>
+<span class="nc" id="L252">			statement.setInt(1, supportingDocumentID);</span>
+<span class="nc" id="L253">			resultSet = statement.executeQuery();	</span>
+<span class="nc" id="L254">			return getChangeEvents(resultSet);</span>
+		}
+<span class="nc" id="L256">		catch(SQLException exception) {</span>
+<span class="nc" id="L257">			log.logException(exception);</span>
+<span class="nc" id="L258">			String errorMessage</span>
+<span class="nc" id="L259">				= MacawMessages.getMessage(&quot;sql.error.changeHistory.unableToGetChangesDocument&quot;,</span>
+<span class="nc" id="L260">											supportingDocument.getDisplayName());</span>
+<span class="nc" id="L261">			MacawException macawException </span>
+				= new MacawException(MacawErrorType.UNABLE_TO_GET_CHANGES_FOR_DOCUMENT,
+									 errorMessage);
+<span class="nc" id="L264">			throw macawException;</span>
+		}	
+		finally {
+<span class="nc" id="L267">			SQLUtilities.closeStatementsWithCatch(statement, resultSet);</span>
+		}
+	}
+
+	public ArrayList&lt;MacawChangeEvent&gt; getChangeHistoryForValueLabels(Connection connection,
+																	  Variable variable) throws MacawException {
+
+<span class="nc" id="L274">		int variableID = variable.getIdentifier();</span>
+		
+<span class="nc" id="L276">		StringBuilder query = new StringBuilder();</span>
+<span class="nc" id="L277">		query.append(&quot;SELECT date, message, user_id &quot;);</span>
+<span class="nc" id="L278">		query.append(&quot;FROM change_events &quot;);</span>
+<span class="nc" id="L279">		query.append(&quot;WHERE owner_variable_id=? AND change_type='value_label' &quot;);</span>
+<span class="nc" id="L280">		query.append(&quot;ORDER BY DATE DESC;&quot;);</span>
+
+<span class="nc" id="L282">		ResultSet resultSet = null;</span>
+<span class="nc" id="L283">		PreparedStatement statement = null;</span>
+		try {
+<span class="nc" id="L285">			statement</span>
+<span class="nc" id="L286">				= connection.prepareStatement(query.toString());</span>
+<span class="nc" id="L287">			statement.setInt(1, variableID);</span>
+<span class="nc" id="L288">			resultSet = statement.executeQuery();	</span>
+<span class="nc" id="L289">			return getChangeEvents(resultSet);</span>
+		}
+<span class="nc" id="L291">		catch(SQLException exception) {</span>
+<span class="nc" id="L292">			log.logException(exception);</span>
+<span class="nc" id="L293">			String errorMessage</span>
+<span class="nc" id="L294">				= MacawMessages.getMessage(&quot;sql.error.changeHistory.unableToGetChangesForValueLabels&quot;,</span>
+<span class="nc" id="L295">											variable.getDisplayName());</span>
+<span class="nc" id="L296">			MacawException macawException </span>
+				= new MacawException(MacawErrorType.UNABLE_TO_GET_CHANGES_FOR_VALUE_LABEL,
+									 errorMessage);
+<span class="nc" id="L299">			throw macawException;</span>
+		}	
+		finally {
+<span class="nc" id="L302">			SQLUtilities.closeStatementsWithCatch(statement, resultSet);</span>
+		}
+	}
+
+	public ArrayList&lt;MacawChangeEvent&gt; getChangeHistoryForListChoices(Connection connection) throws MacawException {
+<span class="nc" id="L307">		StringBuilder query = new StringBuilder();</span>
+<span class="nc" id="L308">		query.append(&quot;SELECT date, message, user_id &quot;);</span>
+<span class="nc" id="L309">		query.append(&quot;FROM change_events &quot;);</span>
+<span class="nc" id="L310">		query.append(&quot;WHERE change_type='list_choice' &quot;);</span>
+<span class="nc" id="L311">		query.append(&quot;ORDER BY DATE DESC;&quot;);</span>
+
+<span class="nc" id="L313">		ResultSet resultSet = null;</span>
+<span class="nc" id="L314">		PreparedStatement statement = null;</span>
+		try {
+<span class="nc" id="L316">			statement</span>
+<span class="nc" id="L317">				= connection.prepareStatement(query.toString());</span>
+<span class="nc" id="L318">			resultSet = statement.executeQuery();	</span>
+<span class="nc" id="L319">			return getChangeEvents(resultSet);</span>
+		}
+<span class="nc" id="L321">		catch(SQLException exception) {</span>
+<span class="nc" id="L322">			log.logException(exception);</span>
+<span class="nc" id="L323">			String errorMessage</span>
+<span class="nc" id="L324">				= MacawMessages.getMessage(&quot;sql.error.changeHistory.unableToGetChangesForListChoices&quot;);</span>
+<span class="nc" id="L325">			MacawException macawException </span>
+				= new MacawException(MacawErrorType.UNABLE_TO_GET_CHANGES_FOR_LIST_CHOICES,
+									 errorMessage);
+<span class="nc" id="L328">			throw macawException;</span>
+		}	
+		finally {
+<span class="nc" id="L331">			SQLUtilities.closeStatementsWithCatch(statement, resultSet);</span>
+		}
+	}
+	
+	public ArrayList&lt;MacawChangeEvent&gt; getChangeHistoryForUser(Connection connection,
+														   	   User user) throws MacawException {
+		
+<span class="nc" id="L338">		StringBuilder query = new StringBuilder();</span>
+<span class="nc" id="L339">		query.append(&quot;SELECT date, message, user_id &quot;);</span>
+<span class="nc" id="L340">		query.append(&quot;FROM change_events &quot;);</span>
+<span class="nc" id="L341">		query.append(&quot;WHERE user_id=? AND change_type='variable' &quot;);</span>
+<span class="nc" id="L342">		query.append(&quot;ORDER BY DATE DESC;&quot;);</span>
+
+<span class="nc" id="L344">		ResultSet resultSet = null;</span>
+<span class="nc" id="L345">		PreparedStatement statement = null;</span>
+		try {
+<span class="nc" id="L347">			statement</span>
+<span class="nc" id="L348">				= connection.prepareStatement(query.toString());</span>
+<span class="nc" id="L349">			statement.setString(1, user.getUserID());</span>
+<span class="nc" id="L350">			resultSet = statement.executeQuery();	</span>
+<span class="nc" id="L351">			return getChangeEvents(resultSet);</span>
+		}
+<span class="nc" id="L353">		catch(SQLException exception) {</span>
+<span class="nc" id="L354">			log.logException(exception);</span>
+<span class="nc" id="L355">			String errorMessage</span>
+<span class="nc" id="L356">				= MacawMessages.getMessage(&quot;sql.error.changeHistory.unableToGetChangesForUser&quot;,</span>
+<span class="nc" id="L357">											user.getDisplayName());</span>
+<span class="nc" id="L358">			MacawException macawException </span>
+				= new MacawException(MacawErrorType.UNABLE_TO_GET_CHANGES_FOR_USER,
+									 errorMessage);
+<span class="nc" id="L361">			throw macawException;</span>
+		}	
+		finally {
+<span class="nc" id="L364">			SQLUtilities.closeStatementsWithCatch(statement, resultSet);</span>
+		}
+	}
+	
+	private ArrayList&lt;MacawChangeEvent&gt; getChangeEvents(ResultSet resultSet) throws SQLException {
+<span class="nc" id="L369">		ArrayList&lt;MacawChangeEvent&gt; changeEvents</span>
+			= new ArrayList&lt;MacawChangeEvent&gt;();
+<span class="nc bnc" id="L371" title="All 2 branches missed.">		while (resultSet.next() == true) {</span>
+<span class="nc" id="L372">			MacawChangeEvent changeEvent</span>
+				= new MacawChangeEvent();
+<span class="nc" id="L374">			changeEvent.setDate(resultSet.getDate(1));</span>
+<span class="nc" id="L375">			changeEvent.setChangeMessage(resultSet.getString(2));</span>
+<span class="nc" id="L376">			changeEvent.setUserID(resultSet.getString(3));</span>
+<span class="nc" id="L377">			changeEvents.add(changeEvent);</span>
+<span class="nc" id="L378">		}</span>
+<span class="nc" id="L379">		return changeEvents;		</span>
+	}
+	
+	public void clear(Connection connection) throws MacawException {
+<span class="nc" id="L383">		StringBuilder query = new StringBuilder();</span>
+<span class="nc" id="L384">		query.append(&quot;DELETE FROM change_events;&quot;);</span>
+
+<span class="nc" id="L386">		PreparedStatement statement = null;</span>
+		try {
+<span class="nc" id="L388">			statement</span>
+<span class="nc" id="L389">				= connection.prepareStatement(query.toString());</span>
+<span class="nc" id="L390">			statement.executeUpdate();	</span>
+		}
+<span class="nc" id="L392">		catch(SQLException exception) {</span>
+<span class="nc" id="L393">			exception.printStackTrace(System.out);</span>
+<span class="nc" id="L394">			String errorMessage</span>
+<span class="nc" id="L395">				= MacawMessages.getMessage(&quot;sql.error.unableToClearTable&quot;);</span>
+<span class="nc" id="L396">			MacawException macawException</span>
+				= new MacawException(MacawErrorType.UNABLE_TO_CLEAR_TABLE,
+									 errorMessage);
+<span class="nc" id="L399">			throw macawException;</span>
+		}
+		finally {
+<span class="nc" id="L402">			SQLUtilities.closeStatementsWithCatch(statement, null);</span>
+		}
+<span class="nc" id="L404">	}</span>
+
+	public void clearAllChanges(Connection connection) throws MacawException {
+<span class="nc" id="L407">		clear(connection);</span>
+<span class="nc" id="L408">	}</span>
+	
+	public ArrayList&lt;MacawChangeEvent&gt; getAllChanges(Connection connection) throws MacawException {
+
+<span class="nc" id="L412">		StringBuilder query = new StringBuilder();</span>
+<span class="nc" id="L413">		query.append(&quot;SELECT date, message, user_id &quot;);</span>
+<span class="nc" id="L414">		query.append(&quot;FROM change_events &quot;);</span>
+<span class="nc" id="L415">		query.append(&quot;ORDER BY DATE DESC;&quot;);</span>
+
+<span class="nc" id="L417">		ResultSet resultSet = null;</span>
+<span class="nc" id="L418">		PreparedStatement statement = null;</span>
+		try {
+<span class="nc" id="L420">			statement</span>
+<span class="nc" id="L421">				= connection.prepareStatement(query.toString());</span>
+<span class="nc" id="L422">			resultSet = statement.executeQuery();	</span>
+<span class="nc" id="L423">			return getChangeEvents(resultSet);</span>
+		}
+<span class="nc" id="L425">		catch(SQLException exception) {</span>
+<span class="nc" id="L426">			String errorMessage</span>
+<span class="nc" id="L427">				= MacawMessages.getMessage(&quot;sql.error.unableToClearTable&quot;);</span>
+<span class="nc" id="L428">			MacawException macawException</span>
+				= new MacawException(MacawErrorType.UNABLE_TO_CLEAR_TABLE,
+									 errorMessage);
+<span class="nc" id="L431">			throw macawException;</span>
+		}		
+		finally {
+<span class="nc" id="L434">			SQLUtilities.closeStatementsWithCatch(statement, resultSet);</span>
+		}
+	}
+
+	// ==========================================
+	// Section Errors and Validation
+	// ==========================================
+
+	// ==========================================
+	// Section Interfaces
+	// ==========================================
+
+	// ==========================================
+	// Section Overload
+	// ==========================================
+
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

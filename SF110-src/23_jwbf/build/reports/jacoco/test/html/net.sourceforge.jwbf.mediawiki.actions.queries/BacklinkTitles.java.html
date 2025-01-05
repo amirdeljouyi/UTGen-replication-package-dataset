@@ -1,0 +1,346 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BacklinkTitles.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">23_jwbf</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.jwbf.mediawiki.actions.queries</a> &gt; <span class="el_source">BacklinkTitles.java</span></div><h1>BacklinkTitles.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2007 Tobias Knerr.
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
+ *
+ * Contributors:
+ * Tobias Knerr
+ *
+ */
+package net.sourceforge.jwbf.mediawiki.actions.queries;
+
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_15;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_16;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_17;
+
+import java.util.Collection;
+import java.util.Vector;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import lombok.extern.slf4j.Slf4j;
+import net.sourceforge.jwbf.core.actions.Get;
+import net.sourceforge.jwbf.core.actions.util.HttpAction;
+import net.sourceforge.jwbf.mediawiki.actions.MediaWiki;
+import net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version;
+import net.sourceforge.jwbf.mediawiki.actions.util.MWAction;
+import net.sourceforge.jwbf.mediawiki.actions.util.RedirectFilter;
+import net.sourceforge.jwbf.mediawiki.actions.util.SupportedBy;
+import net.sourceforge.jwbf.mediawiki.actions.util.VersionException;
+import net.sourceforge.jwbf.mediawiki.bots.MediaWikiBot;
+
+/**
+ * action class using the MediaWiki-api's &quot;list=backlinks&quot;.
+ * 
+ * @author Thomas Stock
+ * @author Tobias Knerr
+ * @since JWBF 1.1
+ */
+<span class="nc" id="L49">@Slf4j</span>
+@SupportedBy({ MW1_15, MW1_16, MW1_17 })
+public class BacklinkTitles extends TitleQuery&lt;String&gt; {
+
+  /**
+   * enum that defines the three posibilities of dealing with article lists
+   * including both redirects and non-redirects.
+   * &lt;ul&gt;
+   * &lt;li&gt;all: List all pages regardless of their redirect flag&lt;/li&gt;
+   * &lt;li&gt;redirects: Only list redirects&lt;/li&gt;
+   * &lt;li&gt;nonredirects: Don't list redirects&lt;/li&gt;
+   * &lt;/ul&gt;
+   */
+
+  /** constant value for the bllimit-parameter. **/
+  private static final int LIMIT = 50;
+
+  /** object creating the requests that are sent to the api. */
+<span class="nc" id="L67">  private RequestBuilder requestBuilder = null;</span>
+
+  private final String articleName;
+
+  private MediaWikiBot bot;
+  private final RedirectFilter redirectFilter;
+  private final int[] namespaces;
+
+  /**
+   * The public constructor. It will have a MediaWiki-request generated, which
+   * is then added to msgs. When it is answered, the method
+   * processAllReturningText will be called (from outside this class).
+   * 
+   * @param articleName
+   *          the title of the article, != null
+   * @param namespaces
+   *          the namespace(s) that will be searched for links, as a string of
+   *          numbers separated by '|'; if null, this parameter is omitted. See
+   *          for e.g. {@link MediaWiki#NS_ALL}.
+   * @param redirectFilter
+   *          filter that determines how to handle redirects, must be all for MW
+   *          versions before 1.11; != null
+   * @param bot
+   *          a
+   * 
+   * @throws VersionException
+   *           if general functionality or parameter values are not compatible
+   *           with apiVersion value
+   */
+  public BacklinkTitles(MediaWikiBot bot, String articleName,
+      RedirectFilter redirectFilter, int... namespaces) throws VersionException {
+<span class="nc" id="L98">    super(bot);</span>
+<span class="nc bnc" id="L99" title="All 2 branches missed.">    assert bot != null;</span>
+<span class="nc bnc" id="L100" title="All 4 branches missed.">    assert articleName != null &amp;&amp; redirectFilter != null;</span>
+<span class="nc bnc" id="L101" title="All 4 branches missed.">    if (bot.getVersion() == Version.MW1_09</span>
+        &amp;&amp; redirectFilter != RedirectFilter.all) {
+<span class="nc" id="L103">      throw new VersionException(</span>
+          &quot;redirect filtering is not available in this MediaWiki version&quot;);
+    }
+<span class="nc" id="L106">    this.redirectFilter = redirectFilter;</span>
+<span class="nc" id="L107">    this.namespaces = namespaces;</span>
+
+<span class="nc" id="L109">    this.articleName = articleName;</span>
+<span class="nc" id="L110">    this.bot = bot;</span>
+<span class="nc" id="L111">    requestBuilder = createRequestBuilder(bot.getVersion());</span>
+
+<span class="nc" id="L113">  }</span>
+
+  /**
+   * 
+   * @param articleName
+   *          a
+   * @param bot
+   *          a
+   * @throws VersionException
+   *           if action is not supported
+   */
+  public BacklinkTitles(MediaWikiBot bot, String articleName)
+      throws VersionException {
+<span class="nc" id="L126">    this(bot, articleName, RedirectFilter.all, null);</span>
+
+<span class="nc" id="L128">  }</span>
+
+  @Override
+  protected Object clone() throws CloneNotSupportedException {
+    try {
+<span class="nc" id="L133">      return new BacklinkTitles(bot, articleName, redirectFilter, namespaces);</span>
+<span class="nc" id="L134">    } catch (VersionException e) {</span>
+<span class="nc" id="L135">      throw new CloneNotSupportedException(e.getLocalizedMessage());</span>
+    }
+  }
+
+  /**
+   * gets the information about a follow-up page from a provided api response.
+   * If there is one, the information for the next page parameter is added to
+   * the nextPageInfo field.
+   * 
+   * @param s
+   *          text for parsing
+   */
+  @Override
+  protected String parseHasMore(final String s) {
+
+    // get the blcontinue-value
+<span class="nc" id="L151">    Pattern p = Pattern.compile(&quot;&lt;query-continue&gt;.*?&quot;</span>
+        + &quot;&lt;backlinks *blcontinue=\&quot;([^\&quot;]*)\&quot; */&gt;&quot; + &quot;.*?&lt;/query-continue&gt;&quot;,
+        Pattern.DOTALL | Pattern.MULTILINE);
+
+<span class="nc" id="L155">    Matcher m = p.matcher(s);</span>
+
+<span class="nc bnc" id="L157" title="All 2 branches missed.">    if (m.find()) {</span>
+<span class="nc" id="L158">      return m.group(1);</span>
+    } else {
+<span class="nc" id="L160">      return &quot;&quot;;</span>
+    }
+
+  }
+
+  /**
+   * picks the article name from a MediaWiki api response.
+   * 
+   * @param s
+   *          text for parsing
+   */
+  @Override
+  protected Collection&lt;String&gt; parseArticleTitles(String s) {
+
+    // get the other backlink titles and add them all to the titleCollection
+<span class="nc" id="L175">    Collection&lt;String&gt; titleCollection = new Vector&lt;String&gt;();</span>
+
+<span class="nc" id="L177">    Pattern p = Pattern</span>
+<span class="nc" id="L178">        .compile(&quot;&lt;bl pageid=\&quot;.*?\&quot; ns=\&quot;.*?\&quot; title=\&quot;([^\&quot;]*)\&quot; (redirect=\&quot;\&quot; )?/&gt;&quot;);</span>
+
+<span class="nc" id="L180">    Matcher m = p.matcher(s);</span>
+
+<span class="nc bnc" id="L182" title="All 2 branches missed.">    while (m.find()) {</span>
+<span class="nc" id="L183">      titleCollection.add(m.group(1));</span>
+
+    }
+<span class="nc" id="L186">    return titleCollection;</span>
+
+  }
+
+  /**
+   * creates a request builder for the given API version.
+   * 
+   * @param apiVersion
+   *          a, for which the request builder is working.
+   * @throws VersionException
+   *           if no request builder class for the apiVersion is known
+   * @return a
+   */
+  private RequestBuilder createRequestBuilder(Version apiVersion) {
+
+<span class="nc bnc" id="L201" title="All 3 branches missed.">    switch (apiVersion) {</span>
+
+      case MW1_09:
+      case MW1_10:
+<span class="nc" id="L205">        return new RequestBuilder1x09();</span>
+
+      case MW1_11:
+      case MW1_12:
+      case MW1_13:
+      case MW1_14:
+      case MW1_15:
+      case MW1_16:
+<span class="nc" id="L213">        return new RequestBuilder1x11();</span>
+
+      default: // MW1_17 and up
+<span class="nc" id="L216">        return new RequestBuilder1x17();</span>
+
+    }
+
+  }
+
+  /** interface for classes that create a request strings. */
+  private interface RequestBuilder {
+
+    /**
+     * generates an initial MediaWiki-request.
+     * 
+     * @param articleName
+     *          a
+     * @param redirectFilter
+     *          a
+     * @param namespace
+     *          a
+     * @return the request in string form
+     */
+    String buildInitialRequest(String articleName,
+        RedirectFilter redirectFilter, int[] namespace);
+
+    /**
+     * generates a follow-up MediaWiki-request.
+     * 
+     * @param blcontinue
+     *          key for continuing
+     * @return the request in string form
+     */
+    String buildContinueRequest(String articleName, String blcontinue);
+
+  }
+
+  /** request builder for MW versions 1_17 onwards. */
+  private static class RequestBuilder1x17 implements RequestBuilder {
+    /**
+     * {@inheritDoc}
+     */
+    public String buildInitialRequest(String articleName,
+        RedirectFilter redirectFilter, int[] namespace) {
+
+<span class="nc" id="L258">      return &quot;/api.php?action=query&amp;list=backlinks&quot;</span>
+          + &quot;&amp;bltitle=&quot;
+<span class="nc bnc" id="L260" title="All 2 branches missed.">          + MediaWiki.encode(articleName)</span>
+<span class="nc bnc" id="L261" title="All 2 branches missed.">          + ((namespace != null &amp;&amp; MWAction.createNsString(namespace).length() != 0) ? (&quot;&amp;blnamespace=&quot; + MediaWiki</span>
+<span class="nc" id="L262">              .encode(MWAction.createNsString(namespace))) : &quot;&quot;)</span>
+<span class="nc" id="L263">          + &quot;&amp;blfilterredir=&quot; + MediaWiki.encode(redirectFilter.toString())</span>
+          + &quot;&amp;bllimit=&quot; + LIMIT + &quot;&amp;format=xml&quot;;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public String buildContinueRequest(String articleName, String blcontinue) {
+<span class="nc" id="L271">      return &quot;/api.php?action=query&amp;list=backlinks&quot; + &quot;&amp;blcontinue=&quot;</span>
+<span class="nc" id="L272">          + MediaWiki.encode(blcontinue) + &quot;&amp;bllimit=&quot; + LIMIT + &quot;&amp;bltitle=&quot;</span>
+<span class="nc" id="L273">          + MediaWiki.encode(articleName) + &quot;&amp;format=xml&quot;;</span>
+    }
+
+  }
+
+  /** request builder for MW versions 1_11 to (at least) 1_13. */
+  private static class RequestBuilder1x11 implements RequestBuilder {
+    /**
+     * {@inheritDoc}
+     */
+    public String buildInitialRequest(String articleName,
+        RedirectFilter redirectFilter, int[] namespace) {
+
+<span class="nc" id="L286">      return &quot;/api.php?action=query&amp;list=backlinks&quot;</span>
+          + &quot;&amp;bltitle=&quot;
+<span class="nc bnc" id="L288" title="All 2 branches missed.">          + MediaWiki.encode(articleName)</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">          + ((namespace != null &amp;&amp; MWAction.createNsString(namespace).length() != 0) ? (&quot;&amp;blnamespace=&quot; + MediaWiki</span>
+<span class="nc" id="L290">              .encode(MWAction.createNsString(namespace))) : &quot;&quot;)</span>
+<span class="nc" id="L291">          + &quot;&amp;blfilterredir=&quot; + MediaWiki.encode(redirectFilter.toString())</span>
+          + &quot;&amp;bllimit=&quot; + LIMIT + &quot;&amp;format=xml&quot;;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public String buildContinueRequest(String articleName, String blcontinue) {
+
+<span class="nc" id="L300">      return &quot;/api.php?action=query&amp;list=backlinks&quot; + &quot;&amp;blcontinue=&quot;</span>
+<span class="nc" id="L301">          + MediaWiki.encode(blcontinue) + &quot;&amp;bllimit=&quot; + LIMIT + &quot;&amp;format=xml&quot;;</span>
+    }
+
+  }
+
+  /** request builder for MW versions 1_09 and 1_10. */
+  private static class RequestBuilder1x09 implements RequestBuilder {
+    /**
+     * {@inheritDoc}
+     */
+    public String buildInitialRequest(String articleName,
+        RedirectFilter redirectFilter, int[] namespace) {
+
+<span class="nc" id="L314">      return &quot;/api.php?action=query&amp;list=backlinks&quot;</span>
+          + &quot;&amp;titles=&quot;
+<span class="nc bnc" id="L316" title="All 2 branches missed.">          + MediaWiki.encode(articleName)</span>
+<span class="nc bnc" id="L317" title="All 2 branches missed.">          + ((namespace != null &amp;&amp; MWAction.createNsString(namespace).length() != 0) ? (&quot;&amp;blnamespace=&quot; + MediaWiki</span>
+<span class="nc" id="L318">              .encode(MWAction.createNsString(namespace))) : &quot;&quot;)</span>
+<span class="nc" id="L319">          + &quot;&amp;blfilterredir=&quot; + MediaWiki.encode(redirectFilter.toString())</span>
+          + &quot;&amp;bllimit=&quot; + LIMIT + &quot;&amp;format=xml&quot;;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public String buildContinueRequest(String articleName, String blcontinue) {
+
+<span class="nc" id="L328">      return &quot;/api.php?action=query&amp;list=backlinks&quot; + &quot;&amp;blcontinue=&quot;</span>
+<span class="nc" id="L329">          + MediaWiki.encode(blcontinue) + &quot;&amp;bllimit=&quot; + LIMIT + &quot;&amp;format=xml&quot;;</span>
+    }
+
+  }
+
+  @Override
+  protected HttpAction prepareCollection() {
+<span class="nc bnc" id="L336" title="All 2 branches missed.">    if (getNextPageInfo().length() &gt; 0) {</span>
+<span class="nc" id="L337">      return new Get(requestBuilder.buildContinueRequest(articleName,</span>
+<span class="nc" id="L338">          getNextPageInfo()));</span>
+    } else {
+<span class="nc" id="L340">      return new Get(requestBuilder.buildInitialRequest(articleName,</span>
+          redirectFilter, namespaces));
+    }
+  }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

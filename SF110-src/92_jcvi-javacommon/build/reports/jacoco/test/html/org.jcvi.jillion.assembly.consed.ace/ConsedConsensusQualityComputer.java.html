@@ -1,0 +1,392 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ConsedConsensusQualityComputer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.assembly.consed.ace</a> &gt; <span class="el_source">ConsedConsensusQualityComputer.java</span></div><h1>ConsedConsensusQualityComputer.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+package org.jcvi.jillion.assembly.consed.ace;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+
+import org.jcvi.jillion.assembly.AssembledRead;
+import org.jcvi.jillion.assembly.AssemblyUtil;
+import org.jcvi.jillion.assembly.Contig;
+import org.jcvi.jillion.core.Direction;
+import org.jcvi.jillion.core.Range;
+import org.jcvi.jillion.core.datastore.DataStoreException;
+import org.jcvi.jillion.core.io.IOUtil;
+import org.jcvi.jillion.core.qual.PhredQuality;
+import org.jcvi.jillion.core.qual.QualitySequence;
+import org.jcvi.jillion.core.qual.QualitySequenceBuilder;
+import org.jcvi.jillion.core.qual.QualitySequenceDataStore;
+import org.jcvi.jillion.core.residue.nt.NucleotideSequence;
+import org.jcvi.jillion.core.util.iter.IteratorUtil;
+import org.jcvi.jillion.core.util.iter.StreamingIterator;
+import org.jcvi.jillion.internal.core.util.JillionUtil;
+
+<span class="nc" id="L46">final class ConsedConsensusQualityComputer {</span>
+
+	//The algorithm that consed uses was explained to dkatzel
+	//by David Gordon, the author of Consed, via several phone calls and emails 
+	//in March 2013
+	//
+	//Here is the basic algorithm:
+	//
+	//For each consensus position, look at all underlying reads that match
+	//and sum the highest forward quality and the highest reverse quality
+	//if there is extra coverage (even if only in one dir) then add an additional 5 qv.
+	//max value allowed is 90.
+	//
+	//To filter which reads are considered, Consed uses a flanking window of 2bp on each side
+	//the entire window must match the consensus in order for the read to be considered at 
+	//the consensus position.
+	//
+	//below are some more details from emails from David Gordon:
+	//
+	//OK, I looked at the code for computing the consensus qualities. 
+	//It only uses reads that agree with the consensus in a window about the base in question:
+	//
+	//    ...CCBCC...    consensus
+	//    ...ccbcc...    read
+	//
+	// so in a column, if any of ccbcc disagrees with CCBCC,
+	// this read is not used for the purpose of calculating the consensus quality of B.
+	//
+	// at the ends of contigs, then the window is one-sided.  For
+    // example, at the left end the window looks like this:
+	//
+    //    BCC...
+    //    bcc...
+	//
+    //  (even if the read extends further to the left).
+	//
+	// And all of the bases must not be pads.  So if there is a column of
+	// pads, the window is larger:
+	//
+	//      ...C*CCBCC...
+	//       ...c*ccbcc...
+	//
+	// If this window isn't completely contained within the read's aligned
+	// region, then this read isn't used.
+	//
+	// The whole window business is to not allow mis-aligned reads to be used
+	// in the calculation.
+	//
+	// Requiring the window decreases the chance that the read is misaligned
+	// (at this location).  When you look at it this way, then these rules
+	// make sense.
+	//
+	//
+	// The +5 is used only once--not once for each strand.
+	//
+	// There is also an issue of library duplicates. 
+	// If 2 reads have the same starting location, they are suspected
+	// of being library duplicates and thus are not allowed to 
+	// confirm each other so no +5 boost is given.  
+	// For example, suppose you have 50 reads all top strand,
+	// but they all start at the same location, 
+	// then there is no +5 of the quality because it is likely 
+	// they were all PCR'd from the same piece of DNA.
+	//
+	// Quality values are not allowed to be greater than 90--I just cut it off there. 
+	// (Quality 98 and 99 have special meanings.)
+	
+	/**
+	 * {@value}  = Max value that consed qualities are allowed to have,
+	 * any qualities values that are greater have special meanings.
+	 */
+	private static final int MAX_CONSED_COMPUTED_QUALITY = 90;
+	/**
+	 * Bonus quality amount added to final consensus quality
+	 * if there are multiple reads that agree with the 
+	 * consensus in a single direction that don't
+	 * start at the same position.
+	 */
+	private static final int BONUS_VALUE = 5;
+	
+	private static final int NUMBER_OF_NON_GAPS_IN_WINDOW =2;
+	
+	/**
+     * Compute the consensus quality sequence as computed by the same algorithm consed uses.
+     * @param contig the contig to compute the consensus qualities for; can not be null.
+     * @return a {@link QualitySequence} can not be null.
+     * @throws DataStoreException  if there is a problem fetching read quality data
+     * @throws NullPointerException if contig is null.
+     */
+	public static QualitySequence computeConsensusQualities(Contig&lt;? extends AssembledRead&gt; contig, QualitySequenceDataStore readQualities) throws DataStoreException{
+<span class="nc bnc" id="L136" title="All 2 branches missed.">		if(contig ==null){</span>
+<span class="nc" id="L137">    		throw new NullPointerException(&quot;contig can not be null&quot;);</span>
+    	}
+<span class="nc bnc" id="L139" title="All 2 branches missed.">		if(readQualities ==null){</span>
+<span class="nc" id="L140">			throw new NullPointerException(&quot;read quality datastore can not be null&quot;);</span>
+		}
+<span class="nc" id="L142">		return computeConsensusQualities(contig.getConsensusSequence(), contig.getReadIterator(), readQualities);</span>
+	}
+	
+	/**
+     * Compute the consensus quality sequence as computed by the same algorithm consed uses.
+     * @param consensusSequence the contig consensus sequence to compute the consensus qualities for; can not be null.
+     * @return a {@link QualitySequence} can not be null.
+     * @throws DataStoreException  if there is a problem fetching read quality data
+     * @throws NullPointerException if contig consensus seuquence is null.
+     */
+	public static QualitySequence computeConsensusQualities(NucleotideSequence consensusSequence, Iterable&lt;? extends AssembledRead&gt; reads, QualitySequenceDataStore readQualities) throws DataStoreException{
+<span class="nc bnc" id="L153" title="All 2 branches missed.">		if(consensusSequence ==null){</span>
+<span class="nc" id="L154">    		throw new NullPointerException(&quot;consensus can not be null&quot;);</span>
+    	}
+<span class="nc bnc" id="L156" title="All 2 branches missed.">		if(readQualities ==null){</span>
+<span class="nc" id="L157">			throw new NullPointerException(&quot;read quality datastore can not be null&quot;);</span>
+		}
+<span class="nc" id="L159">		return computeConsensusQualities(consensusSequence, IteratorUtil.createStreamingIterator(reads.iterator()), readQualities);</span>
+	}
+	/**
+     * Compute the consensus quality sequence as computed by the same algorithm consed uses.
+     * @param contig the contig to compute the consensus qualities for; can not be null.
+     * @return a {@link QualitySequence} can not be null.
+     * @throws DataStoreException 
+     * @throws NullPointerException if contig is null.
+     */
+    private static QualitySequence computeConsensusQualities(NucleotideSequence consensusSequence, 
+    		StreamingIterator&lt;? extends AssembledRead&gt; iter,
+    		QualitySequenceDataStore readQualities) throws DataStoreException{
+    	
+    	
+    	try{
+<span class="nc" id="L174">	    	int[] consensusGapsArray = toIntArray(consensusSequence.getGapOffsets());</span>
+	    	
+<span class="nc" id="L176">	    	int consensusLength = (int)consensusSequence.getLength();</span>
+<span class="nc" id="L177">			List&lt;List&lt;QualityPosition&gt;&gt; forwardQualitiesTowardsConsensus = new ArrayList&lt;List&lt;QualityPosition&gt;&gt;((int)consensusSequence.getLength());</span>
+<span class="nc" id="L178">			List&lt;List&lt;QualityPosition&gt;&gt; reverseQualitiesTowardsConsensus = new ArrayList&lt;List&lt;QualityPosition&gt;&gt;((int)consensusSequence.getLength());</span>
+	    	
+<span class="nc bnc" id="L180" title="All 2 branches missed.">			for(int i=0; i&lt; consensusLength; i++){</span>
+<span class="nc" id="L181">	    		forwardQualitiesTowardsConsensus.add(new ArrayList&lt;QualityPosition&gt;());</span>
+<span class="nc" id="L182">	    		reverseQualitiesTowardsConsensus.add(new ArrayList&lt;QualityPosition&gt;());</span>
+	    	}
+		
+		
+<span class="nc bnc" id="L186" title="All 2 branches missed.">	    	while(iter.hasNext()){</span>
+<span class="nc" id="L187">	    		AssembledRead read = iter.next();</span>
+<span class="nc" id="L188">	    		long start =read.getGappedStartOffset();</span>
+	    		
+<span class="nc" id="L190">	    		int[] differenceArray = toIntArray( read.getNucleotideSequence().getDifferenceMap().keySet());	    		</span>
+<span class="nc" id="L191">	    		int[] readGaps = toIntArray(read.getNucleotideSequence().getGapOffsets());</span>
+<span class="nc" id="L192">	    		Range validRange = read.getReadInfo().getValidRange();</span>
+<span class="nc" id="L193">	    		Direction dir = read.getDirection();</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">	    		if(dir ==Direction.REVERSE){</span>
+<span class="nc" id="L195">	    			validRange = AssemblyUtil.reverseComplementValidRange(validRange, read.getReadInfo().getUngappedFullLength());</span>
+	    		}
+<span class="nc" id="L197">	    		QualitySequence validQualities = AssemblyUtil.getUngappedComplementedValidRangeQualities(read, readQualities.get(read.getId()));</span>
+
+<span class="nc" id="L199">	    		Iterator&lt;PhredQuality&gt; qualIter = validQualities.iterator();</span>
+<span class="nc" id="L200">	    		int i=0;</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">	    		while(qualIter.hasNext()){</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">	    			if(notAGap(readGaps, i)){</span>
+<span class="nc" id="L203">		    			PhredQuality qual =qualIter.next();</span>
+<span class="nc" id="L204">		    			int consensusOffset = (int)(i+start);</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">		    			if(notAGap(consensusGapsArray, consensusOffset) </span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">		    					&amp;&amp; readMatchesWindow(consensusGapsArray, consensusLength, read, start, differenceArray, i)){</span>
+<span class="nc" id="L207">		    				addQualityToConsensusConsideratino(</span>
+									forwardQualitiesTowardsConsensus,
+									reverseQualitiesTowardsConsensus, start,
+									dir, qual, consensusOffset);			    			
+		    			}
+	    			}
+<span class="nc" id="L213">	    			i++;</span>
+	    		}
+<span class="nc" id="L215">	    	}</span>
+	    	//we've now looked through all the reads
+<span class="nc" id="L217">	    	QualitySequenceBuilder consensusQualitiesBuilder = new QualitySequenceBuilder(consensusLength);</span>
+<span class="nc bnc" id="L218" title="All 2 branches missed.">	    	for(int i=0; i&lt; consensusLength; i++){</span>
+<span class="nc" id="L219">	    		consensusQualitiesBuilder.append(</span>
+<span class="nc" id="L220">	    				computeConsensusQuality( forwardQualitiesTowardsConsensus,reverseQualitiesTowardsConsensus, i));</span>
+	    	}
+<span class="nc" id="L222">	    	removeConsensusGaps(consensusQualitiesBuilder,consensusGapsArray);</span>
+<span class="nc" id="L223">	    	return consensusQualitiesBuilder.build();</span>
+    	}finally{
+<span class="nc" id="L225">    		IOUtil.closeAndIgnoreErrors(iter);</span>
+    	}
+    }
+	private static void addQualityToConsensusConsideratino(
+			List&lt;List&lt;QualityPosition&gt;&gt; forwardQualitiesTowardsConsensus,
+			List&lt;List&lt;QualityPosition&gt;&gt; reverseQualitiesTowardsConsensus,
+			long start, Direction dir, PhredQuality qual, int consensusOffset) {
+<span class="nc" id="L232">		QualityPosition position = new QualityPosition(qual, start);</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">		if(dir==Direction.FORWARD){</span>
+<span class="nc" id="L234">			forwardQualitiesTowardsConsensus.get(consensusOffset).add(position);</span>
+		}else{
+<span class="nc" id="L236">			reverseQualitiesTowardsConsensus.get(consensusOffset).add(position);</span>
+		}
+<span class="nc" id="L238">	}</span>
+	private static void removeConsensusGaps(
+			QualitySequenceBuilder consensusQualitiesBuilder,
+			int[] consensusGapsArray) {
+		//iterate backwards to preserve offset order
+<span class="nc bnc" id="L243" title="All 2 branches missed.">		for(int i=consensusGapsArray.length-1; i&gt;=0; i--){</span>
+<span class="nc" id="L244">			consensusQualitiesBuilder.delete(Range.of(consensusGapsArray[i]));</span>
+		}
+		
+<span class="nc" id="L247">	}</span>
+	
+	private static boolean notDifferentThan(int[] differenceArray, int offset){
+<span class="nc" id="L250">		return notAGap(differenceArray, offset);</span>
+	}
+	private static boolean notAGap(int[] consensusGapsArray,
+			int consensusOffset) {
+<span class="nc bnc" id="L254" title="All 2 branches missed.">		return Arrays.binarySearch(consensusGapsArray, consensusOffset)&lt;0;</span>
+	}
+	private static int computeConsensusQuality(
+			List&lt;List&lt;QualityPosition&gt;&gt; forwardQualitiesTowardsConsensus,
+			List&lt;List&lt;QualityPosition&gt;&gt; reverseQualitiesTowardsConsensus, int i) {
+<span class="nc" id="L259">		List&lt;QualityPosition&gt; forwards = forwardQualitiesTowardsConsensus.get(i);</span>
+<span class="nc" id="L260">		Collections.sort(forwards);	    		</span>
+		
+<span class="nc" id="L262">		List&lt;QualityPosition&gt; reverses = reverseQualitiesTowardsConsensus.get(i);</span>
+<span class="nc" id="L263">		Collections.sort(reverses);</span>
+		
+<span class="nc bnc" id="L265" title="All 2 branches missed.">		byte highestForwardQuality = forwards.isEmpty()? 0 : forwards.get(forwards.size()-1).quality;</span>
+<span class="nc bnc" id="L266" title="All 2 branches missed.">		byte highestReverseQuality = reverses.isEmpty()? 0 : reverses.get(reverses.size()-1).quality;</span>
+  	
+<span class="nc" id="L268">		int sum = highestForwardQuality + highestReverseQuality;</span>
+<span class="nc bnc" id="L269" title="All 4 branches missed.">		if(hasBonusCoverage(forwards) || hasBonusCoverage(reverses)){</span>
+<span class="nc" id="L270">			sum +=BONUS_VALUE;</span>
+		}
+<span class="nc" id="L272">		return Math.min(sum, MAX_CONSED_COMPUTED_QUALITY);</span>
+	}
+	public static boolean readMatchesWindow(int[] consensusGapsArray,
+			int consensusLength, AssembledRead read, long start,
+			int[] differenceArray, int i) {
+<span class="nc" id="L277">		boolean windowMatches = notDifferentThan(differenceArray, i);</span>
+<span class="nc" id="L278">		int windowLeftSize = computeWindowLeft(consensusGapsArray, i+ start);</span>
+		
+<span class="nc bnc" id="L280" title="All 6 branches missed.">		for(int j= i-windowLeftSize; windowMatches &amp;&amp; j&gt;=0 &amp;&amp; j&lt;i; j++){</span>
+<span class="nc" id="L281">			windowMatches = notDifferentThan(differenceArray, j);</span>
+		}
+<span class="nc bnc" id="L283" title="All 2 branches missed.">		if(windowMatches){</span>
+			//short circuit so we don't do any extra computations
+<span class="nc" id="L285">			int windowRightSize = computeWindowRight(consensusGapsArray, i+start, consensusLength);</span>
+<span class="nc bnc" id="L286" title="All 6 branches missed.">			for(int j= i+1; windowMatches &amp;&amp; j&lt;=i+windowRightSize &amp;&amp; j&lt;read.getGappedLength(); j++){</span>
+<span class="nc" id="L287">				windowMatches = notDifferentThan(differenceArray, j);</span>
+			}
+		}
+<span class="nc" id="L290">		return windowMatches;</span>
+	}
+    private static int[] toIntArray(Collection&lt;Integer&gt; ints){
+<span class="nc" id="L293">    	int[] array = new int[ints.size()];</span>
+<span class="nc" id="L294">		Iterator&lt;Integer&gt; iter = ints.iterator();</span>
+<span class="nc bnc" id="L295" title="All 2 branches missed.">		for(int i=0;  iter.hasNext(); i++){</span>
+<span class="nc" id="L296">			array[i]=iter.next().intValue();</span>
+		}
+<span class="nc" id="L298">		return array;</span>
+    }
+    private static int computeWindowLeft(int[] consensusGapsArray, long startPosition) {
+<span class="nc" id="L301">		int numberOfBasesInWindow=0;</span>
+<span class="nc" id="L302">		int position = (int)startPosition-1;</span>
+<span class="nc bnc" id="L303" title="All 4 branches missed.">		while(position &gt;=0 &amp;&amp; numberOfBasesInWindow &lt; NUMBER_OF_NON_GAPS_IN_WINDOW){</span>
+			
+<span class="nc bnc" id="L305" title="All 2 branches missed.">			if(notAGap(consensusGapsArray, position)){</span>
+				//not a gap
+<span class="nc" id="L307">				numberOfBasesInWindow++;</span>
+			}
+<span class="nc" id="L309">			position--;</span>
+		}
+<span class="nc" id="L311">		return numberOfBasesInWindow;</span>
+	}
+    
+    private static int computeWindowRight(int[] consensusGapsArray, long startPosition, int consensusLength) {
+<span class="nc" id="L315">		int numberOfBasesInWindow=0;</span>
+<span class="nc" id="L316">		int position = (int)startPosition+1;</span>
+<span class="nc" id="L317">		int numberOfNonGapsInWindow=0;</span>
+<span class="nc bnc" id="L318" title="All 4 branches missed.">		while(position &lt;consensusLength &amp;&amp; numberOfNonGapsInWindow &lt; NUMBER_OF_NON_GAPS_IN_WINDOW){</span>
+			
+<span class="nc bnc" id="L320" title="All 2 branches missed.">			if(notAGap(consensusGapsArray, position)){</span>
+				//not a gap
+<span class="nc" id="L322">				numberOfNonGapsInWindow++;				</span>
+			}
+<span class="nc" id="L324">			numberOfBasesInWindow++;</span>
+<span class="nc" id="L325">			position++;</span>
+		}
+<span class="nc" id="L327">		return numberOfBasesInWindow;</span>
+	}
+    
+    
+	private static boolean hasBonusCoverage(List&lt;QualityPosition&gt; forwards) {
+<span class="nc bnc" id="L332" title="All 2 branches missed.">		if(forwards.isEmpty()){</span>
+<span class="nc" id="L333">			return false;</span>
+		}
+<span class="nc" id="L335">		Iterator&lt;QualityPosition&gt; iter = forwards.iterator();</span>
+<span class="nc" id="L336">		long firstOffset = iter.next().startOffset;</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">		while(iter.hasNext()){</span>
+<span class="nc" id="L338">			long nextOffset = iter.next().startOffset;</span>
+<span class="nc bnc" id="L339" title="All 2 branches missed.">			if(firstOffset !=nextOffset){</span>
+<span class="nc" id="L340">				return true;</span>
+			}
+<span class="nc" id="L342">		}</span>
+<span class="nc" id="L343">		return false;</span>
+	}
+	private static final class QualityPosition implements Comparable&lt;QualityPosition&gt;{
+    	private final byte quality;
+    	private final long startOffset;
+    	
+<span class="nc" id="L349">		public QualityPosition(PhredQuality quality, long startOffset) {</span>
+<span class="nc" id="L350">			this.quality = quality.getQualityScore();</span>
+<span class="nc" id="L351">			this.startOffset = startOffset;</span>
+<span class="nc" id="L352">		}</span>
+
+		@Override
+		public int compareTo(QualityPosition other) {
+<span class="nc" id="L356">			return JillionUtil.compare(quality, other.quality);</span>
+		}
+
+		@Override
+		public int hashCode() {
+<span class="nc" id="L361">			final int prime = 31;</span>
+<span class="nc" id="L362">			int result = 1;</span>
+<span class="nc" id="L363">			result = prime * result + quality;</span>
+<span class="nc" id="L364">			result = prime * result</span>
+					+ (int) (startOffset ^ (startOffset &gt;&gt;&gt; 32));
+<span class="nc" id="L366">			return result;</span>
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+<span class="nc bnc" id="L371" title="All 2 branches missed.">			if (this == obj) {</span>
+<span class="nc" id="L372">				return true;</span>
+			}
+<span class="nc bnc" id="L374" title="All 2 branches missed.">			if (obj == null) {</span>
+<span class="nc" id="L375">				return false;</span>
+			}
+<span class="nc bnc" id="L377" title="All 2 branches missed.">			if (!(obj instanceof QualityPosition)) {</span>
+<span class="nc" id="L378">				return false;</span>
+			}
+<span class="nc" id="L380">			QualityPosition other = (QualityPosition) obj;</span>
+<span class="nc bnc" id="L381" title="All 2 branches missed.">			if (quality != other.quality) {</span>
+<span class="nc" id="L382">				return false;</span>
+			}
+<span class="nc bnc" id="L384" title="All 2 branches missed.">			if (startOffset != other.startOffset) {</span>
+<span class="nc" id="L385">				return false;</span>
+			}
+<span class="nc" id="L387">			return true;</span>
+		}
+    	
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

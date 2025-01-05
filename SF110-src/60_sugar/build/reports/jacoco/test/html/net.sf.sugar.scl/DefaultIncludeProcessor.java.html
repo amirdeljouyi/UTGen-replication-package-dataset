@@ -1,0 +1,434 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DefaultIncludeProcessor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">60_sugar</a> &gt; <a href="index.source.html" class="el_package">net.sf.sugar.scl</a> &gt; <span class="el_source">DefaultIncludeProcessor.java</span></div><h1>DefaultIncludeProcessor.java</h1><pre class="source lang-java linenums">package net.sf.sugar.scl;
+
+import static net.sf.sugar.scl.DefaultIncludeProcessor.SupportedSchemes.*;
+import org.antlr.runtime.ANTLRInputStream;
+import org.antlr.runtime.CommonTokenStream;
+import org.antlr.runtime.RecognitionException;
+import org.w3c.dom.*;
+
+import javax.xml.xpath.XPath;
+import javax.xml.xpath.XPathConstants;
+import javax.xml.xpath.XPathExpressionException;
+import javax.xml.xpath.XPathFactory;
+import java.io.*;
+import java.net.MalformedURLException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.*;
+import static net.sf.sugar.scl.SCLParser.SCL_ROOT_ELEMENT;
+
+/**
+ * Created by IntelliJ IDEA.
+ * User: kbishop
+ * Date: 02-Aug-2008
+ * Time: 15:29:27
+ * &lt;p/&gt;
+ * process SCL includes according to the following rules
+ * &lt;p/&gt;
+ * 1)  URI's beginning with 'http' or 'https' will be loaded over the network.
+ * 2)  URI's beginning with 'file' wil be loaded from the filesystem.
+ * 3)  URI's beginning with 'classpath' will be loaded by the ContextClassloader.
+ *
+ * @author kbishop
+ * @version $Id$
+ */
+public class DefaultIncludeProcessor implements IncludeProcessor {
+
+    /**
+     *  The one and only root SCL file which was the first to be parsed.
+     *
+     */
+    private final URI rootSCLFile;
+
+    private final Document rootDocument;
+
+    private final XPathFactory xPathFactory;
+
+<span class="nc" id="L47">    private final Map&lt;URI, IncludeHolder&gt; includeCache = new HashMap&lt;URI, IncludeHolder&gt;();</span>
+    
+    /**
+     * A location to cache all the includes which have been read or downloaded.
+     * We do this so we can handle self references and cyclical references appropriately.
+     */
+<span class="nc" id="L53">    private final List&lt;Include&gt; includes = new ArrayList&lt;Include&gt;();</span>
+
+
+<span class="nc" id="L56">    public static enum SupportedSchemes {</span>
+<span class="nc" id="L57">        http, jar, classpath, file</span>
+    }
+
+<span class="nc" id="L60">    public DefaultIncludeProcessor(URI rootSCLFile, Document rootDocument) {</span>
+<span class="nc" id="L61">        this.xPathFactory = XPathFactory.newInstance();</span>
+<span class="nc" id="L62">        this.rootSCLFile = rootSCLFile;</span>
+<span class="nc" id="L63">        this.rootDocument = rootDocument;</span>
+<span class="nc" id="L64">    }</span>
+
+    public void prepareInclude(final Element parentElement, String includeLocation, final URI parentLocation) throws IncludeException {
+<span class="nc" id="L67">        final URI includeLocationURI = resolveIncludeLocation(includeLocation, parentLocation);</span>
+
+<span class="nc bnc" id="L69" title="All 2 branches missed.">        if (!this.includeCache.containsKey(includeLocationURI)) {</span>
+<span class="nc" id="L70">            this.includeCache.put(includeLocationURI, new IncludeHolder());</span>
+        }
+
+<span class="nc" id="L73">        final IncludeHolder holder = this.includeCache.get(includeLocationURI);</span>
+
+<span class="nc" id="L75">        Include include = new Include() {</span>
+            {
+<span class="nc" id="L77">                setParentURI(parentLocation);</span>
+<span class="nc" id="L78">                setParentElement(parentElement);</span>
+<span class="nc" id="L79">                setIncludeURI(includeLocationURI);</span>
+<span class="nc" id="L80">                setIncludeHolder(holder);</span>
+<span class="nc" id="L81">            }</span>
+        };
+
+<span class="nc" id="L84">        includes.add(include);</span>
+<span class="nc" id="L85">    }</span>
+
+    public void prepareInclude(final Element parentElement, String includeLocation, final URI parentLocation, final String xpathQuery) throws IncludeException {
+<span class="nc" id="L88">        final URI includeLocationURI = resolveIncludeLocation(includeLocation, parentLocation);</span>
+
+<span class="nc bnc" id="L90" title="All 2 branches missed.">        if (!this.includeCache.containsKey(includeLocationURI)) {</span>
+<span class="nc" id="L91">            this.includeCache.put(includeLocationURI, new IncludeHolder());</span>
+        }
+
+<span class="nc" id="L94">        final IncludeHolder holder = this.includeCache.get(includeLocationURI);</span>
+
+<span class="nc" id="L96">        IncludePartial include = new IncludePartial() {</span>
+            {
+<span class="nc" id="L98">                setParentURI(parentLocation);</span>
+<span class="nc" id="L99">                setParentElement(parentElement);</span>
+<span class="nc" id="L100">                setIncludeURI(includeLocationURI);</span>
+<span class="nc" id="L101">                setXPathQuery(xpathQuery);</span>
+<span class="nc" id="L102">                setIncludeHolder(holder);</span>
+<span class="nc" id="L103">            }</span>
+        };
+
+<span class="nc" id="L106">        includes.add(include);</span>
+<span class="nc" id="L107">    }</span>
+
+    public void prepareIncludeValue(final Element parentElement,
+                                    final String propertyName,
+                                    String includeLocation,
+                                    final URI parentLocation,
+                                    final String xpathQuery) throws IncludeException {
+        
+<span class="nc" id="L115">        final URI includeLocationURI = resolveIncludeLocation(includeLocation, parentLocation);</span>
+
+<span class="nc bnc" id="L117" title="All 2 branches missed.">        if (!this.includeCache.containsKey(includeLocationURI)) {</span>
+<span class="nc" id="L118">            this.includeCache.put(includeLocationURI, new IncludeHolder());</span>
+        }
+
+<span class="nc" id="L121">        final IncludeHolder holder = this.includeCache.get(includeLocationURI);</span>
+
+<span class="nc" id="L123">        IncludeValue include = new IncludeValue() {</span>
+            {
+<span class="nc" id="L125">                setParentURI(parentLocation);</span>
+<span class="nc" id="L126">                setParentElement(parentElement);</span>
+<span class="nc" id="L127">                setIncludeURI(includeLocationURI);</span>
+<span class="nc" id="L128">                setXPathQuery(xpathQuery);</span>
+<span class="nc" id="L129">                setIncludeHolder(holder);</span>
+<span class="nc" id="L130">                setPropertyName(propertyName);</span>
+<span class="nc" id="L131">            }</span>
+        };
+
+<span class="nc" id="L134">        includes.add(include);</span>
+<span class="nc" id="L135">    }</span>
+
+    /**
+     * Uses the SCL Parser and Lexer to process the include.
+     *
+     * @param includeLocationURI - a String to be parsed into a URI, representing the location of the include to process.
+     * @return Document - an XML DOM representation of the SCL configuration.
+     * @throws IncludeException - thrown if there is an I/O problem or an ANTLR specific problem.
+     */
+    Document processInclude(URI includeLocationURI) throws IncludeException {
+
+<span class="nc" id="L146">        InputStream is = this.loadInclude(includeLocationURI);</span>
+
+        SCLLexer lexer;
+
+        try {
+<span class="nc" id="L151">            lexer = new SCLLexer(new ANTLRInputStream(is));</span>
+
+<span class="nc" id="L153">            CommonTokenStream tokens = new CommonTokenStream(lexer);</span>
+<span class="nc" id="L154">            SCLParser parser = new SCLParser(tokens);</span>
+<span class="nc" id="L155">            parser.setRootSCLFile(includeLocationURI);</span>
+<span class="nc" id="L156">            parser.setIncludeProcessor(this);</span>
+
+<span class="nc" id="L158">            return parser.scl();</span>
+
+<span class="nc" id="L160">        } catch (RecognitionException re) {</span>
+<span class="nc" id="L161">            throw new IncludeException(&quot;unable to parse include [&quot; + includeLocationURI + &quot;]&quot;, re);</span>
+<span class="nc" id="L162">        } catch (IOException ioe) {</span>
+<span class="nc" id="L163">            throw new IncludeException(&quot;an error occurred while parsing include [&quot; + includeLocationURI + &quot;]&quot;, ioe);</span>
+        }
+    }
+
+    private URI resolveIncludeLocation(String includeLocation, URI parentLocation) throws IncludeException {
+        URI includeLocationURI;
+        try {
+<span class="nc" id="L170">            includeLocationURI = parentLocation.resolve(new URI(includeLocation));</span>
+
+            //deal this jar:file type URIs differently as this is broken in the JRE
+<span class="nc bnc" id="L173" title="All 2 branches missed.">            if (jar.name().equals(parentLocation.getScheme())) {</span>
+<span class="nc" id="L174">                String parentQuery = parentLocation.toString();</span>
+<span class="nc" id="L175">                String[] components = parentQuery.split(&quot;!&quot;);</span>
+<span class="nc" id="L176">                String newInnerJarPath = new URI(components[1]).resolve(includeLocation).toString();</span>
+<span class="nc" id="L177">                includeLocationURI = new URI(components[0] + &quot;!&quot; + newInnerJarPath);</span>
+            }
+
+<span class="nc" id="L180">        } catch (URISyntaxException urise) {</span>
+<span class="nc" id="L181">            throw new IncludeException(&quot;unable to include file [&quot; + includeLocation + &quot;]&quot;, urise);</span>
+<span class="nc" id="L182">        }</span>
+<span class="nc" id="L183">        return includeLocationURI;</span>
+    }
+
+    /**
+     * This method takes the include location and the parent location, and attempts to resolve the location of the
+     * include based on the URI of the parent.
+     * &lt;p/&gt;
+     * For instance, if the parent URI is http://foo.com/root.scl and that file includes 'inc1.scl' , then the resolved
+     * URI for the include will be http://foo.com/inc1.scl
+     *
+     * @param includeLocation - a String which will b parsed into a URI in order to resolve the include's location.
+     * @return java.io.InputStream
+     * @throws IncludeException - an exception notifying the caller that it was unable to load the include
+     */
+    InputStream loadInclude(URI includeLocation) throws IncludeException {
+
+<span class="nc" id="L199">        String scheme = includeLocation.getScheme();</span>
+
+<span class="nc bnc" id="L201" title="All 2 branches missed.">        if (http.name().equals(scheme)) {</span>
+<span class="nc" id="L202">            return loadIncludeFromHttp(includeLocation);</span>
+        }
+
+<span class="nc bnc" id="L205" title="All 2 branches missed.">        if (classpath.name().equals(scheme)) {</span>
+<span class="nc" id="L206">            return loadIncludeFromClasspath(includeLocation);</span>
+        }
+
+<span class="nc bnc" id="L209" title="All 2 branches missed.">        if (jar.name().equals(scheme)) {</span>
+<span class="nc" id="L210">            return loadIncludeFromJar(includeLocation);</span>
+        }
+
+<span class="nc bnc" id="L213" title="All 2 branches missed.">        if (file.name().equals(scheme)) {</span>
+<span class="nc" id="L214">            return loadIncludeFromFilesystem(includeLocation);</span>
+        }
+
+<span class="nc" id="L217">        throw new IncludeException(&quot;include statements must use the following schemes &quot;</span>
+<span class="nc" id="L218">                + Arrays.toString(SupportedSchemes.values()));</span>
+
+    }
+
+    private InputStream loadIncludeFromJar(URI uri) throws IncludeException {
+        try {
+<span class="nc" id="L224">            return (uri.toURL().openConnection()).getInputStream();</span>
+<span class="nc" id="L225">        } catch (MalformedURLException murle) {</span>
+<span class="nc" id="L226">            throw new IncludeException(&quot;unable to load the include [&quot; + uri + &quot;] it is an invalid URI : &quot;, murle);</span>
+<span class="nc" id="L227">        } catch (IOException ioe) {</span>
+<span class="nc" id="L228">            throw new IncludeException(&quot;unable to load the include [&quot; + uri + &quot;]&quot;, ioe);</span>
+        }
+    }
+
+    private InputStream loadIncludeFromClasspath(URI uri)  {
+<span class="nc" id="L233">        String path = uri.getPath();</span>
+<span class="nc" id="L234">        return getClass().getClassLoader().getResourceAsStream(path);</span>
+    }
+
+    private InputStream loadIncludeFromFilesystem(URI uri) throws IncludeException {
+        try {
+<span class="nc" id="L239">            return new FileInputStream(new File(uri));</span>
+<span class="nc" id="L240">        } catch (IOException ioe) {</span>
+<span class="nc" id="L241">            throw new IncludeException(&quot;unable to load include [&quot; + uri + &quot;] from filesystem : &quot;, ioe);</span>
+        }
+    }
+
+    private InputStream loadIncludeFromHttp(URI uri) throws IncludeException {
+        try {
+<span class="nc" id="L247">            return uri.toURL().openStream();</span>
+<span class="nc" id="L248">        } catch (IOException ioe) {</span>
+<span class="nc" id="L249">            throw new IncludeException(&quot;unable to load include [&quot; + uri + &quot;] over http : &quot;, ioe);</span>
+        }
+    }
+
+    /**
+     * This method does the clever work of connecting each parsed DOM to the parent document that included it.
+     *
+     * When the parser finds an include during the parse, it calls the relevant prepareInclude() method,
+     * prepareInclude() adds the relevant information to a global list of includes.
+     * Once the rest of the document has been parsed, then this method is called.
+     *
+     * Resolution involves the following steps :
+     * &lt;ol&gt;
+     * &lt;li&gt;Find the includes to be processed for this document.&lt;/li&gt;
+     * &lt;li&gt;Check for circular dependencies.  (i.e. any include which eventually leads to being included itself)&lt;li&gt;
+     * &lt;li&gt;Process the include (i.e. start to parse it) and store the resulting DOM in the relevant &lt;code&gt;Include&lt;/code&gt; object.&lt;li&gt;
+     * &lt;li&gt;In the case of a circular depencency being found, there is no need to parse that include as the document will have already been parsed.
+     *     Instead we just call findBenignDocument() which will return the required DOM, but without any of its includes (as they wont be processed).&lt;li&gt;
+     * &lt;li&gt;Once the relevant DOM objects have been built each one is then added to the relevent element in the parent document.
+     * In the case of includes which are filtered by an XPath expression, the resulting nodes of the XPath expression are added to the parent DOM.&lt;/li&gt;
+     * &lt;li&gt;Set the 'resolved' status of the Include to true, to prevent it being picked up again.&lt;/li&gt;
+     * &lt;/ol&gt;
+     *
+     * @param currentDocument - the document currently being precessed by the parser.
+     * @throws IncludeException - thrown if the include procesing fails or if any XPath queries break.
+     */
+    public void resolveIncludes(Document currentDocument) throws IncludeException {
+
+        //copy the include cache as processing the includes will modify it
+<span class="nc" id="L278">        List&lt;Include&gt; snapshot = findUnresolvedIncludes(currentDocument);</span>
+
+<span class="nc bnc" id="L280" title="All 2 branches missed.">        for (Include include : snapshot) {</span>
+<span class="nc" id="L281">            Include circularInclude = this.getCircularInclude(include, include.getParentURI());</span>
+
+<span class="nc bnc" id="L283" title="All 2 branches missed.">            if ((circularInclude != null)) {</span>
+
+<span class="nc" id="L285">                Document benignDocument = findBenignDocument(circularInclude);</span>
+<span class="nc" id="L286">                include.getIncludeHolder().setDocument(benignDocument);</span>
+
+<span class="nc bnc" id="L288" title="All 2 branches missed.">            } else if (include.getIncludeHolder().getDocument() == null) {</span>
+<span class="nc" id="L289">                Document includedDocument = this.processInclude(include.getIncludeURI());</span>
+<span class="nc" id="L290">                include.getIncludeHolder().setDocument(includedDocument);</span>
+            }
+<span class="nc" id="L292">        }</span>
+
+<span class="nc bnc" id="L294" title="All 2 branches missed.">        for (Include include : snapshot) {</span>
+<span class="nc" id="L295">            Element parentElement = include.getParentElement();</span>
+
+<span class="nc bnc" id="L297" title="All 2 branches missed.">            if (include instanceof IncludeValue) {</span>
+<span class="nc" id="L298">                IncludeValue includeValue = (IncludeValue)include;</span>
+<span class="nc" id="L299">                String xPathQuery = includeValue.getXPathQuery();</span>
+
+                try {
+<span class="nc" id="L302">                    XPath xpath = this.xPathFactory.newXPath();</span>
+<span class="nc" id="L303">                    String value = (String)xpath.evaluate(&quot;/&quot;+ SCL_ROOT_ELEMENT + &quot;/&quot; + xPathQuery, include.getIncludeHolder().getDocument().getDocumentElement(), XPathConstants.STRING);</span>
+<span class="nc" id="L304">                    Element property = currentDocument.createElement(includeValue.getPropertyName());</span>
+<span class="nc" id="L305">                    property.setTextContent(value);</span>
+<span class="nc" id="L306">                    parentElement.appendChild(property);</span>
+                    
+<span class="nc" id="L308">                } catch (XPathExpressionException xpee) {</span>
+<span class="nc" id="L309">                    throw new IncludeException(&quot;unable to evaluate XPath query : &quot; + xpee, xpee);</span>
+<span class="nc" id="L310">                }</span>
+<span class="nc" id="L311">            } else {</span>
+                NodeList resolvedNodes;
+
+<span class="nc bnc" id="L314" title="All 2 branches missed.">                if (include instanceof IncludePartial) {</span>
+<span class="nc" id="L315">                    String xpathQuery = ((IncludePartial)include).getXPathQuery();</span>
+
+                    try {
+<span class="nc" id="L318">                        XPath xpath = this.xPathFactory.newXPath();</span>
+<span class="nc" id="L319">                        resolvedNodes = (NodeList)xpath.evaluate(&quot;/&quot;+ SCL_ROOT_ELEMENT + &quot;/&quot; + xpathQuery, include.getIncludeHolder().getDocument().getDocumentElement(), XPathConstants.NODESET);</span>
+<span class="nc" id="L320">                    } catch (XPathExpressionException xpee) {</span>
+<span class="nc" id="L321">                        throw new IncludeException(&quot;unable to evaluate XPath query : &quot; + xpee, xpee);</span>
+<span class="nc" id="L322">                    }</span>
+<span class="nc" id="L323">                } else {</span>
+<span class="nc" id="L324">                    resolvedNodes = include.getIncludeHolder().getDocument().getDocumentElement().getChildNodes();</span>
+                }
+
+<span class="nc bnc" id="L327" title="All 2 branches missed.">                for (int i = 0; i &lt; resolvedNodes.getLength(); i++) {</span>
+<span class="nc" id="L328">                    Node importedNode = currentDocument.importNode(resolvedNodes.item(i), true);</span>
+<span class="nc" id="L329">                    parentElement.appendChild(importedNode);</span>
+                }
+            }
+
+<span class="nc" id="L333">            include.setFullyResolved();</span>
+<span class="nc" id="L334">        }</span>
+<span class="nc" id="L335">    }</span>
+
+    public void loadUnparsedInclude(Element parentElement,
+                                    String propertyName,
+                                    String includeLocation,
+                                    URI parentLocation) throws IncludeException {
+
+<span class="nc" id="L342">        final URI includeLocationURI = resolveIncludeLocation(includeLocation, parentLocation);</span>
+
+<span class="nc" id="L344">        InputStream is = this.loadInclude(includeLocationURI);</span>
+
+<span class="nc" id="L346">        StringBuilder builder = new StringBuilder(256);</span>
+<span class="nc" id="L347">        int charRead = 0;</span>
+
+        try {
+<span class="nc bnc" id="L350" title="All 2 branches missed.">            while ((charRead = is.read()) != -1) {</span>
+<span class="nc" id="L351">                builder.append((char)charRead);</span>
+            }
+<span class="nc" id="L353">        } catch (IOException e) {</span>
+<span class="nc" id="L354">            e.printStackTrace();</span>
+<span class="nc" id="L355">        }</span>
+
+<span class="nc" id="L357">        Element property = parentElement.getOwnerDocument().createElement(propertyName);</span>
+<span class="nc" id="L358">        CDATASection cdata = parentElement.getOwnerDocument().createCDATASection(builder.toString());</span>
+<span class="nc" id="L359">        property.appendChild(cdata);</span>
+<span class="nc" id="L360">        parentElement.appendChild(property);</span>
+<span class="nc" id="L361">    }</span>
+
+    /**
+     * This method finds includes contained in the global list of includes, which belong to the DOM being currently
+     * processed AND are not already processed.
+     * 
+     * @param currentDocument - the docuement to find the nresolved includes for.
+     * @return List&lt;Include&gt; - the list of unprocessed includes for the current document.
+     */
+    private List&lt;Include&gt; findUnresolvedIncludes(Document currentDocument) {
+<span class="nc" id="L371">        List&lt;Include&gt; unresolvedIncludes = new ArrayList&lt;Include&gt;();</span>
+<span class="nc bnc" id="L372" title="All 2 branches missed.">        for (Include include : this.includes) {</span>
+<span class="nc" id="L373">            Document includeParentDocument = include.getParentElement().getOwnerDocument();</span>
+
+<span class="nc bnc" id="L375" title="All 4 branches missed.">            if (!include.isFullyResolved() &amp;&amp; includeParentDocument.equals(currentDocument)) {</span>
+<span class="nc" id="L376">                unresolvedIncludes.add(include);</span>
+            }
+<span class="nc" id="L378">        }</span>
+<span class="nc" id="L379">        return unresolvedIncludes;</span>
+    }
+
+    /**
+     *  Detects circular references in the include graph by identifying if the parent of the current include
+     *  exists in the includeCache but is unresolved and also has children which are unresolved.
+     *
+     *
+     *
+     * @param include - the include to check fo circular dependencies on.
+     * @param parentURI - the URI of
+     * @return include - the
+     */
+    private Include getCircularInclude(Include include, URI parentURI) {
+<span class="nc bnc" id="L393" title="All 2 branches missed.">        for (Include i : this.includes) {</span>
+<span class="nc bnc" id="L394" title="All 4 branches missed.">            if (i.getIncludeURI().equals(parentURI) &amp;&amp; i.getIncludeHolder().getDocument() == null) {</span>
+<span class="nc bnc" id="L395" title="All 2 branches missed.">                if(i.getIncludeURI().equals(include.getIncludeURI())) {</span>
+<span class="nc" id="L396">                    return include;</span>
+                } else {
+<span class="nc" id="L398">                    return this.getCircularInclude(include, i.getParentURI());</span>
+                }
+            }
+<span class="nc" id="L401">        }</span>
+<span class="nc" id="L402">        return null;</span>
+    }
+
+    /**
+     *  This is effectively the Document at the beginning of a circular include.
+     *  Once the circular include has been located, then we need to find any include which is a child of this one as
+     *  that will contain the reference to the Document (via the parent element) that we need.
+     *
+     *  At this point we will expect that the document will be built but any includes will not be present, hence the term
+     *  'Benign' (as in self limiting) .
+     *
+     *  If the include is of the root document then that is returned instead. It is assumed that an instance of this object
+     *  is constructed with a reference to the root URI and root DOM document (which is created by instantiating the SCLParser).
+     * 
+     * @param circularInclude - the include which we are checking.
+     * @return - Document the benign version of the document to include.
+     */
+    private Document findBenignDocument(Include circularInclude) {
+<span class="nc bnc" id="L420" title="All 2 branches missed.">        if (circularInclude.getIncludeURI().equals(this.rootSCLFile)) {</span>
+<span class="nc" id="L421">            return this.rootDocument;</span>
+        } else {
+<span class="nc bnc" id="L423" title="All 2 branches missed.">            for (Include includeChild : this.includes) {</span>
+<span class="nc bnc" id="L424" title="All 2 branches missed.">                if (includeChild.getParentURI().equals(circularInclude.getIncludeURI())) {</span>
+<span class="nc" id="L425">                    return includeChild.getParentElement().getOwnerDocument();</span>
+                }
+<span class="nc" id="L427">            }</span>
+        }
+<span class="nc" id="L429">        return null;</span>
+    }
+}
+
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

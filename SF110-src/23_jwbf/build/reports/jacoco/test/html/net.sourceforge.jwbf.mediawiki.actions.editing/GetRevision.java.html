@@ -1,0 +1,288 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GetRevision.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">23_jwbf</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.jwbf.mediawiki.actions.editing</a> &gt; <span class="el_source">GetRevision.java</span></div><h1>GetRevision.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2007 Thomas Stock.
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
+ *
+ * Contributors:
+ *
+ */
+package net.sourceforge.jwbf.mediawiki.actions.editing;
+
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_09;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_10;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_11;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_12;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_13;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_14;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_15;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_16;
+
+import java.io.IOException;
+import java.io.Reader;
+import java.io.StringReader;
+import java.text.ParseException;
+import java.util.Iterator;
+
+import lombok.extern.slf4j.Slf4j;
+import net.sourceforge.jwbf.core.actions.Get;
+import net.sourceforge.jwbf.core.actions.util.ActionException;
+import net.sourceforge.jwbf.core.actions.util.HttpAction;
+import net.sourceforge.jwbf.core.actions.util.ProcessException;
+import net.sourceforge.jwbf.core.contentRep.SimpleArticle;
+import net.sourceforge.jwbf.mediawiki.actions.MediaWiki;
+import net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version;
+import net.sourceforge.jwbf.mediawiki.actions.util.ApiException;
+import net.sourceforge.jwbf.mediawiki.actions.util.MWAction;
+import net.sourceforge.jwbf.mediawiki.actions.util.SupportedBy;
+
+import org.jdom.Document;
+import org.jdom.Element;
+import org.jdom.JDOMException;
+import org.jdom.input.SAXBuilder;
+import org.xml.sax.InputSource;
+
+/**
+ * Reads the content of a given article.
+ * 
+ * @author Thomas Stock
+ * 
+ * 
+ */
+<span class="nc" id="L61">@Slf4j</span>
+@SupportedBy({ MW1_09, MW1_10, MW1_11, MW1_12, MW1_13, MW1_14, MW1_15, MW1_16 })
+public class GetRevision extends MWAction {
+
+  private final SimpleArticle sa;
+
+  public static final int CONTENT = 1 &lt;&lt; 1;
+  public static final int TIMESTAMP = 1 &lt;&lt; 2;
+  public static final int USER = 1 &lt;&lt; 3;
+  public static final int COMMENT = 1 &lt;&lt; 4;
+  public static final int IDS = 1 &lt;&lt; 5;
+  public static final int FLAGS = 1 &lt;&lt; 6;
+
+  public static final int FIRST = 1 &lt;&lt; 30;
+  public static final int LAST = 1 &lt;&lt; 31;
+
+  private final int properties;
+
+  private final Get msg;
+
+<span class="nc" id="L81">  private boolean singleProcess = true;</span>
+
+  private final Version botVersion;
+
+  /**
+   * TODO follow redirects. TODO change constructor fild ordering; bot
+   * 
+   * @throws ProcessException
+   *           a
+   * @throws ActionException
+   *           a
+   * @param articlename
+   *          of
+   * @param properties
+   *          the
+   * @param v
+   *          the
+   */
+  public GetRevision(Version v, final String articlename, final int properties)
+      throws ProcessException {
+<span class="nc" id="L101">    super(v);</span>
+<span class="nc" id="L102">    botVersion = v;</span>
+    // if (!bot.getUserinfo().getRights().contains(&quot;read&quot;)) {
+    // throw new
+    // ActionException(&quot;reading is not permited, make sure that this account is able to read&quot;);
+    // } FIXME check if
+
+<span class="nc" id="L108">    this.properties = properties;</span>
+<span class="nc" id="L109">    sa = new SimpleArticle();</span>
+<span class="nc" id="L110">    sa.setTitle(articlename);</span>
+<span class="nc" id="L111">    String uS = &quot;/api.php?action=query&amp;prop=revisions&amp;titles=&quot;</span>
+<span class="nc" id="L112">        + MediaWiki.encode(articlename) + &quot;&amp;rvprop=&quot;</span>
+<span class="nc" id="L113">        + getDataProperties(properties) + getReversion(properties)</span>
+        + &quot;&amp;rvlimit=1&quot; + &quot;&amp;format=xml&quot;;
+<span class="nc" id="L115">    msg = new Get(uS);</span>
+
+<span class="nc" id="L117">  }</span>
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public String processReturningText(final String s, HttpAction ha)
+      throws ProcessException {
+<span class="nc bnc" id="L125" title="All 4 branches missed.">    if (msg.getRequest().equals(ha.getRequest()) &amp;&amp; singleProcess) {</span>
+<span class="nc bnc" id="L126" title="All 2 branches missed.">      if (log.isDebugEnabled()) { // TODO no very nice debug here</span>
+<span class="nc bnc" id="L127" title="All 2 branches missed.">        if (s.length() &lt; 151) {</span>
+<span class="nc" id="L128">          log.debug(s);</span>
+        } else {
+<span class="nc" id="L130">          log.debug(&quot;...&quot; + s.substring(50, 150) + &quot;...&quot;);</span>
+        }
+
+      }
+
+<span class="nc" id="L135">      parse(s);</span>
+<span class="nc" id="L136">      singleProcess = false;</span>
+
+    }
+<span class="nc" id="L139">    return &quot;&quot;;</span>
+  }
+
+  /**
+   * TODO Not very nice implementation.
+   * 
+   * @param property
+   *          the
+   * @return a
+   */
+  private String getDataProperties(final int property) {
+<span class="nc" id="L150">    String properties = &quot;&quot;;</span>
+
+<span class="nc bnc" id="L152" title="All 2 branches missed.">    if ((property &amp; CONTENT) &gt; 0) {</span>
+<span class="nc" id="L153">      properties += &quot;content|&quot;;</span>
+    }
+<span class="nc bnc" id="L155" title="All 2 branches missed.">    if ((property &amp; COMMENT) &gt; 0) {</span>
+<span class="nc" id="L156">      properties += &quot;comment|&quot;;</span>
+    }
+<span class="nc bnc" id="L158" title="All 2 branches missed.">    if ((property &amp; TIMESTAMP) &gt; 0) {</span>
+<span class="nc" id="L159">      properties += &quot;timestamp|&quot;;</span>
+    }
+<span class="nc bnc" id="L161" title="All 2 branches missed.">    if ((property &amp; USER) &gt; 0) {</span>
+<span class="nc" id="L162">      properties += &quot;user|&quot;;</span>
+    }
+<span class="nc bnc" id="L164" title="All 4 branches missed.">    if ((property &amp; IDS) &gt; 0 &amp;&amp; botVersion.greaterEqThen(MW1_11)) {</span>
+<span class="nc" id="L165">      properties += &quot;ids|&quot;;</span>
+    }
+<span class="nc bnc" id="L167" title="All 4 branches missed.">    if ((property &amp; FLAGS) &gt; 0 &amp;&amp; botVersion.greaterEqThen(MW1_11)) {</span>
+<span class="nc" id="L168">      properties += &quot;flags|&quot;;</span>
+    }
+
+<span class="nc bnc" id="L171" title="All 2 branches missed.">    if (properties.length() &gt; 0) {</span>
+<span class="nc" id="L172">      return MediaWiki.encode(properties.substring(0, properties.length() - 1));</span>
+    }
+
+<span class="nc" id="L175">    return &quot;&quot;;</span>
+  }
+
+  private String getReversion(final int property) {
+<span class="nc" id="L179">    String properties = &quot;&amp;rvdir=&quot;;</span>
+
+<span class="nc bnc" id="L181" title="All 2 branches missed.">    if ((property &amp; FIRST) &gt; 0) {</span>
+<span class="nc" id="L182">      properties += &quot;newer&quot;;</span>
+    } else {
+<span class="nc" id="L184">      properties += &quot;older&quot;;</span>
+    }
+
+<span class="nc" id="L187">    return properties;</span>
+  }
+
+  private void parse(final String xml) throws ApiException {
+<span class="nc" id="L191">    SAXBuilder builder = new SAXBuilder();</span>
+<span class="nc" id="L192">    Element root = null;</span>
+    try {
+<span class="nc" id="L194">      Reader i = new StringReader(xml);</span>
+<span class="nc" id="L195">      Document doc = builder.build(new InputSource(i));</span>
+
+<span class="nc" id="L197">      root = doc.getRootElement();</span>
+
+<span class="nc" id="L199">    } catch (JDOMException e) {</span>
+<span class="nc" id="L200">      throw new RuntimeException(e);</span>
+<span class="nc" id="L201">    } catch (IOException e) {</span>
+<span class="nc" id="L202">      throw new RuntimeException(e);</span>
+<span class="nc" id="L203">    }</span>
+<span class="nc bnc" id="L204" title="All 2 branches missed.">    if (root != null)</span>
+<span class="nc" id="L205">      findContent(root);</span>
+<span class="nc" id="L206">  }</span>
+
+  /**
+   * 
+   * @return the
+   */
+  public SimpleArticle getArticle() {
+
+<span class="nc" id="L214">    return sa;</span>
+  }
+
+  private void findContent(final Element root) throws ApiException {
+    // if(log.isDebugEnabled())
+    // log.debug(&quot;try to find content in &quot; + root.getQualifiedName());
+    @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L221">    Iterator&lt;Element&gt; el = root.getChildren().iterator();</span>
+<span class="nc bnc" id="L222" title="All 2 branches missed.">    while (el.hasNext()) {</span>
+<span class="nc" id="L223">      Element element = el.next();</span>
+<span class="nc bnc" id="L224" title="All 2 branches missed.">      if (element.getQualifiedName().equalsIgnoreCase(&quot;error&quot;)) {</span>
+<span class="nc" id="L225">        throw new ApiException(element.getAttributeValue(&quot;code&quot;),</span>
+<span class="nc" id="L226">            element.getAttributeValue(&quot;info&quot;));</span>
+<span class="nc bnc" id="L227" title="All 2 branches missed.">      } else if (element.getQualifiedName().equalsIgnoreCase(&quot;rev&quot;)) {</span>
+
+        try {
+<span class="nc" id="L230">          sa.setText(element.getText());</span>
+<span class="nc" id="L231">        } catch (NullPointerException e) {</span>
+<span class="nc bnc" id="L232" title="All 2 branches missed.">          if (log.isDebugEnabled()) {</span>
+<span class="nc" id="L233">            log.debug(&quot;no text found&quot;);</span>
+          }
+<span class="nc" id="L235">        }</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">        if ((properties &amp; FLAGS) &gt; 0) {</span>
+<span class="nc bnc" id="L237" title="All 2 branches missed.">          if (element.getAttribute(&quot;minor&quot;) != null) {</span>
+<span class="nc" id="L238">            sa.setMinorEdit(true);</span>
+          } else {
+<span class="nc" id="L240">            sa.setMinorEdit(false);</span>
+          }
+        }
+
+<span class="nc" id="L244">        sa.setRevisionId(getAsStringValues(element, &quot;revid&quot;));</span>
+<span class="nc" id="L245">        sa.setEditSummary(getAsStringValues(element, &quot;comment&quot;));</span>
+<span class="nc" id="L246">        sa.setEditor(getAsStringValues(element, &quot;user&quot;));</span>
+
+<span class="nc bnc" id="L248" title="All 2 branches missed.">        if ((properties &amp; TIMESTAMP) &gt; 0) {</span>
+
+          try {
+<span class="nc" id="L251">            sa.setEditTimestamp(getAsStringValues(element, &quot;timestamp&quot;));</span>
+<span class="nc" id="L252">          } catch (ParseException e) {</span>
+<span class="nc" id="L253">            log.debug(&quot;timestamp could not be parsed&quot;);</span>
+<span class="nc" id="L254">          }</span>
+        }
+
+      } else {
+<span class="nc" id="L258">        findContent(element);</span>
+      }
+
+<span class="nc" id="L261">    }</span>
+
+<span class="nc" id="L263">  }</span>
+
+  private String getAsStringValues(Element e, String attrName) {
+<span class="nc" id="L266">    String buff = &quot;&quot;;</span>
+    try {
+<span class="nc" id="L268">      buff = e.getAttributeValue(attrName);</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">      if (buff == null) {</span>
+<span class="nc" id="L270">        throw new NullPointerException();</span>
+      }
+<span class="nc" id="L272">    } catch (Exception npe) {</span>
+      // LOG.debug(&quot;no value for &quot; + attrName );
+<span class="nc" id="L274">      buff = &quot;&quot;;</span>
+<span class="nc" id="L275">    }</span>
+    // LOG.debug(&quot;value for &quot; + attrName + &quot; = \&quot;&quot; + buff + &quot;\&quot;&quot;);
+<span class="nc" id="L277">    return buff;</span>
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  public HttpAction getNextMessage() {
+<span class="nc" id="L284">    return msg;</span>
+  }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

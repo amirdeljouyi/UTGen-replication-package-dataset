@@ -1,0 +1,632 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FileEntry.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">52_lagoon</a> &gt; <a href="index.source.html" class="el_package">nu.staldal.lagoon.core</a> &gt; <span class="el_source">FileEntry.java</span></div><h1>FileEntry.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2001-2004, Mikael St�ldal
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ * notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ * notice, this list of conditions and the following disclaimer in the
+ * documentation and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of the author nor the names of its contributors
+ * may be used to endorse or promote products derived from this software
+ * without specific prior written permission.
+ *
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ *
+ * Note: This is known as &quot;the modified BSD license&quot;. It's an approved
+ * Open Source and Free Software license, see
+ * http://www.opensource.org/licenses/
+ * and
+ * http://www.gnu.org/philosophy/license-list.html
+ */
+
+package nu.staldal.lagoon.core;
+
+import java.io.*;
+import java.util.*;
+import java.net.URL;
+import java.net.URLConnection;
+
+import javax.xml.parsers.*;
+import javax.xml.transform.Source;
+import javax.xml.transform.stream.StreamSource;
+import org.xml.sax.*;
+
+import nu.staldal.lagoon.util.*;
+import nu.staldal.util.Utils;
+
+
+/**
+ * A file in the sitemap.
+ *
+ * Contains information on how to (re)build a single file in a website.
+ *
+ * @see nu.staldal.lagoon.core.Sitemap
+ */
+class FileEntry extends EntryWithSource implements SitemapEntry, FileTarget
+{
+    private static final boolean DEBUG = true;
+
+    private Producer myProducer;
+	private OutputEntry outputEntry;
+
+    private final FileStorage targetStorage;
+	private final File tempDir;
+	private final String targetURL;
+
+    private String currentSourceURL;
+    private String currentTargetURL;
+    private String currentTargetDir;
+    private String currentTargetName;
+    private long targetLastMod;
+    private String newTarget;
+	private Vector tempFiles;
+	
+	private Vector targetThreads;
+
+	
+    /**
+     * Constructor.
+     *
+     * @param processor the LagoonProcessor.
+     * @param sitemap  the Sitemap.
+     * @param targetURL  the file to create, may contain wildcard anywhere,
+     *                   must be pseudo-absolute.
+     * @param sourceURL  the file to use, may contain wildcard in filename,
+	 *                  must absolute or pseudo-absolute, may be &lt;code&gt;null&lt;/code&gt;.
+     * @param sourceRootDir  absolute path to the source directory
+	 * @param tempDir	where to store temporary files
+     */
+    public FileEntry(LagoonProcessor processor, Sitemap sitemap, 
+					 String targetURL, String sourceURL,
+                     File sourceRootDir, File tempDir)
+        throws LagoonException
+    {
+<span class="nc" id="L103">		super(processor, sitemap, sourceURL, sourceRootDir);	</span>
+		
+<span class="nc" id="L105">        this.targetStorage = processor.getTargetLocation();</span>
+<span class="nc" id="L106">		this.tempDir = tempDir;</span>
+<span class="nc" id="L107">		this.targetURL = targetURL;</span>
+		
+<span class="nc" id="L109">        this.myProducer = null;</span>
+<span class="nc" id="L110">		this.outputEntry = null;</span>
+
+<span class="nc" id="L112">        this.currentSourceURL = null;</span>
+<span class="nc" id="L113">        this.currentTargetURL = null;</span>
+<span class="nc" id="L114">        this.targetLastMod = -1;</span>
+<span class="nc" id="L115">        this.newTarget = null;</span>
+		
+<span class="nc" id="L117">		this.targetThreads = new Vector();</span>
+<span class="nc" id="L118">    }</span>
+
+    public void destroy()
+        throws IOException
+    {
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        if (myProducer != null)</span>
+<span class="nc" id="L124">            myProducer.doDestroy();</span>
+<span class="nc" id="L125">    }</span>
+
+    public void beforeBuild(boolean always)
+        throws IOException
+    {
+<span class="nc bnc" id="L130" title="All 2 branches missed.">        if (myProducer != null)</span>
+<span class="nc" id="L131">            myProducer.doBeforeBuild();</span>
+<span class="nc" id="L132">    }</span>
+
+
+    public void afterBuild(boolean always)
+        throws IOException
+    {
+<span class="nc bnc" id="L138" title="All 2 branches missed.">        if (myProducer != null)</span>
+<span class="nc" id="L139">            myProducer.doAfterBuild();</span>
+<span class="nc" id="L140">    }</span>
+    
+
+    /**
+     * Set the ByteStreamProducer that produces the final output for this
+     * FileEntry.
+     * Used during initialization.
+     */
+    void setMyProducer(Producer prod)
+    {
+<span class="nc" id="L150">        myProducer = prod;</span>
+<span class="nc" id="L151">    }</span>
+    
+
+    void setMyOutput(OutputEntry outputEntry)
+    {
+<span class="nc" id="L156">        this.outputEntry = outputEntry;</span>
+<span class="nc" id="L157">    }</span>
+
+	
+    public boolean build(boolean always)
+        throws IOException
+    {
+<span class="nc bnc" id="L163" title="All 2 branches missed.">		if (sourceURL == null)</span>
+        {   // no main source
+<span class="nc" id="L165">	        currentSourceURL = null;</span>
+<span class="nc" id="L166">            currentTargetURL = targetURL;</span>
+<span class="nc" id="L167">            return buildFile(always);</span>
+        }
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        else if (Utils.absoluteURL(sourceURL))</span>
+        {   // absolute URL
+<span class="nc" id="L171">	        currentSourceURL = sourceURL;</span>
+<span class="nc" id="L172">            currentTargetURL = targetURL;</span>
+<span class="nc" id="L173">            return buildFile(always);</span>
+        }
+<span class="nc bnc" id="L175" title="All 2 branches missed.">        else if (Wildcard.isWildcard(sourceURL))</span>
+        {   // main source is a wildcard pattern
+<span class="nc" id="L177">			int slash = sourceURL.lastIndexOf('/');</span>
+<span class="nc" id="L178">			String sourceDirURL = sourceURL.substring(0, slash+1);</span>
+<span class="nc" id="L179">			String sourceMask = sourceURL.substring(slash+1);</span>
+<span class="nc" id="L180">			File sourceDir = new File(sourceRootDir, sourceDirURL); </span>
+            
+<span class="nc" id="L182">			String[] files = sourceDir.list();</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">			if (files == null)</span>
+			{
+<span class="nc" id="L185">				throw new FileNotFoundException(</span>
+<span class="nc" id="L186">					sourceDir.getAbsolutePath() + &quot; (directory not found)&quot;);	</span>
+			}
+<span class="nc" id="L188">			boolean success = true;</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">            for (int i = 0; i &lt; files.length; i++)</span>
+            {				
+<span class="nc" id="L191">                File currentSourceFile = new File(sourceDir, files[i]);</span>
+<span class="nc bnc" id="L192" title="All 2 branches missed.">                if (!currentSourceFile.isFile()) continue;</span>
+
+<span class="nc" id="L194">                String part = Wildcard.matchWildcard(sourceMask, files[i]);</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">                if (part == null) continue;</span>
+
+<span class="nc" id="L197">				currentSourceURL = sourceDirURL + files[i];</span>
+
+<span class="nc" id="L199">                currentTargetURL =</span>
+<span class="nc" id="L200">                    Wildcard.instantiateWildcard(targetURL, part);</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">                if (!buildFile(always)) success = false;</span>
+            }
+<span class="nc" id="L203">			return success;</span>
+        }
+        else
+        {   // main source is a regular file
+<span class="nc" id="L207">	        currentSourceURL = sourceURL;</span>
+<span class="nc" id="L208">            currentTargetURL = targetURL;</span>
+<span class="nc" id="L209">            return buildFile(always);</span>
+        }
+    }
+	
+
+    private boolean buildFile(boolean always)
+        throws IOException
+    {
+<span class="nc" id="L217">        targetLastMod = targetStorage.fileLastModified(currentTargetURL);</span>
+        
+<span class="nc bnc" id="L219" title="All 4 branches missed.">        if (always || (targetLastMod &lt;= 0))</span>
+        {
+<span class="nc" id="L221">            return buildAlways();</span>
+        }
+
+<span class="nc" id="L224">		boolean success = true;</span>
+<span class="nc" id="L225">        boolean updated = false;</span>
+        try {
+<span class="nc" id="L227">            updated = myProducer.hasBeenUpdated(targetLastMod);</span>
+        }
+<span class="nc" id="L229">        catch (LagoonException e)</span>
+        {
+<span class="nc" id="L231">            reportException(e);</span>
+<span class="nc" id="L232">			success = false;</span>
+        }
+<span class="nc" id="L234">        catch (IOException e)</span>
+        {
+<span class="nc" id="L236">            reportException(e);</span>
+<span class="nc" id="L237">			success = false;</span>
+<span class="nc" id="L238">        }</span>
+
+<span class="nc bnc" id="L240" title="All 2 branches missed.">        if (updated)</span>
+        {
+<span class="nc bnc" id="L242" title="All 2 branches missed.">            if (!buildAlways()) success = false;</span>
+        }
+<span class="nc" id="L244">		return success;</span>
+    }
+	
+
+    /**
+     * The actual building of this file.
+     * Used after any dependency checking indicates the file needs rebuilding.
+     */
+    private boolean buildAlways()
+        throws IOException
+    {
+<span class="nc" id="L255">        processor.log.println(&quot;Building: &quot; + currentTargetURL);</span>
+		
+<span class="nc" id="L257">		int slash = currentTargetURL.lastIndexOf('/');</span>
+<span class="nc" id="L258">		currentTargetDir = currentTargetURL.substring(0, slash+1);</span>
+<span class="nc" id="L259">		currentTargetName = currentTargetURL.substring(slash+1);</span>
+
+        String thisTargetURL;
+<span class="nc" id="L262">        OutputHandler out = null;</span>
+<span class="nc" id="L263">        String exceptionType = null;</span>
+<span class="nc" id="L264">        boolean bailOut = false;</span>
+<span class="nc" id="L265">		boolean success = true;</span>
+		
+		ByteStreamProducer theProducer;
+<span class="nc bnc" id="L268" title="All 2 branches missed.">		if (outputEntry == null)</span>
+		{
+<span class="nc" id="L270">			theProducer = (ByteStreamProducer)myProducer;	</span>
+		}
+		else
+		{
+<span class="nc" id="L274">			outputEntry.setNext((XMLStreamProducer)myProducer);</span>
+<span class="nc" id="L275">			outputEntry.setSourceManager(this);</span>
+<span class="nc" id="L276">			theProducer = outputEntry.getByteProducer();</span>
+		}
+
+<span class="nc" id="L279">		tempFiles = new Vector();</span>
+		
+<span class="nc" id="L281">		newTarget = currentTargetName;</span>
+
+        do {
+<span class="nc" id="L284">			thisTargetURL = currentTargetDir + newTarget;</span>
+<span class="nc" id="L285">            newTarget = null;</span>
+<span class="nc" id="L286">	        out = targetStorage.createFile(thisTargetURL);</span>
+			
+			try {
+<span class="nc" id="L289">                theProducer.start(out.getOutputStream(), this);</span>
+<span class="nc" id="L290">                exceptionType = null; // no exception thrown</span>
+            }
+<span class="nc" id="L292">            catch (Exception e)</span>
+            {
+<span class="nc" id="L294">				success = false;</span>
+<span class="nc" id="L295">				if (DEBUG) e.printStackTrace();	</span>
+				
+<span class="nc" id="L297">				String thisExceptionType = e.getClass().getName();</span>
+
+				// the same type of exception thrown twice in a row
+<span class="nc bnc" id="L300" title="All 2 branches missed.">				if (thisExceptionType.equals(exceptionType))</span>
+				{
+<span class="nc" id="L302">					bailOut = true;</span>
+				}
+<span class="nc" id="L304">				exceptionType = thisExceptionType;</span>
+
+<span class="nc" id="L306">                e = reportException(e);</span>
+
+<span class="nc bnc" id="L308" title="All 2 branches missed.">				if (out != null) out.discard();				</span>
+
+<span class="nc bnc" id="L310" title="All 2 branches missed.">				if (e instanceof RuntimeException)</span>
+				{
+<span class="nc" id="L312">					throw (RuntimeException)e;</span>
+				}
+
+<span class="nc bnc" id="L315" title="All 2 branches missed.">                if (bailOut)</span>
+                {
+<span class="nc" id="L317">					processor.err.println(&quot;Error building &quot; + currentTargetURL</span>
+						+ &quot;: Too many exceptions, bailing out&quot;);
+<span class="nc" id="L319">					break;</span>
+				}
+				else
+				{
+<span class="nc" id="L323">					continue;</span>
+				}
+<span class="nc" id="L325">            }</span>
+
+<span class="nc" id="L327">            out.commit();</span>
+<span class="nc bnc" id="L328" title="All 2 branches missed.">        } while (newTarget != null);</span>
+
+<span class="nc" id="L330">        byte[] buf = new byte[8192];</span>
+		
+<span class="nc bnc" id="L332" title="All 2 branches missed.">		for (int i = 0; i&lt;tempFiles.size(); i++)</span>
+		{
+<span class="nc" id="L334">			String path = (String)tempFiles.elementAt(i);</span>
+<span class="nc" id="L335">			File tempFile = new File(tempDir, &quot;temp&quot; + i);</span>
+<span class="nc" id="L336">			FileInputStream fis = new FileInputStream(tempFile);</span>
+			
+<span class="nc" id="L338">			OutputHandler oh = targetStorage.createFile(path);</span>
+	
+			try {
+    	    	while (true)
+        		{
+<span class="nc" id="L343">            		int bytesRead = fis.read(buf);</span>
+<span class="nc bnc" id="L344" title="All 2 branches missed.">            		if (bytesRead &lt; 1) break;</span>
+<span class="nc" id="L345">            		oh.getOutputStream().write(buf, 0, bytesRead);</span>
+<span class="nc" id="L346">        		}</span>
+<span class="nc" id="L347">	        	fis.close();</span>
+<span class="nc" id="L348">				tempFile.delete();</span>
+			}
+<span class="nc" id="L350">			catch (IOException e)</span>
+			{
+<span class="nc" id="L352">				success = false;</span>
+<span class="nc" id="L353">				reportException(e);</span>
+<span class="nc" id="L354">				oh.discard();</span>
+<span class="nc" id="L355">				break;</span>
+<span class="nc" id="L356">			}</span>
+<span class="nc" id="L357">			oh.commit();			</span>
+		}
+		
+<span class="nc" id="L360">		for (Enumeration en = targetThreads.elements(); </span>
+<span class="nc bnc" id="L361" title="All 2 branches missed.">			 en.hasMoreElements(); )</span>
+		{
+<span class="nc" id="L363">			Thread t = (Thread)en.nextElement();</span>
+			try {
+<span class="nc bnc" id="L365" title="All 2 branches missed.">				if (t != null) t.join();</span>
+			}
+<span class="nc" id="L367">			catch (InterruptedException e) {}</span>
+<span class="nc" id="L368">		}</span>
+<span class="nc" id="L369">		targetThreads.clear();</span>
+		
+<span class="nc" id="L371">		return success;</span>
+    }
+
+
+	private Exception reportException(Exception e)
+	{
+<span class="nc bnc" id="L377" title="All 2 branches missed.">		if (e instanceof RuntimeException)</span>
+		{
+<span class="nc" id="L379">			return e;	</span>
+		}
+<span class="nc bnc" id="L381" title="All 2 branches missed.">		if (e instanceof SAXParseException)</span>
+		{
+<span class="nc" id="L383">			SAXParseException spe = (SAXParseException)e;</span>
+<span class="nc" id="L384">			Exception ee = spe.getException();</span>
+<span class="nc bnc" id="L385" title="All 2 branches missed.">			if (ee instanceof RuntimeException)</span>
+			{
+<span class="nc" id="L387">				return ee;</span>
+			}
+<span class="nc bnc" id="L389" title="All 2 branches missed.">			String sysId = (spe.getSystemId() == null)</span>
+<span class="nc" id="L390">				? (&quot;(&quot; + currentTargetURL + &quot;)&quot;): spe.getSystemId();</span>
+<span class="nc" id="L391">			processor.err.println(sysId + &quot;:&quot; + spe.getLineNumber()</span>
+<span class="nc" id="L392">				+ &quot;:&quot; + spe.getColumnNumber() + &quot;: &quot; + spe.getMessage());</span>
+<span class="nc" id="L393">		}</span>
+<span class="nc bnc" id="L394" title="All 2 branches missed.">		else if (e instanceof SAXException)</span>
+		{
+<span class="nc" id="L396">			SAXException se = (SAXException)e;</span>
+<span class="nc" id="L397">			Exception ee = se.getException();</span>
+<span class="nc bnc" id="L398" title="All 2 branches missed.">			if (ee instanceof RuntimeException)</span>
+			{
+<span class="nc" id="L400">				return ee;</span>
+			}
+<span class="nc bnc" id="L402" title="All 2 branches missed.">			else if (ee != null)</span>
+			{
+<span class="nc" id="L404">				processor.err.println(&quot;Error building &quot; + currentTargetURL</span>
+<span class="nc" id="L405">					+ &quot;: &quot; + ee.toString());</span>
+<span class="nc" id="L406">    			if (DEBUG) ee.printStackTrace(System.out);</span>
+			}
+			else
+			{
+<span class="nc" id="L410">				processor.err.println(&quot;Error building &quot; + currentTargetURL</span>
+<span class="nc" id="L411">					+ &quot;: &quot; + se.getMessage());</span>
+<span class="nc" id="L412">    			if (DEBUG) se.printStackTrace(System.out);</span>
+			}
+<span class="nc" id="L414">		}</span>
+<span class="nc bnc" id="L415" title="All 2 branches missed.">		else if (e instanceof IOException)</span>
+		{
+<span class="nc" id="L417">			processor.err.println(&quot;Error building &quot; + currentTargetURL</span>
+<span class="nc" id="L418">					+ &quot;: &quot; + e.toString());</span>
+<span class="nc" id="L419">			if (DEBUG) e.printStackTrace(System.out);</span>
+		}
+		else
+		{
+<span class="nc" id="L423">			processor.err.println(&quot;Error building &quot; + currentTargetURL + &quot;:&quot;);</span>
+<span class="nc" id="L424">			e.printStackTrace(processor.err);</span>
+		}
+<span class="nc" id="L426">		return e;</span>
+	}
+
+
+	// Partial SourceManager implemenation
+   
+    public String getSourceURL()
+        throws FileNotFoundException
+	{
+<span class="nc bnc" id="L435" title="All 2 branches missed.">        if (currentSourceURL == null)</span>
+<span class="nc" id="L436">            throw new FileNotFoundException(&quot;no source file specified&quot;);</span>
+
+<span class="nc" id="L438">		return currentSourceURL;		</span>
+	}
+	
+	
+	// FileTarget implemenation
+
+    public String getCurrentTargetURL()
+    {
+<span class="nc" id="L446">        return currentTargetURL;</span>
+    }
+
+    public void newTarget(String filename, boolean prependFilename)
+    {
+<span class="nc bnc" id="L451" title="All 2 branches missed.">		if (prependFilename)</span>
+		{
+<span class="nc" id="L453">			this.newTarget = currentTargetName + '_' + filename;	</span>
+		}
+		else
+		{
+<span class="nc" id="L457">			this.newTarget = filename;</span>
+		}
+<span class="nc" id="L459">    }</span>
+
+    public OutputHandler newAsyncTarget(String filename, 
+			boolean prependFilename)
+		throws IOException
+	{
+<span class="nc bnc" id="L465" title="All 4 branches missed.">		if (filename.charAt(0) != '/' &amp;&amp; !prependFilename)</span>
+		{
+<span class="nc" id="L467">			filename = currentTargetDir + filename;</span>
+		}
+<span class="nc bnc" id="L469" title="All 4 branches missed.">		else if (filename.charAt(0) != '/' &amp;&amp; prependFilename)</span>
+		{			
+<span class="nc" id="L471">			filename = currentTargetDir + currentTargetName + '_' + filename;</span>
+		}
+			
+<span class="nc" id="L474">		if (DEBUG) System.out.println(&quot;New async target: &quot; + filename);</span>
+		
+<span class="nc bnc" id="L476" title="All 2 branches missed.">		if (targetStorage.isReentrant())</span>
+		{
+<span class="nc" id="L478">			return targetStorage.createFile(filename);</span>
+		}
+		else
+		{
+<span class="nc" id="L482">			tempFiles.addElement(filename);			</span>
+<span class="nc" id="L483">			File currentFile = new File(tempDir, &quot;temp&quot; + (tempFiles.size()-1));	</span>
+<span class="nc" id="L484">			return new TempOutputHandler(currentFile,</span>
+				new FileOutputStream(currentFile));
+		}
+	}	
+
+
+    private static void sleepUntilInterrupted()
+    {
+        try {
+            while (true)
+<span class="nc" id="L494">                Thread.sleep(1000*60); // Sleep one minute</span>
+        }
+<span class="nc" id="L496">        catch (InterruptedException e) {}</span>
+<span class="nc" id="L497">    }</span>
+
+	
+	private Thread mainThread;
+	private ContentHandler asyncSAX;
+	private Exception asyncException;
+	
+    public ContentHandler newAsyncTargetWithOutput(
+			String filename, boolean prependFilename, String outputName)
+		throws java.io.IOException, SAXException
+	{
+<span class="nc" id="L508">		mainThread = Thread.currentThread();</span>
+<span class="nc" id="L509">		asyncSAX = null;</span>
+<span class="nc" id="L510">		asyncException = null;</span>
+		
+<span class="nc" id="L512">		final OutputHandler oh = newAsyncTarget(filename, prependFilename);</span>
+		
+<span class="nc" id="L514">		final OutputEntry outputEntry = sitemap.lookupOutput(outputName);</span>
+<span class="nc bnc" id="L515" title="All 2 branches missed.">		if (outputEntry == null) throw new LagoonException(</span>
+			&quot;Output entry &quot; + outputName + &quot; not found in Sitemap&quot;);
+
+<span class="nc" id="L518">		outputEntry.setSourceManager(this);</span>
+				
+<span class="nc" id="L520">		outputEntry.setNext(new XMLStreamProducer() {</span>
+		    public void start(ContentHandler sax, Target target)
+        		throws SAXException, IOException
+			{
+<span class="nc" id="L524">				asyncSAX = sax;</span>
+<span class="nc" id="L525">				mainThread.interrupt();</span>
+<span class="nc" id="L526">			}</span>
+			
+			public void init()
+			{
+<span class="nc" id="L530">				throw new RuntimeException(&quot;Invalid context&quot;);	</span>
+			}
+
+			public void destroy()
+			{
+<span class="nc" id="L535">				throw new RuntimeException(&quot;Invalid context&quot;);	</span>
+			}
+
+			public boolean hasBeenUpdated(long lastBuild) 
+			{
+<span class="nc" id="L540">				throw new RuntimeException(&quot;Invalid context&quot;);	</span>
+			}
+		});
+
+<span class="nc" id="L544">		Thread targetThread = new Thread(new Runnable() {</span>
+			public void run()
+			{
+<span class="nc" id="L547">				if (DEBUG) System.out.println(&quot;TargetThread just started&quot;);</span>
+				try {
+					try {
+<span class="nc" id="L550">						outputEntry.getByteProducer().start(</span>
+<span class="nc" id="L551">							oh.getOutputStream(), </span>
+							FileEntry.this);
+					}
+<span class="nc" id="L554">					catch (Exception e)</span>
+					{
+<span class="nc" id="L556">						oh.discard();</span>
+<span class="nc" id="L557">						throw e;</span>
+<span class="nc" id="L558">					}</span>
+<span class="nc" id="L559">					oh.commit();</span>
+				}
+<span class="nc" id="L561">				catch (Exception e)</span>
+				{
+<span class="nc" id="L563">					asyncException = e;</span>
+<span class="nc" id="L564">					mainThread.interrupt();</span>
+<span class="nc" id="L565">				}</span>
+<span class="nc" id="L566">				if (DEBUG) System.out.println(&quot;TargetThread about to end&quot;);</span>
+<span class="nc" id="L567">			}</span>
+		}, &quot;TargetThread&quot;);
+<span class="nc" id="L569">		targetThreads.addElement(targetThread);</span>
+<span class="nc" id="L570">		targetThread.start();</span>
+
+<span class="nc" id="L572">		if (DEBUG) System.out.println(&quot;Waiting for TargetThread...&quot;);</span>
+<span class="nc" id="L573">	 	sleepUntilInterrupted();</span>
+<span class="nc" id="L574">		if (DEBUG) System.out.println(&quot;...finished waiting for TargetThread&quot;);</span>
+		
+<span class="nc bnc" id="L576" title="All 2 branches missed.">		if (asyncException != null)</span>
+		{
+<span class="nc bnc" id="L578" title="All 2 branches missed.">			if (asyncException instanceof IOException)</span>
+<span class="nc" id="L579">				throw (IOException)asyncException;</span>
+<span class="nc bnc" id="L580" title="All 2 branches missed.">			else if (asyncException instanceof SAXException)</span>
+<span class="nc" id="L581">				throw (SAXException)asyncException;</span>
+<span class="nc bnc" id="L582" title="All 2 branches missed.">			else if (asyncException instanceof RuntimeException)</span>
+<span class="nc" id="L583">				throw (RuntimeException)asyncException;</span>
+			else
+<span class="nc" id="L585">				throw new SAXException(asyncException);</span>
+		}
+		
+<span class="nc" id="L588">		return asyncSAX;</span>
+	}	
+
+
+	public boolean isWildcard()
+    {
+<span class="nc" id="L594">        return Wildcard.isWildcard(sourceURL);</span>
+	}
+
+
+	static class TempOutputHandler extends OutputHandler
+	{
+		private File currentFile;
+		
+		TempOutputHandler(File currentFile, OutputStream out)
+		{
+<span class="nc" id="L604">			super(out);</span>
+<span class="nc" id="L605">			this.currentFile = currentFile;</span>
+<span class="nc" id="L606">		}</span>
+		
+		public void commit()
+			throws java.io.IOException
+		{
+<span class="nc" id="L611">			out.close();</span>
+<span class="nc" id="L612">		}</span>
+
+		public void discard()
+			throws java.io.IOException
+		{
+<span class="nc" id="L617">			out.close();</span>
+<span class="nc bnc" id="L618" title="All 2 branches missed.">			if (!currentFile.exists()) return;</span>
+<span class="nc bnc" id="L619" title="All 2 branches missed.">			if (currentFile.delete())</span>
+			{
+<span class="nc" id="L621">				return;</span>
+			}
+			else
+			{
+<span class="nc" id="L625">				throw new IOException(&quot;Unable to delete file: &quot; + currentFile);</span>
+			}
+		}
+	}
+	
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

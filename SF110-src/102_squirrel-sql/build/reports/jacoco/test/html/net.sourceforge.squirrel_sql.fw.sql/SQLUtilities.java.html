@@ -1,0 +1,451 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SQLUtilities.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.fw.sql</a> &gt; <span class="el_source">SQLUtilities.java</span></div><h1>SQLUtilities.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (C) 2007 Rob Manning
+ * manningr@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+package net.sourceforge.squirrel_sql.fw.sql;
+
+import java.io.Serializable;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.List;
+
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+/**
+ * @author manningr : except where noted
+ */
+<span class="nc" id="L37">public class SQLUtilities</span>
+{
+
+	/** Logger for this class. */
+<span class="nc" id="L41">	private final static ILogger s_log = LoggerController.createLogger(SQLUtilities.class);</span>
+
+	/**
+	 * Contributed by Thomas Mueller to handle doubling quote characters found in an identifier. In H2 and
+	 * other dbs, the following statement creates a table with an embedded quote character: CREATE TABLE
+	 * &quot;foo&quot;&quot;bar&quot; (someid int); However, what is returned by the driver for table name is: foo&quot;bar The reason
+	 * is simple. Just like embedded quotes in SQL strings, such as: select 'I don''t know' from test
+	 * Similarly, embedded quote characters can also appear in identifiers such as table names, by doubling (or
+	 * quoting, if you will) the quote.
+	 * 
+	 * @param s
+	 *           the string to have embedded quotes expanded.
+	 * @return a new string with any embedded quotes doubled, or null if null is passed.
+	 * @author Thomas Mueller
+	 */
+	public static String quoteIdentifier(String s)
+	{
+<span class="nc bnc" id="L58" title="All 2 branches missed.">		if (s == null)</span>
+		{
+<span class="nc" id="L60">			return null;</span>
+		}
+<span class="nc" id="L62">		StringBuilder buff = null;</span>
+<span class="nc" id="L63">		buff = new StringBuilder();</span>
+<span class="nc bnc" id="L64" title="All 2 branches missed.">		for (int i = 0; i &lt; s.length(); i++)</span>
+		{
+<span class="nc" id="L66">			char c = s.charAt(i);</span>
+<span class="nc bnc" id="L67" title="All 6 branches missed.">			if (c == '&quot;' &amp;&amp; i != 0 &amp;&amp; i != s.length() - 1)</span>
+			{
+<span class="nc" id="L69">				buff.append(c);</span>
+			}
+<span class="nc" id="L71">			buff.append(c);</span>
+		}
+<span class="nc" id="L73">		String result = buff.toString();</span>
+<span class="nc" id="L74">		return result;</span>
+	}
+
+	/**
+	 * Reverses the insertion order list. Just a convenience method.
+	 * 
+	 * @param md
+	 * @param tables
+	 * @return
+	 * @throws SQLException
+	 */
+	public static List&lt;ITableInfo&gt; getDeletionOrder(List&lt;ITableInfo&gt; tables, SQLDatabaseMetaData md,
+		ProgressCallBack callback) throws SQLException
+	{
+<span class="nc" id="L88">		List&lt;ITableInfo&gt; insertionOrder = getInsertionOrder(tables, md, callback);</span>
+<span class="nc" id="L89">		Collections.reverse(insertionOrder);</span>
+<span class="nc" id="L90">		return insertionOrder;</span>
+	}
+
+	/**
+	 * Returns the specified list of tables in an order such that insertions into all tables will satisfy any
+	 * foreign key constraints. This will not correctly handle recursive constraints. This algorthim was
+	 * adapted from SchemaSpy class/method: net.sourceforge.schemaspy.SchemaSpy.sortTablesByRI() unattached -
+	 * tables that have no dependencies on other tables parents - tables that only have children children -
+	 * tables that only have parents sandwiches - tables that have both parents and children - as in the
+	 * &quot;sandwich&quot; generation. The first SQLException encountered while attempting to get FK information on any
+	 * table will cause this to bail it's effort to re-order the list and the list will be returned as it came
+	 * in - there's no point in spewing exceptions to end up with a flawed result; just give up.
+	 * 
+	 * @param md
+	 * @param tables
+	 * @param listener
+	 * @return
+	 * @throws SQLException
+	 */
+	public static List&lt;ITableInfo&gt; getInsertionOrder(List&lt;ITableInfo&gt; tables, SQLDatabaseMetaData md,
+		ProgressCallBack callback) throws SQLException
+	{
+<span class="nc" id="L112">		List&lt;ITableInfo&gt; result = new ArrayList&lt;ITableInfo&gt;();</span>
+		// tables that are netiher children nor parents - utility tables
+<span class="nc" id="L114">		List&lt;ITableInfo&gt; unattached = new ArrayList&lt;ITableInfo&gt;();</span>
+		// tables that have at least one parent table
+<span class="nc" id="L116">		List&lt;ITableInfo&gt; children = new ArrayList&lt;ITableInfo&gt;();</span>
+		// tables that have at least one child table
+<span class="nc" id="L118">		List&lt;ITableInfo&gt; parents = new ArrayList&lt;ITableInfo&gt;();</span>
+		// tables that have at least one child table and have a least one parent table
+<span class="nc" id="L120">		List&lt;ITableInfo&gt; sandwiches = new ArrayList&lt;ITableInfo&gt;();</span>
+<span class="nc" id="L121">		ITableInfo lastTable = null;</span>
+		try
+		{
+<span class="nc bnc" id="L124" title="All 2 branches missed.">			for (ITableInfo table : tables)</span>
+			{
+<span class="nc" id="L126">				lastTable = table;</span>
+<span class="nc" id="L127">				callback.currentlyLoading(table.getSimpleName());</span>
+<span class="nc" id="L128">				ForeignKeyInfo[] importedKeys = getImportedKeys(table, md);</span>
+<span class="nc" id="L129">				ForeignKeyInfo[] exportedKeys = getExportedKeys(table, md);</span>
+
+<span class="nc bnc" id="L131" title="All 6 branches missed.">				if (importedKeys != null &amp;&amp; importedKeys.length == 0 &amp;&amp; exportedKeys.length == 0)</span>
+				{
+<span class="nc" id="L133">					unattached.add(table);</span>
+<span class="nc" id="L134">					continue;</span>
+				}
+<span class="nc bnc" id="L136" title="All 4 branches missed.">				if (exportedKeys != null &amp;&amp; exportedKeys.length &gt; 0)</span>
+				{
+<span class="nc bnc" id="L138" title="All 4 branches missed.">					if (importedKeys != null &amp;&amp; importedKeys.length &gt; 0)</span>
+					{
+<span class="nc" id="L140">						sandwiches.add(table);</span>
+					} else
+					{
+<span class="nc" id="L143">						parents.add(table);</span>
+					}
+<span class="nc" id="L145">					continue;</span>
+				}
+<span class="nc bnc" id="L147" title="All 4 branches missed.">				if (importedKeys != null &amp;&amp; importedKeys.length &gt; 0)</span>
+				{
+<span class="nc" id="L149">					children.add(table);</span>
+				}
+<span class="nc" id="L151">			}</span>
+<span class="nc" id="L152">			reorderTables(sandwiches);</span>
+
+<span class="nc bnc" id="L154" title="All 2 branches missed.">			for (ITableInfo info : unattached)</span>
+			{
+<span class="nc" id="L156">				result.add(info);</span>
+<span class="nc" id="L157">			}</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">			for (ITableInfo info : parents)</span>
+			{
+<span class="nc" id="L160">				result.add(info);</span>
+<span class="nc" id="L161">			}</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">			for (ITableInfo info : sandwiches)</span>
+			{
+<span class="nc" id="L164">				result.add(info);</span>
+<span class="nc" id="L165">			}</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">			for (ITableInfo info : children)</span>
+			{
+<span class="nc" id="L168">				result.add(info);</span>
+<span class="nc" id="L169">			}</span>
+<span class="nc bnc" id="L170" title="All 2 branches missed.">			if (result.size() != tables.size())</span>
+			{
+<span class="nc" id="L172">				s_log.error(&quot;getInsertionOrder(): failed to obtain a result table list &quot; + &quot;(&quot; + result.size()</span>
+<span class="nc" id="L173">					+ &quot;) that is the same size as the input table &quot; + &quot;list (&quot; + tables.size()</span>
+					+ &quot;) - returning the original unordered &quot; + &quot;list&quot;);
+<span class="nc" id="L175">				result = tables;</span>
+			}
+<span class="nc" id="L177">		} catch (Exception e)</span>
+		{
+<span class="nc bnc" id="L179" title="All 2 branches missed.">			if (lastTable != null)</span>
+			{
+<span class="nc" id="L181">				String tablename = lastTable.getSimpleName();</span>
+<span class="nc" id="L182">				s_log.error(&quot;Unexpected exception while getting foreign key info for &quot; + &quot;table &quot; + tablename, e);</span>
+<span class="nc" id="L183">			} else</span>
+			{
+<span class="nc" id="L185">				s_log.error(&quot;Unexpected exception while getting foreign key info &quot;, e);</span>
+			}
+<span class="nc" id="L187">			result = tables;</span>
+<span class="nc" id="L188">		}</span>
+<span class="nc" id="L189">		return result;</span>
+	}
+
+	public static ForeignKeyInfo[] getImportedKeys(ITableInfo ti, SQLDatabaseMetaData md) throws SQLException
+	{
+<span class="nc" id="L194">		ForeignKeyInfo[] result = ti.getImportedKeys();</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">		if (result == null)</span>
+		{
+<span class="nc" id="L197">			result = md.getImportedKeysInfo(ti);</span>
+			// Avoid the hit next time
+<span class="nc" id="L199">			ti.setImportedKeys(result);</span>
+		}
+<span class="nc" id="L201">		return result;</span>
+	}
+
+	/**
+	 * @param ti
+	 * @param md
+	 * @return
+	 * @throws SQLException
+	 */
+	public static ForeignKeyInfo[] getExportedKeys(ITableInfo ti, SQLDatabaseMetaData md) throws SQLException
+	{
+<span class="nc" id="L212">		ForeignKeyInfo[] result = ti.getExportedKeys();</span>
+<span class="nc bnc" id="L213" title="All 2 branches missed.">		if (result == null)</span>
+		{
+<span class="nc" id="L215">			result = md.getExportedKeysInfo(ti);</span>
+			// Avoid the hit next time
+<span class="nc" id="L217">			ti.setExportedKeys(result);</span>
+		}
+<span class="nc" id="L219">		return result;</span>
+	}
+
+	/**
+	 * @param sandwiches
+	 */
+	private static void reorderTables(List&lt;ITableInfo&gt; sandwiches)
+	{
+<span class="nc" id="L227">		Collections.sort(sandwiches, new TableComparator());</span>
+<span class="nc" id="L228">	}</span>
+
+	/**
+	 * Returns a list of table names that have Primary Keys that are referenced by foreign key constraints on
+	 * columns in the specified list of tables, that are not also contained in the specified list
+	 * 
+	 * @param md
+	 * @param tables
+	 * @return
+	 * @throws SQLException
+	 */
+	public static List&lt;String&gt; getExtFKParents(SQLDatabaseMetaData md, List&lt;ITableInfo&gt; tables)
+		throws SQLException
+	{
+<span class="nc" id="L242">		List&lt;String&gt; result = new ArrayList&lt;String&gt;();</span>
+<span class="nc" id="L243">		HashSet&lt;String&gt; tableNames = new HashSet&lt;String&gt;();</span>
+
+<span class="nc bnc" id="L245" title="All 2 branches missed.">		for (ITableInfo table : tables)</span>
+		{
+<span class="nc" id="L247">			tableNames.add(table.getSimpleName());</span>
+<span class="nc" id="L248">		}</span>
+
+<span class="nc bnc" id="L250" title="All 2 branches missed.">		for (ITableInfo table : tables)</span>
+		{
+<span class="nc" id="L252">			ForeignKeyInfo[] importedKeys = md.getImportedKeysInfo(table);</span>
+<span class="nc bnc" id="L253" title="All 2 branches missed.">			for (int i = 0; i &lt; importedKeys.length; i++)</span>
+			{
+<span class="nc" id="L255">				ForeignKeyInfo info = importedKeys[i];</span>
+<span class="nc" id="L256">				String pkTable = info.getPrimaryKeyTableName();</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">				if (!tableNames.contains(pkTable))</span>
+				{
+<span class="nc" id="L259">					result.add(pkTable);</span>
+				}
+			}
+<span class="nc" id="L262">		}</span>
+<span class="nc" id="L263">		return result;</span>
+	}
+
+	/**
+	 * Returns a list of table names that have Foreign keys that reference Primary Keys in the specified List
+	 * of tables, but that are not also contained in the list of tables.
+	 * 
+	 * @param md
+	 * @param tables
+	 * @return
+	 * @throws SQLException
+	 */
+	public static List&lt;String&gt; getExtFKChildren(SQLDatabaseMetaData md, List&lt;ITableInfo&gt; tables)
+		throws SQLException
+	{
+<span class="nc" id="L278">		List&lt;String&gt; result = new ArrayList&lt;String&gt;();</span>
+<span class="nc" id="L279">		HashSet&lt;String&gt; tableNames = new HashSet&lt;String&gt;();</span>
+
+<span class="nc bnc" id="L281" title="All 2 branches missed.">		for (ITableInfo table : tables)</span>
+		{
+<span class="nc" id="L283">			tableNames.add(table.getSimpleName());</span>
+<span class="nc" id="L284">		}</span>
+
+<span class="nc bnc" id="L286" title="All 2 branches missed.">		for (ITableInfo table : tables)</span>
+		{
+<span class="nc" id="L288">			ForeignKeyInfo[] exportedKeys = md.getExportedKeysInfo(table);</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">			for (int i = 0; i &lt; exportedKeys.length; i++)</span>
+			{
+<span class="nc" id="L291">				ForeignKeyInfo info = exportedKeys[i];</span>
+<span class="nc" id="L292">				String fkTable = info.getForeignKeyTableName();</span>
+<span class="nc bnc" id="L293" title="All 2 branches missed.">				if (!tableNames.contains(fkTable))</span>
+				{
+<span class="nc" id="L295">					result.add(fkTable);</span>
+				}
+			}
+<span class="nc" id="L298">		}</span>
+<span class="nc" id="L299">		return result;</span>
+	}
+
+	/**
+	 * Closes the specified ResultSet safely (with no exceptions) and logs a debug message if SQLException is
+	 * encountered. This will not close the Statement that created the ResultSet.
+	 * 
+	 * @param rs
+	 *           the ResultSet to close - it can be null.
+	 */
+	public static void closeResultSet(ResultSet rs)
+	{
+<span class="nc" id="L311">		closeResultSet(rs, false);</span>
+<span class="nc" id="L312">	}</span>
+
+	/**
+	 * Closes the specified ResultSet safely (with no exceptions) and logs a debug message if SQLException is
+	 * encountered. This will also close the Statement that created the ResultSet if closeStatement boolean is
+	 * true.
+	 * 
+	 * @param rs
+	 *           the ResultSet to close - it can be null.
+	 * @param closeStatement
+	 *           if true, will close the Statement that created this ResultSet; false - will not close the
+	 *           Statement.
+	 */
+	public static void closeResultSet(ResultSet rs, boolean closeStatement)
+	{
+<span class="nc bnc" id="L327" title="All 2 branches missed.">		if (rs == null)</span>
+		{
+<span class="nc" id="L329">			return;</span>
+		}
+		// Close the ResultSet
+		try
+		{
+<span class="nc" id="L334">			rs.close();</span>
+<span class="nc" id="L335">		} catch (SQLException e)</span>
+		{
+<span class="nc bnc" id="L337" title="All 2 branches missed.">			if (s_log.isDebugEnabled())</span>
+			{
+<span class="nc" id="L339">				s_log.debug(&quot;Unexpected exception while closing ResultSet: &quot; + e.getMessage(), e);</span>
+			}
+<span class="nc" id="L341">		}</span>
+<span class="nc bnc" id="L342" title="All 2 branches missed.">		if (closeStatement)</span>
+		{
+			// Close the ResultSet's Statement if it is non-null. This frees open
+			// cursors.
+
+			try
+			{
+<span class="nc" id="L349">				Statement stmt = rs.getStatement();</span>
+<span class="nc bnc" id="L350" title="All 2 branches missed.">				if (stmt != null)</span>
+				{
+<span class="nc" id="L352">					stmt.close();</span>
+				}
+<span class="nc" id="L354">			} catch (SQLException e)</span>
+			{
+<span class="nc bnc" id="L356" title="All 2 branches missed.">				if (s_log.isDebugEnabled())</span>
+				{
+<span class="nc" id="L358">					s_log.debug(&quot;Unexpected exception while closing &quot; + &quot;Statement: &quot; + e.getMessage(), e);</span>
+				}
+<span class="nc" id="L360">			}</span>
+		}
+<span class="nc" id="L362">	}</span>
+
+	/**
+	 * Closes the specified Statement safely (with no exceptions) and logs a debug message if SQLException is
+	 * encountered.
+	 * 
+	 * @param stmt
+	 *           the Statement to close - it can be null.
+	 */
+	public static void closeStatement(Statement stmt)
+	{
+<span class="nc bnc" id="L373" title="All 2 branches missed.">		if (stmt == null)</span>
+		{
+<span class="nc" id="L375">			return;</span>
+		}
+		try
+		{
+<span class="nc" id="L379">			stmt.close();</span>
+<span class="nc" id="L380">		} catch (SQLException e)</span>
+		{
+<span class="nc bnc" id="L382" title="All 2 branches missed.">			if (s_log.isDebugEnabled())</span>
+			{
+<span class="nc" id="L384">				s_log.error(&quot;Unexpected exception while closing Statement: &quot; + e.getMessage(), e);</span>
+			}
+<span class="nc" id="L386">		}</span>
+<span class="nc" id="L387">	}</span>
+
+   public static String getQualifiedTableName(String catalog, String schema, String tableName)
+   {
+<span class="nc" id="L391">      String ret = &quot;&quot;;</span>
+
+<span class="nc bnc" id="L393" title="All 2 branches missed.">      if(null != catalog)</span>
+      {
+<span class="nc" id="L395">         ret += catalog + &quot;.&quot;;</span>
+      }
+
+<span class="nc bnc" id="L398" title="All 2 branches missed.">      if(null != schema)</span>
+      {
+<span class="nc" id="L400">         ret += schema + &quot;.&quot;;</span>
+      }
+
+<span class="nc" id="L403">      ret += tableName;</span>
+
+<span class="nc" id="L405">      return ret;</span>
+   }
+
+   /**
+	 * @author manningr
+	 */
+	private static class TableComparator implements Comparator&lt;ITableInfo&gt;, Serializable
+	{
+
+		private static final long serialVersionUID = 1L;
+
+		public int compare(ITableInfo t1, ITableInfo t2)
+		{
+<span class="nc" id="L418">			ForeignKeyInfo[] t1ImportedKeys = t1.getImportedKeys();</span>
+<span class="nc bnc" id="L419" title="All 2 branches missed.">			for (int i = 0; i &lt; t1ImportedKeys.length; i++)</span>
+			{
+<span class="nc" id="L421">				ForeignKeyInfo info = t1ImportedKeys[i];</span>
+<span class="nc bnc" id="L422" title="All 2 branches missed.">				if (info.getPrimaryKeyTableName().equals(t2.getSimpleName()))</span>
+				{
+					// t1 depends on t2
+<span class="nc" id="L425">					return 1;</span>
+				}
+			}
+<span class="nc" id="L428">			ForeignKeyInfo[] t2ImportedKeys = t2.getImportedKeys();</span>
+<span class="nc bnc" id="L429" title="All 2 branches missed.">			for (int i = 0; i &lt; t2ImportedKeys.length; i++)</span>
+			{
+<span class="nc" id="L431">				ForeignKeyInfo info = t2ImportedKeys[i];</span>
+<span class="nc bnc" id="L432" title="All 2 branches missed.">				if (info.getPrimaryKeyTableName().equals(t1.getSimpleName()))</span>
+				{
+					// t2 depends on t1
+<span class="nc" id="L435">					return -1;</span>
+				}
+			}
+<span class="nc bnc" id="L438" title="All 2 branches missed.">			if (t1.getImportedKeys().length &gt; t2ImportedKeys.length)</span>
+			{
+<span class="nc" id="L440">				return 1;</span>
+			}
+<span class="nc bnc" id="L442" title="All 2 branches missed.">			if (t1.getImportedKeys().length &lt; t2ImportedKeys.length)</span>
+			{
+<span class="nc" id="L444">				return -1;</span>
+			}
+<span class="nc" id="L446">			return 0;</span>
+		}
+
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

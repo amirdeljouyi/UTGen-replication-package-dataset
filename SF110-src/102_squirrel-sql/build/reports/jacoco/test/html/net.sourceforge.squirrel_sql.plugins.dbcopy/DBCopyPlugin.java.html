@@ -1,0 +1,411 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DBCopyPlugin.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.plugins.dbcopy</a> &gt; <span class="el_source">DBCopyPlugin.java</span></div><h1>DBCopyPlugin.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.plugins.dbcopy;
+
+/*
+ * Copyright (C) 2005 Rob Manning
+ * manningr@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+
+import java.util.List;
+
+import javax.swing.SwingUtilities;
+
+import net.sourceforge.squirrel_sql.client.IApplication;
+import net.sourceforge.squirrel_sql.client.action.ActionCollection;
+import net.sourceforge.squirrel_sql.client.plugin.DefaultSessionPlugin;
+import net.sourceforge.squirrel_sql.client.plugin.PluginException;
+import net.sourceforge.squirrel_sql.client.plugin.PluginResources;
+import net.sourceforge.squirrel_sql.client.plugin.PluginSessionCallback;
+import net.sourceforge.squirrel_sql.client.preferences.IGlobalPreferencesPanel;
+import net.sourceforge.squirrel_sql.client.session.IObjectTreeAPI;
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.fw.gui.GUIUtils;
+import net.sourceforge.squirrel_sql.fw.sql.DatabaseObjectType;
+import net.sourceforge.squirrel_sql.fw.sql.IDatabaseObjectInfo;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLConnection;
+import net.sourceforge.squirrel_sql.fw.sql.TableInfo;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.actions.CopyTableAction;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.actions.PasteTableAction;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.actions.PasteTableAsAction;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.gui.DBCopyGlobalPreferencesTab;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.prefs.PreferencesManager;
+
+/**
+ * The class that sets up the various resources required by SQuirreL to implement a plugin. This plugin
+ * implements the ability to copy tables and various other table-related objects from one database to another.
+ */
+<span class="nc" id="L52">public class DBCopyPlugin extends DefaultSessionPlugin implements SessionInfoProvider</span>
+{
+
+	public static final String BUNDLE_BASE_NAME = &quot;net.sourceforge.squirrel_sql.plugins.dbcopy.dbcopy&quot;;
+
+	/** Logger for this class. */
+<span class="nc" id="L58">	private final static ILogger s_log = LoggerController.createLogger(DBCopyPlugin.class);</span>
+
+	private PluginResources _resources;
+
+<span class="nc" id="L62">	private ISession copySourceSession = null;</span>
+
+<span class="nc" id="L64">	private ISession copyDestSession = null;</span>
+
+<span class="nc" id="L66">	private List&lt;IDatabaseObjectInfo&gt; selectedDatabaseObjects = null;</span>
+
+<span class="nc" id="L68">	private IDatabaseObjectInfo selectedDestDatabaseObject = null;</span>
+   private String _pasteToTableName;
+
+   /**
+	 * @see net.sourceforge.squirrel_sql.client.plugin.ISessionPlugin#sessionStarted(net.sourceforge.squirrel_sql.client.session.ISession)
+	 */
+	public PluginSessionCallback sessionStarted(final ISession session)
+	{
+<span class="nc" id="L76">		IObjectTreeAPI api = session.getObjectTreeAPIOfActiveSessionWindow();</span>
+<span class="nc" id="L77">		addMenuItemsToContextMenu(api);</span>
+<span class="nc" id="L78">		return new DBCopyPluginSessionCallback(this);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.plugin.DefaultSessionPlugin#sessionEnding(net.sourceforge.squirrel_sql.client.session.ISession)
+	 */
+	public void sessionEnding(final ISession session)
+	{
+<span class="nc bnc" id="L86" title="All 2 branches missed.">		if (session.equals(copySourceSession))</span>
+		{
+<span class="nc" id="L88">			copySourceSession = null;</span>
+			// Can't paste from a session that is no longer around.
+<span class="nc" id="L90">			setPasteMenuEnabled(false);</span>
+		}
+<span class="nc" id="L92">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.plugin.IPlugin#getInternalName()
+	 */
+	public String getInternalName()
+	{
+<span class="nc" id="L99">		return &quot;dbcopy&quot;;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.plugin.IPlugin#getDescriptiveName()
+	 */
+	public String getDescriptiveName()
+	{
+<span class="nc" id="L107">		return &quot;DBCopy Plugin&quot;;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.plugin.IPlugin#getAuthor()
+	 */
+	public String getAuthor()
+	{
+<span class="nc" id="L115">		return &quot;Rob Manning&quot;;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.plugin.DefaultPlugin#getContributors()
+	 */
+	public String getContributors()
+	{
+<span class="nc" id="L123">		return &quot;Dan Dragut&quot;;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.plugin.IPlugin#getVersion()
+	 */
+	public String getVersion()
+	{
+<span class="nc" id="L131">		return &quot;1.15&quot;;</span>
+	}
+
+	/**
+	 * Returns the name of the Help file for the plugin. This should be a text or HTML file residing in the
+	 * &lt;TT&gt;getPluginAppSettingsFolder&lt;/TT&gt; directory.
+	 * 
+	 * @return the Help file name or &lt;TT&gt;null&lt;/TT&gt; if plugin doesn't have a help file.
+	 */
+	public String getHelpFileName()
+	{
+<span class="nc" id="L142">		return &quot;readme.html&quot;;</span>
+	}
+
+	/**
+	 * Returns the name of the change log for the plugin. This should be a text or HTML file residing in the
+	 * &lt;TT&gt;getPluginAppSettingsFolder&lt;/TT&gt; directory.
+	 * 
+	 * @return the changelog file name or &lt;TT&gt;null&lt;/TT&gt; if plugin doesn't have a change log.
+	 */
+	public String getChangeLogFileName()
+	{
+<span class="nc" id="L153">		return &quot;changes.txt&quot;;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.plugin.DefaultPlugin#getLicenceFileName()
+	 */
+	@Override
+	public String getLicenceFileName()
+	{
+<span class="nc" id="L162">		return &quot;license.txt&quot;;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.plugin.DefaultPlugin#initialize()
+	 */
+	public void initialize() throws PluginException
+	{
+<span class="nc" id="L170">		super.initialize();</span>
+		// md = new MemoryDiagnostics();
+<span class="nc bnc" id="L172" title="All 2 branches missed.">		if (s_log.isDebugEnabled())</span>
+		{
+<span class="nc" id="L174">			s_log.debug(&quot;Initializing DB Copy Plugin&quot;);</span>
+		}
+<span class="nc" id="L176">		_resources = new DBCopyPluginResources(BUNDLE_BASE_NAME, this);</span>
+<span class="nc" id="L177">		PreferencesManager.initialize(this);</span>
+
+<span class="nc" id="L179">		IApplication app = getApplication();</span>
+<span class="nc" id="L180">		ActionCollection coll = app.getActionCollection();</span>
+
+<span class="nc" id="L182">      coll.add(new CopyTableAction(app, _resources, this));</span>
+<span class="nc" id="L183">		coll.add(new PasteTableAction(app, _resources, this));</span>
+<span class="nc" id="L184">		coll.add(new PasteTableAsAction(app, _resources, this));</span>
+
+<span class="nc" id="L186">		setPasteMenuEnabled(false);</span>
+<span class="nc" id="L187">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.plugin.DefaultPlugin#unload()
+	 */
+	public void unload()
+	{
+<span class="nc" id="L194">		super.unload();</span>
+<span class="nc" id="L195">		copySourceSession = null;</span>
+<span class="nc" id="L196">		setPasteMenuEnabled(false);</span>
+<span class="nc" id="L197">		PreferencesManager.unload();</span>
+<span class="nc" id="L198">	}</span>
+
+	/**
+	 * @param enabled
+	 */
+	public void setCopyMenuEnabled(final boolean enabled)
+	{
+<span class="nc" id="L205">		GUIUtils.processOnSwingEventThread(new Runnable()</span>
+<span class="nc" id="L206">		{</span>
+			public void run()
+			{
+<span class="nc" id="L209">				final ActionCollection coll = getApplication().getActionCollection();</span>
+<span class="nc" id="L210">				coll.get(CopyTableAction.class).setEnabled(enabled);</span>
+<span class="nc" id="L211">			}</span>
+		});
+<span class="nc" id="L213">	}</span>
+
+	/**
+	 * @param enabled
+	 */
+	public void setPasteMenuEnabled(final boolean enabled)
+	{
+<span class="nc" id="L220">		GUIUtils.processOnSwingEventThread(new Runnable()</span>
+<span class="nc" id="L221">		{</span>
+			public void run()
+			{
+<span class="nc" id="L224">				final ActionCollection coll = getApplication().getActionCollection();</span>
+<span class="nc" id="L225">				coll.get(PasteTableAction.class).setEnabled(true);</span>
+<span class="nc" id="L226">			}</span>
+		});
+<span class="nc" id="L228">	}</span>
+
+	/**
+	 * @param selectedDatabaseObjects
+	 *           The selectedDatabaseObjects to set.
+	 */
+	public void setSourceDatabaseObjects(List&lt;IDatabaseObjectInfo&gt; dbObjList)
+	{
+<span class="nc bnc" id="L236" title="All 2 branches missed.">		if (dbObjList != null)</span>
+		{
+<span class="nc" id="L238">			selectedDatabaseObjects = dbObjList;</span>
+<span class="nc" id="L239">			int sourceObjectCount = 0;</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">			if (s_log.isDebugEnabled())</span>
+			{
+<span class="nc bnc" id="L242" title="All 2 branches missed.">				for (IDatabaseObjectInfo info : dbObjList)</span>
+				{
+<span class="nc" id="L244">					s_log.debug(&quot;setSelectedDatabaseObjects: IDatabaseObjectInfo[&quot; + (sourceObjectCount++) + &quot;]=&quot;</span>
+						+ info);
+<span class="nc" id="L246">				}</span>
+			}
+		}
+<span class="nc" id="L249">	}</span>
+
+	/**
+	 * Create panel for the Global Properties dialog.
+	 * 
+	 * @return properties panel.
+	 */
+	public IGlobalPreferencesPanel[] getGlobalPreferencePanels()
+	{
+<span class="nc" id="L258">		DBCopyGlobalPreferencesTab tab = new DBCopyGlobalPreferencesTab();</span>
+<span class="nc" id="L259">		return new IGlobalPreferencesPanel[] { tab };</span>
+	}
+
+	/**
+	 * @param coll
+	 * @param api
+	 */
+	protected void addMenuItemsToContextMenu(final IObjectTreeAPI api)
+	{
+		// final IObjectTreeAPI api = Compat.getIObjectTreeAPI(session, this);
+<span class="nc" id="L269">		final ActionCollection coll = getApplication().getActionCollection();</span>
+
+<span class="nc bnc" id="L271" title="All 2 branches missed.">		if (SwingUtilities.isEventDispatchThread())</span>
+		{
+<span class="nc" id="L273">			addToPopup(api, coll);</span>
+		}
+		else
+		{
+<span class="nc" id="L277">			SwingUtilities.invokeLater(new Runnable()</span>
+<span class="nc" id="L278">			{</span>
+				public void run()
+				{
+<span class="nc" id="L281">					addToPopup(api, coll);</span>
+<span class="nc" id="L282">				}</span>
+			});
+		}
+<span class="nc" id="L285">	}</span>
+
+	/**
+	 * @param api
+	 * @param coll
+	 */
+	private void addToPopup(IObjectTreeAPI api, ActionCollection coll)
+	{
+
+<span class="nc" id="L294">		api.addToPopup(DatabaseObjectType.TABLE_TYPE_DBO, coll.get(CopyTableAction.class));</span>
+
+<span class="nc" id="L296">		api.addToPopup(DatabaseObjectType.TABLE_TYPE_DBO, coll.get(PasteTableAction.class));</span>
+<span class="nc" id="L297">		api.addToPopup(DatabaseObjectType.TABLE_TYPE_DBO, coll.get(PasteTableAsAction.class));</span>
+
+		// Copy action object tree types
+<span class="nc" id="L300">		api.addToPopup(DatabaseObjectType.TABLE, coll.get(CopyTableAction.class));</span>
+
+<span class="nc" id="L302">		api.addToPopup(DatabaseObjectType.TABLE, coll.get(PasteTableAction.class));</span>
+<span class="nc" id="L303">		api.addToPopup(DatabaseObjectType.TABLE, coll.get(PasteTableAsAction.class));</span>
+
+		// Paste action object tree types
+<span class="nc" id="L306">		api.addToPopup(DatabaseObjectType.SCHEMA, coll.get(PasteTableAction.class));</span>
+<span class="nc" id="L307">		api.addToPopup(DatabaseObjectType.SCHEMA, coll.get(PasteTableAsAction.class));</span>
+
+		// MySQL shows databases as &quot;CATALOGS&quot; not &quot;SCHEMAS&quot;
+<span class="nc" id="L310">		api.addToPopup(DatabaseObjectType.CATALOG, coll.get(PasteTableAction.class));</span>
+<span class="nc" id="L311">		api.addToPopup(DatabaseObjectType.CATALOG, coll.get(PasteTableAsAction.class));</span>
+
+<span class="nc" id="L313">		api.addToPopup(DatabaseObjectType.SESSION, coll.get(PasteTableAsAction.class));</span>
+
+<span class="nc" id="L315">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.plugins.dbcopy.SessionInfoProvider#getSourceSession()
+	 */
+	public ISession getSourceSession()
+	{
+<span class="nc" id="L322">		return copySourceSession;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.plugins.dbcopy.SessionInfoProvider#setSourceSession(net.sourceforge.squirrel_sql.client.session.ISession)
+	 */
+	public void setSourceSession(ISession session)
+	{
+<span class="nc bnc" id="L330" title="All 2 branches missed.">		if (session != null)</span>
+		{
+<span class="nc" id="L332">			copySourceSession = session;</span>
+		}
+<span class="nc" id="L334">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.plugins.dbcopy.SessionInfoProvider#getSourceDatabaseObjects()
+	 */
+	public List&lt;IDatabaseObjectInfo&gt; getSourceDatabaseObjects()
+	{
+<span class="nc" id="L341">		return selectedDatabaseObjects;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.plugins.dbcopy.SessionInfoProvider#getDestSession()
+	 */
+	public ISession getDestSession()
+	{
+<span class="nc" id="L349">		return copyDestSession;</span>
+	}
+
+   @Override
+   public void setPasteToTableName(String pasteToTableName)
+   {
+<span class="nc" id="L355">      _pasteToTableName = pasteToTableName;</span>
+<span class="nc" id="L356">   }</span>
+
+   @Override
+   public String getPasteToTableName()
+   {
+<span class="nc" id="L361">      return _pasteToTableName;</span>
+   }
+
+   @Override
+   public TableInfo getPasteToTableInfo(ISQLConnection destConn, String destSchema, String destCatalog)
+   {
+<span class="nc bnc" id="L367" title="All 2 branches missed.">      if(null == _pasteToTableName)</span>
+      {
+<span class="nc" id="L369">         return null;</span>
+      }
+
+<span class="nc bnc" id="L372" title="All 4 branches missed.">      if(1 != selectedDatabaseObjects.size() || false == selectedDatabaseObjects.get(0) instanceof TableInfo)</span>
+      {
+<span class="nc" id="L374">         throw new IllegalStateException(&quot;Invalid paste table as state&quot;);</span>
+      }
+
+<span class="nc" id="L377">      TableInfo ret = new TableInfo(destCatalog, destSchema, _pasteToTableName, &quot;TABLE&quot;, null, destConn.getSQLMetaData());</span>
+<span class="nc" id="L378">      return ret;</span>
+   }
+
+   @Override
+   public boolean isCopiedFormDestinationSession()
+   {
+<span class="nc" id="L384">      return copyDestSession.equals(copySourceSession);</span>
+   }
+
+   /**
+	 * @see net.sourceforge.squirrel_sql.plugins.dbcopy.SessionInfoProvider#setDestSession(net.sourceforge.squirrel_sql.client.session.ISession)
+	 */
+	public void setDestSession(ISession session)
+	{
+<span class="nc" id="L392">		copyDestSession = session;</span>
+<span class="nc" id="L393">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.plugins.dbcopy.SessionInfoProvider#getDestDatabaseObject()
+	 */
+	public IDatabaseObjectInfo getDestDatabaseObject()
+	{
+<span class="nc" id="L400">		return selectedDestDatabaseObject;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.plugins.dbcopy.SessionInfoProvider#setDestDatabaseObject(net.sourceforge.squirrel_sql.fw.sql.IDatabaseObjectInfo)
+	 */
+	public void setDestDatabaseObject(IDatabaseObjectInfo info)
+	{
+<span class="nc" id="L408">		selectedDestDatabaseObject = info;</span>
+<span class="nc" id="L409">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

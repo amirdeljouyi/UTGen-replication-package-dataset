@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AllPageTitles.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">23_jwbf</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.jwbf.mediawiki.actions.queries</a> &gt; <span class="el_source">AllPageTitles.java</span></div><h1>AllPageTitles.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2007 Tobias Knerr.
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
+ *
+ * Contributors:
+ * Tobias Knerr
+ *
+ */
+package net.sourceforge.jwbf.mediawiki.actions.queries;
+
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_09;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_10;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_11;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_12;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_13;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_14;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_15;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_16;
+
+import java.util.Collection;
+import java.util.Vector;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import lombok.extern.slf4j.Slf4j;
+import net.sourceforge.jwbf.core.actions.Get;
+import net.sourceforge.jwbf.core.actions.util.HttpAction;
+import net.sourceforge.jwbf.mediawiki.actions.MediaWiki;
+import net.sourceforge.jwbf.mediawiki.actions.util.MWAction;
+import net.sourceforge.jwbf.mediawiki.actions.util.RedirectFilter;
+import net.sourceforge.jwbf.mediawiki.actions.util.SupportedBy;
+import net.sourceforge.jwbf.mediawiki.actions.util.VersionException;
+import net.sourceforge.jwbf.mediawiki.bots.MediaWikiBot;
+
+/**
+ * Action class using the MediaWiki-api's &quot;list=allpages&quot;.
+ * 
+ * @author Tobias Knerr
+ * @author Thomas Stock
+ * 
+ */
+<span class="nc" id="L53">@Slf4j</span>
+@SupportedBy({ MW1_09, MW1_10, MW1_11, MW1_12, MW1_13, MW1_14, MW1_15, MW1_16 })
+public class AllPageTitles extends TitleQuery&lt;String&gt; {
+
+  /** Pattern to parse returned page, @see {@link #parseHasMore(String)}. */
+<span class="nc" id="L58">  private static final Pattern HAS_MORE_PATTERN = Pattern</span>
+<span class="nc" id="L59">      .compile(</span>
+          &quot;&lt;query-continue&gt;.*?&lt;allpages *apfrom=\&quot;([^\&quot;]*)\&quot; */&gt;.*?&lt;/query-continue&gt;&quot;,
+          Pattern.DOTALL | Pattern.MULTILINE);
+<span class="nc" id="L62">  private static final Pattern ARTICLE_TITLES_PATTERN = Pattern</span>
+<span class="nc" id="L63">      .compile(&quot;&lt;p pageid=\&quot;.*?\&quot; ns=\&quot;.*?\&quot; title=\&quot;(.*?)\&quot; /&gt;&quot;);</span>
+  /** Pattern to parse returned page, @see {@link #parseArticleTitles(String)} */
+  /** Constant value for the aplimit-parameter. **/
+  private static final int LIMIT = 50;
+
+
+  /**
+   * Information given in the constructor, necessary for creating next action.
+   */
+  private String prefix;
+  private String namespaces;
+
+  private MediaWikiBot bot;
+
+  private String from;
+
+  private RedirectFilter rf;
+
+
+
+  /**
+   * The public constructor. It will have an MediaWiki-request generated,
+   * which is then added to msgs. When it is answered, the method
+   * processAllReturningText will be called (from outside this class). For the
+   * parameters, see
+   * {@link AllPageTitles#generateRequest(String, String, boolean, boolean, String)}
+   * 
+   * @param from
+   *            page title to start from, may be null
+   * @param prefix
+   *            restricts search to titles that begin with this value, may be
+   *            null
+   * @param rf
+   *            include redirects in the list
+   * @param bot a
+   * @param namespaces
+   *            the namespace(s) that will be searched for links, as a string
+   *            of numbers separated by '|'; if null, this parameter is
+   *            omitted TODO are multible namespaces allowed?
+   * @throws VersionException if version is incompatible
+   */
+  public AllPageTitles(MediaWikiBot bot, String from,
+      String prefix, RedirectFilter rf, int ... namespaces) throws VersionException {
+<span class="nc" id="L106">    this(bot, from, prefix, rf, MWAction.createNsString(namespaces));</span>
+
+<span class="nc" id="L108">  }</span>
+  /**
+   * 
+   * @param bot a
+   * @param namespaces the
+   * @throws VersionException if version is incompatible
+   */
+  public AllPageTitles(MediaWikiBot bot, int ... namespaces) throws VersionException {
+<span class="nc" id="L116">    this(bot, null, null, RedirectFilter.nonredirects, namespaces);</span>
+
+<span class="nc" id="L118">  }</span>
+
+  /**
+   * @param from a
+   * @param prefix a
+   * @param rf the
+   * @param namespaces the
+   * @param bot the
+   * @throws VersionException if not supported
+   */
+  protected AllPageTitles(MediaWikiBot bot, String from
+      , String prefix, RedirectFilter rf, String namespaces) throws VersionException {
+<span class="nc" id="L130">    super(bot);</span>
+
+
+<span class="nc" id="L133">    this.bot = bot;</span>
+<span class="nc" id="L134">    this.rf = rf;</span>
+<span class="nc" id="L135">    this.prefix = prefix;</span>
+<span class="nc" id="L136">    this.namespaces = namespaces;</span>
+<span class="nc" id="L137">    this.from = from;</span>
+    //    generateRequest(from, prefix, rf, namespaces);
+
+<span class="nc" id="L140">  }</span>
+
+  /**
+   * Generates the next MediaWiki-request (GetMethod) and adds it to msgs.
+   * 
+   * @param from
+   *            page title to start from, may be null
+   * @param prefix
+   *            restricts search to titles that begin with this value, may be
+   *            null
+   * @param rf include redirects in the list
+   * @param namespace
+   *            the namespace(s) that will be searched for links, as a string
+   *            of numbers separated by '|'; if null, this parameter is
+   *            omitted
+   * @return a
+   */
+  private Get generateRequest(String from, String prefix,
+      RedirectFilter rf, String namespace) {
+<span class="nc bnc" id="L159" title="All 2 branches missed.">    if (log.isTraceEnabled()) {</span>
+<span class="nc" id="L160">      log.trace(&quot;enter GetAllPagetitles.generateRequest&quot;</span>
+          + &quot;(String,String,boolean,boolean,String)&quot;);
+    }
+
+    String apfilterredir;
+<span class="nc bnc" id="L165" title="All 2 branches missed.">    if (rf == RedirectFilter.all) {</span>
+<span class="nc" id="L166">      apfilterredir = &quot;all&quot;;</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">    } else if (rf == RedirectFilter.redirects) {</span>
+<span class="nc" id="L168">      apfilterredir = &quot;redirects&quot;;</span>
+    } else {
+<span class="nc" id="L170">      apfilterredir = &quot;nonredirects&quot;;</span>
+    }
+
+
+<span class="nc bnc" id="L174" title="All 2 branches missed.">    String uS = &quot;/api.php?action=query&amp;list=allpages&amp;&quot;</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">        + ((from != null &amp;&amp; from.length() &gt; 0) ? (&quot;&amp;apfrom=&quot; + MediaWiki</span>
+<span class="nc bnc" id="L176" title="All 2 branches missed.">            .encode(from)) : &quot;&quot;)</span>
+<span class="nc bnc" id="L177" title="All 2 branches missed.">            + ((prefix != null) ? (&quot;&amp;apprefix=&quot; + MediaWiki.encode(prefix)) : &quot;&quot;)</span>
+<span class="nc bnc" id="L178" title="All 2 branches missed.">            + ((namespace != null &amp;&amp; namespace.length() != 0) ? (&quot;&amp;apnamespace=&quot; + MediaWiki.encode(namespace))</span>
+                : &quot;&quot;) + &quot;&amp;apfilterredir=&quot; + apfilterredir + &quot;&amp;aplimit=&quot; + LIMIT
+                + &quot;&amp;format=xml&quot;;
+<span class="nc" id="L181">    return new Get(uS);</span>
+
+  }
+
+
+
+  /**
+   * Picks the article name from a MediaWiki api response.
+   * 
+   * @param s
+   *            text for parsing
+   * @return a
+   */
+  @Override
+  protected Collection&lt;String&gt; parseArticleTitles(String s) {
+<span class="nc bnc" id="L196" title="All 2 branches missed.">    if (log.isTraceEnabled()) {</span>
+<span class="nc" id="L197">      log.trace(&quot;enter GetAllPagetitles.parseArticleTitles(String)&quot;);</span>
+    }
+<span class="nc" id="L199">    Collection&lt;String&gt; c = new Vector&lt;String&gt;();</span>
+<span class="nc" id="L200">    Matcher m = ARTICLE_TITLES_PATTERN.matcher(s);</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">    while (m.find()) {</span>
+<span class="nc" id="L202">      String title = MediaWiki.decode(m.group(1));</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">      if (log.isDebugEnabled()) {</span>
+<span class="nc" id="L204">        log.debug(&quot;Found article title: \&quot;&quot; + title + &quot;\&quot;&quot;);</span>
+      }
+<span class="nc" id="L206">      c.add(title);</span>
+<span class="nc" id="L207">    }</span>
+<span class="nc" id="L208">    return c;</span>
+  }
+  /**
+   * Gets the information about a follow-up page from a provided api response.
+   * If there is one, a new request is added to msgs by calling
+   * generateRequest. If no exists, the string is empty.
+   * 
+   * @param s
+   *            text for parsing
+   * @return the
+   */
+  @Override
+  protected String parseHasMore(final String s) {
+<span class="nc bnc" id="L221" title="All 2 branches missed.">    if (log.isTraceEnabled()) {</span>
+<span class="nc" id="L222">      log.trace(&quot;enter GetAllPagetitles.parseHasMore(String)&quot;);</span>
+    }
+<span class="nc" id="L224">    Matcher m = HAS_MORE_PATTERN.matcher(s);</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">    if (m.find()) {</span>
+<span class="nc" id="L226">      return  m.group(1);</span>
+    } else {
+<span class="nc" id="L228">      return &quot;&quot;;</span>
+    }
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  protected HttpAction prepareCollection() {
+
+<span class="nc" id="L238">    return generateRequest(getNextPageInfo(), prefix, rf, namespaces);</span>
+
+  }
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  protected Object clone() throws CloneNotSupportedException {
+    try {
+<span class="nc" id="L247">      return new AllPageTitles(bot, from, prefix, rf, namespaces);</span>
+<span class="nc" id="L248">    } catch (VersionException e) {</span>
+<span class="nc" id="L249">      throw new CloneNotSupportedException(e.getLocalizedMessage());</span>
+    }
+  }
+
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

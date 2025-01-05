@@ -1,0 +1,440 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MediaWikiBot.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">23_jwbf</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.jwbf.mediawiki.bots</a> &gt; <span class="el_source">MediaWikiBot.java</span></div><h1>MediaWikiBot.java</h1><pre class="source lang-java linenums">package net.sourceforge.jwbf.mediawiki.bots;
+
+import java.net.URL;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
+
+import javax.annotation.Nonnull;
+import javax.inject.Inject;
+
+import lombok.extern.slf4j.Slf4j;
+import net.sourceforge.jwbf.core.actions.ContentProcessable;
+import net.sourceforge.jwbf.core.actions.HttpActionClient;
+import net.sourceforge.jwbf.core.actions.util.ActionException;
+import net.sourceforge.jwbf.core.actions.util.ProcessException;
+import net.sourceforge.jwbf.core.bots.HttpBot;
+import net.sourceforge.jwbf.core.bots.WikiBot;
+import net.sourceforge.jwbf.core.bots.util.JwbfException;
+import net.sourceforge.jwbf.core.contentRep.Article;
+import net.sourceforge.jwbf.core.contentRep.ContentAccessable;
+import net.sourceforge.jwbf.core.contentRep.SimpleArticle;
+import net.sourceforge.jwbf.core.contentRep.Userinfo;
+import net.sourceforge.jwbf.mediawiki.actions.MediaWiki;
+import net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version;
+import net.sourceforge.jwbf.mediawiki.actions.editing.GetRevision;
+import net.sourceforge.jwbf.mediawiki.actions.editing.PostDelete;
+import net.sourceforge.jwbf.mediawiki.actions.editing.PostModifyContent;
+import net.sourceforge.jwbf.mediawiki.actions.login.PostLogin;
+import net.sourceforge.jwbf.mediawiki.actions.login.PostLoginOld;
+import net.sourceforge.jwbf.mediawiki.actions.meta.GetUserinfo;
+import net.sourceforge.jwbf.mediawiki.actions.meta.GetVersion;
+import net.sourceforge.jwbf.mediawiki.actions.meta.Siteinfo;
+import net.sourceforge.jwbf.mediawiki.actions.util.VersionException;
+import net.sourceforge.jwbf.mediawiki.contentRep.LoginData;
+
+/**
+ * This class helps you to interact with each &lt;a href=&quot;http://www.mediawiki.org&quot;
+ * target=&quot;_blank&quot;&gt;MediaWiki&lt;/a&gt;. This class offers a &lt;b&gt;basic set&lt;/b&gt; of
+ * methods which are defined in the package net.sourceforge.jwbf.actions.mw.*
+ * 
+ * 
+ * How to use:
+ * 
+ * &lt;pre&gt;
+ * MediaWikiBot b = new MediaWikiBot(&amp;quot;http://yourwiki.org&amp;quot;);
+ * b.login(&amp;quot;Username&amp;quot;, &amp;quot;Password&amp;quot;);
+ * System.out.println(b.readContent(&amp;quot;Main Page&amp;quot;).getText());
+ * &lt;/pre&gt;
+ * 
+ * &lt;b&gt;How to find the correct wikiurl&lt;/b&gt;
+ * &lt;p&gt;
+ * The correct wikiurl is sometimes not easy to find, because some wikiadmis
+ * uses url rewriting rules. In this cases the correct url is the one, which
+ * gives you access to &lt;code&gt;api.php&lt;/code&gt;. E.g. Compare
+ * 
+ * &lt;pre&gt;
+ * http://www.mediawiki.org/wiki/api.php
+ * http://www.mediawiki.org/w/api.php
+ * &lt;/pre&gt;
+ * 
+ * Thus the correct wikiurl is: &lt;code&gt;http://www.mediawiki.org/w/&lt;/code&gt;
+ * &lt;/p&gt;
+ * 
+ * @author Thomas Stock
+ * @author Tobias Knerr
+ * @author Justus Bisser
+ * 
+ * @see MediaWikiAdapterBot
+ * 
+ */
+<span class="fc" id="L71">@Slf4j</span>
+public class MediaWikiBot implements WikiBot {
+
+<span class="nc" id="L74">  private LoginData login = null;</span>
+
+<span class="nc" id="L76">  private Version version = null;</span>
+<span class="nc" id="L77">  private Userinfo ui = null;</span>
+
+<span class="nc" id="L79">  private boolean loginChangeUserInfo = false;</span>
+<span class="nc" id="L80">  private boolean loginChangeVersion = false;</span>
+<span class="nc" id="L81">  private boolean useEditApi = true;</span>
+
+  @Inject
+  private HttpBot bot;
+
+  /**
+   * These chars are not allowed in article names.
+   */
+<span class="fc" id="L89">  public static final char[] INVALID_LABEL_CHARS = &quot;[]{}&lt;&gt;|&quot;.toCharArray();</span>
+  private static final int DEFAULT_READ_PROPERTIES = GetRevision.CONTENT
+      | GetRevision.COMMENT | GetRevision.USER | GetRevision.TIMESTAMP
+      | GetRevision.IDS | GetRevision.FLAGS;
+
+<span class="fc" id="L94">  private static final Set&lt;String&gt; emptySet = Collections</span>
+<span class="fc" id="L95">      .unmodifiableSet(new HashSet&lt;String&gt;());</span>
+
+  /**
+   * use this constructor, if you want to work with IoC.
+   * 
+   */
+<span class="nc" id="L101">  public MediaWikiBot() {</span>
+
+<span class="nc" id="L103">  }</span>
+
+  /**
+   * @param u
+   *          wikihosturl like &quot;http://www.mediawiki.org/w/&quot;
+   */
+<span class="nc" id="L109">  public MediaWikiBot(final URL u) {</span>
+<span class="nc" id="L110">    bot = new HttpBot(u);</span>
+<span class="nc" id="L111">  }</span>
+
+  /**
+   * 
+   * @param client
+   *          a
+   */
+<span class="nc" id="L118">  public MediaWikiBot(final HttpActionClient client) {</span>
+<span class="nc" id="L119">    bot = new HttpBot(client);</span>
+<span class="nc" id="L120">  }</span>
+
+  /**
+   * @param url
+   *          wikihosturl like &quot;http://www.mediawiki.org/w/&quot;
+   * @throws IllegalArgumentException
+   *           if param url does not represent a well-formed url
+   */
+
+<span class="nc" id="L129">  public MediaWikiBot(final String url) {</span>
+<span class="nc" id="L130">    bot = new HttpBot(url);</span>
+<span class="nc bnc" id="L131" title="All 4 branches missed.">    if (!(url.endsWith(&quot;.php&quot;) || url.endsWith(&quot;/&quot;))) {</span>
+<span class="nc" id="L132">      throw new IllegalArgumentException(&quot;(&quot; + url</span>
+          + &quot;) url must end with slash or .php&quot;);
+    }
+<span class="nc" id="L135">    getBot().setConnection(url);</span>
+<span class="nc" id="L136">  }</span>
+
+  /**
+   * 
+   * @param url
+   *          wikihosturl like &quot;http://www.mediawiki.org/w/&quot;
+   * @param testHostReachable
+   *          if true, test if host reachable
+   */
+<span class="nc" id="L145">  public MediaWikiBot(URL url, boolean testHostReachable) {</span>
+<span class="nc" id="L146">    bot = new HttpBot(url);</span>
+<span class="nc bnc" id="L147" title="All 2 branches missed.">    if (testHostReachable) {</span>
+<span class="nc" id="L148">      getBot().getPage(url.toExternalForm());</span>
+    }
+<span class="nc" id="L150">    getBot().setConnection(url);</span>
+<span class="nc" id="L151">  }</span>
+
+  /**
+   * Performs a Login.
+   * 
+   * @param username
+   *          the username
+   * @param passwd
+   *          the password
+   * @param domain
+   *          login domain (Special for LDAPAuth extention to authenticate
+   *          against LDAP users)
+   * @see PostLogin
+   * @see PostLoginOld
+   */
+  public void login(final String username, final String passwd,
+      final String domain) {
+<span class="nc" id="L168">    LoginData login = new LoginData();</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">    switch (getVersion()) {</span>
+      case MW1_09:
+      case MW1_10:
+      case MW1_11:
+      case MW1_12:
+<span class="nc" id="L174">        performAction(new PostLoginOld(username, passwd, domain, login));</span>
+<span class="nc" id="L175">        break;</span>
+
+      default:
+<span class="nc" id="L178">        performAction(new PostLogin(username, passwd, domain, login));</span>
+        break;
+    }
+
+<span class="nc" id="L182">    this.login = login;</span>
+<span class="nc" id="L183">    loginChangeUserInfo = true;</span>
+<span class="nc bnc" id="L184" title="All 2 branches missed.">    if (getVersion() == Version.UNKNOWN) {</span>
+<span class="nc" id="L185">      loginChangeVersion = true;</span>
+    }
+
+<span class="nc" id="L188">  }</span>
+
+  /**
+   * TODO mv doc
+   * 
+   * Performs a Login. Actual old cookie login works right, because is pending
+   * on {@link #writeContent(ContentAccessable)}
+   * 
+   * @param username
+   *          the username
+   * @param passwd
+   *          the password
+   * @see PostLogin
+   * @see PostLoginOld
+   */
+  public void login(final String username, final String passwd) {
+
+<span class="nc" id="L205">    login(username, passwd, null);</span>
+<span class="nc" id="L206">  }</span>
+
+  /**
+   * 
+   * @param name
+   *          of article in a mediawiki like &quot;Main Page&quot;
+   * @param properties
+   *          {@link GetRevision}
+   * @return a content representation of requested article, never null
+   * @see GetRevision
+   */
+  public synchronized Article getArticle(final String name, final int properties) {
+<span class="nc" id="L218">    return new Article(this, readData(name, properties));</span>
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  public synchronized SimpleArticle readData(final String name,
+      final int properties) {
+
+<span class="nc" id="L227">    GetRevision ac = new GetRevision(getVersion(), name, properties);</span>
+
+<span class="nc" id="L229">    performAction(ac);</span>
+
+<span class="nc" id="L231">    return ac.getArticle();</span>
+
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  public SimpleArticle readData(String name) {
+
+<span class="nc" id="L240">    return readData(name, DEFAULT_READ_PROPERTIES);</span>
+  }
+
+  /**
+   * 
+   * @param name
+   *          of article in a mediawiki like &quot;Main Page&quot;
+   * @return a content representation of requested article, never null
+   * @see GetRevision
+   */
+  public synchronized Article getArticle(final String name) {
+<span class="nc" id="L251">    return getArticle(name, DEFAULT_READ_PROPERTIES);</span>
+
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  public synchronized void writeContent(final SimpleArticle simpleArticle) {
+<span class="nc bnc" id="L259" title="All 2 branches missed.">    if (!isLoggedIn()) {</span>
+<span class="nc" id="L260">      throw new ActionException(&quot;Please login first&quot;);</span>
+    }
+
+<span class="nc bnc" id="L263" title="All 2 branches missed.">    for (char invChar : INVALID_LABEL_CHARS) { // FIXME Replace with a REGEX</span>
+<span class="nc bnc" id="L264" title="All 2 branches missed.">      if (simpleArticle.getTitle().contains(invChar + &quot;&quot;)) {</span>
+<span class="nc" id="L265">        throw new ActionException(&quot;Invalid character in label\&quot;&quot;</span>
+<span class="nc" id="L266">            + simpleArticle.getTitle() + &quot;\&quot; : \&quot;&quot; + invChar + &quot;\&quot;&quot;);</span>
+      }
+    }
+
+<span class="nc" id="L270">    performAction(new PostModifyContent(this, simpleArticle));</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">    if (simpleArticle.getText().trim().length() &lt; 1)</span>
+<span class="nc" id="L272">      throw new RuntimeException(&quot;Content is empty, still written&quot;);</span>
+<span class="nc" id="L273">  }</span>
+
+  /**
+   * 
+   * @return true if
+   */
+  public final boolean isLoggedIn() {
+
+<span class="nc bnc" id="L281" title="All 2 branches missed.">    if (login != null) {</span>
+<span class="nc" id="L282">      return login.isLoggedIn();</span>
+    }
+<span class="nc" id="L284">    return false;</span>
+
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  public Userinfo getUserinfo() {
+<span class="nc" id="L292">    log.debug(&quot;get userinfo&quot;);</span>
+<span class="nc bnc" id="L293" title="All 4 branches missed.">    if (ui == null || loginChangeUserInfo) {</span>
+      GetUserinfo a;
+      try {
+<span class="nc" id="L296">        a = new GetUserinfo(getVersion());</span>
+
+<span class="nc" id="L298">        performAction(a);</span>
+<span class="nc" id="L299">        ui = a;</span>
+<span class="nc" id="L300">        loginChangeUserInfo = false;</span>
+<span class="nc" id="L301">      } catch (VersionException e) {</span>
+<span class="nc bnc" id="L302" title="All 4 branches missed.">        if (login != null &amp;&amp; login.getUserName().length() &gt; 0) {</span>
+<span class="nc" id="L303">          ui = new Userinfo() {</span>
+
+            public String getUsername() {
+<span class="nc" id="L306">              return login.getUserName();</span>
+            }
+
+            public Set&lt;String&gt; getRights() {
+<span class="nc" id="L310">              return emptySet;</span>
+            }
+
+            public Set&lt;String&gt; getGroups() {
+<span class="nc" id="L314">              return emptySet;</span>
+            }
+          };
+        } else {
+<span class="nc" id="L318">          ui = new Userinfo() {</span>
+
+            public String getUsername() {
+<span class="nc" id="L321">              return &quot;unknown&quot;;</span>
+            }
+
+            public Set&lt;String&gt; getRights() {
+<span class="nc" id="L325">              return emptySet;</span>
+            }
+
+            public Set&lt;String&gt; getGroups() {
+<span class="nc" id="L329">              return emptySet;</span>
+            }
+          };
+        }
+<span class="nc" id="L333">      }</span>
+
+    }
+<span class="nc" id="L336">    return ui;</span>
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  public void delete(String title) {
+
+<span class="nc" id="L344">    performAction(new PostDelete(this, title));</span>
+<span class="nc" id="L345">  }</span>
+
+  public synchronized String performAction(ContentProcessable a) {
+<span class="nc bnc" id="L348" title="All 2 branches missed.">    if (a.isSelfExecuter()) {</span>
+<span class="nc" id="L349">      throw new ActionException(&quot;this is a selfexcecuting action, &quot;</span>
+          + &quot;please do not perform this action manually&quot;);
+    }
+<span class="nc" id="L352">    return getBot().performAction(a);</span>
+  }
+
+  private HttpBot getBot() {
+<span class="nc bnc" id="L356" title="All 2 branches missed.">    if (bot == null) {</span>
+<span class="nc" id="L357">      throw new IllegalStateException(</span>
+          &quot;please use another constructor or inject &quot;
+<span class="nc" id="L359">              + HttpBot.class.getCanonicalName());</span>
+    }
+<span class="nc" id="L361">    return bot;</span>
+  }
+
+  /**
+   * 
+   * @return the
+   * @throws IllegalStateException
+   *           if no version was found.
+   * @see #getSiteinfo()
+   */
+  @Nonnull
+  public Version getVersion() throws IllegalStateException {
+<span class="nc bnc" id="L373" title="All 4 branches missed.">    if (version == null || loginChangeVersion) {</span>
+      try {
+<span class="nc" id="L375">        GetVersion gs = new GetVersion();</span>
+<span class="nc" id="L376">        performAction(gs);</span>
+
+<span class="nc" id="L378">        version = gs.getVersion();</span>
+<span class="nc" id="L379">        loginChangeVersion = false;</span>
+<span class="nc" id="L380">      } catch (JwbfException e) {</span>
+<span class="nc" id="L381">        log.error(e.getClass().getName() + e.getLocalizedMessage());</span>
+<span class="nc" id="L382">        throw new IllegalStateException(e.getLocalizedMessage());</span>
+<span class="nc" id="L383">      }</span>
+<span class="nc" id="L384">      log.debug(&quot;Version is: &quot; + version.name());</span>
+
+    }
+<span class="nc" id="L387">    return version;</span>
+  }
+
+  /**
+   * 
+   * @return a
+   * @throws ActionException
+   *           on problems with http, cookies and io
+   * @see Siteinfo
+   */
+  @Nonnull
+  public Siteinfo getSiteinfo() {
+
+<span class="nc" id="L400">    Siteinfo gs = null;</span>
+    try {
+<span class="nc" id="L402">      gs = new Siteinfo();</span>
+<span class="nc" id="L403">      performAction(gs);</span>
+<span class="nc" id="L404">    } catch (ProcessException e) {</span>
+<span class="nc" id="L405">      log.error(&quot;{}&quot;, e);</span>
+<span class="nc" id="L406">    }</span>
+
+<span class="nc" id="L408">    return gs;</span>
+
+  }
+
+  /**
+   * 
+   * @return the
+   */
+  public final boolean isEditApi() {
+<span class="nc" id="L417">    return useEditApi;</span>
+  }
+
+  /**
+   * @param useEditApi
+   *          Set to false, to force editing without the API.
+   */
+  public final void useEditApi(boolean useEditApi) {
+<span class="nc" id="L425">    this.useEditApi = useEditApi;</span>
+<span class="nc" id="L426">  }</span>
+
+  /**
+   * {@inheritDoc}
+   */
+  public final String getWikiType() {
+<span class="nc" id="L432">    return MediaWiki.class.getName() + &quot; &quot; + getVersion();</span>
+  }
+
+  public String getHostUrl() {
+<span class="nc" id="L436">    return getBot().getHostUrl();</span>
+  }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

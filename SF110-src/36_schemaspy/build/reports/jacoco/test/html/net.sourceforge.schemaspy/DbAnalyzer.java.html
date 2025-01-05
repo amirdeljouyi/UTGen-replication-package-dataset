@@ -1,0 +1,413 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DbAnalyzer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">36_schemaspy</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.schemaspy</a> &gt; <span class="el_source">DbAnalyzer.java</span></div><h1>DbAnalyzer.java</h1><pre class="source lang-java linenums">/*
+ * This file is a part of the SchemaSpy project (http://schemaspy.sourceforge.net).
+ * Copyright (C) 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011 John Currier
+ *
+ * SchemaSpy is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * SchemaSpy is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ */
+package net.sourceforge.schemaspy;
+
+import java.sql.DatabaseMetaData;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.regex.Pattern;
+import net.sourceforge.schemaspy.model.ForeignKeyConstraint;
+import net.sourceforge.schemaspy.model.ImpliedForeignKeyConstraint;
+import net.sourceforge.schemaspy.model.RailsForeignKeyConstraint;
+import net.sourceforge.schemaspy.model.Table;
+import net.sourceforge.schemaspy.model.TableColumn;
+import net.sourceforge.schemaspy.model.TableIndex;
+import net.sourceforge.schemaspy.util.Inflection;
+
+<span class="nc" id="L46">public class DbAnalyzer {</span>
+    public static List&lt;ImpliedForeignKeyConstraint&gt; getImpliedConstraints(Collection&lt;Table&gt; tables) {
+<span class="nc" id="L48">        List&lt;TableColumn&gt; columnsWithoutParents = new ArrayList&lt;TableColumn&gt;();</span>
+<span class="nc" id="L49">        Map&lt;TableColumn, Table&gt; allPrimaries = new TreeMap&lt;TableColumn, Table&gt;(new Comparator&lt;TableColumn&gt;() {</span>
+            public int compare(TableColumn column1, TableColumn column2) {
+<span class="nc" id="L51">                int rc = column1.getName().compareToIgnoreCase(column2.getName());</span>
+<span class="nc bnc" id="L52" title="All 2 branches missed.">                if (rc == 0)</span>
+<span class="nc" id="L53">                    rc = column1.getType().compareToIgnoreCase(column2.getType());</span>
+<span class="nc bnc" id="L54" title="All 2 branches missed.">                if (rc == 0)</span>
+<span class="nc" id="L55">                    rc = column1.getLength() - column2.getLength();</span>
+<span class="nc" id="L56">                return rc;</span>
+            }
+        });
+
+<span class="nc" id="L60">        int duplicatePrimaries = 0;</span>
+
+        // gather all the primary key columns and columns without parents
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        for (Table table : tables) {</span>
+<span class="nc" id="L64">            List&lt;TableColumn&gt; tablePrimaries = table.getPrimaryColumns();</span>
+<span class="nc bnc" id="L65" title="All 2 branches missed.">            if (tablePrimaries.size() == 1) { // can't match up multiples...yet...</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">                for (TableColumn primary : tablePrimaries) {</span>
+<span class="nc bnc" id="L67" title="All 2 branches missed.">                    if (primary.allowsImpliedChildren() &amp;&amp;</span>
+<span class="nc bnc" id="L68" title="All 2 branches missed.">                        allPrimaries.put(primary, table) != null)</span>
+<span class="nc" id="L69">                        ++duplicatePrimaries;</span>
+<span class="nc" id="L70">                }</span>
+            }
+
+<span class="nc bnc" id="L73" title="All 2 branches missed.">            for (TableColumn column : table.getColumns()) {</span>
+<span class="nc bnc" id="L74" title="All 4 branches missed.">                if (!column.isForeignKey() &amp;&amp; column.allowsImpliedParents())</span>
+<span class="nc" id="L75">                    columnsWithoutParents.add(column);</span>
+<span class="nc" id="L76">            }</span>
+<span class="nc" id="L77">        }</span>
+
+        // if more than half of the tables have the same primary key then
+        // it's most likely a database where primary key names aren't unique
+        // (e.g. they all have a primary key named 'ID')
+<span class="nc bnc" id="L82" title="All 2 branches missed.">        if (duplicatePrimaries &gt; allPrimaries.size()) // bizarre logic, but it does approximately what we need</span>
+<span class="nc" id="L83">            return new ArrayList&lt;ImpliedForeignKeyConstraint&gt;();</span>
+
+<span class="nc" id="L85">        sortColumnsByTable(columnsWithoutParents);</span>
+
+<span class="nc" id="L87">        List&lt;ImpliedForeignKeyConstraint&gt; impliedConstraints = new ArrayList&lt;ImpliedForeignKeyConstraint&gt;();</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">        for (TableColumn childColumn : columnsWithoutParents) {</span>
+<span class="nc" id="L89">            Table primaryTable = allPrimaries.get(childColumn);</span>
+<span class="nc bnc" id="L90" title="All 4 branches missed.">            if (primaryTable != null &amp;&amp; primaryTable != childColumn.getTable()) {</span>
+<span class="nc" id="L91">                TableColumn parentColumn = primaryTable.getColumn(childColumn.getName());</span>
+                // make sure the potential child-&gt;parent relationships isn't already a
+                // parent-&gt;child relationship
+<span class="nc bnc" id="L94" title="All 2 branches missed.">                if (parentColumn.getParentConstraint(childColumn) == null) {</span>
+                    // ok, we've found a potential relationship with a column matches a primary
+                    // key column in another table and isn't already related to that column
+<span class="nc" id="L97">                    impliedConstraints.add(new ImpliedForeignKeyConstraint(parentColumn, childColumn));</span>
+                }
+            }
+<span class="nc" id="L100">        }</span>
+
+<span class="nc" id="L102">        return impliedConstraints;</span>
+    }
+
+    /**
+     * Ruby on Rails-based databases typically have no real referential integrity
+     * constraints.  Instead they have a somewhat unusual way of associating
+     * columns to primary keys.&lt;p&gt;
+     *
+     * Basically all tables have a primary key named &lt;code&gt;ID&lt;/code&gt;.
+     * All tables are named plural names.
+     * The columns that logically reference that &lt;code&gt;ID&lt;/code&gt; are the singular
+     * form of the table name suffixed with &lt;code&gt;_ID&lt;/code&gt;.&lt;p&gt;
+     *
+     * A side-effect of calling this method is that the returned collection of
+     * constraints will be &quot;tied into&quot; the associated tables.
+     *
+     * @param tables
+     * @return List of {@link RailsForeignKeyConstraint}s
+     */
+    public static List&lt;RailsForeignKeyConstraint&gt; getRailsConstraints(Map&lt;String, Table&gt; tables) {
+<span class="nc" id="L122">        List&lt;RailsForeignKeyConstraint&gt; railsConstraints = new ArrayList&lt;RailsForeignKeyConstraint&gt;(tables.size());</span>
+
+        // iterate thru each column in each table looking for columns that
+        // match Rails naming conventions
+<span class="nc bnc" id="L126" title="All 2 branches missed.">        for (Table table : tables.values()) {</span>
+<span class="nc bnc" id="L127" title="All 2 branches missed.">            for (TableColumn column : table.getColumns()) {</span>
+<span class="nc" id="L128">                String columnName = column.getName().toLowerCase();</span>
+<span class="nc bnc" id="L129" title="All 6 branches missed.">                if (!column.isForeignKey() &amp;&amp; column.allowsImpliedParents() &amp;&amp; columnName.endsWith(&quot;_id&quot;)) {</span>
+<span class="nc" id="L130">                    String singular = columnName.substring(0, columnName.length() - 3);</span>
+<span class="nc" id="L131">                    String primaryTableName = Inflection.pluralize(singular);</span>
+<span class="nc" id="L132">                    Table primaryTable = tables.get(primaryTableName);</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">                    if (primaryTable != null) {</span>
+<span class="nc" id="L134">                        TableColumn primaryColumn = primaryTable.getColumn(&quot;ID&quot;);</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">                        if (primaryColumn != null) {</span>
+<span class="nc" id="L136">                            railsConstraints.add(new RailsForeignKeyConstraint(primaryColumn, column));</span>
+                        }
+                    }
+                }
+<span class="nc" id="L140">            }</span>
+<span class="nc" id="L141">        }</span>
+
+<span class="nc" id="L143">        return railsConstraints;</span>
+    }
+
+    /**
+     * Returns a &lt;code&gt;List&lt;/code&gt; of all of the &lt;code&gt;ForeignKeyConstraint&lt;/code&gt;s
+     * used by the specified tables.
+     *
+     * @param tables Collection
+     * @return List
+     */
+    public static List&lt;ForeignKeyConstraint&gt; getForeignKeyConstraints(Collection&lt;Table&gt; tables) {
+<span class="nc" id="L154">        List&lt;ForeignKeyConstraint&gt; constraints = new ArrayList&lt;ForeignKeyConstraint&gt;();</span>
+
+<span class="nc bnc" id="L156" title="All 2 branches missed.">        for (Table table : tables) {</span>
+<span class="nc" id="L157">            constraints.addAll(table.getForeignKeys());</span>
+<span class="nc" id="L158">        }</span>
+
+<span class="nc" id="L160">        return constraints;</span>
+    }
+
+    public static List&lt;Table&gt; getOrphans(Collection&lt;Table&gt; tables) {
+<span class="nc" id="L164">        List&lt;Table&gt; orphans = new ArrayList&lt;Table&gt;();</span>
+
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        for (Table table : tables) {</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">            if (table.isOrphan(false)) {</span>
+<span class="nc" id="L168">                orphans.add(table);</span>
+            }
+<span class="nc" id="L170">        }</span>
+
+<span class="nc" id="L172">        return sortTablesByName(orphans);</span>
+    }
+
+    /**
+     * Return a list of &lt;code&gt;TableColumn&lt;/code&gt;s that are both nullable
+     * and have an index that specifies that they must be unique (a rather strange combo).
+     */
+    public static List&lt;TableColumn&gt; getMustBeUniqueNullableColumns(Collection&lt;Table&gt; tables) {
+<span class="nc" id="L180">        List&lt;TableColumn&gt; uniqueNullables = new ArrayList&lt;TableColumn&gt;();</span>
+
+<span class="nc bnc" id="L182" title="All 2 branches missed.">        for (Table table : tables) {</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">            for (TableIndex index : table.getIndexes()) {</span>
+<span class="nc bnc" id="L184" title="All 2 branches missed.">                if (index.isUniqueNullable()) {</span>
+<span class="nc" id="L185">                    uniqueNullables.addAll(index.getColumns());</span>
+                }
+<span class="nc" id="L187">            }</span>
+<span class="nc" id="L188">        }</span>
+
+<span class="nc" id="L190">        return sortColumnsByTable(uniqueNullables);</span>
+    }
+
+    /**
+     * Return a list of &lt;code&gt;Table&lt;/code&gt;s that have neither an index nor a primary key.
+     */
+    public static List&lt;Table&gt; getTablesWithoutIndexes(Collection&lt;Table&gt; tables) {
+<span class="nc" id="L197">        List&lt;Table&gt; withoutIndexes = new ArrayList&lt;Table&gt;();</span>
+
+<span class="nc bnc" id="L199" title="All 2 branches missed.">        for (Table table : tables) {</span>
+<span class="nc bnc" id="L200" title="All 6 branches missed.">            if (table.getIndexes().size() == 0 &amp;&amp; !table.isView() &amp;&amp; !table.isLogical())</span>
+<span class="nc" id="L201">                withoutIndexes.add(table);</span>
+<span class="nc" id="L202">        }</span>
+
+<span class="nc" id="L204">        return sortTablesByName(withoutIndexes);</span>
+    }
+
+    public static List&lt;Table&gt; getTablesWithIncrementingColumnNames(Collection&lt;Table&gt; tables) {
+<span class="nc" id="L208">        List&lt;Table&gt; denormalizedTables = new ArrayList&lt;Table&gt;();</span>
+
+<span class="nc bnc" id="L210" title="All 2 branches missed.">        for (Table table : tables) {</span>
+<span class="nc" id="L211">            Map&lt;String, Long&gt; columnPrefixes = new HashMap&lt;String, Long&gt;();</span>
+
+<span class="nc bnc" id="L213" title="All 2 branches missed.">            for (TableColumn column : table.getColumns()) {</span>
+                // search for columns that start with the same prefix
+                // and end in an incrementing number
+
+<span class="nc" id="L217">                String columnName = column.getName();</span>
+<span class="nc" id="L218">                String numbers = null;</span>
+<span class="nc bnc" id="L219" title="All 2 branches missed.">                for (int i = columnName.length() - 1; i &gt; 0; --i) {</span>
+<span class="nc bnc" id="L220" title="All 2 branches missed.">                    if (Character.isDigit(columnName.charAt(i))) {</span>
+<span class="nc bnc" id="L221" title="All 2 branches missed.">                        numbers = String.valueOf(columnName.charAt(i)) + (numbers == null ? &quot;&quot; : numbers);</span>
+                    } else {
+                        break;
+                    }
+                }
+
+                // attempt to detect where they had an existing column
+                // and added a &quot;column2&quot; type of column (we'll call this one &quot;1&quot;)
+<span class="nc bnc" id="L229" title="All 2 branches missed.">                if (numbers == null) {</span>
+<span class="nc" id="L230">                    numbers = &quot;1&quot;;</span>
+<span class="nc" id="L231">                    columnName = columnName + numbers;</span>
+                }
+
+                // see if we've already found a column with the same prefix
+                // that had a numeric suffix +/- 1.
+<span class="nc" id="L236">                String prefix = columnName.substring(0, columnName.length() - numbers.length());</span>
+<span class="nc" id="L237">                long numeric = Long.parseLong(numbers);</span>
+<span class="nc" id="L238">                Long existing = columnPrefixes.get(prefix);</span>
+<span class="nc bnc" id="L239" title="All 4 branches missed.">                if (existing != null &amp;&amp; Math.abs(existing.longValue() - numeric) == 1) {</span>
+                    // found one so add it to our list and stop evaluating this table
+<span class="nc" id="L241">                    denormalizedTables.add(table);</span>
+<span class="nc" id="L242">                    break;</span>
+                }
+<span class="nc" id="L244">                columnPrefixes.put(prefix, new Long(numeric));</span>
+<span class="nc" id="L245">            }</span>
+<span class="nc" id="L246">        }</span>
+
+<span class="nc" id="L248">        return sortTablesByName(denormalizedTables);</span>
+    }
+
+    public static List&lt;Table&gt; getTablesWithOneColumn(Collection&lt;Table&gt; tables) {
+<span class="nc" id="L252">        List&lt;Table&gt; singleColumnTables = new ArrayList&lt;Table&gt;();</span>
+
+<span class="nc bnc" id="L254" title="All 2 branches missed.">        for (Table table : tables) {</span>
+<span class="nc bnc" id="L255" title="All 2 branches missed.">            if (table.getColumns().size() == 1)</span>
+<span class="nc" id="L256">                singleColumnTables.add(table);</span>
+<span class="nc" id="L257">        }</span>
+
+<span class="nc" id="L259">        return sortTablesByName(singleColumnTables);</span>
+    }
+
+    public static List&lt;Table&gt; sortTablesByName(List&lt;Table&gt; tables) {
+<span class="nc" id="L263">        Collections.sort(tables, new Comparator&lt;Table&gt;() {</span>
+            public int compare(Table table1, Table table2) {
+<span class="nc" id="L265">                return table1.compareTo(table2);</span>
+            }
+        });
+
+<span class="nc" id="L269">        return tables;</span>
+    }
+
+    public static List&lt;TableColumn&gt; sortColumnsByTable(List&lt;TableColumn&gt; columns) {
+<span class="nc" id="L273">        Collections.sort(columns, new Comparator&lt;TableColumn&gt;() {</span>
+            public int compare(TableColumn column1, TableColumn column2) {
+<span class="nc" id="L275">                int rc = column1.getTable().compareTo(column2.getTable());</span>
+<span class="nc bnc" id="L276" title="All 2 branches missed.">                if (rc == 0)</span>
+<span class="nc" id="L277">                    rc = column1.getName().compareToIgnoreCase(column2.getName());</span>
+<span class="nc" id="L278">                return rc;</span>
+            }
+        });
+
+<span class="nc" id="L282">        return columns;</span>
+    }
+
+    /**
+     * Returns a list of columns that have the word &quot;NULL&quot; or &quot;null&quot; as their default value
+     * instead of the likely candidate value null.
+     *
+     * @param tables Collection
+     * @return List
+     */
+    public static List&lt;TableColumn&gt; getDefaultNullStringColumns(Collection&lt;Table&gt; tables) {
+<span class="nc" id="L293">        List&lt;TableColumn&gt; defaultNullStringColumns = new ArrayList&lt;TableColumn&gt;();</span>
+
+<span class="nc bnc" id="L295" title="All 2 branches missed.">        for (Table table : tables) {</span>
+<span class="nc bnc" id="L296" title="All 2 branches missed.">            for (TableColumn column : table.getColumns()) {</span>
+<span class="nc" id="L297">                Object defaultValue = column.getDefaultValue();</span>
+<span class="nc bnc" id="L298" title="All 4 branches missed.">                if (defaultValue != null &amp;&amp; defaultValue instanceof String) {</span>
+<span class="nc" id="L299">                    String defaultString = defaultValue.toString();</span>
+<span class="nc bnc" id="L300" title="All 2 branches missed.">                    if (defaultString.trim().equalsIgnoreCase(&quot;'null'&quot;)) {</span>
+<span class="nc" id="L301">                        defaultNullStringColumns.add(column);</span>
+                    }
+                }
+<span class="nc" id="L304">            }</span>
+<span class="nc" id="L305">        }</span>
+
+<span class="nc" id="L307">        return sortColumnsByTable(defaultNullStringColumns);</span>
+    }
+
+    /**
+     * getSchemas - returns a List of catalog names (Strings)
+     *
+     * @param meta DatabaseMetaData
+     */
+    public static List&lt;String&gt; getCatalogs(DatabaseMetaData meta) throws SQLException {
+<span class="nc" id="L316">        List&lt;String&gt; catalogs = new ArrayList&lt;String&gt;();</span>
+
+<span class="nc" id="L318">        ResultSet rs = meta.getCatalogs();</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">        while (rs.next()) {</span>
+<span class="nc" id="L320">            catalogs.add(rs.getString(&quot;TABLE_CAT&quot;));</span>
+        }
+<span class="nc" id="L322">        rs.close();</span>
+
+<span class="nc" id="L324">        return catalogs;</span>
+    }
+
+    /**
+     * getSchemas - returns a List of schema names (Strings)
+     *
+     * @param meta DatabaseMetaData
+     */
+    public static List&lt;String&gt; getSchemas(DatabaseMetaData meta) throws SQLException {
+<span class="nc" id="L333">        List&lt;String&gt; schemas = new ArrayList&lt;String&gt;();</span>
+
+<span class="nc" id="L335">        ResultSet rs = meta.getSchemas();</span>
+<span class="nc bnc" id="L336" title="All 2 branches missed.">        while (rs.next()) {</span>
+<span class="nc" id="L337">            schemas.add(rs.getString(&quot;TABLE_SCHEM&quot;));</span>
+        }
+<span class="nc" id="L339">        rs.close();</span>
+
+<span class="nc" id="L341">        return schemas;</span>
+    }
+
+    /**
+     * getSchemas - returns a List of schema names (Strings) that contain tables
+     *
+     * @param meta DatabaseMetaData
+     */
+    public static List&lt;String&gt; getPopulatedSchemas(DatabaseMetaData meta) throws SQLException {
+<span class="nc" id="L350">        return getPopulatedSchemas(meta, &quot;.*&quot;, false);</span>
+    }
+
+    /**
+     * getSchemas - returns a List of schema names (Strings) that contain tables and
+     * match the &lt;code&gt;schemaSpec&lt;/code&gt; regular expression
+     *
+     * @param meta DatabaseMetaData
+     */
+    public static List&lt;String&gt; getPopulatedSchemas(DatabaseMetaData meta, String schemaSpec, boolean isCatalog) throws SQLException {
+<span class="nc" id="L360">        Set&lt;String&gt; schemas = new TreeSet&lt;String&gt;(); // alpha sorted</span>
+<span class="nc" id="L361">        Pattern schemaRegex = Pattern.compile(schemaSpec);</span>
+<span class="nc" id="L362">        Logger logger = Logger.getLogger(DbAnalyzer.class.getName());</span>
+<span class="nc" id="L363">        boolean logging = logger.isLoggable(Level.FINE);</span>
+
+<span class="nc bnc" id="L365" title="All 4 branches missed.">        for (String schema : (isCatalog ? getCatalogs(meta) : getSchemas(meta))) {</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">            if (schemaRegex.matcher(schema).matches()) {</span>
+<span class="nc" id="L367">                ResultSet rs = null;</span>
+                try {
+<span class="nc" id="L369">                    rs = meta.getTables(null, schema, &quot;%&quot;, null);</span>
+<span class="nc bnc" id="L370" title="All 2 branches missed.">                    if (rs.next()) {</span>
+<span class="nc bnc" id="L371" title="All 2 branches missed.">                        if (logging)</span>
+<span class="nc" id="L372">                            logger.fine(&quot;Including schema &quot; + schema +</span>
+                                        &quot;: matches + \&quot;&quot; + schemaRegex + &quot;\&quot; and contains tables&quot;);
+<span class="nc" id="L374">                        schemas.add(schema);</span>
+                    } else {
+<span class="nc bnc" id="L376" title="All 2 branches missed.">                        if (logging)</span>
+<span class="nc" id="L377">                            logger.fine(&quot;Excluding schema &quot; + schema +</span>
+                                        &quot;: matches \&quot;&quot; + schemaRegex + &quot;\&quot; but contains no tables&quot;);
+                    }
+<span class="nc" id="L380">                } catch (SQLException ignore) {</span>
+                } finally {
+<span class="nc bnc" id="L382" title="All 2 branches missed.">                    if (rs != null)</span>
+<span class="nc" id="L383">                        rs.close();</span>
+                }
+<span class="nc" id="L385">            } else {</span>
+<span class="nc bnc" id="L386" title="All 2 branches missed.">                if (logging)</span>
+<span class="nc" id="L387">                    logger.fine(&quot;Excluding schema &quot; + schema +</span>
+                                &quot;: doesn't match \&quot;&quot; + schemaRegex + '&quot;');
+            }
+<span class="nc" id="L390">        }</span>
+
+<span class="nc" id="L392">        return new ArrayList&lt;String&gt;(schemas);</span>
+    }
+
+    /**
+     * For debugging/analyzing result sets
+     * @param rs ResultSet
+     * @throws SQLException
+     */
+    public static void dumpResultSetRow(ResultSet rs, String description) throws SQLException {
+<span class="nc" id="L401">        ResultSetMetaData meta = rs.getMetaData();</span>
+<span class="nc" id="L402">        int numColumns = meta.getColumnCount();</span>
+<span class="nc" id="L403">        System.out.println(numColumns + &quot; columns of &quot; + description + &quot;:&quot;);</span>
+<span class="nc bnc" id="L404" title="All 2 branches missed.">        for (int i = 1; i &lt;= numColumns; ++i) {</span>
+<span class="nc" id="L405">            System.out.print(meta.getColumnLabel(i));</span>
+<span class="nc" id="L406">            System.out.print(&quot;: &quot;);</span>
+<span class="nc" id="L407">            System.out.print(String.valueOf(rs.getString(i)));</span>
+<span class="nc" id="L408">            System.out.print(&quot;\t&quot;);</span>
+        }
+<span class="nc" id="L410">        System.out.println();</span>
+<span class="nc" id="L411">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

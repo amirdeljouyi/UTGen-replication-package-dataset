@@ -1,0 +1,531 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MQConnection.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.technical.mq</a> &gt; <span class="el_source">MQConnection.java</span></div><h1>MQConnection.java</h1><pre class="source lang-java linenums">package net.sf.xbus.technical.mq;
+
+import java.util.Enumeration;
+import java.util.Hashtable;
+
+import javax.jms.DeliveryMode;
+import javax.jms.JMSException;
+import javax.jms.Message;
+import javax.jms.Queue;
+import javax.jms.QueueBrowser;
+import javax.jms.QueueConnection;
+import javax.jms.QueueConnectionFactory;
+import javax.jms.QueueReceiver;
+import javax.jms.QueueSender;
+import javax.jms.QueueSession;
+import javax.jms.Session;
+import javax.jms.TextMessage;
+import javax.naming.Context;
+import javax.naming.InitialContext;
+import javax.naming.NamingException;
+
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.TAManager;
+import net.sf.xbus.base.core.TAResource;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.core.config.Configuration;
+import net.sf.xbus.base.core.trace.Trace;
+import net.sf.xbus.base.deletedMessageStore.DeletedMessageStore;
+import net.sf.xbus.base.xbussystem.XBUSSystem;
+
+/**
+ * &lt;code&gt;MQConnection&lt;/code&gt; manages connections and sessions for messagequeues.
+ * &lt;p&gt;
+ * 
+ * It implements two Design-Patterns:
+ * &lt;ol&gt;
+ * &lt;li&gt;&lt;b&gt;Singleton: &lt;/b&gt; An instance of &lt;code&gt;MQConnection&lt;/code&gt; is created
+ * for every thread. This instance can be fetched with
+ * &lt;code&gt;getInstance()&lt;/code&gt;.&lt;/li&gt;
+ * &lt;li&gt;&lt;b&gt;Facade: &lt;/b&gt; The complexity of creating and managing a connection is
+ * capsuled.&lt;/li&gt;
+ * &lt;/ol&gt;
+ */
+public class MQConnection implements TAResource {
+<span class="nc" id="L45">	private static Hashtable mMQConnections = new Hashtable();</span>
+<span class="nc" id="L46">	private static final Object classLock = MQConnection.class;</span>
+
+<span class="nc" id="L48">	private QueueConnectionFactory mQueueConnectionFactory = null;</span>
+<span class="nc" id="L49">	private Context jndiContext = null;</span>
+
+<span class="nc" id="L51">	private String mQueueSuffix = null;</span>
+
+<span class="nc" id="L53">	private QueueSession mSession = null;</span>
+<span class="nc" id="L54">	private QueueConnection mConnection = null;</span>
+<span class="nc" id="L55">	private Hashtable mReceivers = new Hashtable();</span>
+<span class="nc" id="L56">	private Hashtable mBrowsers = new Hashtable();</span>
+<span class="nc" id="L57">	private Hashtable mSenders = new Hashtable();</span>
+<span class="nc" id="L58">	private Hashtable mQueues = new Hashtable();</span>
+<span class="nc" id="L59">	private boolean mIsOpen = false;</span>
+
+<span class="nc" id="L61">	private XBUSSystem mDeleteQueue = null;</span>
+<span class="nc" id="L62">	private String mDeleteMessageId = null;</span>
+
+	/**
+	 * The constructor is private, instances of &lt;code&gt;MQConnection&lt;/code&gt; can
+	 * only be generated via the method &lt;code&gt;getInstance()&lt;/code&gt;. Each
+	 * instance is put in a &lt;code&gt;Hashtable&lt;/code&gt; with the name of the thread
+	 * as the key.
+	 */
+<span class="nc" id="L70">	private MQConnection() throws XException {</span>
+<span class="nc" id="L71">		Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L72">		mQueueSuffix = config.getValueOptional(&quot;Connection&quot;, &quot;MQ&quot;,</span>
+				&quot;QueueSuffix&quot;);
+<span class="nc bnc" id="L74" title="All 2 branches missed.">		if (mQueueSuffix == null) {</span>
+<span class="nc" id="L75">			mQueueSuffix = &quot;&quot;;</span>
+		}
+
+<span class="nc" id="L78">		open();</span>
+<span class="nc" id="L79">		TAManager taManager = TAManager.getInstance();</span>
+<span class="nc" id="L80">		taManager.registerResource(this);</span>
+
+<span class="nc" id="L82">		mMQConnections.put(Thread.currentThread().getName(), this);</span>
+<span class="nc" id="L83">	}</span>
+
+	/**
+	 * Opens the JMS-QueueSession and JMS-QueueConnection for sending and
+	 * receiving messages.
+	 */
+	public void open() throws XException {
+<span class="nc bnc" id="L90" title="All 2 branches missed.">		if (!mIsOpen) {</span>
+<span class="nc" id="L91">			jndiContext = null;</span>
+
+<span class="nc bnc" id="L93" title="All 2 branches missed.">			if (mQueueConnectionFactory == null) {</span>
+<span class="nc" id="L94">				Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L95">				mQueueConnectionFactory = (QueueConnectionFactory) jndiLookup(config</span>
+<span class="nc" id="L96">						.getValue(&quot;Connection&quot;, &quot;MQ&quot;, &quot;QueueConnectionFactory&quot;));</span>
+			}
+
+			try {
+<span class="nc" id="L100">				mConnection = mQueueConnectionFactory.createQueueConnection();</span>
+<span class="nc" id="L101">				mSession = mConnection.createQueueSession(true,</span>
+						Session.AUTO_ACKNOWLEDGE);
+<span class="nc" id="L103">				mConnection.start();</span>
+<span class="nc" id="L104">			} catch (JMSException e) {</span>
+<span class="nc" id="L105">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_MQ, &quot;0&quot;, e);
+<span class="nc" id="L108">			}</span>
+
+<span class="nc" id="L110">			mIsOpen = true;</span>
+		}
+<span class="nc" id="L112">	}</span>
+
+	/**
+	 * Delivers an instance of &lt;code&gt;MQConnection&lt;/code&gt;.
+	 * &lt;p&gt;
+	 * 
+	 * If it is the first call for the actual thread, a new
+	 * &lt;code&gt;MQConnection&lt;/code&gt; -object gets created. Subsequent calls in this
+	 * thread will deliver the object, that has been created by the first call.
+	 */
+	public static MQConnection getInstance() throws XException {
+<span class="nc" id="L123">		synchronized (classLock) {</span>
+<span class="nc" id="L124">			MQConnection mqConnection = (MQConnection) mMQConnections</span>
+<span class="nc" id="L125">					.get(Thread.currentThread().getName());</span>
+
+<span class="nc bnc" id="L127" title="All 2 branches missed.">			if (mqConnection == null) {</span>
+<span class="nc" id="L128">				mqConnection = new MQConnection();</span>
+			}
+
+<span class="nc" id="L131">			return mqConnection;</span>
+		}
+	}
+
+	/**
+	 * Commits all actions on the queues associated with this
+	 * &lt;code&gt;MQConnection&lt;/code&gt; (normally all queues of the current thread).
+	 */
+	public void commit() throws XException {
+		try {
+<span class="nc" id="L141">			mSession.commit();</span>
+<span class="nc" id="L142">		} catch (JMSException e) {</span>
+<span class="nc" id="L143">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL, Constants.PACKAGE_TECHNICAL_MQ,
+					&quot;0&quot;, e);
+		} finally {
+<span class="nc" id="L147">			mDeleteMessageId = null;</span>
+<span class="nc" id="L148">			mDeleteQueue = null;</span>
+		}
+<span class="nc" id="L150">	}</span>
+
+	/**
+	 * Performs a rollback for all actions on the queues associated with this
+	 * &lt;code&gt;MQConnection&lt;/code&gt; (normally all queues of the current thread).
+	 */
+	public void rollback() throws XException {
+<span class="nc bnc" id="L157" title="All 2 branches missed.">		if (mIsOpen) {</span>
+			try {
+<span class="nc" id="L159">				mSession.rollback();</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">				if (mDeleteQueue != null) {</span>
+					/*
+					 * The first queue entry shall be deleted after writing it
+					 * to the DeletedMessageStore, because the OnError
+					 * resolution is Delete
+					 */
+<span class="nc" id="L166">					QueueReceiver receiver = getReceiver(mDeleteQueue);</span>
+<span class="nc" id="L167">					Message message = receiver.receiveNoWait();</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">					if (message.getJMSMessageID().equals(mDeleteMessageId)</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">							&amp;&amp; DeletedMessageStore.getInstance().writeMessage()) {</span>
+<span class="nc" id="L170">						mSession.commit();</span>
+					} else {
+<span class="nc" id="L172">						mSession.rollback();</span>
+					}
+				}
+<span class="nc" id="L175">			} catch (JMSException e) {</span>
+<span class="nc" id="L176">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_MQ, &quot;0&quot;, e);
+			} finally {
+<span class="nc" id="L180">				mDeleteMessageId = null;</span>
+<span class="nc" id="L181">				mDeleteQueue = null;</span>
+			}
+		}
+<span class="nc" id="L184">	}</span>
+
+	/**
+	 * Closes the connection.
+	 */
+	public void close() throws XException {
+		try {
+			QueueReceiver receiver;
+<span class="nc bnc" id="L192" title="All 2 branches missed.">			for (Enumeration e = mReceivers.elements(); e.hasMoreElements();) {</span>
+<span class="nc" id="L193">				receiver = (QueueReceiver) e.nextElement();</span>
+<span class="nc" id="L194">				receiver.close();</span>
+			}
+<span class="nc" id="L196">			mReceivers.clear();</span>
+
+			QueueSender sender;
+<span class="nc bnc" id="L199" title="All 2 branches missed.">			for (Enumeration e = mSenders.elements(); e.hasMoreElements();) {</span>
+<span class="nc" id="L200">				sender = (QueueSender) e.nextElement();</span>
+<span class="nc" id="L201">				sender.close();</span>
+			}
+<span class="nc" id="L203">			mSenders.clear();</span>
+
+			QueueBrowser browser;
+<span class="nc bnc" id="L206" title="All 2 branches missed.">			for (Enumeration e = mBrowsers.elements(); e.hasMoreElements();) {</span>
+<span class="nc" id="L207">				browser = (QueueBrowser) e.nextElement();</span>
+<span class="nc" id="L208">				browser.close();</span>
+			}
+<span class="nc" id="L210">			mBrowsers.clear();</span>
+
+<span class="nc" id="L212">			mSession.close();</span>
+<span class="nc" id="L213">			mConnection.close();</span>
+
+<span class="nc" id="L215">			mIsOpen = false;</span>
+<span class="nc" id="L216">			jndiContext = null;</span>
+<span class="nc" id="L217">		} catch (JMSException e) {</span>
+<span class="nc" id="L218">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL, Constants.PACKAGE_TECHNICAL_MQ,
+					&quot;0&quot;, e);
+<span class="nc" id="L221">		}</span>
+<span class="nc" id="L222">	}</span>
+
+	/**
+	 * Initializes the MQConnection.
+	 */
+	public void initialize() {
+<span class="nc" id="L228">		mIsOpen = false;</span>
+<span class="nc" id="L229">		mReceivers.clear();</span>
+<span class="nc" id="L230">	}</span>
+
+	/**
+	 * Creates and returns a JMS- &lt;code&gt;QueueSender&lt;/code&gt; for the given queue.
+	 */
+	public QueueSender getSender(XBUSSystem system) throws XException {
+<span class="nc" id="L236">		QueueSender sender = null;</span>
+
+<span class="nc" id="L238">		String pyhsQueuename = getPhysQueuename(system);</span>
+<span class="nc" id="L239">		Queue queue = getQueue(pyhsQueuename);</span>
+
+		try {
+<span class="nc bnc" id="L242" title="All 2 branches missed.">			if ((sender = (QueueSender) mSenders.get(pyhsQueuename)) == null) {</span>
+<span class="nc" id="L243">				sender = mSession.createSender(queue);</span>
+<span class="nc" id="L244">				sender.setDeliveryMode(DeliveryMode.PERSISTENT);</span>
+<span class="nc" id="L245">				mSenders.put(pyhsQueuename, sender);</span>
+			}
+<span class="nc" id="L247">		} catch (JMSException e) {</span>
+<span class="nc" id="L248">			Trace</span>
+<span class="nc" id="L249">					.warn(&quot;Connection may be gone, trying MQConnection.getSender again ...&quot;);</span>
+<span class="nc" id="L250">			mIsOpen = false;</span>
+<span class="nc" id="L251">			open();</span>
+			try {
+<span class="nc bnc" id="L253" title="All 2 branches missed.">				if ((sender = (QueueSender) mSenders.get(pyhsQueuename)) == null) {</span>
+<span class="nc" id="L254">					sender = mSession.createSender(queue);</span>
+<span class="nc" id="L255">					sender.setDeliveryMode(DeliveryMode.PERSISTENT);</span>
+<span class="nc" id="L256">					mSenders.put(pyhsQueuename, sender);</span>
+				}
+<span class="nc" id="L258">			} catch (JMSException exc) {</span>
+<span class="nc" id="L259">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_MQ, &quot;0&quot;, exc);
+<span class="nc" id="L262">			}</span>
+<span class="nc" id="L263">		}</span>
+<span class="nc" id="L264">		return sender;</span>
+	}
+
+	/**
+	 * Creates and returns a JMS- &lt;code&gt;QueueReceiver&lt;/code&gt; for the given
+	 * queue.
+	 * 
+	 * @param system
+	 *            name of an interface
+	 * 
+	 * @return JMS QueueReceiver
+	 */
+	public QueueReceiver getReceiver(XBUSSystem system) throws XException {
+<span class="nc" id="L277">		QueueReceiver receiver = null;</span>
+
+<span class="nc" id="L279">		String pyhsQueuename = getPhysQueuename(system);</span>
+<span class="nc" id="L280">		Queue queue = getQueue(pyhsQueuename);</span>
+		try {
+<span class="nc bnc" id="L282" title="All 2 branches missed.">			if ((receiver = (QueueReceiver) mReceivers.get(pyhsQueuename)) == null) {</span>
+<span class="nc" id="L283">				receiver = mSession.createReceiver(queue);</span>
+<span class="nc" id="L284">				mReceivers.put(pyhsQueuename, receiver);</span>
+			}
+<span class="nc" id="L286">		} catch (JMSException e) {</span>
+<span class="nc" id="L287">			Trace</span>
+<span class="nc" id="L288">					.warn(&quot;Connection may be gone, trying MQConnection.getReceiver again ...&quot;);</span>
+<span class="nc" id="L289">			mIsOpen = false;</span>
+<span class="nc" id="L290">			open();</span>
+			try {
+<span class="nc bnc" id="L292" title="All 2 branches missed.">				if ((receiver = (QueueReceiver) mReceivers.get(pyhsQueuename)) == null) {</span>
+<span class="nc" id="L293">					receiver = mSession.createReceiver(queue);</span>
+<span class="nc" id="L294">					mReceivers.put(pyhsQueuename, receiver);</span>
+				}
+<span class="nc" id="L296">			} catch (JMSException exc) {</span>
+<span class="nc" id="L297">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_MQ, &quot;0&quot;, exc);
+<span class="nc" id="L300">			}</span>
+<span class="nc" id="L301">		}</span>
+<span class="nc" id="L302">		return receiver;</span>
+	}
+
+	/**
+	 * Creates and returns a JMS- &lt;code&gt;QueueBrowser&lt;/code&gt; for the given queue.
+	 */
+	public QueueBrowser getBrowser(XBUSSystem system) throws XException {
+<span class="nc" id="L309">		QueueBrowser browser = null;</span>
+
+<span class="nc" id="L311">		String pyhsQueuename = getPhysQueuename(system);</span>
+<span class="nc" id="L312">		Queue queue = getQueue(pyhsQueuename);</span>
+		try {
+<span class="nc bnc" id="L314" title="All 2 branches missed.">			if ((browser = (QueueBrowser) mBrowsers.get(pyhsQueuename)) == null) {</span>
+<span class="nc" id="L315">				browser = mSession.createBrowser(queue);</span>
+<span class="nc" id="L316">				mBrowsers.put(pyhsQueuename, browser);</span>
+			}
+<span class="nc" id="L318">		} catch (JMSException e) {</span>
+<span class="nc" id="L319">			Trace</span>
+<span class="nc" id="L320">					.warn(&quot;Connection may be gone, trying MQConnection.getBrowser again ...&quot;);</span>
+<span class="nc" id="L321">			mIsOpen = false;</span>
+<span class="nc" id="L322">			open();</span>
+			try {
+<span class="nc bnc" id="L324" title="All 2 branches missed.">				if ((browser = (QueueBrowser) mBrowsers.get(pyhsQueuename)) == null) {</span>
+<span class="nc" id="L325">					browser = mSession.createBrowser(queue);</span>
+<span class="nc" id="L326">					mBrowsers.put(pyhsQueuename, browser);</span>
+				}
+<span class="nc" id="L328">			} catch (JMSException exc) {</span>
+<span class="nc" id="L329">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_MQ, &quot;0&quot;, exc);
+<span class="nc" id="L332">			}</span>
+<span class="nc" id="L333">		}</span>
+<span class="nc" id="L334">		return browser;</span>
+	}
+
+	/**
+	 * Creates and returns a JMS- &lt;code&gt;TextMessage&lt;/code&gt;.
+	 */
+	public TextMessage createTextMessage() throws XException {
+<span class="nc" id="L341">		TextMessage message = null;</span>
+
+		try {
+<span class="nc" id="L344">			message = mSession.createTextMessage();</span>
+<span class="nc" id="L345">			message.setJMSDeliveryMode(DeliveryMode.PERSISTENT);</span>
+<span class="nc" id="L346">		} catch (JMSException e) {</span>
+<span class="nc" id="L347">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL, Constants.PACKAGE_TECHNICAL_MQ,
+					&quot;0&quot;, e);
+<span class="nc" id="L350">		}</span>
+<span class="nc" id="L351">		return message;</span>
+	}
+
+	protected void setDeleteInformation(XBUSSystem source, String messageId) {
+<span class="nc" id="L355">		mDeleteQueue = source;</span>
+<span class="nc" id="L356">		mDeleteMessageId = messageId;</span>
+<span class="nc" id="L357">	}</span>
+
+	static public void clear() {
+<span class="nc" id="L360">		mMQConnections.clear();</span>
+<span class="nc" id="L361">	}</span>
+
+	/**
+	 * Creates a JNDI InitialContext object if none exists yet. Then looks up
+	 * the string argument and returns the associated object.
+	 * 
+	 * @param name
+	 *            the name of the object to be looked up
+	 * 
+	 * @return the object bound to &lt;code&gt;name&lt;/code&gt;
+	 * @throws net.sf.xbus.base.core.XException
+	 */
+	private Object jndiLookup(String name) throws XException {
+<span class="nc" id="L374">		Object obj = null;</span>
+
+<span class="nc bnc" id="L376" title="All 2 branches missed.">		if (jndiContext == null) {</span>
+<span class="nc" id="L377">			jndiContext = createContext();</span>
+		}
+
+		try {
+<span class="nc" id="L381">			obj = jndiContext.lookup(name);</span>
+<span class="nc" id="L382">		} catch (NamingException e) {</span>
+<span class="nc" id="L383">			Trace</span>
+<span class="nc" id="L384">					.warn(&quot;Connection maybe gone, trying MQConnection.jndiContext again...&quot;);</span>
+			try {
+<span class="nc" id="L386">				jndiContext = createContext();</span>
+<span class="nc" id="L387">				obj = jndiContext.lookup(name);</span>
+<span class="nc" id="L388">			} catch (NamingException exc) {</span>
+<span class="nc" id="L389">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_MQ, &quot;0&quot;, e);
+<span class="nc" id="L392">			}</span>
+<span class="nc" id="L393">		}</span>
+<span class="nc" id="L394">		return obj;</span>
+	}
+
+	/**
+	 * Reads the name of the message queue from the configuration.
+	 * 
+	 * @param system
+	 *            the name of the sender/receiver
+	 * 
+	 * @return the name of the message queue
+	 */
+	public String getPhysQueuename(XBUSSystem system) throws XException {
+<span class="nc" id="L406">		Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L407">		String physQueuename = config.getValue(Constants.CHAPTER_SYSTEM, system</span>
+<span class="nc" id="L408">				.getName(), &quot;Queuename&quot;);</span>
+
+<span class="nc" id="L410">		physQueuename = system.replaceAllMarkers(physQueuename)[0];</span>
+<span class="nc" id="L411">		return new StringBuffer(physQueuename).append(mQueueSuffix).toString();</span>
+	}
+
+	private Context createContext() throws XException {
+		try {
+<span class="nc" id="L416">			Hashtable env = new Hashtable();</span>
+
+<span class="nc" id="L418">			Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L419">			String factory = config.getValue(&quot;Connection&quot;, &quot;MQ&quot;,</span>
+					&quot;ContextFactory&quot;);
+<span class="nc" id="L421">			env.put(Context.INITIAL_CONTEXT_FACTORY, factory);</span>
+<span class="nc" id="L422">			String url = config.getValueOptional(&quot;Connection&quot;, &quot;MQ&quot;, &quot;URL&quot;);</span>
+<span class="nc bnc" id="L423" title="All 2 branches missed.">			if (url != null) {</span>
+<span class="nc" id="L424">				env.put(Context.PROVIDER_URL, url);</span>
+			}
+<span class="nc" id="L426">			String user = config.getValueOptional(&quot;Connection&quot;, &quot;MQ&quot;, &quot;User&quot;);</span>
+<span class="nc bnc" id="L427" title="All 2 branches missed.">			if (user != null) {</span>
+<span class="nc" id="L428">				env.put(Context.SECURITY_PRINCIPAL, user);</span>
+			}
+<span class="nc" id="L430">			String password = config.getValueOptional(&quot;Connection&quot;, &quot;MQ&quot;,</span>
+					&quot;Password&quot;);
+<span class="nc bnc" id="L432" title="All 2 branches missed.">			if (password != null) {</span>
+<span class="nc" id="L433">				env.put(Context.SECURITY_CREDENTIALS, password);</span>
+			}
+<span class="nc" id="L435">			String referral = config.getValueOptional(&quot;Connection&quot;, &quot;MQ&quot;,</span>
+					&quot;Referral&quot;);
+<span class="nc bnc" id="L437" title="All 2 branches missed.">			if (referral != null) {</span>
+<span class="nc" id="L438">				env.put(Context.REFERRAL, referral);</span>
+			}
+<span class="nc" id="L440">			String authorative = config.getValueOptional(&quot;Connection&quot;, &quot;MQ&quot;,</span>
+					&quot;Authorative&quot;);
+<span class="nc bnc" id="L442" title="All 2 branches missed.">			if (authorative != null) {</span>
+<span class="nc" id="L443">				env.put(Context.AUTHORITATIVE, authorative);</span>
+			}
+<span class="nc" id="L445">			String batchSize = config.getValueOptional(&quot;Connection&quot;, &quot;MQ&quot;,</span>
+					&quot;BatchSize&quot;);
+<span class="nc bnc" id="L447" title="All 2 branches missed.">			if (batchSize != null) {</span>
+<span class="nc" id="L448">				env.put(Context.BATCHSIZE, batchSize);</span>
+			}
+<span class="nc" id="L450">			String language = config.getValueOptional(&quot;Connection&quot;, &quot;MQ&quot;,</span>
+					&quot;Language&quot;);
+<span class="nc bnc" id="L452" title="All 2 branches missed.">			if (language != null) {</span>
+<span class="nc" id="L453">				env.put(Context.LANGUAGE, language);</span>
+			}
+<span class="nc" id="L455">			String dnsUrl = config.getValueOptional(&quot;Connection&quot;, &quot;MQ&quot;,</span>
+					&quot;DNS_URL&quot;);
+<span class="nc bnc" id="L457" title="All 2 branches missed.">			if (dnsUrl != null) {</span>
+<span class="nc" id="L458">				env.put(Context.DNS_URL, dnsUrl);</span>
+			}
+<span class="nc" id="L460">			String objectFactories = config.getValueOptional(&quot;Connection&quot;,</span>
+					&quot;MQ&quot;, &quot;ObjectFactories&quot;);
+<span class="nc bnc" id="L462" title="All 2 branches missed.">			if (objectFactories != null) {</span>
+<span class="nc" id="L463">				env.put(Context.OBJECT_FACTORIES, objectFactories);</span>
+			}
+<span class="nc" id="L465">			String securityProtocol = config.getValueOptional(&quot;Connection&quot;,</span>
+					&quot;MQ&quot;, &quot;SecurityProtocol&quot;);
+<span class="nc bnc" id="L467" title="All 2 branches missed.">			if (securityProtocol != null) {</span>
+<span class="nc" id="L468">				env.put(Context.SECURITY_PROTOCOL, securityProtocol);</span>
+			}
+<span class="nc" id="L470">			String securityAuthentication = config.getValueOptional(</span>
+					&quot;Connection&quot;, &quot;MQ&quot;, &quot;SecurityAuthentication&quot;);
+<span class="nc bnc" id="L472" title="All 2 branches missed.">			if (securityAuthentication != null) {</span>
+<span class="nc" id="L473">				env</span>
+<span class="nc" id="L474">						.put(Context.SECURITY_AUTHENTICATION,</span>
+								securityAuthentication);
+			}
+<span class="nc" id="L477">			String stateFactories = config.getValueOptional(&quot;Connection&quot;, &quot;MQ&quot;,</span>
+					&quot;StateFactories&quot;);
+<span class="nc bnc" id="L479" title="All 2 branches missed.">			if (stateFactories != null) {</span>
+<span class="nc" id="L480">				env.put(Context.STATE_FACTORIES, stateFactories);</span>
+			}
+<span class="nc" id="L482">			String urlPkgPrefixes = config.getValueOptional(&quot;Connection&quot;, &quot;MQ&quot;,</span>
+					&quot;URLPkgPrefixes&quot;);
+<span class="nc bnc" id="L484" title="All 2 branches missed.">			if (urlPkgPrefixes != null) {</span>
+<span class="nc" id="L485">				env.put(Context.URL_PKG_PREFIXES, urlPkgPrefixes);</span>
+			}
+<span class="nc" id="L487">			String port = config.getValueOptional(&quot;Connection&quot;, &quot;MQ&quot;, &quot;Port&quot;);</span>
+<span class="nc bnc" id="L488" title="All 2 branches missed.">			if (port != null) {</span>
+<span class="nc" id="L489">				env.put(&quot;javax.naming.factory.port&quot;, port);</span>
+			}
+<span class="nc" id="L491">			String host = config.getValueOptional(&quot;Connection&quot;, &quot;MQ&quot;, &quot;Host&quot;);</span>
+<span class="nc bnc" id="L492" title="All 2 branches missed.">			if (host != null) {</span>
+<span class="nc" id="L493">				env.put(&quot;javax.naming.factory.host&quot;, host);</span>
+			}
+<span class="nc" id="L495">			return new InitialContext(env);</span>
+<span class="nc" id="L496">		} catch (NamingException e) {</span>
+<span class="nc" id="L497">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL, Constants.PACKAGE_TECHNICAL_MQ,
+					&quot;0&quot;, e);
+		}
+	}
+
+	private Queue getQueue(String physQueuename) throws XException {
+<span class="nc" id="L504">		Queue queue = (Queue) mQueues.get(physQueuename);</span>
+<span class="nc bnc" id="L505" title="All 2 branches missed.">		if (queue == null) {</span>
+			try {
+<span class="nc" id="L507">				if (Configuration.getInstance().getValue(&quot;Connection&quot;, &quot;MQ&quot;,</span>
+<span class="nc bnc" id="L508" title="All 2 branches missed.">						&quot;ContextFactory&quot;).contains(&quot;activemq&quot;)) {</span>
+					/*
+					 * Workaround for ActiveMQ dynamic queues
+					 */
+<span class="nc" id="L512">					queue = (Queue) jndiLookup(&quot;dynamicQueues/&quot; + physQueuename);</span>
+				} else {
+<span class="nc" id="L514">					queue = (Queue) jndiLookup(physQueuename);</span>
+				}
+<span class="nc" id="L516">			} catch (XException e1) {</span>
+				try {
+<span class="nc" id="L518">					Trace.error(&quot;Creating queue &quot; + physQueuename);</span>
+<span class="nc" id="L519">					queue = mSession.createQueue(physQueuename);</span>
+<span class="nc" id="L520">					mQueues.put(physQueuename, queue);</span>
+<span class="nc" id="L521">				} catch (JMSException e2) {</span>
+<span class="nc" id="L522">					throw new XException(Constants.LOCATION_EXTERN,</span>
+							Constants.LAYER_TECHNICAL,
+							Constants.PACKAGE_TECHNICAL_MQ, &quot;0&quot;, e2);
+<span class="nc" id="L525">				}</span>
+<span class="nc" id="L526">			}</span>
+		}
+<span class="nc" id="L528">		return queue;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

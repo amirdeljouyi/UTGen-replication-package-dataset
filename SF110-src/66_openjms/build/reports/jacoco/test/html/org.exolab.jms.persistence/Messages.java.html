@@ -1,0 +1,624 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Messages.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.persistence</a> &gt; <span class="el_source">Messages.java</span></div><h1>Messages.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2000-2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ */
+package org.exolab.jms.persistence;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.HashMap;
+import java.util.Vector;
+
+import javax.jms.JMSException;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import org.exolab.jms.client.JmsDestination;
+import org.exolab.jms.client.JmsTopic;
+import org.exolab.jms.message.MessageImpl;
+import org.exolab.jms.messagemgr.PersistentMessageHandle;
+
+
+/**
+ * This class manages the persistence of message objects.
+ *
+ * @version     $Revision: 1.5 $ $Date: 2007/04/16 02:50:21 $
+ * @author      &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ */
+class Messages {
+
+    /**
+     * The destination manager.
+     */
+    private final Destinations _destinations;
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L83">    private static final Log _log = LogFactory.getLog(Messages.class);</span>
+
+
+    /**
+     * Construct a new &lt;code&gt;Messages&lt;/code&gt;.
+     *
+     * @param destinations the destinations manager
+     */
+<span class="nc" id="L91">    public Messages(Destinations destinations) {</span>
+<span class="nc" id="L92">        _destinations = destinations;</span>
+<span class="nc" id="L93">    }</span>
+
+    /**
+     * Add a message to the database, in the context of the specified
+     * transaction and connection.
+     *
+     * @param connection - execute on this connection
+     * @param message - the message to add
+     * @throws PersistenceException - an sql related error
+     */
+    public void add(Connection connection, MessageImpl message)
+        throws PersistenceException {
+
+<span class="nc" id="L106">        PreparedStatement insert = null;</span>
+
+        // extract the identity of the message
+<span class="nc" id="L109">        String messageId = message.getMessageId().getId();</span>
+
+        // check that the destination is actually registered
+        // and map the name to the corresponding id
+        String name;
+        try {
+<span class="nc" id="L115">            name = ((JmsDestination) message.getJMSDestination()).getName();</span>
+<span class="nc" id="L116">        } catch (JMSException exception) {</span>
+<span class="nc" id="L117">            throw new PersistenceException(</span>
+                &quot;Failed to get destination for message=&quot; +
+<span class="nc" id="L119">                message.getMessageId(), exception);</span>
+<span class="nc" id="L120">        }</span>
+
+<span class="nc" id="L122">        long destinationId = _destinations.getId(name);</span>
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        if (destinationId == 0) {</span>
+<span class="nc" id="L124">            throw new PersistenceException(</span>
+<span class="nc" id="L125">                &quot;Cannot add message=&quot; + message.getMessageId() +</span>
+                &quot;, destination=&quot; + name + &quot; (&quot; + destinationId +
+                &quot;): destination does not exist&quot;);
+        }
+
+        try {
+            // create, populate and execute the insert
+<span class="nc" id="L132">            insert = connection.prepareStatement(</span>
+                &quot;insert into messages (messageId, destinationId, priority, &quot;
+                + &quot;createTime, expiryTime, processed, messageBlob) values &quot;
+                + &quot;(?,?,?,?,?,?,?)&quot;);
+<span class="nc" id="L136">            insert.setString(1, messageId);</span>
+<span class="nc" id="L137">            insert.setLong(2, destinationId);</span>
+<span class="nc" id="L138">            insert.setInt(3, message.getJMSPriority());</span>
+<span class="nc" id="L139">            insert.setLong(4, message.getAcceptedTime());</span>
+<span class="nc" id="L140">            insert.setLong(5, message.getJMSExpiration());</span>
+<span class="nc bnc" id="L141" title="All 2 branches missed.">            insert.setInt(6, (message.getProcessed()) ? 1 : 0);</span>
+
+            // serialize the message
+<span class="nc" id="L144">            byte[] bytes = serialize(message);</span>
+<span class="nc" id="L145">            insert.setBinaryStream(7, new ByteArrayInputStream(bytes),</span>
+                bytes.length);
+            //insert.setBytes(8, bytes);
+
+            // execute the insert
+<span class="nc bnc" id="L150" title="All 2 branches missed.">            if (insert.executeUpdate() != 1) {</span>
+<span class="nc" id="L151">                throw new PersistenceException(</span>
+<span class="nc" id="L152">                    &quot;Failed to add message=&quot; + message.getMessageId() +</span>
+                    &quot;, destination=&quot; + name + &quot; (&quot; + destinationId + &quot;)&quot;);
+            }
+<span class="nc" id="L155">        } catch (PersistenceException exception) {</span>
+<span class="nc" id="L156">            throw exception;</span>
+<span class="nc" id="L157">        } catch (Exception exception) {</span>
+<span class="nc" id="L158">            throw new PersistenceException(</span>
+<span class="nc" id="L159">                &quot;Failed to add message=&quot; + message.getMessageId() +</span>
+                &quot;, destination=&quot; + name + &quot; (&quot; + destinationId + &quot;)&quot;,
+                exception);
+        } finally {
+<span class="nc" id="L163">            SQLHelper.close(insert);</span>
+        }
+<span class="nc" id="L165">    }</span>
+
+    /**
+     * Update the message state in the database. This will be called to set
+     * the message state to processed by the provider
+     *
+     * @param connection - execute on this connection
+     * @param message - the message to update
+     * @throws PersistenceException - an sql related error
+     */
+    public void update(Connection connection, MessageImpl message)
+        throws PersistenceException {
+
+<span class="nc" id="L178">        PreparedStatement update = null;</span>
+
+        // extract the identity of the message
+<span class="nc" id="L181">        String messageId = message.getMessageId().getId();</span>
+
+        try {
+<span class="nc" id="L184">            update = connection.prepareStatement(</span>
+                &quot;update messages set processed=? where messageId=?&quot;);
+<span class="nc bnc" id="L186" title="All 2 branches missed.">            update.setInt(1, message.getProcessed() ? 1 : 0);</span>
+<span class="nc" id="L187">            update.setString(2, messageId);</span>
+
+            // execute the update
+<span class="nc bnc" id="L190" title="All 2 branches missed.">            if (update.executeUpdate() != 1) {</span>
+<span class="nc" id="L191">                _log.error(&quot;Cannot update message=&quot; + messageId);</span>
+            }
+<span class="nc" id="L193">        } catch (SQLException exception) {</span>
+<span class="nc" id="L194">            throw new PersistenceException(</span>
+                &quot;Failed to update message, id=&quot; + messageId, exception);
+        } finally {
+<span class="nc" id="L197">            SQLHelper.close(update);</span>
+        }
+<span class="nc" id="L199">    }</span>
+
+    /**
+     * Remove a message with the specified identity from the database
+     *
+     * @param connection - execute on this connection
+     * @param messageId - the message id of the message to remove
+     * @throws PersistenceException - an sql related error
+     */
+    public void remove(Connection connection, String messageId)
+        throws PersistenceException {
+
+<span class="nc" id="L211">        PreparedStatement delete = null;</span>
+        try {
+<span class="nc" id="L213">            delete = connection.prepareStatement(</span>
+                &quot;delete from messages where messageId=?&quot;);
+<span class="nc" id="L215">            delete.setString(1, messageId);</span>
+
+            // execute the delete
+<span class="nc bnc" id="L218" title="All 2 branches missed.">            if (delete.executeUpdate() != 1) {</span>
+<span class="nc" id="L219">                _log.error(&quot;Cannot remove message=&quot; + messageId);</span>
+            }
+<span class="nc" id="L221">        } catch (SQLException exception) {</span>
+<span class="nc" id="L222">            throw new PersistenceException(</span>
+                &quot;Failed to remove message, id=&quot; + messageId, exception);
+        } finally {
+<span class="nc" id="L225">            SQLHelper.close(delete);</span>
+        }
+<span class="nc" id="L227">    }</span>
+
+    /**
+     * Return the message identified by the message Id
+     *
+     * @param connection - execute on this connection
+     * @param messageId - id of message to retrieve
+     * @return MessageImpl - the associated message
+     * @throws PersistenceException - an sql related error
+     */
+    public MessageImpl get(Connection connection, String messageId)
+        throws PersistenceException {
+
+<span class="nc" id="L240">        MessageImpl result = null;</span>
+<span class="nc" id="L241">        PreparedStatement select = null;</span>
+<span class="nc" id="L242">        ResultSet set = null;</span>
+        try {
+<span class="nc" id="L244">            select = connection.prepareStatement(</span>
+                &quot;select messageBlob, processed from messages where messageId=?&quot;);
+
+<span class="nc" id="L247">            select.setString(1, messageId);</span>
+<span class="nc" id="L248">            set = select.executeQuery();</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">            if (set.next()) {</span>
+<span class="nc" id="L250">                result = deserialize(set.getBytes(1));</span>
+<span class="nc bnc" id="L251" title="All 2 branches missed.">                result.setProcessed((set.getInt(2) == 1 ? true : false));</span>
+            }
+<span class="nc" id="L253">        } catch (SQLException exception) {</span>
+<span class="nc" id="L254">            throw new PersistenceException(</span>
+                &quot;Failed to retrieve message, id=&quot; + messageId, exception);
+        } finally {
+<span class="nc" id="L257">            SQLHelper.close(set);</span>
+<span class="nc" id="L258">            SQLHelper.close(select);</span>
+        }
+
+<span class="nc" id="L261">        return result;</span>
+    }
+
+    /**
+     * Delete all messages for the given destination
+     *
+     * @param connection - execute on this connection
+     * @param destination the destination to remove messages for
+     * @return int - the number of messages purged
+     * @throws PersistenceException - an sql related error
+     */
+    public int removeMessages(Connection connection, String destination)
+        throws PersistenceException {
+
+<span class="nc" id="L275">        int result = 0;</span>
+<span class="nc" id="L276">        PreparedStatement delete = null;</span>
+
+        // map the destination name to an id
+<span class="nc" id="L279">        long destinationId = _destinations.getId(destination);</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">        if (destinationId == 0) {</span>
+<span class="nc" id="L281">            throw new PersistenceException(&quot;Cannot delete messages for &quot; +</span>
+                &quot;destination=&quot; + destination +
+                &quot;: destination does not exist&quot;);
+        }
+
+        try {
+<span class="nc" id="L287">            delete = connection.prepareStatement(</span>
+                &quot;delete from messages where destinationId = ?&quot;);
+<span class="nc" id="L289">            delete.setLong(1, destinationId);</span>
+<span class="nc" id="L290">            result = delete.executeUpdate();</span>
+<span class="nc" id="L291">        } catch (SQLException exception) {</span>
+<span class="nc" id="L292">            throw new PersistenceException(</span>
+                &quot;Failed to remove messages for destination=&quot; + destination,
+                exception);
+        } finally {
+<span class="nc" id="L296">            SQLHelper.close(delete);</span>
+        }
+
+<span class="nc" id="L299">        return result;</span>
+    }
+
+    /**
+     * Retrieve the next set of messages for the specified destination with
+     * an acceptance time greater or equal to that specified. It will retrieve
+     * around 200 or so messages depending on what is available.
+     *
+     * @param connection - execute on this connection
+     * @param destination - the destination
+     * @param priority - the priority of the messages
+     * @param time - with timestamp greater or equal to this
+     * @return Vector - one or more MessageImpl objects
+     * @throws PersistenceException - if an SQL error occurs
+     */
+    public Vector getMessages(Connection connection, String destination,
+                              int priority, long time)
+        throws PersistenceException {
+
+<span class="nc" id="L318">        PreparedStatement select = null;</span>
+<span class="nc" id="L319">        ResultSet set = null;</span>
+<span class="nc" id="L320">        Vector messages = new Vector();</span>
+
+        try {
+<span class="nc" id="L323">            JmsDestination dest = _destinations.get(destination);</span>
+<span class="nc bnc" id="L324" title="All 2 branches missed.">            if (dest == null) {</span>
+<span class="nc" id="L325">                throw new PersistenceException(</span>
+                    &quot;Cannot getMessages for destination=&quot; + destination
+                    + &quot;: destination does not exist&quot;);
+            }
+
+<span class="nc" id="L330">            long destinationId = _destinations.getId(destination);</span>
+<span class="nc bnc" id="L331" title="All 2 branches missed.">            if (destinationId == 0) {</span>
+<span class="nc" id="L332">                throw new PersistenceException(</span>
+                    &quot;Cannot getMessages for destination=&quot; + destination
+                    + &quot;: destination does not exist&quot;);
+            }
+
+<span class="nc bnc" id="L337" title="All 2 branches missed.">            if ((dest instanceof JmsTopic) &amp;&amp;</span>
+<span class="nc bnc" id="L338" title="All 2 branches missed.">                (((JmsTopic) dest).isWildCard())) {</span>
+                // if the destination is a wildcard then we can't only select
+                // on timestamp. This will fault in any message greater than
+                // or equal to the specified timestamp.
+<span class="nc" id="L342">                select = connection.prepareStatement(</span>
+                    &quot;select createTime,processed,messageBlob from messages &quot;
+                    + &quot;where priority=? and createTime&gt;=? &quot;
+                    + &quot;order by createTime asc&quot;);
+<span class="nc" id="L346">                select.setInt(1, priority);</span>
+<span class="nc" id="L347">                select.setLong(2, time);</span>
+            } else {
+                // if the destination is more specific then we can execute a
+                // more specialized query and fault in other messages for
+                // the same destination.
+<span class="nc" id="L352">                select = connection.prepareStatement(</span>
+                    &quot;select createTime,processed,messageBlob from messages &quot;
+                    + &quot;where destinationId=? and priority=? and createTime&gt;=? &quot;
+                    + &quot;order by createTime asc&quot;);
+<span class="nc" id="L356">                select.setLong(1, destinationId);</span>
+<span class="nc" id="L357">                select.setInt(2, priority);</span>
+<span class="nc" id="L358">                select.setLong(3, time);</span>
+            }
+<span class="nc" id="L360">            set = select.executeQuery();</span>
+
+            // now iterate through the result set
+<span class="nc" id="L363">            int count = 0;</span>
+<span class="nc" id="L364">            long lastTimeStamp = time;</span>
+<span class="nc bnc" id="L365" title="All 2 branches missed.">            while (set.next()) {</span>
+<span class="nc" id="L366">                MessageImpl m = deserialize(set.getBytes(3));</span>
+<span class="nc bnc" id="L367" title="All 2 branches missed.">                m.setProcessed((set.getInt(2) == 1 ? true : false));</span>
+<span class="nc" id="L368">                messages.add(m);</span>
+<span class="nc bnc" id="L369" title="All 2 branches missed.">                if (++count &gt; 200) {</span>
+                    // if there are more than two hundred rows then exist
+                    // the loop after 200 messages have been retrieved
+                    // and the timestamp has changed.
+<span class="nc bnc" id="L373" title="All 2 branches missed.">                    if (set.getLong(1) &gt; lastTimeStamp) {</span>
+<span class="nc" id="L374">                        break;</span>
+                    }
+                } else {
+<span class="nc" id="L377">                    lastTimeStamp = set.getLong(1);</span>
+                }
+<span class="nc" id="L379">            }</span>
+<span class="nc" id="L380">        } catch (SQLException exception) {</span>
+<span class="nc" id="L381">            throw new PersistenceException(</span>
+                &quot;Failed to retrieve messages&quot;, exception);
+        } finally {
+<span class="nc" id="L384">            SQLHelper.close(set);</span>
+<span class="nc" id="L385">            SQLHelper.close(select);</span>
+        }
+
+<span class="nc" id="L388">        return messages;</span>
+    }
+
+    /**
+     * Retrieve the specified number of message ids from the database with a
+     * time greater than that specified. The number of items to retrieve
+     * is only a hint and does not reflect the number of messages actually
+     * returned.
+     *
+     * @param connection - execute on this connection
+     * @param time - with timestamp greater than
+     * @param hint - an indication of the number of messages to return.
+     * @return a map of messageId Strings to their creation time
+     * @throws PersistenceException - if an SQL error occurs
+     */
+    public HashMap getMessageIds(Connection connection, long time, int hint)
+        throws PersistenceException {
+
+<span class="nc" id="L406">        PreparedStatement select = null;</span>
+<span class="nc" id="L407">        ResultSet set = null;</span>
+<span class="nc" id="L408">        HashMap messages = new HashMap();</span>
+
+        try {
+<span class="nc" id="L411">            select = connection.prepareStatement(</span>
+                &quot;select messageId,createTime from messages where createTime&gt;? &quot;
+                + &quot;order by createTime asc&quot;);
+<span class="nc" id="L414">            select.setLong(1, time);</span>
+<span class="nc" id="L415">            set = select.executeQuery();</span>
+
+            // now iterate through the result set
+<span class="nc" id="L418">            int count = 0;</span>
+<span class="nc" id="L419">            long lastTimeStamp = time;</span>
+<span class="nc bnc" id="L420" title="All 2 branches missed.">            while (set.next()) {</span>
+<span class="nc" id="L421">                messages.put(set.getString(1), new Long(set.getLong(2)));</span>
+<span class="nc bnc" id="L422" title="All 2 branches missed.">                if (++count &gt; hint) {</span>
+<span class="nc bnc" id="L423" title="All 2 branches missed.">                    if (set.getLong(2) &gt; lastTimeStamp) {</span>
+<span class="nc" id="L424">                        break;</span>
+                    }
+                } else {
+<span class="nc" id="L427">                    lastTimeStamp = set.getLong(&quot;createTime&quot;);</span>
+                }
+
+            }
+<span class="nc" id="L431">        } catch (SQLException exception) {</span>
+<span class="nc" id="L432">            throw new PersistenceException(</span>
+                &quot;Failed to retrieve message identifiers&quot;, exception);
+        } finally {
+<span class="nc" id="L435">            SQLHelper.close(set);</span>
+<span class="nc" id="L436">            SQLHelper.close(select);</span>
+        }
+
+<span class="nc" id="L439">        return messages;</span>
+    }
+
+    /**
+     * Retrieve a list of unprocessed messages and return them to the client.
+     * An unprocessed message has been accepted by the system but not
+     * processed.
+     *
+     * @param connection - execute on this connection
+     * @return Vector - one or more MessageImpl objects
+     * @throws PersistenceException - if an SQL error occurs
+     */
+    public Vector getUnprocessedMessages(Connection connection)
+        throws PersistenceException {
+
+<span class="nc" id="L454">        PreparedStatement select = null;</span>
+<span class="nc" id="L455">        ResultSet set = null;</span>
+<span class="nc" id="L456">        Vector messages = new Vector();</span>
+
+        try {
+<span class="nc" id="L459">            select = connection.prepareStatement(</span>
+                &quot;select messageBlob from messages where processed=0&quot;);
+<span class="nc" id="L461">            set = select.executeQuery();</span>
+            // now iterate through the result set
+<span class="nc bnc" id="L463" title="All 2 branches missed.">            while (set.next()) {</span>
+<span class="nc" id="L464">                MessageImpl m = deserialize(set.getBytes(1));</span>
+<span class="nc" id="L465">                m.setProcessed(false);</span>
+<span class="nc" id="L466">                messages.add(m);</span>
+<span class="nc" id="L467">            }</span>
+<span class="nc" id="L468">        } catch (SQLException exception) {</span>
+<span class="nc" id="L469">            throw new PersistenceException(</span>
+                &quot;Failed to retrieve unprocessed messages&quot;, exception);
+        } finally {
+<span class="nc" id="L472">            SQLHelper.close(set);</span>
+<span class="nc" id="L473">            SQLHelper.close(select);</span>
+        }
+
+<span class="nc" id="L476">        return messages;</span>
+    }
+
+    /**
+     * Retrieve the message handle for all unexpired messages
+     *
+     * @param connection - execute on this connection
+     * @param destination - the destination in question
+     * @return Vector - collection of PersistentMessageHandle objects
+     * @throws  PersistenceException - sql releated exception
+     */
+    public Vector getNonExpiredMessages(Connection connection,
+                                        JmsDestination destination)
+        throws PersistenceException {
+
+<span class="nc" id="L491">        Vector result = new Vector();</span>
+<span class="nc" id="L492">        PreparedStatement select = null;</span>
+<span class="nc" id="L493">        ResultSet set = null;</span>
+
+        try {
+<span class="nc" id="L496">            long destinationId = _destinations.getId(destination.getName());</span>
+
+<span class="nc bnc" id="L498" title="All 2 branches missed.">            if (destinationId == 0) {</span>
+<span class="nc" id="L499">                throw new PersistenceException(</span>
+                    &quot;Cannot getMessages for destination=&quot; + destination
+                    + &quot;: destination does not exist&quot;);
+            }
+
+<span class="nc" id="L504">            select = connection.prepareStatement(</span>
+                &quot;select messageId,destinationId,priority,createTime,&quot;
+                + &quot;sequenceNumber,expiryTime &quot;
+                + &quot;from messages &quot;
+                + &quot;where expiryTime&gt;0 and destinationId=? &quot;
+                + &quot;order by expiryTime asc&quot;);
+<span class="nc" id="L510">            select.setLong(1, destinationId);</span>
+<span class="nc" id="L511">            set = select.executeQuery();</span>
+
+<span class="nc bnc" id="L513" title="All 2 branches missed.">            while (set.next()) {</span>
+<span class="nc" id="L514">                String messageId = set.getString(1);</span>
+<span class="nc" id="L515">                int priority = set.getInt(3);</span>
+<span class="nc" id="L516">                long acceptedTime = set.getLong(4);</span>
+<span class="nc" id="L517">                long sequenceNumber = set.getLong(5);</span>
+<span class="nc" id="L518">                long expiryTime = set.getLong(6);</span>
+<span class="nc" id="L519">                PersistentMessageHandle handle = new PersistentMessageHandle(</span>
+                        messageId, priority, acceptedTime, sequenceNumber,
+                        expiryTime, destination);
+<span class="nc" id="L522">                result.add(handle);</span>
+<span class="nc" id="L523">            }</span>
+<span class="nc" id="L524">        } catch (SQLException exception) {</span>
+<span class="nc" id="L525">            throw new PersistenceException(</span>
+                &quot;Failed to retrieve non-expired messages&quot;, exception);
+        } finally {
+<span class="nc" id="L528">            SQLHelper.close(set);</span>
+<span class="nc" id="L529">            SQLHelper.close(select);</span>
+        }
+
+<span class="nc" id="L532">        return result;</span>
+    }
+
+    /**
+     * Delete all expired messages and associated message handles.
+     *
+     * @param connection - execute on this connection
+     * @throws PersistenceException - if an SQL error occurs
+     */
+    public void removeExpiredMessages(Connection connection)
+        throws PersistenceException {
+
+<span class="nc" id="L544">        PreparedStatement delete = null;</span>
+        try {
+<span class="nc" id="L546">            long time = System.currentTimeMillis();</span>
+
+            // delete from the messages
+<span class="nc" id="L549">            delete = connection.prepareStatement(</span>
+                &quot;delete from messages where expiryTime &gt; 0 and expiryTime &lt; ?&quot;);
+<span class="nc" id="L551">            delete.setLong(1, time);</span>
+<span class="nc" id="L552">            delete.executeUpdate();</span>
+<span class="nc" id="L553">            delete.close();</span>
+
+            // delete the message handles
+<span class="nc" id="L556">            delete = connection.prepareStatement(</span>
+                &quot;delete from message_handles where expiryTime &gt; 0 and expiryTime &lt; ?&quot;);
+<span class="nc" id="L558">            delete.setLong(1, time);</span>
+<span class="nc" id="L559">            delete.executeUpdate();</span>
+<span class="nc" id="L560">        } catch (SQLException exception) {</span>
+<span class="nc" id="L561">            throw new PersistenceException(</span>
+                &quot;Failed to remove expired messages&quot;, exception);
+        } finally {
+<span class="nc" id="L564">            SQLHelper.close(delete);</span>
+        }
+<span class="nc" id="L566">    }</span>
+
+    /**
+     * Get the message as a serialized blob
+     *
+     * @param       message             the message to serialize
+     * @return      byte[]              the serialized message
+     */
+    public byte[] serialize(MessageImpl message)
+        throws PersistenceException {
+
+<span class="nc" id="L577">        byte[] result = null;</span>
+<span class="nc" id="L578">        ObjectOutputStream ostream = null;</span>
+        try {
+<span class="nc" id="L580">            ByteArrayOutputStream bstream = new ByteArrayOutputStream();</span>
+<span class="nc" id="L581">            ostream = new ObjectOutputStream(bstream);</span>
+<span class="nc" id="L582">            ostream.writeObject(message);</span>
+<span class="nc" id="L583">            result = bstream.toByteArray();</span>
+<span class="nc" id="L584">        } catch (Exception exception) {</span>
+<span class="nc" id="L585">            throw new PersistenceException(&quot;Failed to serialize message&quot;,</span>
+                exception);
+        } finally {
+<span class="nc" id="L588">            SQLHelper.close(ostream);</span>
+        }
+
+<span class="nc" id="L591">        return result;</span>
+    }
+
+    /**
+     * Set the message from a serialized blob
+     *
+     * @param blob the serialized message
+     * @return the re-constructed message
+     */
+    public MessageImpl deserialize(byte[] blob) throws PersistenceException {
+<span class="nc" id="L601">        MessageImpl message = null;</span>
+
+<span class="nc bnc" id="L603" title="All 2 branches missed.">        if (blob != null) {</span>
+<span class="nc" id="L604">            ObjectInputStream istream = null;</span>
+            try {
+<span class="nc" id="L606">                ByteArrayInputStream bstream = new ByteArrayInputStream(blob);</span>
+<span class="nc" id="L607">                istream = new ObjectInputStream(bstream);</span>
+<span class="nc" id="L608">                message = (MessageImpl) istream.readObject();</span>
+<span class="nc" id="L609">            } catch (Exception exception) {</span>
+<span class="nc" id="L610">                throw new PersistenceException(</span>
+                    &quot;Failed to de-serialize message&quot;, exception);
+            } finally {
+<span class="nc" id="L613">                SQLHelper.close(istream);</span>
+            }
+<span class="nc" id="L615">        } else {</span>
+<span class="nc" id="L616">            throw new PersistenceException(</span>
+                &quot;Cannot de-serialize null message blob&quot;);
+        }
+
+<span class="nc" id="L620">        return message;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

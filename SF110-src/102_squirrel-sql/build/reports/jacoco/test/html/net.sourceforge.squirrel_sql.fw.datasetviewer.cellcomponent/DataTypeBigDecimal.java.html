@@ -1,0 +1,662 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DataTypeBigDecimal.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent</a> &gt; <span class="el_source">DataTypeBigDecimal.java</span></div><h1>DataTypeBigDecimal.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent;
+/*
+ * Copyright (C) 2001-2003 Colin Bell
+ * colbell@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.math.BigDecimal;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.text.NumberFormat;
+
+import javax.swing.JTable;
+import javax.swing.JTextArea;
+import javax.swing.JTextField;
+import javax.swing.SwingUtilities;
+import javax.swing.text.JTextComponent;
+
+import org.apache.commons.lang.StringUtils;
+
+import net.sourceforge.squirrel_sql.fw.datasetviewer.CellDataPopup;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.ColumnDisplayDefinition;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.whereClause.IWhereClausePart;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.whereClause.IsNullWhereClausePart;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.whereClause.ParameterWhereClausePart;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+/**
+ * @author gwg
+ *
+ * This class provides the display components for handling BigDecimal data types,
+ * specifically SQL types DECIMAL and NUMERIC.
+ * The display components are for:
+ * &lt;UL&gt;
+ * &lt;LI&gt; read-only display within a table cell
+ * &lt;LI&gt; editing within a table cell
+ * &lt;LI&gt; read-only or editing display within a separate window
+ * &lt;/UL&gt;
+ * The class also contains 
+ * &lt;UL&gt;
+ * &lt;LI&gt; a function to compare two display values
+ * to see if they are equal.  This is needed because the display format
+ * may not be the same as the internal format, and all internal object
+ * types may not provide an appropriate equals() function.
+ * &lt;LI&gt; a function to return a printable text form of the cell contents,
+ * which is used in the text version of the table.
+ * &lt;/UL&gt;
+ * &lt;P&gt;
+ * The components returned from this class extend RestorableJTextField
+ * and RestorableJTextArea for use in editing table cells that
+ * contain BigDecimalr values.  It provides the special behavior for null
+ * handling and resetting the cell to the original value.
+ */
+
+public class DataTypeBigDecimal extends FloatingPointBase
+	implements IDataTypeComponent
+{
+<span class="nc" id="L82">	private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L83">		StringManagerFactory.getStringManager(DataTypeBigDecimal.class);</span>
+
+   /** Logger for this class. */
+<span class="nc" id="L86">   private static ILogger s_log = LoggerController.createLogger(DataTypeBigDecimal.class);</span>
+
+	/* whether nulls are allowed or not */
+	private boolean _isNullable;
+
+	/* The total number of decimal digits allowed in the number */
+	private int _precision;
+
+	/* the number of decimal digits allowed to the right of the decimal point
+		 * in the number
+		 */
+	private int _scale;
+
+	/* table of which we are part (needed for creating popup dialog) */
+	private JTable _table;
+
+	/* The JTextComponent that is being used for editing */
+	private IRestorableTextComponent _textComponent;
+
+	/* The CellRenderer used for this data type */
+	//??? For now, use the same renderer as everyone else.
+	//??
+	//?? IN FUTURE: change this to use a new instance of renederer
+	//?? for this data type.
+<span class="nc" id="L110">	private DefaultColumnRenderer _renderer = DefaultColumnRenderer.getInstance();</span>
+
+
+	// The NumberFormat object to use for all locale-dependent formatting.
+	private NumberFormat _numberFormat;
+   private boolean _renderExceptionHasBeenLogged;
+
+
+   /**
+    * Constructor - save the data needed by this data type.
+    */
+<span class="nc" id="L121">   public DataTypeBigDecimal(JTable table, ColumnDisplayDefinition colDef) {</span>
+<span class="nc" id="L122">      _table = table;</span>
+<span class="nc" id="L123">      _colDef = colDef;</span>
+<span class="nc" id="L124">      _isNullable = colDef.isNullable();</span>
+<span class="nc" id="L125">      _precision = colDef.getPrecision();</span>
+<span class="nc" id="L126">      _scale = colDef.getScale();</span>
+
+<span class="nc" id="L128">      _numberFormat = NumberFormat.getInstance();</span>
+
+      // If we use _scale here some number displays go crazy.
+      //_numberFormat.setMaximumFractionDigits(_scale);
+<span class="nc" id="L132">      _numberFormat.setMaximumFractionDigits(maximumFractionDigits);      </span>
+         
+      
+<span class="nc" id="L135">      _numberFormat.setMinimumFractionDigits(0);</span>
+
+<span class="nc" id="L137">   }</span>
+
+	/**
+	 * Return the name of the java class used to hold this data type.
+	 */
+	public String getClassName() {
+<span class="nc" id="L143">		return &quot;java.math.BigDecimal&quot;;</span>
+	}
+
+	/*
+	 * First we have the methods for in-cell and Text-table operations
+	 */
+
+	/**
+	 * Render a value into text for this DataType.
+	 */
+	public String renderObject(Object value) {
+
+
+		//return (String)_renderer.renderObject(value);
+
+<span class="nc bnc" id="L158" title="All 4 branches missed.">		if (value == null || useJavaDefaultFormat)</span>
+		{
+<span class="nc" id="L160">			return (String)_renderer.renderObject(value);</span>
+		}
+		else
+		{
+
+         try
+         {
+<span class="nc" id="L167">            return (String)_renderer.renderObject(_numberFormat.format(value));</span>
+         }
+<span class="nc" id="L169">         catch (Exception e)</span>
+         {
+<span class="nc bnc" id="L171" title="All 2 branches missed.">            if(false == _renderExceptionHasBeenLogged)</span>
+            {
+<span class="nc" id="L173">               _renderExceptionHasBeenLogged = true;</span>
+<span class="nc" id="L174">               s_log.error(&quot;Could not format \&quot;&quot; + value + &quot;\&quot; as number type&quot;, e);</span>
+            }
+<span class="nc" id="L176">            return (String) _renderer.renderObject(value);</span>
+         }
+
+
+      }
+
+	}
+
+	/**
+	 * This Data Type can be edited in a table cell.
+	 */
+	public boolean isEditableInCell(Object originalValue) {
+<span class="nc" id="L188">		return true;</span>
+	}
+
+	/**
+	 * See if a value in a column has been limited in some way and
+	 * needs to be re-read before being used for editing.
+	 * For read-only tables this may actually return true since we want
+	 * to be able to view the entire contents of the cell even if it was not
+	 * completely loaded during the initial table setup.
+	 */
+	public boolean needToReRead(Object originalValue) {
+		// this DataType does not limit the data read during the initial load of the table,
+		// so there is no need to re-read the complete data later
+<span class="nc" id="L201">		return false;</span>
+	}
+
+	/**
+	 * Return a JTextField usable in a CellEditor.
+	 */
+	public JTextField getJTextField() {
+<span class="nc" id="L208">		_textComponent = new RestorableJTextField();</span>
+
+		// special handling of operations while editing this data type
+<span class="nc" id="L211">		((RestorableJTextField)_textComponent).addKeyListener(new KeyTextHandler());</span>
+
+		//
+		// handle mouse events for double-click creation of popup dialog.
+		// This happens only in the JTextField, not the JTextArea, so we can
+		// make this an inner class within this method rather than a separate
+		// inner class as is done with the KeyTextHandler class.
+		//
+<span class="nc" id="L219">		((RestorableJTextField)_textComponent).addMouseListener(new MouseAdapter()</span>
+<span class="nc" id="L220">		{</span>
+			public void mousePressed(MouseEvent evt)
+			{
+<span class="nc bnc" id="L223" title="All 2 branches missed.">				if (evt.getClickCount() == 2)</span>
+				{
+<span class="nc" id="L225">					MouseEvent tableEvt = SwingUtilities.convertMouseEvent(</span>
+<span class="nc" id="L226">						(RestorableJTextField)DataTypeBigDecimal.this._textComponent,</span>
+<span class="nc" id="L227">						evt, DataTypeBigDecimal.this._table);</span>
+<span class="nc" id="L228">					CellDataPopup.showDialog(DataTypeBigDecimal.this._table,</span>
+						DataTypeBigDecimal.this._colDef, tableEvt, true);
+				}
+<span class="nc" id="L231">			}</span>
+		});	// end of mouse listener
+
+<span class="nc" id="L234">		return (JTextField)_textComponent;</span>
+	}
+
+	/**
+	 * Implement the interface for validating and converting to internal object.
+	 * Null is a valid successful return, so errors are indicated only by
+	 * existance or not of a message in the messageBuffer.
+	 */
+	public Object validateAndConvert(String value, Object originalValue, StringBuffer messageBuffer)
+	{
+		// handle null, which is shown as the special string &quot;&lt;null&gt;&quot;
+<span class="nc bnc" id="L245" title="All 4 branches missed.">		if (value.equals(&quot;&lt;null&gt;&quot;) || value.equals(&quot;&quot;))</span>
+<span class="nc" id="L246">			return null;</span>
+
+		// Do the conversion into the object in a safe manner
+		try
+		{
+			BigDecimal obj;
+
+<span class="nc bnc" id="L253" title="All 2 branches missed.">			if(useJavaDefaultFormat)</span>
+			{
+<span class="nc" id="L255">				obj = new BigDecimal(value);</span>
+			}
+			else
+			{
+<span class="nc" id="L259">				obj = new BigDecimal(&quot;&quot; + _numberFormat.parse(value));</span>
+			}
+
+
+			// Some DBs give a negative number when they do not have a value for
+			// the scale.  Assume that if the _scale is 0 or positive that the DB really
+			// means for that to be the scale, but if it is negative then we do not check.
+<span class="nc bnc" id="L266" title="All 4 branches missed.">			if (_scale &gt;= 0 &amp;&amp; obj.scale() &gt; _scale)</span>
+			{
+<span class="nc" id="L268">				Object[] args = new Object[]{</span>
+<span class="nc" id="L269">                        Integer.valueOf(obj.scale()), </span>
+<span class="nc" id="L270">                        Integer.valueOf(_scale)</span>
+                };
+				// i18n[dataTypeBigDecimal.scaleEceeded=Scale Exceeded: Number 
+                //of digits to right of decimal place ({0})\nis greater than 
+                //allowed in column ({1}).]
+<span class="nc" id="L275">				String msg = s_stringMgr.getString(&quot;dataTypeBigDecimal.scaleEceeded&quot;, args);</span>
+
+<span class="nc" id="L277">				messageBuffer.append(msg);</span>
+<span class="nc" id="L278">				return null;</span>
+			}
+
+			// check the total number of digits in the number.
+			// Since the string version of the number is therepresentation of
+			// the digits in that number and including possibly a plus or minus
+			// and a decimal, start by counting the number of digits in the string.
+<span class="nc" id="L285">			int objPrecision = value.length();</span>
+			// now remove the non-digit chars, if any
+<span class="nc bnc" id="L287" title="All 4 branches missed.">			if (value.indexOf(&quot;+&quot;) &gt; -1 || value.indexOf(&quot;-&quot;) &gt; -1)</span>
+<span class="nc" id="L288">				objPrecision--;</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">			if (value.indexOf(&quot;.&quot;) &gt; -1)</span>
+<span class="nc" id="L290">				objPrecision--;</span>
+
+			// Some drivers (e.g. Oracle) give precision as 0 in some cases.
+			// When precision is 0, we cannot check the length, so do not try.
+<span class="nc bnc" id="L294" title="All 4 branches missed.">			if (_precision &gt; 0 &amp;&amp; objPrecision &gt; _precision)</span>
+			{
+<span class="nc" id="L296">				Object[] args = new Object[]{</span>
+<span class="nc" id="L297">                        Integer.valueOf(objPrecision), </span>
+<span class="nc" id="L298">                        Integer.valueOf(_precision)</span>
+                };
+				// i18n[dataTypeBigDecimal.precisionEceeded=Precision Exceeded: 
+                //Number of digits in number ({0})\nis greater than allowed in 
+                //column ({1})]
+<span class="nc" id="L303">				String msg = s_stringMgr.getString(&quot;dataTypeBigDecimal.precisionEceeded&quot;, args);</span>
+
+<span class="nc" id="L305">				messageBuffer.append(msg);</span>
+<span class="nc" id="L306">				return null;</span>
+			}
+<span class="nc" id="L308">			return obj;</span>
+		}
+<span class="nc" id="L310">		catch (Exception e)</span>
+		{
+<span class="nc" id="L312">			messageBuffer.append(e.toString() + &quot;\n&quot;);</span>
+			//?? do we need the message also, or is it automatically part of the toString()?
+			//messageBuffer.append(e.getMessage());
+<span class="nc" id="L315">			return null;</span>
+		}
+	}
+
+	/**
+	 * If true, this tells the PopupEditableIOPanel to use the
+	 * binary editing panel rather than a pure text panel.
+	 * The binary editing panel assumes the data is an array of bytes,
+	 * converts it into text form, allows the user to change how that
+	 * data is displayed (e.g. Hex, Decimal, etc.), and converts
+	 * the data back from text to bytes when the user editing is completed.
+	 * If this returns false, this DataType class must
+	 * convert the internal data into a text string that
+	 * can be displayed (and edited, if allowed) in a TextField
+	 * or TextArea, and must handle all
+	 * user key strokes related to editing of that data.
+	 */
+	public boolean useBinaryEditingPanel() {
+<span class="nc" id="L333">		return false;</span>
+	}
+
+
+	/*
+		 * Now the functions for the Popup-related operations.
+		 */
+
+	/**
+	 * Returns true if data type may be edited in the popup,
+	 * false if not.
+	 */
+	public boolean isEditableInPopup(Object originalValue) {
+<span class="nc" id="L346">		return true;</span>
+	}
+
+	/*
+	 * Return a JTextArea usable in the CellPopupDialog
+	 * and fill in the value.
+	 */
+	 public JTextArea getJTextArea(Object value) {
+<span class="nc" id="L354">		_textComponent = new RestorableJTextArea();</span>
+
+		// value is a simple string representation of the data,
+		// the same one used in Text and in-cell operations.
+<span class="nc" id="L358">		((RestorableJTextArea)_textComponent).setText(renderObject(value));</span>
+
+		// special handling of operations while editing this data type
+<span class="nc" id="L361">		((RestorableJTextArea)_textComponent).addKeyListener(new KeyTextHandler());</span>
+
+<span class="nc" id="L363">		return (RestorableJTextArea)_textComponent;</span>
+	 }
+
+	/**
+	 * Validating and converting in Popup is identical to cell-related operation.
+	 */
+	public Object validateAndConvertInPopup(String value, Object originalValue, StringBuffer messageBuffer) {
+<span class="nc" id="L370">		return validateAndConvert(value, originalValue, messageBuffer);</span>
+	}
+
+	/*
+	 * The following is used in both cell and popup operations.
+	 */
+
+	/*
+		 * Internal class for handling key events during editing
+		 * of both JTextField and JTextArea.
+		 */
+<span class="nc" id="L381">	 private class KeyTextHandler extends BaseKeyTextHandler {</span>
+         
+		 public void keyTyped(KeyEvent e) {
+<span class="nc" id="L384">				char c = e.getKeyChar();</span>
+
+				// as a coding convenience, create a reference to the text component
+				// that is typecast to JTextComponent.  this is not essential, as we
+				// could typecast every reference, but this makes the code cleaner
+<span class="nc" id="L389">                JTextComponent _theComponent = (JTextComponent)DataTypeBigDecimal.this._textComponent;</span>
+<span class="nc" id="L390">				String text = _theComponent.getText();</span>
+
+				// tabs and newlines get put into the text before this check,
+				// so remove them
+				// This only applies to Popup editing since these chars are
+				// not passed to this level by the in-cell editor.
+<span class="nc bnc" id="L396" title="All 4 branches missed.">				if (c == KeyEvent.VK_TAB || c == KeyEvent.VK_ENTER) {</span>
+					// remove all instances of the offending char
+<span class="nc" id="L398">					int index = text.indexOf(c);</span>
+
+<span class="nc bnc" id="L400" title="All 2 branches missed.">					if (-1 != index)</span>
+					{
+<span class="nc bnc" id="L402" title="All 2 branches missed.">						if (index == text.length() - 1)</span>
+						{
+<span class="nc" id="L404">							text = text.substring(0, text.length() - 1);	// truncate string</span>
+						}
+						else
+						{
+<span class="nc" id="L408">							text = text.substring(0, index) + text.substring(index + 1);</span>
+						}
+<span class="nc" id="L410">						((IRestorableTextComponent) _theComponent).updateText(text);</span>
+<span class="nc" id="L411">						_beepHelper.beep(_theComponent);</span>
+<span class="nc" id="L412">						e.consume();</span>
+					}
+				}
+					
+				
+				
+<span class="nc" id="L418">				checkSignCharacter(e, _theComponent, _colDef, _beepHelper);</span>
+
+<span class="nc bnc" id="L420" title="All 2 branches missed.">				if ( ! ( Character.isDigit(c) ||</span>
+<span class="nc bnc" id="L421" title="All 10 branches missed.">					(isSignCharacter(c)) ||</span>
+					(c == '.') || (c == ',') ||  // several number formats use '.' as decimal separator, others use ','
+					(c == KeyEvent.VK_BACK_SPACE) ||
+					(c == KeyEvent.VK_DELETE) ) ) {
+<span class="nc" id="L425">					_beepHelper.beep(_theComponent);</span>
+<span class="nc" id="L426">					e.consume();</span>
+				}
+
+				// handle cases of null
+				// The processing is different when nulls are allowed and when they are not.
+				//
+
+<span class="nc bnc" id="L433" title="All 2 branches missed.">				if ( DataTypeBigDecimal.this._isNullable) {</span>
+
+					// user enters something when field is null
+<span class="nc bnc" id="L436" title="All 2 branches missed.">					if (text.equals(&quot;&lt;null&gt;&quot;)) {</span>
+<span class="nc bnc" id="L437" title="All 4 branches missed.">						if ((c==KeyEvent.VK_BACK_SPACE) || (c == KeyEvent.VK_DELETE)) {</span>
+							// delete when null =&gt; original value
+<span class="nc" id="L439">							DataTypeBigDecimal.this._textComponent.restoreText();</span>
+<span class="nc" id="L440">							e.consume();</span>
+						}
+						else {
+							// non-delete when null =&gt; clear field and add text
+<span class="nc" id="L444">							DataTypeBigDecimal.this._textComponent.updateText(&quot;&quot;);</span>
+							// fall through to normal processing of this key stroke
+						}
+					}
+					else {
+						// check for user deletes last thing in field
+<span class="nc bnc" id="L450" title="All 4 branches missed.">						if ((c == KeyEvent.VK_BACK_SPACE) || (c == KeyEvent.VK_DELETE)) {</span>
+<span class="nc bnc" id="L451" title="All 2 branches missed.">							if (text.length() &lt;= 1 ) {</span>
+								// about to delete last thing in field, so replace with null
+<span class="nc" id="L453">								DataTypeBigDecimal.this._textComponent.updateText(&quot;&lt;null&gt;&quot;);</span>
+<span class="nc" id="L454">								e.consume();</span>
+							}
+						}
+					}
+				}
+				else {
+					// field is not nullable
+					//
+<span class="nc" id="L462">                    handleNotNullableField(text, c, e, _textComponent);</span>
+				}
+<span class="nc" id="L464">			}</span>
+
+
+		}
+
+
+
+
+	/*
+		 * DataBase-related functions
+		 */
+
+	 /**
+	  * On input from the DB, read the data from the ResultSet into the appropriate
+	  * type of object to be stored in the table cell.
+	  */
+	public Object readResultSet(ResultSet rs, int index, boolean limitDataRead)
+		throws java.sql.SQLException {
+
+<span class="nc" id="L483">		BigDecimal data = rs.getBigDecimal(index);</span>
+<span class="nc bnc" id="L484" title="All 2 branches missed.">		if (rs.wasNull())</span>
+<span class="nc" id="L485">			return null;</span>
+<span class="nc" id="L486">		else return data;</span>
+	}
+
+	/**
+	 * When updating the database, generate a string form of this object value
+	 * that can be used in the WHERE clause to match the value in the database.
+	 * A return value of null means that this column cannot be used in the WHERE
+	 * clause, while a return of &quot;null&quot; (or &quot;is null&quot;, etc) means that the column
+	 * can be used in the WHERE clause and the value is actually a null value.
+	 * This function must also include the column label so that its output
+	 * is of the form:
+	 * 	&quot;columnName = value&quot;
+	 * or
+	 * 	&quot;columnName is null&quot;
+	 * or whatever is appropriate for this column in the database.
+	 */
+	public IWhereClausePart getWhereClauseValue(Object value, ISQLDatabaseMetaData md) {
+<span class="nc bnc" id="L503" title="All 6 branches missed.">		if (value == null || value.toString() == null || value.toString().length() == 0)</span>
+<span class="nc" id="L504">			return new IsNullWhereClausePart(_colDef);</span>
+		else
+<span class="nc" id="L506">			return new ParameterWhereClausePart(_colDef, value, this);</span>
+	}
+
+
+	/**
+	 * When updating the database, insert the appropriate datatype into the
+	 * prepared statment at the given variable position.
+	 */
+	public void setPreparedStatementValue(PreparedStatement pstmt, Object value, int position)
+		throws java.sql.SQLException {
+<span class="nc bnc" id="L516" title="All 2 branches missed.">		if (value == null) {</span>
+<span class="nc" id="L517">			pstmt.setNull(position, _colDef.getSqlType());</span>
+		}
+		else {
+<span class="nc" id="L520">			pstmt.setBigDecimal(position, (BigDecimal)value);</span>
+		}
+<span class="nc" id="L522">	}</span>
+
+	/**
+	 * Get a default value for the table used to input data for a new row
+	 * to be inserted into the DB.
+	 */
+	public Object getDefaultValue(String dbDefaultValue) {
+<span class="nc bnc" id="L529" title="All 2 branches missed.">		if (dbDefaultValue != null) {</span>
+			// try to use the DB default value
+<span class="nc" id="L531">			StringBuffer mbuf = new StringBuffer();</span>
+<span class="nc" id="L532">			Object newObject = validateAndConvert(dbDefaultValue, null, mbuf);</span>
+
+			// if there was a problem with converting, then just fall through
+			// and continue as if there was no default given in the DB.
+			// Otherwise, use the converted object
+<span class="nc bnc" id="L537" title="All 2 branches missed.">			if (mbuf.length() == 0)</span>
+<span class="nc" id="L538">				return newObject;</span>
+		}
+
+		// no default in DB.  If nullable, use null.
+<span class="nc bnc" id="L542" title="All 2 branches missed.">		if (_isNullable)</span>
+<span class="nc" id="L543">			return null;</span>
+
+		// field is not nullable, so create a reasonable default value
+<span class="nc" id="L546">		return BigDecimal.ZERO;</span>
+	}
+
+
+
+
+	/*
+		 * File IO related functions
+		 */
+
+
+	 /**
+	  * Say whether or not object can be exported to and imported from
+	  * a file.  We put both export and import together in one test
+	  * on the assumption that all conversions can be done both ways.
+	  */
+	 public boolean canDoFileIO() {
+<span class="nc" id="L563">		 return true;</span>
+	 }
+
+	 /**
+	  * Read a file and construct a valid object from its contents.
+	  * Errors are returned by throwing an IOException containing the
+	  * cause of the problem as its message.
+	  * &lt;P&gt;
+	  * DataType is responsible for validating that the imported
+	  * data can be converted to an object, and then must return
+	  * a text string that can be used in the Popup window text area.
+	  * This object-to-text conversion is the same as is done by
+	  * the DataType object internally in the getJTextArea() method.
+	  * 
+	  * &lt;P&gt;
+	  * File is assumed to be and ASCII string of digits
+	  * representing a value of this data type.
+	  */
+	public String importObject(FileInputStream inStream)
+		 throws IOException {
+
+<span class="nc" id="L584">		 InputStreamReader inReader = new InputStreamReader(inStream);</span>
+
+<span class="nc" id="L586">		 int fileSize = inStream.available();</span>
+
+<span class="nc" id="L588">		 char charBuf[] = new char[fileSize];</span>
+
+<span class="nc" id="L590">		 int count = inReader.read(charBuf, 0, fileSize);</span>
+
+<span class="nc bnc" id="L592" title="All 2 branches missed.">		 if (count != fileSize)</span>
+<span class="nc" id="L593">			 throw new IOException(</span>
+				 &quot;Could read only &quot;+ count +
+				 &quot; chars from a total file size of &quot; + fileSize +
+				 &quot;. Import failed.&quot;);
+
+		 // convert file text into a string
+		 // Special case: some systems tack a newline at the end of
+		 // the text read.  Assume that if last char is a newline that
+		 // we want everything else in the line.
+		 String fileText;
+<span class="nc bnc" id="L603" title="All 2 branches missed.">		 if (charBuf[count-1] == KeyEvent.VK_ENTER)</span>
+<span class="nc" id="L604">			 fileText = new String(charBuf, 0, count-1);</span>
+<span class="nc" id="L605">		 else fileText = new String(charBuf);</span>
+
+		 // test that the string is valid by converting it into an
+		 // object of this data type
+<span class="nc" id="L609">		 StringBuffer messageBuffer = new StringBuffer();</span>
+<span class="nc" id="L610">		 validateAndConvertInPopup(fileText, null, messageBuffer);</span>
+<span class="nc bnc" id="L611" title="All 2 branches missed.">		 if (messageBuffer.length() &gt; 0) {;</span>
+			 // convert number conversion issue into IO issue for consistancy
+<span class="nc" id="L613">			 throw new IOException(</span>
+<span class="nc" id="L614">				 &quot;Text does not represent data of type &quot;+getClassName()+</span>
+				 &quot;.  Text was:\n&quot;+fileText);
+		 }
+
+		 // return the text from the file since it does
+		 // represent a valid value of this data type
+<span class="nc" id="L620">		 return fileText;</span>
+	}
+
+
+	 /**
+	  * Construct an appropriate external representation of the object
+	  * and write it to a file.
+	  * Errors are returned by throwing an IOException containing the
+	  * cause of the problem as its message.
+	  * &lt;P&gt;
+	  * DataType is responsible for validating that the given text
+	  * text from a Popup JTextArea can be converted to an object.
+	  * This text-to-object conversion is the same as validateAndConvertInPopup,
+	  * which may be used internally by the object to do the validation.
+	  * &lt;P&gt;
+	  * The DataType object must flush and close the output stream before returning.
+	  * Typically it will create another object (e.g. an OutputWriter), and
+	  * that is the object that must be flushed and closed.
+	  * 
+	  * &lt;P&gt;
+	  * File is assumed to be and ASCII string of digits
+	  * representing a value of this data type.
+	  */
+	 public void exportObject(FileOutputStream outStream, String text)
+		 throws IOException {
+
+<span class="nc" id="L646">		 OutputStreamWriter outWriter = new OutputStreamWriter(outStream);</span>
+
+		 // check that the text is a valid representation
+<span class="nc" id="L649">		 StringBuffer messageBuffer = new StringBuffer();</span>
+<span class="nc" id="L650">		 validateAndConvertInPopup(text, null, messageBuffer);</span>
+<span class="nc bnc" id="L651" title="All 2 branches missed.">		 if (messageBuffer.length() &gt; 0) {</span>
+			 // there was an error in the conversion
+<span class="nc" id="L653">			 throw new IOException(new String(messageBuffer));</span>
+		 }
+
+		 // just send the text to the output file
+<span class="nc" id="L657">		outWriter.write(text);</span>
+<span class="nc" id="L658">		outWriter.flush();</span>
+<span class="nc" id="L659">		outWriter.close();</span>
+<span class="nc" id="L660">	 }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

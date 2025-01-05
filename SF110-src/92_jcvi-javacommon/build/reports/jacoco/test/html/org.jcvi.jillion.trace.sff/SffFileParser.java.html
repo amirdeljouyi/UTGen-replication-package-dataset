@@ -1,0 +1,444 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SffFileParser.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.trace.sff</a> &gt; <span class="el_source">SffFileParser.java</span></div><h1>SffFileParser.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+package org.jcvi.jillion.trace.sff;
+
+import java.io.BufferedInputStream;
+import java.io.DataInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import org.jcvi.jillion.core.io.IOUtil;
+import org.jcvi.jillion.internal.core.io.OpenAwareInputStream;
+import org.jcvi.jillion.internal.core.io.RandomAccessFileInputStream;
+import org.jcvi.jillion.trace.sff.SffFileParserCallback.SffFileMemento;
+/**
+ * {@code SffFileParser} can parse an SFF
+ * binary encoded
+ * flowgram file.
+ * @author dkatzel
+ * @see &lt;a href =&quot;http://www.ncbi.nlm.nih.gov/Traces/trace.cgi?cmd=show&amp;f=formats&amp;m=doc&amp;s=format#sff&quot;&gt;SFF file format spec from NCBI&lt;/a&gt;
+ */
+public abstract class SffFileParser {
+	
+	protected SffCommonHeader header;
+	/**
+	 * Create a new instance of {@link SffFileParser}
+	 * that will parse the given sff encoded file.
+	 * The file isn't actually parsed until
+	 * one of the accept methods is called.
+	 * @param sffFile the sff file to parse
+	 * @throws NullPointerException if sffFile is null.
+	 * @throws FileNotFoundException if sffFile does not exist.
+	 */
+	public static SffFileParser create(File sffFile) throws FileNotFoundException{
+<span class="nc" id="L56">		return new FileBasesSffParser(sffFile);</span>
+	}
+
+	/**
+	 * Create a new instance of {@link SffFileParser}
+	 * that will parse the given sff encoded {@link InputStream}.
+	 * Please Note that inputStream implementations
+	 * of the FastaFileParser can not create {@link SffFileMemento}s
+	 * or use {@link #accept(SffFileVisitor, SffFileMemento)}.
+	 * The {@link InputStream} isn't actually parsed until
+	 * one of the {@link SffFileParser#accept(SffFileVisitor)}
+	 * is called.
+	 * @param inputStream an {@link InputStream} that contains
+	 * sff encoded data to be parsed; can not be null.
+	 * @throws NullPointerException if sffFile is null.
+	 * @throws FileNotFoundException if sffFile does not exist.
+	 */
+	public static SffFileParser create(InputStream inputStream) throws FileNotFoundException{
+<span class="nc" id="L74">		return new InputStreamBasedSffParser(inputStream);</span>
+	}
+	
+	private SffFileParser(){
+		//can not instantiate outside of this class file
+	}
+	/**
+	 * Visit the sff encode data (starting from the beginning of the file,
+	 * or the start of the inputstream)
+	 * and call the visit methods on the given visitor.
+	 * @param visitor the visitor to call the visit methods on.
+	 * @throws IOException if there is a problem parsing the file.
+	 * @throws NullPointerException if visitor is null.
+	 */
+	public abstract void accept(SffFileVisitor visitor) throws IOException;
+	/**
+	 * Visit the sff file starting from the portion
+	 * of the file specified by the given {@link SffFileMemento}.
+	 * and call the visit methods on the given visitor.
+	 * 
+	 * @param visitor the visitor to call the visit methods on.
+	 * @param memento the {@link SffFileMemento} instance which will
+	 * tell the parser where to start parsing.  Only {@link SffFileMemento}s
+	 * generated by this parser instance are valid.
+	 * @throws IOException if there is a problem parsing the file.
+	 * @throws NullPointerException if visitor is null.
+	 * @throws UnsupportedOperationException if this parser
+	 * was created with an {@link InputStream} instead of a File.
+	 */
+	public abstract void accept(SffFileVisitor visitor, SffFileMemento memento) throws IOException;
+	
+	
+    /**
+     * Parse the given {@link InputStream} containing sff encoded
+     * data and call the appropriate visitXXX methods on the given visitor.
+     * @param in {@link InputStream} containing sff encoded
+     * data
+     * @param visitor the visitor to visit.
+     * @throws SffDecoderException if there is a problem parsing the sff data.
+     * @throws NullPointerException if the inputstream or visitor are null.
+     */
+    protected void accept(InputStream in, SffFileVisitor visitor) throws IOException{
+<span class="nc" id="L116">        DataInputStream dataIn = new DataInputStream(in);</span>
+
+<span class="nc" id="L118">        header =DefaultSFFCommonHeaderDecoder.INSTANCE.decodeHeader(dataIn);</span>
+<span class="nc" id="L119">        ParserState parserState = new ParserState();</span>
+<span class="nc" id="L120">        visitor.visitHeader(createCommonHeaderCallback(parserState), header);</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        if(!parserState.keepParsing()){</span>
+<span class="nc" id="L122">        	return;</span>
+        }
+<span class="nc" id="L124">        parseReads(visitor, dataIn, header);</span>
+<span class="nc" id="L125">        visitor.end();</span>
+        
+<span class="nc" id="L127">    }</span>
+    
+    protected abstract SffFileParserCallback createCommonHeaderCallback(final ParserState parserState);
+    
+	private  void parseReads(SffFileVisitor visitor,
+			DataInputStream dataIn, SffCommonHeader commonHeader)
+			throws IOException {
+<span class="nc" id="L134">		final long numberOfReads = commonHeader.getNumberOfReads();</span>
+		
+<span class="nc" id="L136">		int keyLength = (int)commonHeader.getKeySequence().getLength();</span>
+<span class="nc" id="L137">        int size = 31+commonHeader.getNumberOfFlowsPerRead()+ keyLength;</span>
+<span class="nc" id="L138">        int padding =SffUtil.caclulatePaddedBytes(size);</span>
+<span class="nc" id="L139">        int commonHeaderLength = size+padding;</span>
+        
+<span class="nc" id="L141">        ParserState parserState  = new ParserState(commonHeaderLength);</span>
+<span class="nc bnc" id="L142" title="All 4 branches missed.">		for(int i=0;parserState.keepParsing() &amp;&amp; i&lt;numberOfReads; i++){</span>
+<span class="nc" id="L143">			parserState = handleSingleRead(visitor, dataIn, parserState,</span>
+					i);
+		    
+		}
+<span class="nc" id="L147">	}</span>
+
+	protected ParserState handleSingleRead(SffFileVisitor visitor,
+			DataInputStream dataIn, ParserState parserState,
+			int readCount) throws IOException {
+<span class="nc" id="L152">		SffFileParserCallback readHeaderCallback = createReadHeaderCallback(parserState, readCount);</span>
+<span class="nc" id="L153">		SffReadHeader readHeader = DefaultSffReadHeaderDecoder.INSTANCE.decodeReadHeader(dataIn);</span>
+   
+		
+		
+<span class="nc" id="L157">		SffFileReadVisitor readVisitor = visitor.visitRead(readHeaderCallback, readHeader);</span>
+<span class="nc" id="L158">		int unpaddedHeaderLength = 16+readHeader.getId().length();</span>
+<span class="nc" id="L159">		int readHeaderPadding = SffUtil.caclulatePaddedBytes(unpaddedHeaderLength);</span>
+<span class="nc" id="L160">		int paddedHeaderLength = unpaddedHeaderLength+readHeaderPadding;</span>
+<span class="nc" id="L161">		ParserState updatedParserState= parserState.incrementPosition(paddedHeaderLength);</span>
+<span class="nc" id="L162">		int numberOfFlowsPerRead = header.getNumberOfFlowsPerRead();</span>
+<span class="nc" id="L163">		int readDataLength = SffUtil.getReadDataLength(numberOfFlowsPerRead, readHeader.getNumberOfBases());</span>
+<span class="nc" id="L164">		int readDataPadding =SffUtil.caclulatePaddedBytes(readDataLength);</span>
+		
+<span class="nc bnc" id="L166" title="All 2 branches missed.">		if(readVisitor==null){</span>
+			//skip read data	    	
+<span class="nc" id="L168">			IOUtil.blockingSkip(dataIn, readDataLength+readDataPadding);		    </span>
+		}else{
+<span class="nc" id="L170">			final int numberOfBases = readHeader.getNumberOfBases();</span>
+<span class="nc" id="L171">			SffReadData readData = DefaultSffReadDataDecoder.INSTANCE.decode(dataIn, numberOfFlowsPerRead, numberOfBases);</span>
+<span class="nc" id="L172">			readVisitor.visitReadData(readData);</span>
+<span class="nc" id="L173">			readVisitor.visitEnd();</span>
+		}
+<span class="nc" id="L175">		updatedParserState= updatedParserState.incrementPosition(readDataLength+readDataPadding);</span>
+<span class="nc" id="L176">		return updatedParserState;</span>
+	}
+	
+	
+	protected abstract SffFileParserCallback createReadHeaderCallback(final ParserState parserState,final int readCount);
+	
+	
+	
+	
+	private abstract static class AbstractSffFileMemento implements SffFileMemento{
+		private final long position;
+
+<span class="nc" id="L188">		public AbstractSffFileMemento(long position) {</span>
+<span class="nc" id="L189">			this.position = position;</span>
+<span class="nc" id="L190">		}</span>
+
+		public long getPosition() {
+<span class="nc" id="L193">			return position;</span>
+		}
+		
+		
+	}
+	
+	private static class ReadRecordSffFileMemento extends AbstractSffFileMemento{
+		private final int readCount;
+		public ReadRecordSffFileMemento(long position, int readCount) {
+<span class="nc" id="L202">			super(position);</span>
+<span class="nc" id="L203">			this.readCount = readCount;</span>
+<span class="nc" id="L204">		}</span>
+		
+	}
+	
+	private static class BeginningSffFileMomento extends AbstractSffFileMemento{
+
+		public BeginningSffFileMomento() {
+<span class="nc" id="L211">			super(0L);</span>
+<span class="nc" id="L212">		}</span>
+		
+	}
+	
+	private static class ParserState{
+		private final long position;
+		//keepParsing is an object instead of a primitive
+		//so we can pass around the same reference to each
+		//ParserState object at increment call
+<span class="nc" id="L221">		private AtomicBoolean keepParsing= new AtomicBoolean(true);</span>
+		
+		public ParserState(){
+<span class="nc" id="L224">			this(0L);</span>
+<span class="nc" id="L225">		}</span>
+<span class="nc" id="L226">		public ParserState(long initialPosition){</span>
+<span class="nc" id="L227">			this.position = initialPosition;</span>
+<span class="nc" id="L228">		}</span>
+<span class="nc" id="L229">		private ParserState(long position, AtomicBoolean keepParsing) {</span>
+<span class="nc" id="L230">			this.position = position;</span>
+<span class="nc" id="L231">			this.keepParsing = keepParsing;</span>
+<span class="nc" id="L232">		}</span>
+
+		public ParserState incrementPosition(long increment){
+<span class="nc" id="L235">			return new ParserState(this.position +increment, keepParsing);</span>
+		}
+		
+		public void stop(){
+<span class="nc" id="L239">			keepParsing.set(false);</span>
+<span class="nc" id="L240">		}</span>
+		
+		public boolean keepParsing(){
+<span class="nc" id="L243">			return keepParsing.get();</span>
+		}
+	}
+	
+
+	/**
+	 * InputStream implementation of sff parser
+	 * that can not create mementos
+	 * since we won't always be able to &quot;rewind&quot; the stream.
+	 * @author dkatzel
+	 *
+	 */
+	private static class InputStreamBasedSffParser extends SffFileParser{
+		private final OpenAwareInputStream in;
+		
+<span class="nc" id="L258">		public InputStreamBasedSffParser(InputStream in) {</span>
+<span class="nc" id="L259">			this.in = new OpenAwareInputStream(in);</span>
+<span class="nc" id="L260">		}</span>
+
+		@Override
+		public void accept(SffFileVisitor visitor) throws IOException {
+<span class="nc bnc" id="L264" title="All 2 branches missed.">			if(!in.isOpen()){</span>
+<span class="nc" id="L265">				throw new IOException(&quot;inputstream is not open&quot;);</span>
+			}
+<span class="nc" id="L267">			this.accept(in, visitor);			</span>
+<span class="nc" id="L268">		}</span>
+
+		@Override
+		public void accept(SffFileVisitor visitor, SffFileMemento memento)
+				throws IOException {
+<span class="nc" id="L273">			throw new UnsupportedOperationException(&quot;can not accept mementos when inputStream is provided&quot;);</span>
+			
+		}
+
+		@Override
+		protected SffFileParserCallback createReadHeaderCallback(
+				ParserState parserState, int readCount) {
+<span class="nc" id="L280">			return createMementolessCallback(parserState);</span>
+		}
+		
+		@Override
+		protected SffFileParserCallback createCommonHeaderCallback(
+				ParserState parserState) {
+<span class="nc" id="L286">			return createMementolessCallback(parserState);</span>
+		}
+
+		private SffFileParserCallback createMementolessCallback(final ParserState parserState){
+<span class="nc" id="L290">			return new SffFileParserCallback(){</span>
+
+				@Override
+				public boolean mementoSupported() {
+<span class="nc" id="L294">					return false;</span>
+				}
+
+				@Override
+				public SffFileMemento createMemento() {
+<span class="nc" id="L299">					throw new UnsupportedOperationException(&quot;can not create mementos from inputstream&quot;);</span>
+				}
+
+				@Override
+				public void stopParsing() {
+<span class="nc" id="L304">					parserState.stop();				</span>
+<span class="nc" id="L305">				}</span>
+	    		
+	    	};
+		}
+	}
+	
+	private static class FileBasesSffParser extends SffFileParser{
+		private final File sffFile;
+
+		/**
+		 * Create a new instance of {@link SffFileParser}
+		 * that will parse the given sff encoded file.
+		 * The file isn't actually parsed until
+		 * one of the accept methods is called.
+		 * @param sffFile the sff file to parse
+		 * @throws NullPointerException if sffFile is null.
+		 * @throws FileNotFoundException if sffFile does not exist.
+		 */
+<span class="nc" id="L323">		private FileBasesSffParser(File sffFile) throws FileNotFoundException{</span>
+<span class="nc bnc" id="L324" title="All 2 branches missed.">			if(sffFile ==null){</span>
+<span class="nc" id="L325">				throw new NullPointerException(&quot;sff file can not be null&quot;);</span>
+			}
+<span class="nc bnc" id="L327" title="All 2 branches missed.">			if(!sffFile.exists()){</span>
+<span class="nc" id="L328">				throw new FileNotFoundException(String.format(&quot;sff file %s does not exist&quot;, sffFile.getAbsolutePath()));</span>
+			}
+<span class="nc" id="L330">			this.sffFile = sffFile;</span>
+<span class="nc" id="L331">		}</span>
+		
+		/**
+		 * Visit the sff file (starting from the beginning)
+		 * and call the visit methods on the given visitor.
+		 * @param visitor the visitor to call the visit methods on.
+		 * @throws IOException if there is a problem parsing the file.
+		 * @throws NullPointerException if visitor is null.
+		 */
+		@Override
+		public void accept(SffFileVisitor visitor) throws IOException{
+<span class="nc bnc" id="L342" title="All 2 branches missed.">			if(visitor==null){</span>
+<span class="nc" id="L343">				throw new NullPointerException(&quot;visitor can not be null&quot;);</span>
+			}
+<span class="nc" id="L345">			InputStream in = null;</span>
+			try{
+<span class="nc" id="L347">				in = new BufferedInputStream(new FileInputStream(sffFile));</span>
+<span class="nc" id="L348">				accept(in, visitor);</span>
+			}finally{
+<span class="nc" id="L350">				IOUtil.closeAndIgnoreErrors(in);</span>
+			}
+<span class="nc" id="L352">		}</span>
+		/**
+		 * Visit the sff file starting from the portion
+		 * of the file specified by the given {@link SffFileMemento}.
+		 * and call the visit methods on the given visitor.
+		 * 
+		 * @param visitor the visitor to call the visit methods on.
+		 * @param memento the {@link SffFileMemento} instance which will
+		 * tell the parser where to start parsing.  Only {@link SffFileMemento}s
+		 * generated by this parser instance are valid.
+		 * @throws IOException if there is a problem parsing the file.
+		 * @throws NullPointerException if visitor is null.
+		 */
+		@Override
+		public void accept(SffFileVisitor visitor, SffFileMemento memento) throws IOException{
+			
+<span class="nc bnc" id="L368" title="All 2 branches missed.">			if(!(memento instanceof AbstractSffFileMemento)){</span>
+<span class="nc" id="L369">				throw new IllegalArgumentException(&quot;don't know how to handle this memento&quot;);</span>
+			}
+			//if the header is null,
+			//then we haven't yet parsed the file,
+			//therefore we don't have a valid memento
+<span class="nc bnc" id="L374" title="All 2 branches missed.">			if(header ==null){</span>
+<span class="nc" id="L375">				throw new IllegalStateException(&quot;parser has not yet been initialized, must call accept(visitor) method first&quot;);</span>
+			}
+<span class="nc" id="L377">			InputStream in = null;</span>
+			try{
+				
+<span class="nc bnc" id="L380" title="All 2 branches missed.">				if(memento instanceof ReadRecordSffFileMemento){</span>
+					
+<span class="nc" id="L382">					ReadRecordSffFileMemento readRecordSffFileMemento = (ReadRecordSffFileMemento)memento;</span>
+<span class="nc" id="L383">					ParserState parserState = new ParserState(readRecordSffFileMemento.getPosition());</span>
+<span class="nc" id="L384">					in = new BufferedInputStream(new RandomAccessFileInputStream(sffFile, parserState.position));</span>
+<span class="nc" id="L385">					DataInputStream dataIn = new DataInputStream(in);</span>
+<span class="nc bnc" id="L386" title="All 4 branches missed.">					for(int i=readRecordSffFileMemento.readCount; parserState.keepParsing() &amp;&amp; i&lt;header.getNumberOfReads(); i++){</span>
+<span class="nc" id="L387">						parserState = handleSingleRead(visitor, dataIn, parserState,</span>
+								i);
+					    
+					}
+<span class="nc" id="L391">				}else{</span>
+<span class="nc" id="L392">					in = new BufferedInputStream(new FileInputStream(sffFile));</span>
+<span class="nc" id="L393">					accept(in, visitor);</span>
+				}
+			}finally{
+<span class="nc" id="L396">				IOUtil.closeAndIgnoreErrors(in);</span>
+			}
+<span class="nc" id="L398">		}</span>
+		
+		@Override
+		protected SffFileParserCallback createReadHeaderCallback(final ParserState parserState,final int readCount){
+<span class="nc" id="L402">	    	return new SffFileParserCallback(){</span>
+
+				@Override
+				public boolean mementoSupported() {
+<span class="nc" id="L406">					return true;</span>
+				}
+
+				@Override
+				public SffFileMemento createMemento() {
+<span class="nc" id="L411">					return new ReadRecordSffFileMemento(parserState.position, readCount);</span>
+				}
+
+				@Override
+				public void stopParsing() {
+<span class="nc" id="L416">					parserState.stop();				</span>
+<span class="nc" id="L417">				}</span>
+	    		
+	    	};
+	    }
+		@Override
+		protected SffFileParserCallback createCommonHeaderCallback(final ParserState parserState){
+<span class="nc" id="L423">	    	return new SffFileParserCallback(){</span>
+
+				@Override
+				public boolean mementoSupported() {
+<span class="nc" id="L427">					return true;</span>
+				}
+
+				@Override
+				public SffFileMemento createMemento() {
+<span class="nc" id="L432">					return new BeginningSffFileMomento();</span>
+				}
+
+				@Override
+				public void stopParsing() {
+<span class="nc" id="L437">					parserState.stop();				</span>
+<span class="nc" id="L438">				}</span>
+	    		
+	    	};
+	    }
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

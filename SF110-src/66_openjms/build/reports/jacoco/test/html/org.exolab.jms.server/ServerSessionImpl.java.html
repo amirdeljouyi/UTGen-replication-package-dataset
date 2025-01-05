@@ -1,0 +1,701 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ServerSessionImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.server</a> &gt; <span class="el_source">ServerSessionImpl.java</span></div><h1>ServerSessionImpl.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2000-2004 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: ServerSessionImpl.java,v 1.2 2005/11/18 03:29:41 tanderson Exp $
+ */
+package org.exolab.jms.server;
+
+import java.util.Iterator;
+import java.util.List;
+import javax.jms.InvalidDestinationException;
+import javax.jms.JMSException;
+import javax.jms.Session;
+import javax.transaction.xa.XAException;
+import javax.transaction.xa.XAResource;
+import javax.transaction.xa.Xid;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import org.exolab.jms.client.JmsDestination;
+import org.exolab.jms.client.JmsMessageListener;
+import org.exolab.jms.client.JmsQueue;
+import org.exolab.jms.client.JmsTopic;
+import org.exolab.jms.message.MessageImpl;
+import org.exolab.jms.messagemgr.ConsumerEndpoint;
+import org.exolab.jms.messagemgr.ConsumerManager;
+import org.exolab.jms.messagemgr.Flag;
+import org.exolab.jms.messagemgr.MessageManager;
+import org.exolab.jms.messagemgr.ResourceManager;
+import org.exolab.jms.persistence.DatabaseService;
+import org.exolab.jms.scheduler.Scheduler;
+
+
+/**
+ * A session represents a server side endpoint to the JMSServer. A client can
+ * create producers, consumers and destinations through the session in addi-
+ * tion to other functions. A session has a unique identifer which is a comb-
+ * ination of clientId-connectionId-sessionId.
+ * &lt;p/&gt;
+ * A session represents a single-threaded context which implies that it cannot
+ * be used with more than one thread concurrently. Threads registered with this
+ * session are synchronized.
+ *
+ * @author &lt;a href=&quot;mailto:jima@exoffice.com&quot;&gt;Jim Alateras&lt;/a&gt;
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.2 $ $Date: 2005/11/18 03:29:41 $
+ * @see ServerConnectionImpl
+ */
+class ServerSessionImpl implements ServerSession, XAResource {
+
+    /**
+     * The connection that created this session.
+     */
+    private final ServerConnectionImpl _connection;
+
+    /**
+     * The message manager.
+     */
+    private final MessageManager _messages;
+
+    /**
+     * The consumer manager.
+     */
+    private final ConsumerManager _consumerMgr;
+
+    /**
+     * The resource manager.
+     */
+    private final ResourceManager _resources;
+
+    /**
+     * Holds the current xid that this session is associated with. A session can
+     * olny be associated with one xid at any one time.
+     */
+<span class="nc" id="L114">    private Xid _xid = null;</span>
+
+    /**
+     * Indicates that the session has been closed.
+     */
+<span class="nc" id="L119">    private Flag _closed = new Flag(false);</span>
+
+    /**
+     * The session consumer. All consumers fdr the session are managed by
+     * this.
+     */
+    private final SessionConsumer _consumer;
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L130">    private static final Log _log = LogFactory.getLog(ServerSessionImpl.class);</span>
+
+
+    /**
+     * Construct a new &lt;code&gt;ServerSessionImpl&lt;/code&gt;.
+     *
+     * @param connection  the connection that created this session
+     * @param ackMode     the acknowledgement mode for the session
+     * @param transacted  &lt;code&gt;true&lt;/code&gt; if the session is transactional
+     * @param messageMgr  the message manager
+     * @param consumerMgr the consumer manager
+     * @param resourceMgr the resource manager
+     * @param database    the database service
+     * @param scheduler   the scheduler
+     */
+    public ServerSessionImpl(ServerConnectionImpl connection, int ackMode,
+                             boolean transacted,
+                             MessageManager messageMgr,
+                             ConsumerManager consumerMgr,
+                             ResourceManager resourceMgr,
+                             DatabaseService database,
+<span class="nc" id="L151">                             Scheduler scheduler) {</span>
+<span class="nc" id="L152">        _connection = connection;</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">        if (transacted) {</span>
+<span class="nc" id="L154">            ackMode = Session.SESSION_TRANSACTED;</span>
+        }
+<span class="nc" id="L156">        _consumer = new SessionConsumer(ackMode, database, scheduler);</span>
+<span class="nc" id="L157">        _messages = messageMgr;</span>
+<span class="nc" id="L158">        _consumerMgr = consumerMgr;</span>
+<span class="nc" id="L159">        _resources = resourceMgr;</span>
+<span class="nc" id="L160">    }</span>
+
+    /**
+     * Returns the identifier of the connection that created this session.
+     *
+     * @return the connection identifier
+     */
+    public long getConnectionId() {
+<span class="nc" id="L168">        return _connection.getConnectionId();</span>
+    }
+
+    /**
+     * Acknowledge that a message has been processed.
+     *
+     * @param consumerId the identity of the consumer performing the ack
+     * @param messageId  the message identifier
+     * @throws JMSException for any error
+     */
+    public void acknowledgeMessage(long consumerId, String messageId)
+            throws JMSException {
+<span class="nc" id="L180">        _consumer.acknowledge(consumerId, messageId);</span>
+<span class="nc" id="L181">    }</span>
+
+    /**
+     * Send a message.
+     *
+     * @param message the message to send
+     * @throws JMSException for any error
+     */
+    public void send(MessageImpl message) throws JMSException {
+<span class="nc bnc" id="L190" title="All 2 branches missed.">        if (message == null) {</span>
+<span class="nc" id="L191">            throw new JMSException(&quot;Argument 'message' is null&quot;);</span>
+        }
+
+        try {
+            // set the connection identity and then let the message manager
+            // process it
+<span class="nc" id="L197">            message.setConnectionId(_connection.getConnectionId());</span>
+
+            // if there is a global transaction currently in process then
+            // we must send the message to the resource manager, otherwise
+            // send it directly to the message manager
+<span class="nc bnc" id="L202" title="All 2 branches missed.">            if (_xid != null) {</span>
+<span class="nc" id="L203">                _resources.logPublishedMessage(_xid, message);</span>
+            } else {
+<span class="nc" id="L205">                _messages.add(message);</span>
+            }
+<span class="nc" id="L207">        } catch (JMSException exception) {</span>
+<span class="nc" id="L208">            _log.error(&quot;Failed to process message&quot;, exception);</span>
+<span class="nc" id="L209">            throw exception;</span>
+<span class="nc" id="L210">        } catch (OutOfMemoryError exception) {</span>
+<span class="nc" id="L211">            String msg =</span>
+                    &quot;Failed to process message due to out-of-memory error&quot;;
+<span class="nc" id="L213">            _log.error(msg, exception);</span>
+<span class="nc" id="L214">            throw new JMSException(msg);</span>
+<span class="nc" id="L215">        } catch (Exception exception) {</span>
+<span class="nc" id="L216">            String msg = &quot;Failed to process message&quot;;</span>
+<span class="nc" id="L217">            _log.error(msg, exception);</span>
+<span class="nc" id="L218">            throw new JMSException(msg);</span>
+<span class="nc" id="L219">        }</span>
+<span class="nc" id="L220">    }</span>
+
+    /**
+     * Send a set of messages.
+     *
+     * @param messages a list of &lt;code&gt;MessageImpl&lt;/code&gt; instances
+     * @throws JMSException for any JMS error
+     */
+    public void send(List messages) throws JMSException {
+<span class="nc bnc" id="L229" title="All 2 branches missed.">        if (messages == null) {</span>
+<span class="nc" id="L230">            throw new JMSException(&quot;Argument 'messages' is null&quot;);</span>
+        }
+
+<span class="nc" id="L233">        Iterator iterator = messages.iterator();</span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">        while (iterator.hasNext()) {</span>
+<span class="nc" id="L235">            MessageImpl message = (MessageImpl) iterator.next();</span>
+<span class="nc" id="L236">            send(message);</span>
+<span class="nc" id="L237">        }</span>
+<span class="nc" id="L238">    }</span>
+
+    /**
+     * Return the next available mesage to the specified consumer.
+     * &lt;p/&gt;
+     * This method is non-blocking. If no messages are available, it will return
+     * immediately.
+     *
+     * @param consumerId the consumer identifier
+     * @return the next message or &lt;code&gt;null&lt;/code&gt; if none is available
+     * @throws JMSException for any JMS error
+     */
+    public MessageImpl receiveNoWait(long consumerId) throws JMSException {
+<span class="nc" id="L251">        return _consumer.receiveNoWait(consumerId);</span>
+    }
+
+    /**
+     * Return the next available message to the specified consumer.
+     * &lt;p/&gt;
+     * This method is non-blocking. However, clients can specify a
+     * &lt;code&gt;wait&lt;/code&gt; interval to indicate how long they are prepared to wait
+     * for a message. If no message is available, and the client indicates that
+     * it will wait, it will be notified via the registered {@link
+     * JmsMessageListener} if one subsequently becomes available.
+     *
+     * @param consumerId the consumer identifier
+     * @param wait       number of milliseconds to wait. A value of &lt;code&gt;0
+     *                   &lt;/code&gt; indicates to wait indefinitely
+     * @return the next message or &lt;code&gt;null&lt;/code&gt; if none is available
+     * @throws JMSException for any JMS error
+     */
+    public MessageImpl receive(long consumerId, long wait) throws JMSException {
+<span class="nc" id="L270">        return _consumer.receive(consumerId, wait);</span>
+    }
+
+    /**
+     * Browse up to count messages.
+     *
+     * @param consumerId the consumer identifier
+     * @param count      the maximum number of messages to receive
+     * @return a list of {@link MessageImpl} instances
+     * @throws JMSException for any JMS error
+     */
+    public List browse(long consumerId, int count) throws JMSException {
+<span class="nc" id="L282">        return _consumer.browse(consumerId, count);</span>
+    }
+
+    /**
+     * Create a new message consumer.
+     *
+     * @param destination the destination to consume messages from
+     * @param selector    the message selector. May be &lt;code&gt;null&lt;/code&gt;
+     * @param noLocal     if true, and the destination is a topic, inhibits the
+     *                    delivery of messages published by its own connection.
+     *                    The behavior for &lt;code&gt;noLocal&lt;/code&gt; is not specified
+     *                    if the destination is a queue.
+     * @return the identifty of the message consumer
+     * @throws JMSException for any JMS error
+     */
+    public long createConsumer(JmsDestination destination, String selector,
+                               boolean noLocal) throws JMSException {
+<span class="nc bnc" id="L299" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L300">            _log.debug(&quot;createConsumer(destination=&quot; + destination</span>
+                       + &quot;, selector=&quot; + selector + &quot;, noLocal=&quot; + noLocal
+                       + &quot;) [session=&quot; + this + &quot;]&quot;);
+        }
+
+<span class="nc bnc" id="L305" title="All 2 branches missed.">        if (destination == null) {</span>
+<span class="nc" id="L306">            throw new InvalidDestinationException(</span>
+                    &quot;Cannot create MessageConsumer for null destination&quot;);
+        }
+
+<span class="nc" id="L310">        ConsumerEndpoint consumer = _consumerMgr.createConsumer(</span>
+<span class="nc" id="L311">                destination, _connection.getConnectionId(), selector, noLocal);</span>
+<span class="nc" id="L312">        _consumer.addConsumer(consumer);</span>
+<span class="nc" id="L313">        return consumer.getId();</span>
+    }
+
+    /**
+     * Create a new durable consumer. Durable consumers may only consume from
+     * non-temporary &lt;code&gt;Topic&lt;/code&gt; destinations.
+     *
+     * @param topic    the non-temporary &lt;code&gt;Topic&lt;/code&gt; to subscribe to
+     * @param name     the name used to identify this subscription
+     * @param selector only messages with properties matching the message
+     *                 selector expression are delivered.  A value of null or an
+     *                 empty string indicates that there is no message selector
+     *                 for the message consumer.
+     * @param noLocal  if set, inhibits the delivery of messages published by
+     *                 its own connection
+     * @return the identity of the durable consumer
+     * @throws JMSException for any JMS error
+     */
+    public long createDurableConsumer(JmsTopic topic, String name,
+                                      String selector, boolean noLocal)
+            throws JMSException {
+<span class="nc bnc" id="L334" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L335">            _log.debug(&quot;createDurableConsumer(topic=&quot; + topic + &quot;, name=&quot;</span>
+                       + name
+                       + &quot;, selector=&quot; + selector + &quot;, noLocal=&quot; + noLocal
+                       + &quot;) [session=&quot; + this + &quot;]&quot;);
+        }
+
+        // if a durable subscriber with the specified name is
+        // already active then this method will throw an exception.
+<span class="nc" id="L343">        ConsumerEndpoint consumer = _consumerMgr.createDurableConsumer(topic,</span>
+                                                                       name,
+<span class="nc" id="L345">                                                                       _connection.getClientID(),</span>
+<span class="nc" id="L346">                                                                       _connection.getConnectionId(),</span>
+                                                                       noLocal,
+                                                                       selector);
+<span class="nc" id="L349">        _consumer.addConsumer(consumer);</span>
+<span class="nc" id="L350">        return consumer.getId();</span>
+    }
+
+    /**
+     * Create a queue browser for this session. This allows clients to browse a
+     * queue without removing any messages.
+     *
+     * @param queue    the queue to browse
+     * @param selector the message selector. May be &lt;code&gt;null&lt;/code&gt;
+     * @return the identity of the queue browser
+     * @throws JMSException for any JMS error
+     */
+    public long createBrowser(JmsQueue queue, String selector)
+            throws JMSException {
+<span class="nc bnc" id="L364" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L365">            _log.debug(&quot;createBrowser(queue=&quot; + queue + &quot;, selector=&quot;</span>
+                       + selector
+                       + &quot;) [session=&quot; + this + &quot;]&quot;);
+        }
+
+<span class="nc bnc" id="L370" title="All 2 branches missed.">        if (queue == null) {</span>
+<span class="nc" id="L371">            throw new JMSException(&quot;Cannot create QueueBrowser for null queue&quot;);</span>
+        }
+
+<span class="nc" id="L374">        ConsumerEndpoint consumer = _consumerMgr.createQueueBrowser(queue,</span>
+                                                                    selector);
+
+<span class="nc" id="L377">        _consumer.addConsumer(consumer);</span>
+<span class="nc" id="L378">        return consumer.getId();</span>
+    }
+
+    /**
+     * Close a message consumer.
+     *
+     * @param consumerId the identity of the consumer to close
+     * @throws JMSException for any JMS error
+     */
+    public void closeConsumer(long consumerId) throws JMSException {
+<span class="nc bnc" id="L388" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L389">            _log.debug(&quot;removeConsumer(consumerId=&quot; + consumerId</span>
+                       + &quot;) [session=&quot;
+                       + this + &quot;]&quot;);
+        }
+
+<span class="nc" id="L394">        ConsumerEndpoint consumer = _consumer.removeConsumer(consumerId);</span>
+<span class="nc" id="L395">        _consumerMgr.closeConsumer(consumer);</span>
+<span class="nc" id="L396">    }</span>
+
+    /**
+     * Unsubscribe a durable subscription.
+     *
+     * @param name the name used to identify the subscription
+     * @throws JMSException for any JMS error
+     */
+    public void unsubscribe(String name) throws JMSException {
+<span class="nc bnc" id="L405" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L406">            _log.debug(&quot;unsubscribe(name=&quot; + name + &quot;) [session=&quot; + this + &quot;]&quot;);</span>
+        }
+
+<span class="nc" id="L409">        _consumerMgr.unsubscribe(name, _connection.getClientID());</span>
+<span class="nc" id="L410">    }</span>
+
+    /**
+     * Start the message delivery for the session.
+     *
+     * @throws JMSException for any JMS error
+     */
+    public void start() throws JMSException {
+<span class="nc bnc" id="L418" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L419">            _log.debug(&quot;start() [session=&quot; + this + &quot;]&quot;);</span>
+        }
+<span class="nc" id="L421">        _consumer.start();</span>
+<span class="nc" id="L422">    }</span>
+
+    /**
+     * Stop message delivery for the session.
+     */
+    public void stop() {
+<span class="nc bnc" id="L428" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L429">            _log.debug(&quot;stop() [session=&quot; + this + &quot;]&quot;);</span>
+        }
+<span class="nc" id="L431">        _consumer.stop();</span>
+<span class="nc" id="L432">    }</span>
+
+    /**
+     * Set the listener for this session.
+     * &lt;p/&gt;
+     * The listener is notified whenever a message for the session is present.
+     *
+     * @param listener the message listener
+     */
+    public void setMessageListener(JmsMessageListener listener) {
+<span class="nc" id="L442">        _consumer.setMessageListener(listener);</span>
+<span class="nc" id="L443">    }</span>
+
+    /**
+     * Enable or disable asynchronous message delivery for a particular
+     * consumer.
+     *
+     * @param consumerId the consumer identifier
+     * @param enable     true to enable; false to disable
+     * @throws JMSException for any JMS error
+     */
+    public void setAsynchronous(long consumerId, boolean enable)
+            throws JMSException {
+<span class="nc" id="L455">        _consumer.setAsynchronous(consumerId, enable);</span>
+<span class="nc" id="L456">    }</span>
+
+    /**
+     * Close and release any resource allocated to this session.
+     *
+     * @throws JMSException if the session cannot be closed
+     */
+    public void close() throws JMSException {
+        boolean closed;
+<span class="nc" id="L465">        synchronized (_closed) {</span>
+<span class="nc" id="L466">            closed = _closed.get();</span>
+<span class="nc" id="L467">        }</span>
+
+<span class="nc bnc" id="L469" title="All 2 branches missed.">        if (!closed) {</span>
+<span class="nc" id="L470">            _closed.set(true);</span>
+<span class="nc bnc" id="L471" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L472">                _log.debug(&quot;close() [session=&quot; + this + &quot;]&quot;);</span>
+            }
+
+<span class="nc" id="L475">            _consumer.stop();</span>
+<span class="nc" id="L476">            ConsumerEndpoint[] consumers = _consumer.getConsumers();</span>
+<span class="nc bnc" id="L477" title="All 2 branches missed.">            for (int i = 0; i &lt; consumers.length; ++i) {</span>
+<span class="nc" id="L478">                ConsumerEndpoint consumer = consumers[i];</span>
+<span class="nc" id="L479">                _consumer.removeConsumer(consumer.getId());</span>
+<span class="nc" id="L480">                _consumerMgr.closeConsumer(consumer);</span>
+            }
+
+<span class="nc" id="L483">            _consumer.close();</span>
+
+            // de-register the session from the connection
+<span class="nc" id="L486">            _connection.closed(this);</span>
+<span class="nc" id="L487">        } else {</span>
+<span class="nc bnc" id="L488" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L489">                _log.debug(&quot;close() [session=&quot; + this +</span>
+                           &quot;]: session already closed&quot;);
+            }
+        }
+<span class="nc" id="L493">    }</span>
+
+    /**
+     * Recover the session.
+     * &lt;p/&gt;
+     * All unacknowledged messages are re-delivered with the JMSRedelivered flag
+     * set.
+     *
+     * @throws JMSException if the session cannot be recovered
+     */
+    public void recover() throws JMSException {
+<span class="nc" id="L504">        _consumer.recover();</span>
+<span class="nc" id="L505">    }</span>
+
+    /**
+     * Commit the session.
+     * &lt;p/&gt;
+     * This will acknowledge all delivered messages.
+     *
+     * @throws JMSException if the session cannot be committed
+     */
+    public void commit() throws JMSException {
+<span class="nc" id="L515">        _consumer.commit();</span>
+<span class="nc" id="L516">    }</span>
+
+    /**
+     * Rollback the session.
+     * &lt;p/&gt;
+     * All messages delivered to the client will be redelivered with the
+     * JMSRedelivered flag set.
+     *
+     * @throws JMSException - if there are any problems
+     */
+    public void rollback() throws JMSException {
+<span class="nc" id="L527">        _consumer.rollback();</span>
+<span class="nc" id="L528">    }</span>
+
+    /**
+     * Start work on behalf of a transaction branch specified in xid If TMJOIN
+     * is specified, the start is for joining a transaction previously seen by
+     * the resource manager
+     *
+     * @param xid   the xa transaction identity
+     * @param flags One of TMNOFLAGS, TMJOIN, or TMRESUME
+     * @throws XAException if there is a problem completing the call
+     */
+    public void start(Xid xid, int flags) throws XAException {
+<span class="nc" id="L540">        _resources.start(xid, flags);</span>
+
+        // set this as the current xid for this session
+<span class="nc" id="L543">        _xid = xid;</span>
+<span class="nc" id="L544">    }</span>
+
+    /**
+     * Ask the resource manager to prepare for a transaction commit of the
+     * transaction specified in xid.
+     *
+     * @param xid the xa transaction identity
+     * @return XA_RDONLY or XA_OK
+     * @throws XAException if there is a problem completing the call
+     */
+    public int prepare(Xid xid) throws XAException {
+<span class="nc" id="L555">        return _resources.prepare(xid);</span>
+    }
+
+    /**
+     * Commits an XA transaction that is in progress.
+     *
+     * @param xid      the xa transaction identity
+     * @param onePhase true if it is a one phase commit
+     * @throws XAException if there is a problem completing the call
+     */
+    public void commit(Xid xid, boolean onePhase) throws XAException {
+        try {
+<span class="nc" id="L567">            _resources.commit(xid, onePhase);</span>
+        } finally {
+<span class="nc" id="L569">            _xid = null;</span>
+        }
+<span class="nc" id="L571">    }</span>
+
+    /**
+     * Ends the work performed on behalf of a transaction branch. The resource
+     * manager disassociates the XA resource from the transaction branch
+     * specified and let the transaction be completedCommits an XA transaction
+     * that is in progress.
+     *
+     * @param xid   the xa transaction identity
+     * @param flags one of TMSUCCESS, TMFAIL, or TMSUSPEND
+     * @throws XAException if there is a problem completing the call
+     */
+    public void end(Xid xid, int flags) throws XAException {
+        try {
+<span class="nc" id="L585">            _resources.end(xid, flags);</span>
+        } finally {
+<span class="nc" id="L587">            _xid = null;</span>
+        }
+<span class="nc" id="L589">    }</span>
+
+    /**
+     * Tell the resource manager to forget about a heuristically completed
+     * transaction branch.
+     *
+     * @param xid the xa transaction identity
+     * @throws XAException if there is a problem completing the call
+     */
+    public void forget(Xid xid) throws XAException {
+        try {
+<span class="nc" id="L600">            _resources.forget(xid);</span>
+        } finally {
+<span class="nc" id="L602">            _xid = null;</span>
+        }
+<span class="nc" id="L604">    }</span>
+
+    /**
+     * Obtain a list of prepared transaction branches from a resource manager.
+     * The transaction manager calls this method during recovery to obtain the
+     * list of transaction branches that are currently in prepared or
+     * heuristically completed states.
+     *
+     * @param flag One of TMSTARTRSCAN, TMENDRSCAN, TMNOFLAGS. TMNOFLAGS
+     * @return the set of Xids to recover
+     * @throws XAException - if there is a problem completing the call
+     */
+    public Xid[] recover(int flag) throws XAException {
+<span class="nc" id="L617">        return _resources.recover(flag);</span>
+    }
+
+    /**
+     * Inform the resource manager to roll back work done on behalf of a
+     * transaction branch
+     *
+     * @param xid the xa transaction identity
+     * @throws XAException if there is a problem completing the call
+     */
+    public void rollback(Xid xid) throws XAException {
+        try {
+<span class="nc" id="L629">            _resources.rollback(xid);</span>
+        } finally {
+            // clear the current xid
+<span class="nc" id="L632">            _xid = null;</span>
+        }
+<span class="nc" id="L634">    }</span>
+
+    /**
+     * Return the transaction timeout for this instance of the resource
+     * manager.
+     *
+     * @return the timeout in seconds
+     * @throws XAException if there is a problem completing the call
+     */
+    public int getTransactionTimeout() throws XAException {
+<span class="nc" id="L644">        return _resources.getTransactionTimeout();</span>
+    }
+
+    /**
+     * Set the current transaction timeout value for this XAResource instance.
+     *
+     * @param seconds timeout in seconds
+     * @return if the new transaction timeout was accepted
+     * @throws XAException if there is a problem completing the call
+     */
+    public boolean setTransactionTimeout(int seconds) throws XAException {
+<span class="nc" id="L655">        return _resources.setTransactionTimeout(seconds);</span>
+    }
+
+    /**
+     * This method is called to determine if the resource manager instance
+     * represented by the target object is the same as the resouce manager
+     * instance represented by the parameter xares.
+     *
+     * @param xares an XAResource object whose resource manager instance is to
+     *              be compared with the resource manager instance of the target
+     *              object.
+     * @return true if it's the same RM instance; otherwise false.
+     * @throws XAException for any error
+     */
+    public boolean isSameRM(XAResource xares) throws XAException {
+<span class="nc" id="L670">        boolean result = (xares instanceof ServerSessionImpl);</span>
+<span class="nc bnc" id="L671" title="All 2 branches missed.">        if (result) {</span>
+<span class="nc" id="L672">            ServerSessionImpl other = (ServerSessionImpl) xares;</span>
+<span class="nc bnc" id="L673" title="All 2 branches missed.">            result = (other.getResourceManagerId() == getResourceManagerId());</span>
+        }
+
+<span class="nc" id="L676">        return result;</span>
+    }
+
+    /**
+     * Return the xid that is currently associated with this session or null if
+     * this session is currently not part of a global transactions
+     *
+     * @return Xid
+     */
+    public Xid getXid() {
+<span class="nc" id="L686">        return _xid;</span>
+    }
+
+    /**
+     * Return the identity of the {@link ResourceManager}. The transaction
+     * manager should be the only one to initiating this call.
+     *
+     * @return the identity of the resource manager
+     * @throws XAException - if it cannot retrieve the rid.
+     */
+    public String getResourceManagerId() throws XAException {
+<span class="nc" id="L697">        return _resources.getResourceManagerId();</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

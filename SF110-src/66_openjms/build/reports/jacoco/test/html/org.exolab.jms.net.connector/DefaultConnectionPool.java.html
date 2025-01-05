@@ -1,0 +1,739 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DefaultConnectionPool.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.net.connector</a> &gt; <span class="el_source">DefaultConnectionPool.java</span></div><h1>DefaultConnectionPool.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2005-2006 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: DefaultConnectionPool.java,v 1.11 2008/01/07 13:00:16 tanderson Exp $
+ */
+package org.exolab.jms.net.connector;
+
+import EDU.oswego.cs.dl.util.concurrent.ClockDaemon;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.exolab.jms.common.threads.ThreadFactory;
+import org.exolab.jms.net.uri.URI;
+import org.exolab.jms.net.util.Properties;
+
+import java.security.Principal;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+
+/**
+ * Manages a pool of {@link ManagedConnection} instances, for a particular
+ * {@link ManagedConnectionFactory}.
+ *
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.11 $ $Date: 2008/01/07 13:00:16 $
+ * @see AbstractConnectionManager
+ */
+class DefaultConnectionPool
+        implements ManagedConnectionAcceptorListener,
+                   ManagedConnectionListener, ConnectionPool {
+
+    /**
+     * The connection factory.
+     */
+    private final ManagedConnectionFactory _factory;
+
+    /**
+     * Invocation handler to assign to each new connection.
+     */
+    private final InvocationHandler _handler;
+
+    /**
+     * The connection factory for resolving connections via their URI.
+     */
+    private final ConnectionFactory _resolver;
+
+    /**
+     * The set of allocated connections.
+     */
+<span class="nc" id="L93">    private final List _connections</span>
+<span class="nc" id="L94">            = Collections.synchronizedList(new ArrayList());</span>
+
+    /**
+     * A map of ManagedConnection -&gt; ManagedConnectionHandle. The handles are
+     * used to reap idle connections.
+     */
+<span class="nc" id="L100">    private Map _handles = Collections.synchronizedMap(new HashMap());</span>
+
+    /**
+     * The set of connection acceptors.
+     */
+<span class="nc" id="L105">    private List _acceptors = Collections.synchronizedList(new ArrayList());</span>
+
+    /**
+     * The set of accepted connections.
+     */
+<span class="nc" id="L110">    private List _accepted = Collections.synchronizedList(new ArrayList());</span>
+
+    /**
+     * The set of all connections, as a map of ManagedConnection -&gt; PoolEntry
+     * instances.
+     */
+<span class="nc" id="L116">    private Map _entries = Collections.synchronizedMap(new HashMap());</span>
+
+    /**
+     * Reap thread synchronization helper.
+     */
+<span class="nc" id="L121">    private final Object _reapLock = new Object();</span>
+
+    /**
+     * Clock daemon for periodically running the reaper.
+     */
+    private ClockDaemon _daemon;
+
+    /**
+     * Interval between pinging and reaping connections, in milliseconds.
+     * If &lt;code&gt;0&lt;/code&gt; indicates not to reap connections.
+     */
+    private final long _reapInterval;
+
+    /**
+     * Iterations before a connection that hasn't responded to a ping
+     * is declared dead.
+     */
+    private final int _reapDeadIterations;
+
+    /**
+     * The maximum period that a connection may be idle before it is reaped,
+     * in milliseconds.
+     */
+    private final long _idlePeriod;
+
+    /**
+     * The caller event listener.
+     */
+    private volatile CallerListener _listener;
+
+    /**
+     * Property name prefix for pool configuration items.
+     */
+    private static final String POOL_PREFIX = &quot;org.exolab.jms.net.pool.&quot;;
+
+    /**
+     * Configuration property to indicate the no. of reaps to wait before
+     * reaping a connection that hasn't responded to a ping.
+     */
+    private static final String DEAD_ITERATIONS = &quot;reapDeadIterations&quot;;
+
+    /**
+     * Configuration property to indicate the reap interval.
+     */
+    private static final String REAP_INTERVAL = &quot;reapInterval&quot;;
+
+    /**
+     * Configuration property to indicate the idle time for connections
+     * before they may be reaped.
+     */
+    private static final String IDLE_PERIOD = &quot;idlePeriod&quot;;
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L176">    private static final Log _log</span>
+<span class="nc" id="L177">            = LogFactory.getLog(DefaultConnectionPool.class);</span>
+
+
+    /**
+     * Construct a new &lt;code&gt;DefaultConnectionPool&lt;/code&gt;.
+     *
+     * @param factory    the managed connection factory
+     * @param handler    the invocation handler, assigned to each new managed
+     *                   connection
+     * @param resolver   the connection factory for resolving connections via
+     *                   their URI
+     * @param properties configuration properties. May be &lt;code&gt;null&lt;/code&gt;
+     * @throws ResourceException if any configuration property is invalid
+     */
+    public DefaultConnectionPool(ManagedConnectionFactory factory,
+                                 InvocationHandler handler,
+                                 ConnectionFactory resolver,
+<span class="nc" id="L194">                                 Map properties) throws ResourceException {</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">        if (factory == null) {</span>
+<span class="nc" id="L196">            throw new IllegalArgumentException(&quot;Argument 'factory' is null&quot;);</span>
+        }
+<span class="nc bnc" id="L198" title="All 2 branches missed.">        if (handler == null) {</span>
+<span class="nc" id="L199">            throw new IllegalArgumentException(&quot;Argument 'handler' is null&quot;);</span>
+        }
+<span class="nc bnc" id="L201" title="All 2 branches missed.">        if (resolver == null) {</span>
+<span class="nc" id="L202">            throw new IllegalArgumentException(&quot;Argument 'resolver' is null&quot;);</span>
+        }
+<span class="nc" id="L204">        _factory = factory;</span>
+<span class="nc" id="L205">        _handler = handler;</span>
+<span class="nc" id="L206">        _resolver = resolver;</span>
+
+<span class="nc" id="L208">        Properties config = new Properties(properties, POOL_PREFIX);</span>
+<span class="nc" id="L209">        _reapInterval = getPropertyMillis(config, REAP_INTERVAL, 60);</span>
+<span class="nc" id="L210">        _reapDeadIterations = config.getInt(DEAD_ITERATIONS, 5);</span>
+<span class="nc" id="L211">        _idlePeriod = getPropertyMillis(config, IDLE_PERIOD, 5);</span>
+<span class="nc" id="L212">    }</span>
+
+    /**
+     * Creates a new connection.
+     *
+     * @param principal the security principal
+     * @param info      the connection request info
+     * @return a new connection
+     * @throws ResourceException if a connection cannot be established
+     */
+    public ManagedConnection createManagedConnection(Principal principal,
+                                                     ConnectionRequestInfo info)
+            throws ResourceException {
+<span class="nc" id="L225">        ManagedConnection connection = _factory.createManagedConnection(</span>
+                principal, info);
+<span class="nc" id="L227">        return add(connection, false);</span>
+    }
+
+    /**
+     * Creates an acceptor for connections.
+     *
+     * @param authenticator authenticates incoming connections
+     * @param info          the connection request info
+     * @return a new connection acceptor
+     * @throws ResourceException if an acceptor cannot be created
+     */
+    public ManagedConnectionAcceptor createManagedConnectionAcceptor(
+            Authenticator authenticator, ConnectionRequestInfo info)
+            throws ResourceException {
+
+        ManagedConnectionAcceptor acceptor;
+
+<span class="nc" id="L244">        acceptor = _factory.createManagedConnectionAcceptor(authenticator,</span>
+                                                            info);
+<span class="nc" id="L246">        _acceptors.add(acceptor);</span>
+<span class="nc" id="L247">        return acceptor;</span>
+    }
+
+    /**
+     * Returns a matched connection from the set of pooled connections.
+     *
+     * @param principal the security principal
+     * @param info      the connection request info
+     * @return the first acceptable match, or &lt;code&gt;null&lt;/code&gt; if none is
+     *         found
+     * @throws ResourceException for any error
+     */
+    public ManagedConnection matchManagedConnections(Principal principal,
+                                                     ConnectionRequestInfo info)
+            throws ResourceException {
+
+<span class="nc" id="L263">        ManagedConnection result = null;</span>
+<span class="nc" id="L264">        synchronized (_reapLock) {</span>
+            // synchronize on the reaper to ensure idle connections aren't being
+            // reaped while matching
+
+            // get the list of initialised connections for matching 
+<span class="nc" id="L269">            List connections = new ArrayList(_connections);</span>
+<span class="nc" id="L270">            Iterator iter = connections.iterator();</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">            while (iter.hasNext()) {</span>
+<span class="nc" id="L272">                ManagedConnection connection</span>
+<span class="nc" id="L273">                            = (ManagedConnection) iter.next();</span>
+<span class="nc" id="L274">                PoolEntry entry = (PoolEntry) _entries.get(connection);</span>
+<span class="nc bnc" id="L275" title="All 4 branches missed.">                if (entry == null || !entry.isInitialised()) {</span>
+<span class="nc" id="L276">                    iter.remove();</span>
+                }
+<span class="nc" id="L278">            }</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">            if (!connections.isEmpty()) {</span>
+<span class="nc" id="L280">                result = _factory.matchManagedConnections(connections,</span>
+                                                          principal, info);
+            }
+<span class="nc bnc" id="L283" title="All 2 branches missed.">            if (result != null) {</span>
+                // return the handle corresponding to the connection
+<span class="nc" id="L285">                result = (ManagedConnection) _handles.get(result);</span>
+            } else {
+<span class="nc" id="L287">                List accepted = new ArrayList(_accepted);</span>
+<span class="nc" id="L288">                result = _factory.matchManagedConnections(accepted, principal,</span>
+                                                          info);
+            }
+<span class="nc" id="L291">        }</span>
+<span class="nc" id="L292">        return result;</span>
+    }
+
+    /**
+     * Returns a matched acceptor from the set of pooled connections.
+     *
+     * @param info the connection request info
+     * @return the first acceptable match, or &lt;code&gt;null&lt;/code&gt; if none is
+     *         found
+     * @throws ResourceException for any error
+     */
+    public ManagedConnectionAcceptor matchManagedConnectionAcceptors(
+            ConnectionRequestInfo info) throws ResourceException {
+
+<span class="nc" id="L306">        return _factory.matchManagedConnectionAcceptors(_acceptors, info);</span>
+    }
+
+    /**
+     * Returns a listener for handling accepted connections.
+     *
+     * @return a listener for handling accepted connections
+     */
+    public ManagedConnectionAcceptorListener
+            getManagedConnectionAcceptorListener() {
+<span class="nc" id="L316">        return this;</span>
+    }
+
+    /**
+     * Invoked when a new connection is accepted.
+     *
+     * @param acceptor   the acceptor which created the connection
+     * @param connection the accepted connection
+     */
+    public void accepted(ManagedConnectionAcceptor acceptor,
+                         ManagedConnection connection) {
+        try {
+<span class="nc" id="L328">            add(connection, true);</span>
+<span class="nc" id="L329">        } catch (ResourceException exception) {</span>
+<span class="nc" id="L330">            _log.debug(&quot;Failed to accept connection&quot;, exception);</span>
+<span class="nc" id="L331">        }</span>
+<span class="nc" id="L332">    }</span>
+
+    /**
+     * Notifies closure of a connection. The &lt;code&gt;ManagedConnection&lt;/code&gt;
+     * instance invokes this to notify its registered listeners when the peer
+     * closes the connection.
+     *
+     * @param source the managed connection that is the source of the event
+     */
+    public void closed(ManagedConnection source) {
+<span class="nc bnc" id="L342" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L343">            _log.debug(&quot;Connection &quot; + source + &quot; closed by peer, destroying&quot;);</span>
+        }
+<span class="nc" id="L345">        remove(source);</span>
+<span class="nc" id="L346">    }</span>
+
+    /**
+     * Notifies a connection related error. The &lt;code&gt;ManagedConnection&lt;/code&gt;
+     * instance invokes this to notify of the occurrence of a physical
+     * connection-related error.
+     *
+     * @param source    the managed connection that is the source of the event
+     * @param throwable the error
+     */
+    public void error(ManagedConnection source, Throwable throwable) {
+<span class="nc bnc" id="L357" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L358">            _log.debug(&quot;Error on connection &quot; + source + &quot;, destroying&quot;,</span>
+                       throwable);
+        }
+<span class="nc" id="L361">        remove(source);</span>
+<span class="nc" id="L362">    }</span>
+
+    /**
+     * Notifies of a successful ping.
+     *
+     * @param source the managed connection that is the source of the event
+     */
+    public void pinged(ManagedConnection source) {
+<span class="nc" id="L370">        ManagedConnectionHandle handle</span>
+<span class="nc" id="L371">                = (ManagedConnectionHandle) _handles.get(source);</span>
+<span class="nc bnc" id="L372" title="All 2 branches missed.">        if (handle != null) {</span>
+<span class="nc" id="L373">            handle.pinged();</span>
+        }
+<span class="nc" id="L375">    }</span>
+
+    /**
+     * Closes this connection pool, cleaning up any allocated resources.
+     *
+     * @throws ResourceException for any error
+     */
+    public void close() throws ResourceException {
+<span class="nc" id="L383">        ManagedConnectionAcceptor[] acceptors =</span>
+<span class="nc" id="L384">                (ManagedConnectionAcceptor[]) _acceptors.toArray(</span>
+                        new ManagedConnectionAcceptor[0]);
+<span class="nc" id="L386">        _acceptors.clear();</span>
+
+<span class="nc bnc" id="L388" title="All 2 branches missed.">        for (int i = 0; i &lt; acceptors.length; ++i) {</span>
+<span class="nc" id="L389">            acceptors[i].close();</span>
+        }
+
+<span class="nc" id="L392">        ManagedConnection[] connections =</span>
+<span class="nc" id="L393">                (ManagedConnection[]) _entries.keySet().toArray(</span>
+                        new ManagedConnection[0]);
+<span class="nc bnc" id="L395" title="All 2 branches missed.">        for (int i = 0; i &lt; connections.length; ++i) {</span>
+<span class="nc" id="L396">            connections[i].destroy();</span>
+        }
+<span class="nc" id="L398">        _entries.clear();</span>
+
+<span class="nc" id="L400">        _accepted.clear();</span>
+<span class="nc" id="L401">        _connections.clear();</span>
+
+<span class="nc" id="L403">        stopReaper();</span>
+<span class="nc" id="L404">    }</span>
+
+    /**
+     * Invoked when an acceptor receives an error.
+     *
+     * @param acceptor  the acceptor which received the error
+     * @param throwable the error
+     */
+    public void error(ManagedConnectionAcceptor acceptor,
+                      Throwable throwable) {
+<span class="nc" id="L414">        _acceptors.remove(acceptor);</span>
+
+<span class="nc" id="L416">        String uri = &quot;&lt;unknown&gt;&quot;;</span>
+        try {
+<span class="nc" id="L418">            uri = acceptor.getURI().toString();</span>
+<span class="nc" id="L419">        } catch (ResourceException ignore) {</span>
+            // no-op
+<span class="nc" id="L421">        }</span>
+<span class="nc" id="L422">        _log.error(&quot;Failed to accept connections on URI=&quot; + uri,</span>
+                   throwable);
+
+        try {
+<span class="nc" id="L426">            acceptor.close();</span>
+<span class="nc" id="L427">        } catch (ResourceException exception) {</span>
+<span class="nc bnc" id="L428" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L429">                _log.debug(&quot;Failed to close acceptor, URI=&quot; + uri, exception);</span>
+            }
+<span class="nc" id="L431">        }</span>
+<span class="nc" id="L432">    }</span>
+
+    /**
+     * Sets the listener for caller events.
+     *
+     * @param listener the listener
+     */
+    public void setCallerListener(CallerListener listener) {
+<span class="nc" id="L440">        _listener = listener;</span>
+<span class="nc" id="L441">    }</span>
+
+    /**
+     * Notifies when a managed connection is idle.
+     *
+     * @param connection the idle connection
+     */
+    protected synchronized void idle(ManagedConnectionHandle connection) {
+<span class="nc" id="L449">        connection.clearUsed();</span>
+<span class="nc bnc" id="L450" title="All 2 branches missed.">        if (_daemon != null) {</span>
+<span class="nc" id="L451">            _daemon.executeAfterDelay(_idlePeriod, new IdleReaper());</span>
+        }
+<span class="nc" id="L453">    }</span>
+
+    /**
+     * Adds a connection to the pool. If the connection was created, a {@link
+     * ManagedConnectionHandle} will be returned, wrapping the supplied
+     * connection.
+     *
+     * @param connection the connection to add
+     * @param accepted   if &lt;code&gt;true&lt;/code&gt; the connection was accepted via an
+     *                   {@link ManagedConnectionAcceptor}, otherwise it was
+     *                   created via
+     *                   {@link ManagedConnectionFactory#createManagedConnection}
+     * @return the (possibly wrapped) connection
+     * @throws ResourceException if the connection cannot be added
+     */
+    protected ManagedConnection add(ManagedConnection connection,
+                                    boolean accepted) throws ResourceException {
+        ManagedConnection result;
+
+<span class="nc" id="L472">        PoolEntry entry = new PoolEntry(connection, accepted);</span>
+<span class="nc" id="L473">        _entries.put(connection, entry);</span>
+<span class="nc" id="L474">        ManagedConnection handle = new ManagedConnectionHandle(</span>
+                this, connection, _resolver);
+<span class="nc" id="L476">        _handles.put(connection, handle);</span>
+<span class="nc bnc" id="L477" title="All 2 branches missed.">        if (accepted) {</span>
+<span class="nc" id="L478">            _accepted.add(connection);</span>
+<span class="nc" id="L479">            result = connection;</span>
+        } else {
+<span class="nc" id="L481">            _connections.add(connection);</span>
+<span class="nc" id="L482">            result = handle;</span>
+        }
+<span class="nc" id="L484">        ContextInvocationHandler handler = new ContextInvocationHandler(</span>
+                _handler, _resolver, result);
+        try {
+<span class="nc" id="L487">            connection.setInvocationHandler(handler);</span>
+<span class="nc" id="L488">            connection.setConnectionEventListener(this);</span>
+<span class="nc" id="L489">        } catch (ResourceException exception) {</span>
+            try {
+<span class="nc" id="L491">                _log.debug(&quot;Failed to initialise connection, destroying&quot;,</span>
+                           exception);
+<span class="nc" id="L493">                connection.destroy();</span>
+<span class="nc" id="L494">            } catch (ResourceException nested) {</span>
+<span class="nc" id="L495">                _log.debug(&quot;Failed to destroy connection&quot;, nested);</span>
+            } finally {
+<span class="nc" id="L497">                _entries.remove(connection);</span>
+<span class="nc" id="L498">                _handles.remove(connection);</span>
+<span class="nc bnc" id="L499" title="All 2 branches missed.">                if (accepted) {</span>
+<span class="nc" id="L500">                    _accepted.remove(connection);</span>
+                } else {
+<span class="nc" id="L502">                    _connections.remove(connection);</span>
+                }
+            }
+            // propagate the exception
+<span class="nc" id="L506">            throw exception;</span>
+<span class="nc" id="L507">        }</span>
+
+        // mark the connection as initialised and therefore available for
+        // reaping
+<span class="nc" id="L511">        entry.setInitialised();</span>
+
+<span class="nc" id="L513">        startReaper();</span>
+
+<span class="nc" id="L515">        return result;</span>
+    }
+
+    /**
+     * Remove a connection from the pool.
+     *
+     * @param connection the connection to remove
+     */
+    protected void remove(ManagedConnection connection) {
+<span class="nc" id="L524">        PoolEntry entry = (PoolEntry) _entries.remove(connection);</span>
+<span class="nc bnc" id="L525" title="All 2 branches missed.">        if (entry != null) {</span>
+<span class="nc" id="L526">            _handles.remove(connection);</span>
+<span class="nc bnc" id="L527" title="All 2 branches missed.">            if (entry.getAccepted()) {</span>
+<span class="nc" id="L528">                _accepted.remove(connection);</span>
+            } else {
+<span class="nc" id="L530">                _connections.remove(connection);</span>
+            }
+<span class="nc" id="L532">            URI remoteURI = null;</span>
+<span class="nc" id="L533">            URI localURI = null;</span>
+            try {
+<span class="nc" id="L535">                remoteURI = connection.getRemoteURI();</span>
+<span class="nc" id="L536">                localURI = connection.getLocalURI();</span>
+<span class="nc" id="L537">            } catch (ResourceException exception) {</span>
+<span class="nc" id="L538">                _log.debug(&quot;Failed to get connection URIs&quot;, exception);</span>
+<span class="nc" id="L539">            }</span>
+
+            try {
+<span class="nc" id="L542">                connection.destroy();</span>
+<span class="nc" id="L543">            } catch (ResourceException exception) {</span>
+<span class="nc" id="L544">                _log.debug(&quot;Failed to destroy connection&quot;, exception);</span>
+<span class="nc" id="L545">            }</span>
+<span class="nc bnc" id="L546" title="All 4 branches missed.">            if (remoteURI != null &amp;&amp; localURI != null) {</span>
+<span class="nc" id="L547">                notifyDisconnection(remoteURI, localURI);</span>
+            }
+<span class="nc" id="L549">        } else {</span>
+<span class="nc" id="L550">            _log.debug(&quot;ManagedConnection not found&quot;);</span>
+        }
+<span class="nc bnc" id="L552" title="All 2 branches missed.">        if (_entries.isEmpty()) {</span>
+<span class="nc" id="L553">            stopReaper();</span>
+        }
+<span class="nc" id="L555">    }</span>
+
+    /**
+     * Notify of a disconnection.
+     *
+     * @param remoteURI the remote address that the client is calling from
+     * @param localURI  the local address that the client is calling to
+     */
+    private void notifyDisconnection(URI remoteURI, URI localURI) {
+<span class="nc" id="L564">        CallerListener listener = _listener;</span>
+<span class="nc bnc" id="L565" title="All 2 branches missed.">        if (listener != null) {</span>
+<span class="nc" id="L566">            listener.disconnected(new CallerImpl(remoteURI, localURI));</span>
+        }
+<span class="nc" id="L568">    }</span>
+
+    /**
+     * Starts the reaper for dead/idle connections, if needed.
+     */
+    private synchronized void startReaper() {
+<span class="nc bnc" id="L574" title="All 2 branches missed.">        if (_daemon == null) {</span>
+<span class="nc" id="L575">            _daemon = new ClockDaemon();</span>
+<span class="nc" id="L576">            ThreadFactory creator =</span>
+                    new ThreadFactory(null, &quot;ManagedConnectionReaper&quot;, false);
+<span class="nc" id="L578">            _daemon.setThreadFactory(creator);</span>
+
+<span class="nc bnc" id="L580" title="All 2 branches missed.">            if (_reapInterval &gt; 0) {</span>
+<span class="nc" id="L581">                _daemon.executePeriodically(_reapInterval, new DeadReaper(),</span>
+                                            false);
+            }
+        }
+<span class="nc" id="L585">    }</span>
+
+    /**
+     * Stops the reaper for dead/idle connections, if needed.
+     */
+    private synchronized void stopReaper() {
+<span class="nc bnc" id="L591" title="All 2 branches missed.">        if (_daemon != null) {</span>
+<span class="nc" id="L592">            _daemon.shutDown();</span>
+<span class="nc" id="L593">            _daemon = null;</span>
+        }
+<span class="nc" id="L595">    }</span>
+
+    /**
+     * Reap idle connections.
+     */
+    private void reapIdleConnections() {
+<span class="nc" id="L601">        Map.Entry[] entries = (Map.Entry[]) _handles.entrySet().toArray(</span>
+                new Map.Entry[0]);
+<span class="nc bnc" id="L603" title="All 4 branches missed.">        for (int i = 0; i &lt; entries.length &amp;&amp; !stopReaping(); ++i) {</span>
+<span class="nc" id="L604">            Map.Entry entry = entries[i];</span>
+<span class="nc" id="L605">            ManagedConnection connection =</span>
+<span class="nc" id="L606">                    (ManagedConnection) entry.getKey();</span>
+<span class="nc" id="L607">            PoolEntry pooled = (PoolEntry) _entries.get(connection);</span>
+<span class="nc bnc" id="L608" title="All 4 branches missed.">            if (pooled != null &amp;&amp; pooled.isInitialised()) {</span>
+<span class="nc" id="L609">                ManagedConnectionHandle handle =</span>
+<span class="nc" id="L610">                        (ManagedConnectionHandle) entry.getValue();</span>
+<span class="nc bnc" id="L611" title="All 2 branches missed.">                if (handle.canDestroy()) {</span>
+<span class="nc bnc" id="L612" title="All 2 branches missed.">                    if (_log.isDebugEnabled()) {</span>
+                        try {
+<span class="nc" id="L614">                            _log.debug(&quot;Reaping idle connection, URI=&quot;</span>
+<span class="nc" id="L615">                                    + connection.getRemoteURI()</span>
+                                    + &quot;, local URI=&quot;
+<span class="nc" id="L617">                                    + connection.getLocalURI());</span>
+<span class="nc" id="L618">                        } catch (ResourceException ignore) {</span>
+                            // do nothing
+<span class="nc" id="L620">                        }</span>
+                    }
+<span class="nc" id="L622">                    remove(connection);</span>
+                }
+            }
+        }
+<span class="nc" id="L626">    }</span>
+
+    /**
+     * Reap dead connections.
+     */
+    private void reapDeadConnections() {
+<span class="nc" id="L632">        Map.Entry[] entries = (Map.Entry[]) _handles.entrySet().toArray(</span>
+                new Map.Entry[0]);
+<span class="nc bnc" id="L634" title="All 4 branches missed.">        for (int i = 0; i &lt; entries.length &amp;&amp; !stopReaping(); ++i) {</span>
+<span class="nc" id="L635">            Map.Entry entry = entries[i];</span>
+<span class="nc" id="L636">            ManagedConnection connection =</span>
+<span class="nc" id="L637">                    (ManagedConnection) entry.getKey();</span>
+<span class="nc" id="L638">            PoolEntry pooled = (PoolEntry) _entries.get(connection);</span>
+<span class="nc bnc" id="L639" title="All 4 branches missed.">            if (pooled != null &amp;&amp; pooled.isInitialised()) {</span>
+<span class="nc" id="L640">                ManagedConnectionHandle handle =</span>
+<span class="nc" id="L641">                        (ManagedConnectionHandle) entry.getValue();</span>
+<span class="nc bnc" id="L642" title="All 2 branches missed.">                if (!handle.used()) {</span>
+                    // if the handle is unused, and is not waiting on a ping
+                    // reply, ping the connection
+<span class="nc bnc" id="L645" title="All 2 branches missed.">                    if (handle.pinging()) {</span>
+<span class="nc bnc" id="L646" title="All 2 branches missed.">                        if (handle.incPingWaits() &gt; _reapDeadIterations) {</span>
+<span class="nc" id="L647">                            remove(connection);</span>
+                        }
+                    } else {
+                        try {
+<span class="nc" id="L651">                            handle.ping();</span>
+<span class="nc" id="L652">                        } catch (ResourceException exception) {</span>
+<span class="nc bnc" id="L653" title="All 2 branches missed.">                            if (_log.isDebugEnabled()) {</span>
+                                try {
+<span class="nc" id="L655">                                    _log.debug(</span>
+                                            &quot;Failed to ping connection, URI=&quot;
+<span class="nc" id="L657">                                                    + connection.getRemoteURI()</span>
+                                                    + &quot;, localURI=&quot;
+<span class="nc" id="L659">                                                    + connection.getLocalURI());</span>
+<span class="nc" id="L660">                                } catch (ResourceException ignore) {</span>
+                                    // do nothing
+<span class="nc" id="L662">                                }</span>
+                            }
+<span class="nc" id="L664">                            remove(connection);</span>
+<span class="nc" id="L665">                        }</span>
+                    }
+                } else {
+<span class="nc" id="L668">                    handle.clearUsed();</span>
+                }
+            }
+        }
+<span class="nc" id="L672">    }</span>
+
+    /**
+     * Helper to determines if a reaper should terminate, by checking the
+     * interrupt status of the current thread.
+     *
+     * @return &lt;code&gt;true&lt;/code&gt; if the reaper should terminate
+     */
+    private boolean stopReaping() {
+<span class="nc" id="L681">        return Thread.currentThread().isInterrupted();</span>
+    }
+
+    /**
+     * Helper to return a property in seconds as a millisecond value.
+     *
+     * @param config the properties
+     * @param key the property name
+     * @param defaultValue the value to return if the property doesn't exist.
+     * @return the property in milliseconds
+     * @throws ResourceException if the property isn't a valid integer
+     */
+    private long getPropertyMillis(Properties config, String key,
+                                   int defaultValue) throws ResourceException {
+<span class="nc" id="L695">        int seconds = config.getInt(key, defaultValue);</span>
+<span class="nc bnc" id="L696" title="All 2 branches missed.">        if (seconds &lt; 0) {</span>
+<span class="nc" id="L697">            seconds = 0;</span>
+        }
+<span class="nc" id="L699">        return seconds * 1000;</span>
+    }
+
+    /**
+     * Helper class for reaping idle connections.
+     */
+<span class="nc" id="L705">    private class IdleReaper implements Runnable {</span>
+
+        /**
+         * Run the reaper.
+         */
+        public void run() {
+<span class="nc" id="L711">            synchronized (_reapLock) {</span>
+                try {
+<span class="nc" id="L713">                    reapIdleConnections();</span>
+<span class="nc" id="L714">                } catch (Throwable exception) {</span>
+<span class="nc" id="L715">                    _log.error(exception, exception);</span>
+<span class="nc" id="L716">                }</span>
+<span class="nc" id="L717">            }</span>
+<span class="nc" id="L718">        }</span>
+    }
+
+    /**
+     * Helper class for reaping dead connections.
+     */
+<span class="nc" id="L724">    private class DeadReaper implements Runnable {</span>
+
+        /**
+         * Run the reaper.
+         */
+        public void run() {
+            try {
+<span class="nc" id="L731">                reapDeadConnections();</span>
+<span class="nc" id="L732">            } catch (Throwable exception) {</span>
+<span class="nc" id="L733">                _log.error(exception, exception);</span>
+<span class="nc" id="L734">            }</span>
+<span class="nc" id="L735">        }</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

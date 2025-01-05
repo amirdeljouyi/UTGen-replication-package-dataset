@@ -1,0 +1,1295 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Session.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.session</a> &gt; <span class="el_source">Session.java</span></div><h1>Session.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.session;
+/*
+ * Copyright (C) 2001-2004 Colin Bell
+ * colbell@users.sourceforge.net
+ *
+ * Modifications copyright (C) 2001-2004 Johan Compagner
+ * jcompagner@j-com.nl
+ *
+ * Modifications Copyright (C) 2003-2004 Jason Height
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+
+import java.beans.PropertyChangeEvent;
+import java.beans.PropertyChangeListener;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Hashtable;
+import java.util.List;
+import java.util.ListIterator;
+import java.util.Map;
+
+import javax.swing.Action;
+import javax.swing.JComponent;
+import javax.swing.JFrame;
+import javax.swing.JOptionPane;
+import javax.swing.SwingUtilities;
+
+import net.sourceforge.squirrel_sql.client.IApplication;
+import net.sourceforge.squirrel_sql.client.gui.db.ISQLAliasExt;
+import net.sourceforge.squirrel_sql.client.gui.db.SQLAlias;
+import net.sourceforge.squirrel_sql.client.gui.db.SQLAliasConnectionProperties;
+import net.sourceforge.squirrel_sql.client.gui.desktopcontainer.ISessionWidget;
+import net.sourceforge.squirrel_sql.client.gui.session.ObjectTreeInternalFrame;
+import net.sourceforge.squirrel_sql.client.gui.session.SQLInternalFrame;
+import net.sourceforge.squirrel_sql.client.gui.session.SessionInternalFrame;
+import net.sourceforge.squirrel_sql.client.gui.session.SessionPanel;
+import net.sourceforge.squirrel_sql.client.mainframe.action.OpenConnectionCommand;
+import net.sourceforge.squirrel_sql.client.mainframe.action.OpenConnectionCommandListener;
+import net.sourceforge.squirrel_sql.client.plugin.IPlugin;
+import net.sourceforge.squirrel_sql.client.session.event.SimpleSessionListener;
+import net.sourceforge.squirrel_sql.client.session.mainpanel.IMainPanelTab;
+import net.sourceforge.squirrel_sql.client.session.parser.IParserEventsProcessor;
+import net.sourceforge.squirrel_sql.client.session.parser.ParserEventsProcessor;
+import net.sourceforge.squirrel_sql.client.session.parser.ParserEventsProcessorDummy;
+import net.sourceforge.squirrel_sql.client.session.properties.SessionProperties;
+import net.sourceforge.squirrel_sql.client.session.schemainfo.SchemaInfo;
+import net.sourceforge.squirrel_sql.fw.id.IIdentifier;
+import net.sourceforge.squirrel_sql.fw.persist.ValidationException;
+import net.sourceforge.squirrel_sql.fw.sql.*;
+import net.sourceforge.squirrel_sql.fw.util.BaseException;
+import net.sourceforge.squirrel_sql.fw.util.DefaultExceptionFormatter;
+import net.sourceforge.squirrel_sql.fw.util.ExceptionFormatter;
+import net.sourceforge.squirrel_sql.fw.util.IMessageHandler;
+import net.sourceforge.squirrel_sql.fw.util.NullMessageHandler;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+/**
+ * Think of a session as being the users view of the database. IE it includes
+ * the database connection and the UI.
+ *
+ * @author &lt;A HREF=&quot;mailto:colbell@users.sourceforge.net&quot;&gt;Colin Bell&lt;/A&gt;
+ */
+class Session implements ISession
+{
+   /** Logger for this class. */
+<span class="nc" id="L84">   private static final ILogger s_log =</span>
+<span class="nc" id="L85">      LoggerController.createLogger(Session.class);</span>
+
+   /** Internationalized strings for this class. */
+<span class="nc" id="L88">   private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L89">      StringManagerFactory.getStringManager(Session.class);</span>
+
+   /** Factory used to generate unique IDs for sessions.
+   /** Descriptive title for session. */
+<span class="nc" id="L93">   private String _title = &quot;&quot;;</span>
+
+   private SessionPanel _sessionSheet;
+
+   /** The &lt;TT&gt;IIdentifier&lt;/TT&gt; that uniquely identifies this object. */
+   private final IIdentifier _id;
+
+   /** Application API. */
+   private IApplication _app;
+
+   /** Connection to database. */
+   private SQLConnection _conn;
+
+   /** Driver used to connect to database. */
+   private ISQLDriver _driver;
+
+   /** Alias describing how to connect to database. */
+   private SQLAlias _alias;
+
+   private final String _user;
+   private final String _password;
+
+   /** Properties for this session. */
+   private SessionProperties _props;
+
+   /**
+    * Objects stored in session. Each entry is a &lt;TT&gt;Map&lt;/TT&gt;
+    * keyed by &lt;TT&gt;IPlugin.getInternalName()&lt;/TT&gt;. Each &lt;TT&gt;Map&lt;/TT&gt;
+    * contains the objects saved for the plugin.
+    */
+<span class="nc" id="L123">   private final Map&lt;String, Map&lt;String, Object&gt;&gt; _pluginObjects = </span>
+       new HashMap&lt;String, Map&lt;String, Object&gt;&gt;();
+
+<span class="nc" id="L126">   private IMessageHandler _msgHandler = NullMessageHandler.getInstance();</span>
+
+   /** Xref info about the current connection. */
+   private final net.sourceforge.squirrel_sql.client.session.schemainfo.SchemaInfo _schemaInfo;
+
+   /** Set to &lt;TT&gt;true&lt;/TT&gt; once session closed. */
+   private boolean _closed;
+
+<span class="nc" id="L134">   private List&lt;JComponent&gt; _statusBarToBeAdded = </span>
+       new ArrayList&lt;JComponent&gt;();
+
+<span class="nc" id="L137">   private SQLConnectionListener _connLis = null;</span>
+
+   private ISessionWidget _activeActiveSessionWindow;
+   private SessionInternalFrame _sessionInternalFrame;
+<span class="nc" id="L141">   private Hashtable&lt;IIdentifier, IParserEventsProcessor&gt;  _parserEventsProcessorsByEntryPanelIdentifier = new Hashtable&lt;IIdentifier, IParserEventsProcessor&gt;();</span>
+
+
+   /** flag to track whether or not the table data has been loaded in the object tree */
+<span class="nc" id="L145">   private boolean _finishedLoading = false;</span>
+
+   /** flag to track whether or not the plugins have finished loading for this new session */
+<span class="nc" id="L148">   private boolean _pluginsFinishedLoading = false;</span>
+
+   /** This is set to true when a plugin sets a custom IQueryTokenizer */
+<span class="nc" id="L151">   private boolean customTokenizerInstalled = false;</span>
+   
+<span class="nc" id="L153">   private IQueryTokenizer tokenizer = null;</span>
+   
+   /** The default exception formatter */
+<span class="nc" id="L156">   private DefaultExceptionFormatter formatter = new DefaultExceptionFormatter();</span>
+   
+<span class="nc" id="L158">   private SessionConnectionKeepAlive _sessionConnectionKeepAlive = null;</span>
+   private SimpleSessionListenerManager _simpleSessionListenerManager;
+
+   /**
+    * Create a new session.
+    *
+    * @param	app			Application API.
+    * @param	driver		JDBC driver for session.
+    * @param	alias		Defines URL to database.
+    * @param	conn		Connection to database.
+    * @param	user		User name connected with.
+    * @param	password	Password for &lt;TT&gt;user&lt;/TT&gt;
+    * @param	sessionId	ID that uniquely identifies this session.
+    *
+    * @throws IllegalArgumentException if any parameter is null.
+    */
+   public Session(IApplication app, ISQLDriver driver, SQLAlias alias,
+                  SQLConnection conn, String user, String password,
+                  IIdentifier sessionId)
+<span class="nc" id="L177">   {</span>
+<span class="nc bnc" id="L178" title="All 2 branches missed.">      if (app == null)</span>
+      {
+<span class="nc" id="L180">         throw new IllegalArgumentException(&quot;null IApplication passed&quot;);</span>
+      }
+<span class="nc bnc" id="L182" title="All 2 branches missed.">      if (driver == null)</span>
+      {
+<span class="nc" id="L184">         throw new IllegalArgumentException(&quot;null ISQLDriver passed&quot;);</span>
+      }
+<span class="nc bnc" id="L186" title="All 2 branches missed.">      if (alias == null)</span>
+      {
+<span class="nc" id="L188">         throw new IllegalArgumentException(&quot;null ISQLAlias passed&quot;);</span>
+      }
+<span class="nc bnc" id="L190" title="All 2 branches missed.">      if (conn == null)</span>
+      {
+<span class="nc" id="L192">         throw new IllegalArgumentException(&quot;null SQLConnection passed&quot;);</span>
+      }
+<span class="nc bnc" id="L194" title="All 2 branches missed.">      if (sessionId == null)</span>
+      {
+<span class="nc" id="L196">         throw new IllegalArgumentException(&quot;sessionId == null&quot;);</span>
+      }
+
+<span class="nc" id="L199">      _schemaInfo = new SchemaInfo(app);</span>
+
+<span class="nc" id="L201">      _app = app;</span>
+<span class="nc" id="L202">      _driver = driver;</span>
+
+<span class="nc" id="L204">      _alias = new SQLAlias();</span>
+
+      try
+      {
+<span class="nc" id="L208">         _alias.assignFrom(alias, true);</span>
+      }
+<span class="nc" id="L210">      catch (ValidationException e)</span>
+      {
+<span class="nc" id="L212">         throw new RuntimeException(e);</span>
+<span class="nc" id="L213">      }</span>
+
+
+<span class="nc" id="L216">      _conn = conn;</span>
+<span class="nc" id="L217">      _user = user;</span>
+<span class="nc" id="L218">      _password = password;</span>
+<span class="nc" id="L219">      _id = sessionId;</span>
+
+<span class="nc" id="L221">      setupTitle();</span>
+
+<span class="nc" id="L223">      _props = (SessionProperties)_app.getSquirrelPreferences().getSessionProperties().clone();</span>
+
+<span class="nc" id="L225">      _connLis = new SQLConnectionListener();</span>
+<span class="nc" id="L226">      _conn.addPropertyChangeListener(_connLis);</span>
+
+<span class="nc" id="L228">        checkDriverVersion();</span>
+
+      // Start loading table/column info about the current database.
+<span class="nc" id="L231">      _app.getThreadPool().addTask(new Runnable()</span>
+<span class="nc" id="L232">      {</span>
+         public void run()
+         {
+<span class="nc" id="L235">            _schemaInfo.initialLoad(Session.this);</span>
+<span class="nc" id="L236">            _finishedLoading = true;</span>
+<span class="nc" id="L237">         }</span>
+      });
+<span class="nc" id="L239">      startKeepAliveTaskIfNecessary();</span>
+<span class="nc" id="L240">      _simpleSessionListenerManager = new SimpleSessionListenerManager(app, this);</span>
+<span class="nc" id="L241">   }</span>
+
+   private void startKeepAliveTaskIfNecessary() {
+<span class="nc" id="L244">      SQLAliasConnectionProperties connProps = _alias.getConnectionProperties();</span>
+      
+<span class="nc bnc" id="L246" title="All 2 branches missed.">      if (connProps.isEnableConnectionKeepAlive()) {</span>
+<span class="nc" id="L247">      	String keepAliveSql = connProps.getKeepAliveSqlStatement();</span>
+<span class="nc" id="L248">      	long sleepMillis = connProps.getKeepAliveSleepTimeSeconds() * 1000;</span>
+<span class="nc" id="L249">      	_sessionConnectionKeepAlive = new SessionConnectionKeepAlive(_conn, sleepMillis, keepAliveSql, </span>
+<span class="nc" id="L250">      		_alias.getName());</span>
+<span class="nc" id="L251">			_app.getThreadPool().addTask(_sessionConnectionKeepAlive,</span>
+<span class="nc" id="L252">				&quot;Session Connection Keep-Alive (&quot; + _alias.getName() + &quot;)&quot;);</span>
+      }         	
+<span class="nc" id="L254">   }</span>
+   
+   private void stopKeepAliveTaskIfNecessary() {
+<span class="nc bnc" id="L257" title="All 2 branches missed.">   	if (_sessionConnectionKeepAlive != null) {</span>
+<span class="nc" id="L258">   		_sessionConnectionKeepAlive.setStopped(true);</span>
+   	}
+<span class="nc" id="L260">   }</span>
+   
+   /**
+    * Close this session.
+    *
+    * @throws	SQLException
+    * 			Thrown if an error closing the SQL connection. The session
+    * 			will still be closed even though the connection may not have
+    *			been.
+    */
+   public void close() throws SQLException
+   {
+<span class="nc bnc" id="L272" title="All 2 branches missed.">      if (!_closed)</span>
+      {
+<span class="nc bnc" id="L274" title="All 2 branches missed.">      	if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L275">      		s_log.debug(&quot;Closing session: &quot; + _id);</span>
+      	}
+<span class="nc" id="L277">      	stopKeepAliveTaskIfNecessary();</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">         if (null != _conn)</span>
+         {
+            // _conn is null when session is closed after reconnect (ctrl t) failure.
+<span class="nc" id="L281">            _conn.removePropertyChangeListener(_connLis);</span>
+         }
+<span class="nc" id="L283">         _connLis = null;</span>
+
+
+<span class="nc" id="L286">         IParserEventsProcessor[] procs =</span>
+<span class="nc" id="L287">            _parserEventsProcessorsByEntryPanelIdentifier.values().toArray(new IParserEventsProcessor[0]);</span>
+
+
+<span class="nc bnc" id="L290" title="All 2 branches missed.">         for (int i = 0; i &lt; procs.length; i++)</span>
+         {
+            try
+            {
+<span class="nc bnc" id="L294" title="All 2 branches missed.">               if(procs[i] instanceof ParserEventsProcessor)</span>
+               {
+<span class="nc" id="L296">                  ((ParserEventsProcessor)procs[i]).endProcessing();</span>
+               }
+            }
+<span class="nc" id="L299">            catch(Exception e)</span>
+            {
+<span class="nc bnc" id="L301" title="All 2 branches missed.">            	if (s_log.isInfoEnabled()) {</span>
+<span class="nc" id="L302">            		s_log.info(&quot;Error stopping parser event processor&quot;, e);</span>
+            	}
+<span class="nc" id="L304">            }</span>
+         }
+
+<span class="nc" id="L307">         _schemaInfo.dispose();</span>
+
+
+         try
+         {
+<span class="nc" id="L312">            closeSQLConnection();</span>
+         }
+         finally
+         {
+            // This is set here as SessionPanel.dispose() will attempt
+            // to close the session.
+<span class="nc" id="L318">            _closed = true;</span>
+
+<span class="nc bnc" id="L320" title="All 2 branches missed.">            if (_sessionSheet != null)</span>
+            {
+<span class="nc" id="L322">               _sessionSheet.sessionHasClosed();</span>
+<span class="nc" id="L323">               _sessionSheet = null;</span>
+            }
+            
+            /*
+             *  If the session is closed, we can remove all SQLResultTabs.
+             *  This would be not be necessary, if all closed Sessions will be ready for garbage collecting.
+             *  Often, some code keeps a reference to this session and the Session is not ready for garbage collecting.
+             *  E.g. when dialogs are only set to visible = false and not disposed correctly. 
+             *  To reduced the used memory by such not reachable sessions, we remove all SQLResultTabs, when the session is closed.
+             *  This helps users, they often open and close sessions without restarting SQuirrel.
+             */
+<span class="nc bnc" id="L334" title="All 2 branches missed.">            if(_sessionInternalFrame != null){</span>
+<span class="nc" id="L335">            	_sessionInternalFrame.getSQLPanelAPI().closeAllSQLResultTabs();</span>
+            }
+            
+            
+         }
+<span class="nc bnc" id="L340" title="All 2 branches missed.">         if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L341">         	s_log.debug(&quot;Successfully closed session: &quot; + _id);</span>
+         }
+      }
+<span class="nc" id="L344">   }</span>
+
+   /**
+    * Commit the current SQL transaction.
+    */
+   public synchronized void commit()
+   {
+      try
+      {
+<span class="nc" id="L353">         getSQLConnection().commit();</span>
+<span class="nc" id="L354">         final String msg = s_stringMgr.getString(&quot;Session.commit&quot;);</span>
+<span class="nc" id="L355">         _msgHandler.showMessage(msg);</span>
+      }
+<span class="nc" id="L357">      catch (Throwable ex)</span>
+      {
+<span class="nc" id="L359">         _msgHandler.showErrorMessage(ex, formatter);</span>
+<span class="nc" id="L360">      }</span>
+<span class="nc" id="L361">   }</span>
+
+   /**
+    * Rollback the current SQL transaction.
+    */
+   public synchronized void rollback()
+   {
+      try
+      {
+<span class="nc" id="L370">         getSQLConnection().rollback();</span>
+<span class="nc" id="L371">         final String msg = s_stringMgr.getString(&quot;Session.rollback&quot;);</span>
+<span class="nc" id="L372">         _msgHandler.showMessage(msg);</span>
+      }
+<span class="nc" id="L374">      catch (Exception ex)</span>
+      {
+<span class="nc" id="L376">         _msgHandler.showErrorMessage(ex, formatter);</span>
+<span class="nc" id="L377">      }</span>
+<span class="nc" id="L378">   }</span>
+
+   /**
+    * Return the unique identifier for this session.
+    *
+    * @return the unique identifier for this session.
+    */
+   public IIdentifier getIdentifier()
+   {
+<span class="nc" id="L387">      return _id;</span>
+   }
+
+   /**
+    * Retrieve whether this session has been closed.
+    *
+    * @return &lt;TT&gt;true&lt;/TT&gt; if session closed else &lt;TT&gt;false&lt;/TT&gt;.
+    */
+   public boolean isClosed()
+   {
+<span class="nc" id="L397">      return _closed;</span>
+   }
+
+   /**
+    * Return the Application API object.
+    *
+    * @return	the Application API object.
+    */
+   public IApplication getApplication()
+   {
+<span class="nc" id="L407">      return _app;</span>
+   }
+
+   /**
+    * @return &lt;TT&gt;SQLConnection&lt;/TT&gt; for this session.
+    */
+   public ISQLConnection getSQLConnection()
+   {
+<span class="nc" id="L415">        checkThread();</span>
+<span class="nc" id="L416">      return _conn;</span>
+   }
+
+   /**
+    * @return &lt;TT&gt;ISQLDriver&lt;/TT&gt; for this session.
+    */
+   public ISQLDriver getDriver()
+   {
+<span class="nc" id="L424">      return _driver;</span>
+   }
+
+   /**
+    * @return &lt;TT&gt;ISQLAlias&lt;/TT&gt; for this session.
+    */
+   public ISQLAliasExt getAlias()
+   {
+<span class="nc" id="L432">      return _alias;</span>
+   }
+
+   public SessionProperties getProperties()
+   {
+<span class="nc" id="L437">      return _props;</span>
+   }
+
+   /**
+    * Retrieve the schema information object for this session.
+    */
+   public SchemaInfo getSchemaInfo()
+   {
+<span class="nc" id="L445">      return _schemaInfo;</span>
+   }
+
+   public synchronized Object getPluginObject(IPlugin plugin, String key)
+   {
+<span class="nc bnc" id="L450" title="All 2 branches missed.">      if (plugin == null)</span>
+      {
+<span class="nc" id="L452">         throw new IllegalArgumentException(&quot;Null IPlugin passed&quot;);</span>
+      }
+<span class="nc bnc" id="L454" title="All 2 branches missed.">      if (key == null)</span>
+      {
+<span class="nc" id="L456">         throw new IllegalArgumentException(&quot;Null key passed&quot;);</span>
+      }
+<span class="nc" id="L458">      Map&lt;String, Object&gt; map = _pluginObjects.get(plugin.getInternalName());</span>
+<span class="nc bnc" id="L459" title="All 2 branches missed.">      if (map == null)</span>
+      {
+<span class="nc" id="L461">         map = new HashMap&lt;String, Object&gt;();</span>
+<span class="nc" id="L462">         _pluginObjects.put(plugin.getInternalName(), map);</span>
+      }
+<span class="nc" id="L464">      return map.get(key);</span>
+   }
+
+   /**
+    * Add the passed action to the session toolbar.
+    *
+    * @param	action	Action to be added.
+    */
+   public void addToToolbar(Action action)
+   {
+<span class="nc" id="L474">      _sessionSheet.addToToolbar(action);</span>
+<span class="nc" id="L475">   }</span>
+
+   public void addSeparatorToToolbar()
+   {
+<span class="nc" id="L479">      _sessionSheet.addSeparatorToToolbar();</span>
+<span class="nc" id="L480">   }</span>
+
+
+   public synchronized Object putPluginObject(IPlugin plugin, String key,
+                                              Object value)
+   {
+<span class="nc bnc" id="L486" title="All 2 branches missed.">      if (plugin == null)</span>
+      {
+<span class="nc" id="L488">         throw new IllegalArgumentException(&quot;Null IPlugin passed&quot;);</span>
+      }
+<span class="nc bnc" id="L490" title="All 2 branches missed.">      if (key == null)</span>
+      {
+<span class="nc" id="L492">         throw new IllegalArgumentException(&quot;Null key passed&quot;);</span>
+      }
+<span class="nc" id="L494">      Map&lt;String, Object&gt; map = _pluginObjects.get(plugin.getInternalName());</span>
+<span class="nc bnc" id="L495" title="All 2 branches missed.">      if (map == null)</span>
+      {
+<span class="nc" id="L497">         map = new HashMap&lt;String, Object&gt;();</span>
+<span class="nc" id="L498">         _pluginObjects.put(plugin.getInternalName(), map);</span>
+      }
+<span class="nc" id="L500">      return map.put(key, value);</span>
+   }
+
+   public synchronized void removePluginObject(IPlugin plugin, String key)
+   {
+<span class="nc bnc" id="L505" title="All 2 branches missed.">      if (plugin == null)</span>
+      {
+<span class="nc" id="L507">         throw new IllegalArgumentException(&quot;Null IPlugin passed&quot;);</span>
+      }
+<span class="nc bnc" id="L509" title="All 2 branches missed.">      if (key == null)</span>
+      {
+<span class="nc" id="L511">         throw new IllegalArgumentException(&quot;Null key passed&quot;);</span>
+      }
+<span class="nc" id="L513">      Map&lt;String, Object&gt; map = _pluginObjects.get(plugin.getInternalName());</span>
+<span class="nc bnc" id="L514" title="All 2 branches missed.">      if (map != null)</span>
+      {
+<span class="nc" id="L516">         map.remove(key);</span>
+      }
+<span class="nc" id="L518">   }</span>
+
+   public synchronized void closeSQLConnection() throws SQLException
+   {
+<span class="nc bnc" id="L522" title="All 2 branches missed.">      if (_conn != null)</span>
+      {
+<span class="nc" id="L524">      	stopKeepAliveTaskIfNecessary();</span>
+         try
+         {
+<span class="nc" id="L527">            _conn.close();</span>
+         }
+         finally
+         {
+<span class="nc" id="L531">            _conn = null;</span>
+         }
+      }
+<span class="nc" id="L534">   }</span>
+
+   @Override
+   public JdbcConnectionData getJdbcData()
+   {
+<span class="nc" id="L539">      IIdentifier driverID = _alias.getDriverIdentifier();</span>
+<span class="nc" id="L540">      ISQLDriver sqlDriver = _app.getDataCache().getDriver(driverID);</span>
+
+<span class="nc" id="L542">      return new JdbcConnectionData(sqlDriver.getDriverClassName(), _alias.getUrl(), _user, _password);</span>
+   }
+
+
+   /**
+    * Reconnect to the database.
+    */
+   public void reconnect()
+   {
+<span class="nc" id="L551">      final SQLConnectionState connState = new SQLConnectionState();</span>
+<span class="nc bnc" id="L552" title="All 2 branches missed.">      if (_conn != null)</span>
+      {
+         try
+         {
+<span class="nc" id="L556">            connState.saveState(_conn, getProperties(), _msgHandler);</span>
+         }
+<span class="nc" id="L558">         catch (SQLException ex)</span>
+         {
+<span class="nc" id="L560">            s_log.error(&quot;Unexpected SQLException&quot;, ex);</span>
+<span class="nc" id="L561">         }</span>
+      }
+<span class="nc" id="L563">      final OpenConnectionCommand cmd = new OpenConnectionCommand(_app, _alias,</span>
+<span class="nc" id="L564">                                 _user, _password, connState.getConnectionProperties());</span>
+      try
+      {
+<span class="nc" id="L567">         closeSQLConnection();</span>
+<span class="nc" id="L568">         _app.getSessionManager().fireConnectionClosedForReconnect(this);</span>
+      }
+<span class="nc" id="L570">      catch (SQLException ex)</span>
+      {
+<span class="nc" id="L572">         final String msg = s_stringMgr.getString(&quot;Session.error.connclose&quot;);</span>
+<span class="nc" id="L573">         s_log.error(msg, ex);</span>
+<span class="nc" id="L574">         _msgHandler.showErrorMessage(msg);</span>
+<span class="nc" id="L575">         _msgHandler.showErrorMessage(ex, this.getExceptionFormatter());</span>
+<span class="nc" id="L576">      }</span>
+      try
+      {
+<span class="nc" id="L579">         cmd.execute(new OpenConnectionCommandListener()</span>
+<span class="nc" id="L580">         {</span>
+            @Override
+            public void openConnectionFinished(Throwable t)
+            {
+<span class="nc" id="L584">               reconnectDone(connState, cmd, t);</span>
+<span class="nc" id="L585">            }</span>
+         });
+      }
+<span class="nc" id="L588">      catch (Throwable t)</span>
+      {
+<span class="nc" id="L590">         final String msg = s_stringMgr.getString(&quot;Session.reconnError&quot;, _alias.getName());</span>
+<span class="nc" id="L591">         _msgHandler.showErrorMessage(msg +&quot;\n&quot; + t.toString());</span>
+<span class="nc" id="L592">         s_log.error(msg, t);</span>
+<span class="nc" id="L593">         _app.getSessionManager().fireReconnectFailed(this);</span>
+<span class="nc" id="L594">      }</span>
+<span class="nc" id="L595">   }</span>
+
+   private void reconnectDone(SQLConnectionState connState, OpenConnectionCommand cmd, Throwable t)
+   {
+      try
+      {
+<span class="nc bnc" id="L601" title="All 2 branches missed.">         if(null != t)</span>
+         {
+<span class="nc" id="L603">            throw t;</span>
+         }
+         
+<span class="nc" id="L606">         _conn = cmd.getSQLConnection();</span>
+<span class="nc bnc" id="L607" title="All 2 branches missed.">         if (connState != null)</span>
+         {
+<span class="nc" id="L609">            connState.restoreState(_conn, _msgHandler);</span>
+<span class="nc" id="L610">            getProperties().setAutoCommit(connState.getAutoCommit());</span>
+         }
+<span class="nc" id="L612">         final String msg = s_stringMgr.getString(&quot;Session.reconn&quot;, _alias.getName());</span>
+<span class="nc" id="L613">         _msgHandler.showMessage(msg);</span>
+<span class="nc" id="L614">         _app.getSessionManager().fireReconnected(this);</span>
+<span class="nc" id="L615">         startKeepAliveTaskIfNecessary();</span>
+      }
+<span class="nc" id="L617">      catch (Throwable th)</span>
+      {
+<span class="nc" id="L619">         final String msg = s_stringMgr.getString(&quot;Session.reconnError&quot;, _alias.getName());</span>
+<span class="nc" id="L620">         _msgHandler.showErrorMessage(msg +&quot;\n&quot; + th.toString());</span>
+<span class="nc" id="L621">         s_log.error(msg, th);</span>
+<span class="nc" id="L622">         _app.getSessionManager().fireReconnectFailed(this);</span>
+<span class="nc" id="L623">      }</span>
+<span class="nc" id="L624">   }</span>
+
+   public void setMessageHandler(IMessageHandler handler)
+   {
+<span class="nc bnc" id="L628" title="All 2 branches missed.">      _msgHandler = handler != null ? handler : NullMessageHandler.getInstance();</span>
+<span class="nc" id="L629">   }</span>
+
+   public synchronized void setSessionSheet(SessionPanel child)
+   {
+<span class="nc" id="L633">      _sessionSheet = child;</span>
+<span class="nc bnc" id="L634" title="All 2 branches missed.">      if (_sessionSheet != null)</span>
+      {
+<span class="nc" id="L636">         final ListIterator&lt;JComponent&gt; it = _statusBarToBeAdded.listIterator();</span>
+<span class="nc bnc" id="L637" title="All 2 branches missed.">         while (it.hasNext())</span>
+         {
+<span class="nc" id="L639">            addToStatusBar(it.next());</span>
+<span class="nc" id="L640">            it.remove();</span>
+         }
+      }
+<span class="nc" id="L643">   }</span>
+
+   public synchronized void setSessionInternalFrame(SessionInternalFrame sif)
+   {
+<span class="nc" id="L647">      _sessionInternalFrame = sif;</span>
+
+      // This is a reasonable default and makes initialization code run well
+<span class="nc" id="L650">      _activeActiveSessionWindow = sif;</span>
+
+<span class="nc" id="L652">      _sessionSheet = sif.getSessionPanel();</span>
+<span class="nc" id="L653">      final ListIterator&lt;JComponent&gt; it = _statusBarToBeAdded.listIterator();</span>
+<span class="nc bnc" id="L654" title="All 2 branches missed.">      while (it.hasNext())</span>
+      {
+<span class="nc" id="L656">         addToStatusBar(it.next());</span>
+<span class="nc" id="L657">         it.remove();</span>
+      }
+<span class="nc" id="L659">   }</span>
+
+   public synchronized SessionInternalFrame getSessionInternalFrame()
+   {
+<span class="nc" id="L663">      return _sessionInternalFrame;</span>
+   }
+
+   public synchronized SessionPanel getSessionSheet()
+   {
+<span class="nc" id="L668">      return _sessionSheet;</span>
+   }
+
+   /**
+    * Select a tab in the main tabbed pane.
+    *
+    * @param	tabIndex	The tab to select. @see ISession.IMainTabIndexes
+    *
+    * @throws	IllegalArgumentException
+    *			Thrown if an invalid &lt;TT&gt;tabId&lt;/TT&gt; passed.
+    */
+   public void selectMainTab(int tabIndex)
+   {
+<span class="nc" id="L681">      _sessionSheet.selectMainTab(tabIndex);</span>
+<span class="nc" id="L682">   }</span>
+
+   public int getSelectedMainTabIndex()
+   {
+<span class="nc" id="L686">      return _sessionSheet.getSelectedMainTabIndex();</span>
+   }
+
+   @Override
+   public IMainPanelTab getSelectedMainTab()
+   {
+<span class="nc" id="L692">      return _sessionSheet.getSelectedMainTab();</span>
+   }
+
+
+
+   /**
+    * Add a tab to the main tabbed panel.
+    *
+    * @param	tab	 The tab to be added.
+    *
+    * @return the index of the new tab that was added.
+    *
+    * @throws	IllegalArgumentException
+    *			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;IMainPanelTab&lt;/TT&gt; passed.
+    */
+   public int addMainTab(IMainPanelTab tab)
+   {
+<span class="nc" id="L709">      return _sessionSheet.addMainTab(tab);</span>
+   }
+
+   /**
+    * Add component to the session sheets status bar.
+    *
+    * @param	comp	Component to add.
+    */
+   public synchronized void addToStatusBar(JComponent comp)
+   {
+<span class="nc bnc" id="L719" title="All 2 branches missed.">      if (_sessionSheet != null)</span>
+      {
+<span class="nc" id="L721">         _sessionSheet.addToStatusBar(comp);</span>
+      }
+      else
+      {
+<span class="nc" id="L725">         _statusBarToBeAdded.add(comp);</span>
+      }
+<span class="nc" id="L727">   }</span>
+
+   /**
+    * Remove component from the session sheets status bar.
+    *
+    * @param	comp	Component to remove.
+    */
+   public synchronized void removeFromStatusBar(JComponent comp)
+   {
+<span class="nc bnc" id="L736" title="All 2 branches missed.">      if (_sessionSheet != null)</span>
+      {
+<span class="nc" id="L738">         _sessionSheet.removeFromStatusBar(comp);</span>
+      }
+      else
+      {
+<span class="nc" id="L742">         _statusBarToBeAdded.remove(comp);</span>
+      }
+<span class="nc" id="L744">   }</span>
+
+//	public SQLFilterClauses getSQLFilterClauses()
+//	{
+//		return _sqlFilterClauses;
+//	}
+
+   /**
+    * Retrieve the descriptive title of this session.
+    *
+    * @return		The descriptive title of this session.
+    */
+   public String getTitle()
+   {
+<span class="nc" id="L758">      return _title;</span>
+   }
+
+   public void setTitle(String newTitle)
+   {
+<span class="nc" id="L763">      _title = newTitle;</span>
+<span class="nc" id="L764">   }</span>
+   
+   public String toString()
+   {
+<span class="nc" id="L768">      return getTitle();</span>
+   }
+
+   private void setupTitle()
+   {
+<span class="nc" id="L773">      String catalog = null;</span>
+      try
+      {
+<span class="nc" id="L776">         catalog = getSQLConnection().getCatalog();</span>
+      }
+<span class="nc" id="L778">      catch (SQLException ex)</span>
+      {
+<span class="nc" id="L780">         s_log.error(&quot;Error occured retrieving current catalog from Connection&quot;, ex);</span>
+<span class="nc" id="L781">      }</span>
+<span class="nc bnc" id="L782" title="All 2 branches missed.">      if (catalog == null)</span>
+      {
+<span class="nc" id="L784">         catalog = &quot;&quot;;</span>
+      }
+      else
+      {
+<span class="nc" id="L788">         catalog = &quot;(&quot; + catalog + &quot;)&quot;;</span>
+      }
+
+<span class="nc" id="L791">      String title = null;</span>
+<span class="nc bnc" id="L792" title="All 2 branches missed.">      String user = _user != null ? _user : &quot;&quot;;</span>
+<span class="nc bnc" id="L793" title="All 2 branches missed.">      if (user.length() &gt; 0)</span>
+      {
+<span class="nc" id="L795">         String[] args = new String[3];</span>
+<span class="nc" id="L796">         args[0] = getAlias().getName();</span>
+<span class="nc" id="L797">         args[1] = catalog;</span>
+<span class="nc" id="L798">         args[2] = user;</span>
+<span class="nc" id="L799">         title = s_stringMgr.getString(&quot;Session.title1&quot;, args);</span>
+<span class="nc" id="L800">      }</span>
+      else
+      {
+<span class="nc" id="L803">         String[] args = new String[2];</span>
+<span class="nc" id="L804">         args[0] = getAlias().getName();</span>
+<span class="nc" id="L805">         args[1] = catalog;</span>
+<span class="nc" id="L806">         title = s_stringMgr.getString(&quot;Session.title0&quot;, args);</span>
+      }
+
+<span class="nc" id="L809">      _title = _id + &quot; - &quot; + title;</span>
+<span class="nc" id="L810">   }</span>
+
+
+   /**
+    * The code in any SQLEditor is parsed in the background. You may attach a listener to the ParserEventsProcessor
+    * to get to know about the results of parsing. The events are passed synchron with the event queue
+    * (via SwingUtils.invokeLater()). At the moment events are produced for errors in the SQLScript
+    * which are highlighted in the syntax plugin and for aliases of table names which are used in the
+    * code completion plugin.
+    * &lt;p&gt;
+    * If you want the ParserEventsProcessor to produce further events feel free to contact gerdwagner@users.sourceforge.net.
+    */
+   public IParserEventsProcessor getParserEventsProcessor(IIdentifier entryPanelIdentifier)
+   {
+<span class="nc" id="L824">      IParserEventsProcessor pep = _parserEventsProcessorsByEntryPanelIdentifier.get(entryPanelIdentifier);</span>
+
+<span class="nc bnc" id="L826" title="All 2 branches missed.">      if(null == pep)</span>
+      {
+<span class="nc" id="L828">         ISQLPanelAPI panelAPI = getSqlPanelApi(entryPanelIdentifier);</span>
+
+<span class="nc bnc" id="L830" title="All 2 branches missed.">         if(null != panelAPI)</span>
+         {
+<span class="nc" id="L832">            pep = new ParserEventsProcessor(panelAPI, this);</span>
+         }
+         else
+         {
+            // If there is no sqlPanelAPI (e.g. the Object tree find editor) we assume no parser is necessary and thus provide a dummy impl.
+<span class="nc" id="L837">            pep = new ParserEventsProcessorDummy();</span>
+         }
+
+<span class="nc" id="L840">         _parserEventsProcessorsByEntryPanelIdentifier.put(entryPanelIdentifier, pep);</span>
+      }
+<span class="nc" id="L842">      return pep;</span>
+   }
+
+   private ISQLPanelAPI getSqlPanelApi(IIdentifier entryPanelIdentifier)
+   {
+<span class="nc" id="L847">      ISessionWidget[] frames = getApplication().getWindowManager().getAllFramesOfSession(getIdentifier());</span>
+
+<span class="nc bnc" id="L849" title="All 2 branches missed.">      for (int i = 0; i &lt; frames.length; i++)</span>
+      {
+<span class="nc bnc" id="L851" title="All 2 branches missed.">         if(frames[i] instanceof SQLInternalFrame)</span>
+         {
+<span class="nc" id="L853">            ISQLPanelAPI sqlPanelAPI = ((SQLInternalFrame)frames[i]).getSQLPanelAPI();</span>
+<span class="nc" id="L854">            IIdentifier id = sqlPanelAPI.getSQLEntryPanel().getIdentifier();</span>
+
+<span class="nc bnc" id="L856" title="All 2 branches missed.">            if(id.equals(entryPanelIdentifier))</span>
+            {
+<span class="nc" id="L858">               return sqlPanelAPI;</span>
+            }
+         }
+
+<span class="nc bnc" id="L862" title="All 2 branches missed.">         if(frames[i] instanceof SessionInternalFrame)</span>
+         {
+<span class="nc" id="L864">            ISQLPanelAPI sqlPanelAPI = ((SessionInternalFrame)frames[i]).getSQLPanelAPI();</span>
+<span class="nc" id="L865">            IIdentifier sqlEditorID = sqlPanelAPI.getSQLEntryPanel().getIdentifier();</span>
+
+<span class="nc bnc" id="L867" title="All 2 branches missed.">            if(sqlEditorID.equals(entryPanelIdentifier))</span>
+            {
+<span class="nc" id="L869">               return sqlPanelAPI;</span>
+            }
+
+<span class="nc" id="L872">            IObjectTreeAPI objectTreeApi = ((SessionInternalFrame)frames[i]).getObjectTreeAPI();</span>
+<span class="nc" id="L873">            IIdentifier findEditorID = objectTreeApi.getFindController().getFindEntryPanel().getIdentifier();</span>
+
+<span class="nc bnc" id="L875" title="All 2 branches missed.">            if(findEditorID.equals(entryPanelIdentifier))</span>
+            {
+<span class="nc" id="L877">               return null;</span>
+            }
+         }
+
+<span class="nc bnc" id="L881" title="All 2 branches missed.">         if(frames[i] instanceof ObjectTreeInternalFrame)</span>
+         {
+<span class="nc" id="L883">            IObjectTreeAPI objectTreeApi = ((ObjectTreeInternalFrame)frames[i]).getObjectTreeAPI();</span>
+<span class="nc" id="L884">            IIdentifier findEditorID = objectTreeApi.getFindController().getFindEntryPanel().getIdentifier();</span>
+
+<span class="nc bnc" id="L886" title="All 2 branches missed.">            if(findEditorID.equals(entryPanelIdentifier))</span>
+            {
+<span class="nc" id="L888">               return null;</span>
+            }
+         }
+      }
+
+<span class="nc" id="L893">      throw new IllegalStateException(&quot;Session has no entry panel for ID=&quot; + entryPanelIdentifier);</span>
+   }
+
+   public void setActiveSessionWindow(ISessionWidget activeActiveSessionWindow)
+   {
+<span class="nc" id="L898">      _activeActiveSessionWindow = activeActiveSessionWindow;</span>
+<span class="nc" id="L899">   }</span>
+
+   public ISessionWidget getActiveSessionWindow()
+   {
+<span class="nc" id="L903">      return _activeActiveSessionWindow;</span>
+   }
+
+   /**
+    *
+    * @throws IllegalStateException if ActiveSessionWindow doesn't provide an SQLPanelAPI
+    * for example if it is an ObjectTreeInternalFrame
+    */
+   public ISQLPanelAPI getSQLPanelAPIOfActiveSessionWindow()
+   {
+      ISQLPanelAPI sqlPanelAPI;
+<span class="nc bnc" id="L914" title="All 2 branches missed.">      if(isSessionWidgetActive())</span>
+      {
+<span class="nc" id="L916">         sqlPanelAPI = ((SessionInternalFrame)_activeActiveSessionWindow).getSQLPanelAPI();</span>
+      }
+<span class="nc bnc" id="L918" title="All 2 branches missed.">      else if(_activeActiveSessionWindow instanceof SQLInternalFrame)</span>
+      {
+<span class="nc" id="L920">         sqlPanelAPI = ((SQLInternalFrame)_activeActiveSessionWindow).getSQLPanelAPI();</span>
+      }
+      else
+      {
+<span class="nc" id="L924">         throw new IllegalStateException(&quot;SQLPanelApi can only be provided for SessionInternalFrame or SQLInternalFrame&quot;);</span>
+      }
+
+<span class="nc" id="L927">      return sqlPanelAPI;</span>
+   }
+
+   public boolean isSessionWidgetActive()
+   {
+<span class="nc" id="L932">      return _activeActiveSessionWindow instanceof SessionInternalFrame;</span>
+   }
+
+   /**
+    *
+    * @throws IllegalStateException if ActiveSessionWindow doesn't provide an IObjectTreeAPI
+    * for example if it is an SQLInternalFrame
+    */
+   public IObjectTreeAPI getObjectTreeAPIOfActiveSessionWindow()
+   {
+      IObjectTreeAPI objectTreeAPI;
+<span class="nc bnc" id="L943" title="All 2 branches missed.">      if(isSessionWidgetActive())</span>
+      {
+<span class="nc" id="L945">         objectTreeAPI = ((SessionInternalFrame)_activeActiveSessionWindow).getObjectTreeAPI();</span>
+      }
+<span class="nc bnc" id="L947" title="All 2 branches missed.">      else if(_activeActiveSessionWindow instanceof ObjectTreeInternalFrame)</span>
+      {
+<span class="nc" id="L949">         objectTreeAPI = ((ObjectTreeInternalFrame)_activeActiveSessionWindow).getObjectTreeAPI();</span>
+      }
+      else
+      {
+<span class="nc" id="L953">         throw new IllegalStateException(&quot;ObjectTreeApi can only be provided for SessionInternalFrame or ObjectTreeInternalFrame&quot;);</span>
+      }
+
+<span class="nc" id="L956">      return objectTreeAPI;</span>
+   }
+
+    /**
+     * The point of this method is to try to determine if the driver being used
+     * for this session supports the API methods we are likely to use with this
+     * version of the Java runtime environment.  It's not a showstopper to use
+     * an older driver, but we noticed that in some cases, older versions of 
+     * drivers connecting to newer databases causes various unpredictable error
+     * conditions that are hard to troubleshoot, given that we don't have the 
+     * source to the driver.  Be that as it may, the user will inevitably claim 
+     * that their xyz java app works fine with their antiquated driver, 
+     * whereas SQuirreL does not - therefore it's a SQuirreL bug. So this will 
+     * warn the user when this condition exists and hopefully persuade them to 
+     * correct the problem. 
+     */
+    private void checkDriverVersion() {
+<span class="nc bnc" id="L973" title="All 2 branches missed.">        if (!_app.getSquirrelPreferences().getWarnJreJdbcMismatch()) {</span>
+<span class="nc" id="L974">            return;</span>
+        }
+<span class="nc" id="L976">        String javaVersion = System.getProperty(&quot;java.vm.version&quot;);</span>
+<span class="nc" id="L977">        boolean javaVersionIsAtLeast14 = true;</span>
+<span class="nc bnc" id="L978" title="All 2 branches missed.">        if (javaVersion != null) {</span>
+<span class="nc bnc" id="L979" title="All 2 branches missed.">            if (javaVersion.startsWith(&quot;1.1&quot;)</span>
+<span class="nc bnc" id="L980" title="All 2 branches missed.">                    || javaVersion.startsWith(&quot;1.2&quot;)</span>
+<span class="nc bnc" id="L981" title="All 2 branches missed.">                    || javaVersion.startsWith(&quot;1.3&quot;))</span>
+            {
+<span class="nc" id="L983">                javaVersionIsAtLeast14 = false;</span>
+            }
+        }
+<span class="nc bnc" id="L986" title="All 2 branches missed.">        if (!javaVersionIsAtLeast14) {</span>
+<span class="nc" id="L987">            return;</span>
+        }
+        // At this point we know that we have a 1.4 or higher java runtime
+<span class="nc" id="L990">        boolean driverIs21Compliant = true;</span>
+
+        // Since 1.4 implements interfaces that became available in JDBC 3.0, 
+        // let's warn the user if the driver doesn't support DatabaseMetaData
+        // methods that were added in JDBC 2.1 and JDBC 3.0 specifications. 
+
+<span class="nc" id="L996">        SQLDatabaseMetaData md = _conn.getSQLMetaData();</span>
+        try {
+<span class="nc" id="L998">            md.supportsResultSetType(ResultSet.TYPE_FORWARD_ONLY);</span>
+<span class="nc" id="L999">        } catch (Throwable e) {</span>
+<span class="nc" id="L1000">            driverIs21Compliant = false;</span>
+<span class="nc" id="L1001">        }</span>
+
+<span class="nc bnc" id="L1003" title="All 2 branches missed.">        if (!driverIs21Compliant) {</span>
+            // i18n[Session.driverCompliance=The driver being used for alias ''{0}'' is not JDBC 2.1 compliant.\nYou should consider getting a more recent version of this driver]
+<span class="nc" id="L1005">            String msg =</span>
+<span class="nc" id="L1006">                s_stringMgr.getString(&quot;Session.driverCompliance&quot;, _alias.getName());</span>
+            // i18n[Session.driverComplianceTitle=JRE/JDBC Version Mismatch]
+<span class="nc" id="L1008">            String title =</span>
+<span class="nc" id="L1009">                s_stringMgr.getString(&quot;Session.driverComplianceTitle&quot;);</span>
+<span class="nc" id="L1010">            showMessageDialog(msg, title, JOptionPane.WARNING_MESSAGE);</span>
+<span class="nc" id="L1011">            s_log.info(msg);</span>
+<span class="nc" id="L1012">            return;</span>
+        }
+<span class="nc" id="L1014">        boolean driverIs30Compliant = true;</span>
+        try {
+<span class="nc" id="L1016">            md.supportsSavepoints();</span>
+<span class="nc" id="L1017">        } catch (Throwable e) {</span>
+<span class="nc bnc" id="L1018" title="All 2 branches missed.">      	   if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L1019">      	   	s_log.debug(e);</span>
+      	   }
+<span class="nc" id="L1021">            driverIs30Compliant = false;</span>
+<span class="nc" id="L1022">        }</span>
+
+<span class="nc bnc" id="L1024" title="All 2 branches missed.">        if (!driverIs30Compliant) {</span>
+            // i18n[Session.driverCompliance3.0=The driver being used for alias ''{0}'' is not JDBC 3.0 compliant.\nYou should consider getting a more recent version of this driver]
+<span class="nc" id="L1026">            String msg =</span>
+<span class="nc" id="L1027">                s_stringMgr.getString(&quot;Session.driverCompliance3.0&quot;, _alias.getName());</span>
+            // i18n[Session.driverComplianceTitle=JRE/JDBC Version Mismatch]
+<span class="nc" id="L1029">            String title =</span>
+<span class="nc" id="L1030">                s_stringMgr.getString(&quot;Session.driverComplianceTitle&quot;);</span>
+<span class="nc" id="L1031">            showMessageDialog(msg, title, JOptionPane.WARNING_MESSAGE);</span>
+<span class="nc bnc" id="L1032" title="All 2 branches missed.">            if (s_log.isInfoEnabled()) {</span>
+<span class="nc" id="L1033">            	s_log.info(msg);</span>
+            }
+        }
+<span class="nc" id="L1036">    }</span>
+
+    private void showMessageDialog(final String message,
+                                   final String title,
+                                   final int messageType)
+    {
+<span class="nc" id="L1042">        final JFrame f = _app.getMainFrame();</span>
+<span class="nc" id="L1043">        SwingUtilities.invokeLater(new Runnable() {</span>
+            public void run() {
+<span class="nc" id="L1045">                JOptionPane.showMessageDialog(f,</span>
+                        message,
+                        title,
+                        messageType);
+<span class="nc" id="L1049">            }</span>
+        });
+<span class="nc" id="L1051">    }</span>
+
+    /**
+     * Check the thread of the caller to see if it is the event dispatch thread
+     * and if we are debugging print a debug log message with the call trace.
+     */
+    private void checkThread() {
+        /* This is extremely useful when trying to track down Swing UI freezing.
+         * However, it currently fills the log which obscures other debug 
+         * messages even though UI performance is acceptable, so it is commented 
+         * out until it is needed later. 
+        if (s_log.isDebugEnabled() &amp;&amp; SwingUtilities.isEventDispatchThread()) {
+            try {
+                throw new Exception(&quot;GUI Thread is doing database work&quot;);
+            } catch (Exception e) {
+                s_log.debug(e.getMessage(), e);
+            }
+        }
+        */
+<span class="nc" id="L1070">    }</span>
+
+<span class="nc" id="L1072">   private class SQLConnectionListener implements PropertyChangeListener</span>
+   {
+      public void propertyChange(PropertyChangeEvent evt)
+      {
+<span class="nc" id="L1076">         final String propName = evt.getPropertyName();</span>
+<span class="nc bnc" id="L1077" title="All 4 branches missed.">         if (propName == null || propName == ISQLConnection.IPropertyNames.CATALOG)</span>
+         {
+<span class="nc" id="L1079">            setupTitle();</span>
+         }
+<span class="nc" id="L1081">      }</span>
+   }
+
+
+   protected void finalize() throws Throwable
+   {
+//		System.out.println(&quot;++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++&quot;);
+//		System.out.println(&quot;++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++&quot;);
+//		System.out.println(&quot;+ Finalize &quot; + getClass() + &quot;. Hash code:&quot; + hashCode());
+//		System.out.println(&quot;++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++&quot;);
+//		System.out.println(&quot;++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++&quot;);
+<span class="nc" id="L1092">      _app.getSessionManager().fireSessionFinalized(_id);</span>
+
+<span class="nc" id="L1094">   }</span>
+
+    /**
+     * @param _finishedLoading The _finishedLoading to set.
+     */
+    public void setPluginsfinishedLoading(boolean pluginsFinishedLoading) {
+<span class="nc" id="L1100">        this._pluginsFinishedLoading = pluginsFinishedLoading;</span>
+<span class="nc" id="L1101">    }</span>
+
+    /**
+     * @return Returns the _finishedLoading.
+     */
+    public boolean isfinishedLoading() {
+<span class="nc bnc" id="L1107" title="All 4 branches missed.">        return _finishedLoading &amp;&amp; _pluginsFinishedLoading;</span>
+    }
+
+    /* (non-Javadoc)
+     * @see net.sourceforge.squirrel_sql.client.session.ISession#confirmCloseWithUnsavedEdits()
+     */
+    public boolean confirmClose()
+    {
+<span class="nc bnc" id="L1115" title="All 4 branches missed.">       if(getActiveSessionWindow() instanceof SQLInternalFrame || getActiveSessionWindow() instanceof SessionInternalFrame)</span>
+       {
+<span class="nc bnc" id="L1117" title="All 2 branches missed.">          if (getSQLPanelAPIOfActiveSessionWindow().confirmClose())</span>
+          {
+<span class="nc" id="L1119">             return true;</span>
+          }
+          else
+          {
+<span class="nc" id="L1123">             return false;</span>
+          }
+       }
+       
+<span class="nc" id="L1127">       return true;</span>
+
+    }
+
+    /**
+     * Returns the IQueryTokenizer implementation to use for tokenizing scripts
+     * statements that should be sent to the server.  If the tokenizer hasn't 
+     * been initialized yet, then a default one will be created.  If a cutom
+     * tokenizer has been installed, this will just return that one, in lieu of
+     * the default one.
+     * 
+     * @return an implementation of IQueryTokenizer
+     */    
+    public IQueryTokenizer getQueryTokenizer() {
+<span class="nc bnc" id="L1141" title="All 4 branches missed.">        if (tokenizer == null || !customTokenizerInstalled) {</span>
+            // No tokenizer has been set by any installed plugin.  Go ahead and
+            // give the default tokenizer.  It is important to not cache this 
+            // object so that session property changes to the current session 
+            // are reflected in this default tokenizer.
+<span class="nc" id="L1146">            tokenizer = new QueryTokenizer(_props.getSQLStatementSeparator(),</span>
+<span class="nc" id="L1147">                                           _props.getStartOfLineComment(),</span>
+<span class="nc" id="L1148">                                           _props.getRemoveMultiLineComment());</span>
+        }
+<span class="nc" id="L1150">        return tokenizer;</span>
+    }
+
+    /**
+     * Sets the IQueryTokenizer implementation to use for this session.
+     * 
+     * @param tokenizer
+     * 
+     * @throws IllegalArgumentException for null argument
+     * @throws IllegalStateException if a custom tokenizer is already installed.
+     */    
+    public void setQueryTokenizer(IQueryTokenizer aTokenizer) {
+<span class="nc bnc" id="L1162" title="All 2 branches missed.">        if (aTokenizer == null) {</span>
+<span class="nc" id="L1163">            throw new IllegalArgumentException(&quot;aTokenizer arg cannot be null&quot;);</span>
+        }        
+<span class="nc bnc" id="L1165" title="All 2 branches missed.">        if (customTokenizerInstalled) {</span>
+<span class="nc" id="L1166">            String currentTokenizer = tokenizer.getClass().getName();</span>
+<span class="nc" id="L1167">            String newTokenizer = tokenizer.getClass().getName();</span>
+<span class="nc" id="L1168">            throw new IllegalStateException(</span>
+                &quot;Only one custom query tokenizer can be installed.  &quot; +
+                &quot;Current tokenizer is &quot;+currentTokenizer+&quot;. New tokenizer is &quot;+
+                newTokenizer);
+        }
+<span class="nc" id="L1173">        customTokenizerInstalled = true;</span>
+<span class="nc" id="L1174">        tokenizer = aTokenizer;</span>
+
+<span class="nc" id="L1176">       TokenizerSessPropsInteractions tep = tokenizer.getTokenizerSessPropsInteractions();</span>
+
+<span class="nc bnc" id="L1178" title="All 2 branches missed.">       if(tep.isTokenizerDefinesStatementSeparator())</span>
+       {
+<span class="nc" id="L1180">         _props.setSQLStatementSeparator(aTokenizer.getSQLStatementSeparator());</span>
+       }
+
+<span class="nc bnc" id="L1183" title="All 2 branches missed.">       if(tep.isTokenizerDefinesStatementSeparator())</span>
+       {
+<span class="nc" id="L1185">          _props.setStartOfLineComment(aTokenizer.getLineCommentBegin());</span>
+       }
+
+<span class="nc bnc" id="L1188" title="All 2 branches missed.">       if(tep.isTokenizerDefinesStatementSeparator())</span>
+       {
+<span class="nc" id="L1190">         _props.setRemoveMultiLineComment(aTokenizer.isRemoveMultiLineComment());</span>
+       }
+<span class="nc" id="L1192">    }</span>
+
+    /**
+     * @see net.sourceforge.squirrel_sql.client.session.ISession#getMetaData()
+     */
+    public ISQLDatabaseMetaData getMetaData() {
+<span class="nc bnc" id="L1198" title="All 2 branches missed.">        if (_conn != null) {</span>
+<span class="nc" id="L1199">            return _conn.getSQLMetaData();</span>
+        } else {
+<span class="nc" id="L1201">            return null;</span>
+        }
+    }
+
+    /**
+     * @see net.sourceforge.squirrel_sql.client.session.ISession#setExceptionFormatter(net.sourceforge.squirrel_sql.fw.util.ExceptionFormatter)
+     */
+    public void setExceptionFormatter(ExceptionFormatter formatter) {
+<span class="nc" id="L1209">        this.formatter.setCustomExceptionFormatter(formatter);</span>
+<span class="nc" id="L1210">    }</span>
+
+    /**
+     * @see net.sourceforge.squirrel_sql.client.session.ISession#getExceptionFormatter()
+     */
+    public ExceptionFormatter getExceptionFormatter() {
+<span class="nc" id="L1216">        return this.formatter; </span>
+    }
+    
+    /**
+     * @see net.sourceforge.squirrel_sql.client.session.ISession#formatException(java.lang.Throwable)
+     */
+    public String formatException(Throwable th) {
+<span class="nc" id="L1223">        return this.formatter.format(th);</span>
+    }
+
+    /**
+     * @see net.sourceforge.squirrel_sql.client.session.ISession#showErrorMessage(java.lang.String)
+     */
+    public void showErrorMessage(String msg) {
+<span class="nc" id="L1230">        _msgHandler.showErrorMessage(msg);</span>
+<span class="nc" id="L1231">    }</span>
+
+    /**
+     * @see net.sourceforge.squirrel_sql.client.session.ISession#showErrorMessage(java.lang.Throwable, net.sourceforge.squirrel_sql.fw.util.ExceptionFormatter)
+     */
+    public void showErrorMessage(Throwable th) {
+<span class="nc" id="L1237">        _msgHandler.showErrorMessage(th, formatter);</span>
+<span class="nc" id="L1238">    }</span>
+
+    /**
+     * @see net.sourceforge.squirrel_sql.client.session.ISession#showMessage(java.lang.String)
+     */
+    public void showMessage(String msg) {
+<span class="nc" id="L1244">        _msgHandler.showMessage(msg);</span>
+<span class="nc" id="L1245">    }</span>
+
+    /**
+     * @see net.sourceforge.squirrel_sql.client.session.ISession#showMessage(java.lang.Throwable, net.sourceforge.squirrel_sql.fw.util.ExceptionFormatter)
+     */
+    public void showMessage(Throwable th) {
+<span class="nc" id="L1251">        _msgHandler.showMessage(th, formatter);</span>
+<span class="nc" id="L1252">    }</span>
+
+    /**
+     * @see net.sourceforge.squirrel_sql.client.session.ISession#showWarningMessage(java.lang.String)
+     */
+    public void showWarningMessage(String msg) {
+<span class="nc" id="L1258">        _msgHandler.showWarningMessage(msg);</span>
+<span class="nc" id="L1259">    }</span>
+    
+    /**
+     * @see net.sourceforge.squirrel_sql.client.session.ISession#createUnmanagedConnection()
+     */
+    public SQLConnection createUnmanagedConnection()
+    {
+<span class="nc" id="L1266">       SQLConnectionState connState = new SQLConnectionState();</span>
+
+<span class="nc" id="L1268">       OpenConnectionCommand cmd = new OpenConnectionCommand(_app, _alias,</span>
+<span class="nc" id="L1269">             _user, _password, connState.getConnectionProperties());</span>
+       try
+       {
+<span class="nc" id="L1272">          cmd.executeAndWait();</span>
+       }
+<span class="nc" id="L1274">       catch (Exception e)</span>
+       {
+<span class="nc" id="L1276">          showErrorMessage(e);</span>
+<span class="nc" id="L1277">          return null;</span>
+<span class="nc" id="L1278">       }</span>
+
+<span class="nc" id="L1280">       return cmd.getSQLConnection();</span>
+    }
+
+   @Override
+   public void addSimpleSessionListener(SimpleSessionListener simpleSessionListener)
+   {
+<span class="nc" id="L1286">      _simpleSessionListenerManager.addListener(simpleSessionListener);</span>
+<span class="nc" id="L1287">   }</span>
+
+   @Override
+   public void removeSimpleSessionListener(SimpleSessionListener simpleSessionListener)
+   {
+<span class="nc" id="L1292">      _simpleSessionListenerManager.removeListener(simpleSessionListener);</span>
+<span class="nc" id="L1293">   }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

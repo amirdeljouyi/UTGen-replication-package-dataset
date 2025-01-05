@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FilteringBuffer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">43_lilith</a> &gt; <a href="index.source.html" class="el_package">de.huxhorn.lilith.buffers</a> &gt; <span class="el_source">FilteringBuffer.java</span></div><h1>FilteringBuffer.java</h1><pre class="source lang-java linenums">package de.huxhorn.lilith.buffers;
+
+import de.huxhorn.lilith.swing.callables.FilteringCallable;
+import de.huxhorn.sulky.buffers.BasicBufferIterator;
+import de.huxhorn.sulky.buffers.Buffer;
+import de.huxhorn.sulky.buffers.DisposeOperation;
+import de.huxhorn.sulky.conditions.Condition;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+
+public class FilteringBuffer&lt;E&gt;
+	implements Buffer&lt;E&gt;, DisposeOperation
+{
+<span class="nc" id="L20">	private final Logger logger = LoggerFactory.getLogger(FilteringCallable.class);</span>
+
+	public static &lt;E&gt; Buffer&lt;E&gt; resolveSourceBuffer(Buffer&lt;E&gt; buffer)
+	{
+		for(; ;)
+		{
+<span class="nc bnc" id="L26" title="All 2 branches missed.">			if(!(buffer instanceof FilteringBuffer))</span>
+			{
+<span class="nc" id="L28">				return buffer;</span>
+			}
+<span class="nc" id="L30">			buffer = ((FilteringBuffer&lt;E&gt;) buffer).getSourceBuffer();</span>
+		}
+	}
+
+	private Buffer&lt;E&gt; sourceBuffer;
+	private Condition condition;
+	private final ReentrantReadWriteLock indicesLock;
+	private final List&lt;Long&gt; filteredIndices;
+	private boolean disposed;
+
+	public FilteringBuffer(Buffer&lt;E&gt; sourceBuffer, Condition condition)
+<span class="nc" id="L41">	{</span>
+<span class="nc" id="L42">		this.indicesLock = new ReentrantReadWriteLock(true);</span>
+<span class="nc" id="L43">		this.sourceBuffer = sourceBuffer;</span>
+<span class="nc" id="L44">		this.condition = condition;</span>
+<span class="nc" id="L45">		this.filteredIndices = new ArrayList&lt;Long&gt;();</span>
+<span class="nc" id="L46">		this.disposed = false;</span>
+<span class="nc" id="L47">	}</span>
+
+	public E get(long index)
+	{
+<span class="nc" id="L51">		long realIndex = getSourceIndex(index);</span>
+<span class="nc bnc" id="L52" title="All 2 branches missed.">		if(realIndex &gt;= 0)</span>
+		{
+<span class="nc" id="L54">			return sourceBuffer.get(realIndex);</span>
+		}
+<span class="nc" id="L56">		return null;</span>
+	}
+
+	public long getSourceIndex(long index)
+	{
+<span class="nc" id="L61">		long realIndex = -1;</span>
+
+<span class="nc" id="L63">		ReentrantReadWriteLock.ReadLock lock = indicesLock.readLock();</span>
+<span class="nc" id="L64">		lock.lock();</span>
+		try
+		{
+<span class="nc bnc" id="L67" title="All 4 branches missed.">			if(index &gt;= 0 &amp;&amp; index &lt; filteredIndices.size())</span>
+			{
+<span class="nc" id="L69">				realIndex = filteredIndices.get((int) index);</span>
+			}
+		}
+		finally
+		{
+<span class="nc" id="L74">			lock.unlock();</span>
+		}
+<span class="nc" id="L76">		return realIndex;</span>
+	}
+
+	public long getSize()
+	{
+<span class="nc" id="L81">		ReentrantReadWriteLock.ReadLock lock = indicesLock.readLock();</span>
+<span class="nc" id="L82">		lock.lock();</span>
+		try
+		{
+<span class="nc" id="L85">			return filteredIndices.size();</span>
+		}
+		finally
+		{
+<span class="nc" id="L89">			lock.unlock();</span>
+		}
+	}
+
+	public void addFilteredIndex(long index)
+	{
+<span class="nc" id="L95">		long size = sourceBuffer.getSize();</span>
+<span class="nc bnc" id="L96" title="All 4 branches missed.">		if(index &lt; 0 || index &gt;= sourceBuffer.getSize())</span>
+		{
+<span class="nc bnc" id="L98" title="All 2 branches missed.">			if(logger.isInfoEnabled()) logger.info(&quot;Invalid filtered index {} (size={})!&quot;, index, size);</span>
+		}
+<span class="nc" id="L100">		ReentrantReadWriteLock.WriteLock lock = indicesLock.writeLock();</span>
+<span class="nc" id="L101">		lock.lock();</span>
+		try
+		{
+<span class="nc" id="L104">			filteredIndices.add(index);</span>
+		}
+		finally
+		{
+<span class="nc" id="L108">			lock.unlock();</span>
+		}
+<span class="nc" id="L110">	}</span>
+
+	public void clearFilteredIndices()
+	{
+<span class="nc" id="L114">		ReentrantReadWriteLock.WriteLock lock = indicesLock.writeLock();</span>
+<span class="nc" id="L115">		lock.lock();</span>
+		try
+		{
+<span class="nc" id="L118">			filteredIndices.clear();</span>
+		}
+		finally
+		{
+<span class="nc" id="L122">			lock.unlock();</span>
+		}
+<span class="nc" id="L124">	}</span>
+
+	public Iterator&lt;E&gt; iterator()
+	{
+<span class="nc" id="L128">		return new BasicBufferIterator&lt;E&gt;(this);</span>
+	}
+
+	public Buffer&lt;E&gt; getSourceBuffer()
+	{
+<span class="nc" id="L133">		return sourceBuffer;</span>
+	}
+
+	public Condition getCondition()
+	{
+<span class="nc" id="L138">		return condition;</span>
+	}
+
+	public void dispose()
+	{
+<span class="nc" id="L143">		this.disposed = true;</span>
+<span class="nc" id="L144">	}</span>
+
+	public boolean isDisposed()
+	{
+<span class="nc" id="L148">		return disposed;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

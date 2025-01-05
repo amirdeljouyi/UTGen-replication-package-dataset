@@ -1,0 +1,379 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>StackMapAttribute.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">51_jiprof</a> &gt; <a href="index.source.html" class="el_package">org.objectweb.asm.jip.attrs</a> &gt; <span class="el_source">StackMapAttribute.java</span></div><h1>StackMapAttribute.java</h1><pre class="source lang-java linenums">/**
+ * ASM: a very small and fast Java bytecode manipulation framework
+ * Copyright (c) 2000-2005 INRIA, France Telecom
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holders nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS &quot;AS IS&quot;
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+package org.objectweb.asm.jip.attrs;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+
+import org.objectweb.asm.jip.Attribute;
+import org.objectweb.asm.jip.ByteVector;
+import org.objectweb.asm.jip.ClassReader;
+import org.objectweb.asm.jip.ClassWriter;
+import org.objectweb.asm.jip.Label;
+
+/**
+ * StackMapAttribute is used by CDLC preverifier. Definition is given in
+ * appendix &quot;CLDC Byte Code Typechecker Specification&quot; from CDLC 1.1
+ * specification. &lt;p&gt; &lt;i&gt;Note that this implementation does not calculate
+ * StackMapFrame structures from the method bytecode. If method code is changed
+ * or generated from scratch, then developer is responsible to prepare a correct
+ * StackMapFrame structures.&lt;/i&gt; &lt;p&gt; The format of the stack map in the class
+ * file is given below. In the following, &lt;ul&gt; &lt;li&gt;if the length of the
+ * method's byte code1 is 65535 or less, then &lt;tt&gt;uoffset&lt;/tt&gt; represents the
+ * type u2; otherwise &lt;tt&gt;uoffset&lt;/tt&gt; represents the type u4.&lt;/li&gt; &lt;li&gt;If
+ * the maximum number of local variables for the method is 65535 or less, then
+ * &lt;tt&gt;ulocalvar&lt;/tt&gt; represents the type u2; otherwise &lt;tt&gt;ulocalvar&lt;/tt&gt;
+ * represents the type u4.&lt;/li&gt; &lt;li&gt;If the maximum size of the operand stack
+ * is 65535 or less, then &lt;tt&gt;ustack&lt;/tt&gt; represents the type u2; otherwise
+ * ustack represents the type u4.&lt;/li&gt; &lt;/ul&gt;
+ * 
+ * &lt;pre&gt;
+ * stack_map { // attribute StackMap
+ *   u2 attribute_name_index;
+ *   u4 attribute_length
+ *   uoffset number_of_entries;
+ *   stack_map_frame entries[number_of_entries];
+ * }
+ * &lt;/pre&gt;
+ * 
+ * Each stack map frame has the following format:
+ * 
+ * &lt;pre&gt;
+ * stack_map_frame {
+ *   uoffset offset;
+ *   ulocalvar number_of_locals;
+ *   verification_type_info locals[number_of_locals];
+ *   ustack number_of_stack_items;
+ *   verification_type_info stack[number_of_stack_items];
+ * }
+ * &lt;/pre&gt;
+ * 
+ * The &lt;tt&gt;verification_type_info&lt;/tt&gt; structure consists of a one-byte tag
+ * followed by zero or more bytes, giving more information about the tag. Each
+ * &lt;tt&gt;verification_type_info&lt;/tt&gt; structure specifies the verification type
+ * of one or two locations.
+ * 
+ * &lt;pre&gt;
+ * union verification_type_info {
+ *   Top_variable_info;
+ *   Integer_variable_info;
+ *   Float_variable_info;
+ *   Long_variable_info;
+ *   Double_variable_info;
+ *   Null_variable_info;
+ *   UninitializedThis_variable_info;
+ *   Object_variable_info;
+ *   Uninitialized_variable_info;
+ * }
+ *      
+ * Top_variable_info {
+ *   u1 tag = ITEM_Top; // 0
+ * }
+ *      
+ * Integer_variable_info {
+ *   u1 tag = ITEM_Integer; // 1
+ * }
+ *      
+ * Float_variable_info {
+ *   u1 tag = ITEM_Float; // 2
+ * }
+ *      
+ * Long_variable_info {
+ *   u1 tag = ITEM_Long; // 4
+ * }
+ *      
+ * Double_variable_info {
+ *   u1 tag = ITEM_Double; // 3
+ * }
+ *      
+ * Null_variable_info {
+ *  u1 tag = ITEM_Null; // 5
+ * }
+ *      
+ * UninitializedThis_variable_info {
+ *   u1 tag = ITEM_UninitializedThis; // 6
+ * }
+ *      
+ * Object_variable_info {
+ *   u1 tag = ITEM_Object; // 7
+ *   u2 cpool_index;
+ * }
+ *      
+ * Uninitialized_variable_info {
+ *   u1 tag = ITEM_Uninitialized // 8
+ *   uoffset offset;
+ * }
+ * &lt;/pre&gt;
+ * 
+ * @see &lt;a href=&quot;http://www.jcp.org/en/jsr/detail?id=139&quot;&gt;JSR 139 : Connected
+ *      Limited Device Configuration 1.1&lt;/a&gt;
+ * 
+ * @author Eugene Kuleshov
+ */
+public class StackMapAttribute extends Attribute {
+
+    static final int MAX_SIZE = 65535;
+
+    /**
+     * A List of &lt;code&gt;StackMapFrame&lt;/code&gt; instances.
+     */
+<span class="nc" id="L150">    public List frames = new ArrayList();</span>
+
+    public StackMapAttribute() {
+<span class="nc" id="L153">        super(&quot;StackMap&quot;);</span>
+<span class="nc" id="L154">    }</span>
+
+    public StackMapAttribute(List frames) {
+<span class="nc" id="L157">        this();</span>
+<span class="nc" id="L158">        this.frames = frames;</span>
+<span class="nc" id="L159">    }</span>
+
+    public List getFrames() {
+<span class="nc" id="L162">        return frames;</span>
+    }
+
+    public StackMapFrame getFrame(Label label) {
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        for (int i = 0; i &lt; frames.size(); i++) {</span>
+<span class="nc" id="L167">            StackMapFrame frame = (StackMapFrame) frames.get(i);</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">            if (frame.label == label) {</span>
+<span class="nc" id="L169">                return frame;</span>
+            }
+        }
+<span class="nc" id="L172">        return null;</span>
+    }
+
+    public boolean isUnknown() {
+<span class="nc" id="L176">        return false;</span>
+    }
+
+    public boolean isCodeAttribute() {
+<span class="nc" id="L180">        return true;</span>
+    }
+
+    protected Attribute read(
+        ClassReader cr,
+        int off,
+        int len,
+        char[] buf,
+        int codeOff,
+        Label[] labels)
+    {
+<span class="nc" id="L191">        StackMapAttribute attr = new StackMapAttribute();</span>
+        // note that this is not the size of Code attribute
+<span class="nc bnc" id="L193" title="All 2 branches missed.">        boolean isExtCodeSize = cr.readInt(codeOff + 4) &gt; MAX_SIZE;</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">        boolean isExtLocals = cr.readUnsignedShort(codeOff + 2) &gt; MAX_SIZE;</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">        boolean isExtStack = cr.readUnsignedShort(codeOff) &gt; MAX_SIZE;</span>
+
+<span class="nc" id="L197">        int size = 0;</span>
+<span class="nc bnc" id="L198" title="All 2 branches missed.">        if (isExtCodeSize) {</span>
+<span class="nc" id="L199">            size = cr.readInt(off);</span>
+<span class="nc" id="L200">            off += 4;</span>
+        } else {
+<span class="nc" id="L202">            size = cr.readUnsignedShort(off);</span>
+<span class="nc" id="L203">            off += 2;</span>
+        }
+<span class="nc bnc" id="L205" title="All 2 branches missed.">        for (int i = 0; i &lt; size; i++) {</span>
+            int offset;
+<span class="nc bnc" id="L207" title="All 2 branches missed.">            if (isExtCodeSize) {</span>
+<span class="nc" id="L208">                offset = cr.readInt(off);</span>
+<span class="nc" id="L209">                off += 4;</span>
+            } else {
+<span class="nc" id="L211">                offset = cr.readUnsignedShort(off);</span>
+<span class="nc" id="L212">                off += 2;</span>
+            }
+
+<span class="nc" id="L215">            Label label = getLabel(offset, labels);</span>
+<span class="nc" id="L216">            List locals = new ArrayList();</span>
+<span class="nc" id="L217">            List stack = new ArrayList();</span>
+
+<span class="nc" id="L219">            off = readTypeInfo(cr,</span>
+                    off,
+                    locals,
+                    labels,
+                    buf,
+                    isExtLocals,
+                    isExtCodeSize);
+<span class="nc" id="L226">            off = readTypeInfo(cr,</span>
+                    off,
+                    stack,
+                    labels,
+                    buf,
+                    isExtStack,
+                    isExtCodeSize);
+
+<span class="nc" id="L234">            attr.frames.add(new StackMapFrame(label, locals, stack));</span>
+        }
+<span class="nc" id="L236">        return attr;</span>
+    }
+
+    private int readTypeInfo(
+        ClassReader cr,
+        int off,
+        List info,
+        Label[] labels,
+        char[] buf,
+        boolean isExt,
+        boolean isExtCode)
+    {
+<span class="nc" id="L248">        int n = 0;</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">        if (isExt) {</span>
+<span class="nc" id="L250">            n = cr.readInt(off);</span>
+<span class="nc" id="L251">            off += 4;</span>
+        } else {
+<span class="nc" id="L253">            n = cr.readUnsignedShort(off);</span>
+<span class="nc" id="L254">            off += 2;</span>
+        }
+<span class="nc bnc" id="L256" title="All 2 branches missed.">        for (int j = 0; j &lt; n; j++) {</span>
+<span class="nc" id="L257">            int itemType = cr.readByte(off++);</span>
+<span class="nc" id="L258">            StackMapType typeInfo = StackMapType.getTypeInfo(itemType);</span>
+<span class="nc" id="L259">            info.add(typeInfo);</span>
+<span class="nc bnc" id="L260" title="All 3 branches missed.">            switch (itemType) {</span>
+                case StackMapType.ITEM_Object: //
+<span class="nc" id="L262">                    typeInfo.setObject(cr.readClass(off, buf));</span>
+<span class="nc" id="L263">                    off += 2;</span>
+<span class="nc" id="L264">                    break;</span>
+                case StackMapType.ITEM_Uninitialized: //
+                    int offset;
+<span class="nc bnc" id="L267" title="All 2 branches missed.">                    if (isExtCode) {</span>
+<span class="nc" id="L268">                        offset = cr.readInt(off);</span>
+<span class="nc" id="L269">                        off += 4;</span>
+                    } else {
+<span class="nc" id="L271">                        offset = cr.readUnsignedShort(off);</span>
+<span class="nc" id="L272">                        off += 2;</span>
+                    }
+<span class="nc" id="L274">                    typeInfo.setLabel(getLabel(offset, labels));</span>
+                    break;
+            }
+        }
+<span class="nc" id="L278">        return off;</span>
+    }
+
+    private void writeTypeInfo(ByteVector bv, ClassWriter cw, List info, int max)
+    {
+<span class="nc bnc" id="L283" title="All 2 branches missed.">        if (max &gt; StackMapAttribute.MAX_SIZE) {</span>
+<span class="nc" id="L284">            bv.putInt(info.size());</span>
+        } else {
+<span class="nc" id="L286">            bv.putShort(info.size());</span>
+        }
+<span class="nc bnc" id="L288" title="All 2 branches missed.">        for (int j = 0; j &lt; info.size(); j++) {</span>
+<span class="nc" id="L289">            StackMapType typeInfo = (StackMapType) info.get(j);</span>
+<span class="nc" id="L290">            bv.putByte(typeInfo.getType());</span>
+<span class="nc bnc" id="L291" title="All 3 branches missed.">            switch (typeInfo.getType()) {</span>
+                case StackMapType.ITEM_Object: //
+<span class="nc" id="L293">                    bv.putShort(cw.newClass(typeInfo.getObject()));</span>
+<span class="nc" id="L294">                    break;</span>
+
+                case StackMapType.ITEM_Uninitialized: //
+<span class="nc" id="L297">                    bv.putShort(typeInfo.getLabel().getOffset());</span>
+                    break;
+
+            }
+        }
+<span class="nc" id="L302">    }</span>
+
+    private Label getLabel(int offset, Label[] labels) {
+<span class="nc" id="L305">        Label l = labels[offset];</span>
+<span class="nc bnc" id="L306" title="All 2 branches missed.">        if (l != null) {</span>
+<span class="nc" id="L307">            return l;</span>
+        }
+<span class="nc" id="L309">        return labels[offset] = new Label();</span>
+    }
+
+    protected ByteVector write(
+        ClassWriter cw,
+        byte[] code,
+        int len,
+        int maxStack,
+        int maxLocals)
+    {
+<span class="nc" id="L319">        ByteVector bv = new ByteVector();</span>
+<span class="nc bnc" id="L320" title="All 4 branches missed.">        if (code != null &amp;&amp; code.length &gt; MAX_SIZE) { // TODO verify value</span>
+<span class="nc" id="L321">            bv.putInt(frames.size());</span>
+        } else {
+<span class="nc" id="L323">            bv.putShort(frames.size());</span>
+        }
+<span class="nc bnc" id="L325" title="All 2 branches missed.">        for (int i = 0; i &lt; frames.size(); i++) {</span>
+<span class="nc" id="L326">            writeFrame((StackMapFrame) frames.get(i),</span>
+                    cw,
+                    maxStack,
+                    maxLocals,
+                    bv);
+        }
+<span class="nc" id="L332">        return bv;</span>
+    }
+
+    protected Label[] getLabels() {
+<span class="nc" id="L336">        HashSet labels = new HashSet();</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">        for (int i = 0; i &lt; frames.size(); i++) {</span>
+<span class="nc" id="L338">            getFrameLabels((StackMapFrame) frames.get(i), labels);</span>
+        }
+<span class="nc" id="L340">        return (Label[]) labels.toArray(new Label[labels.size()]);</span>
+    }
+
+    private void writeFrame(
+        StackMapFrame frame,
+        ClassWriter cw,
+        int maxStack,
+        int maxLocals,
+        ByteVector bv)
+    {
+<span class="nc" id="L350">        bv.putShort(frame.label.getOffset());</span>
+<span class="nc" id="L351">        writeTypeInfo(bv, cw, frame.locals, maxLocals);</span>
+<span class="nc" id="L352">        writeTypeInfo(bv, cw, frame.stack, maxStack);</span>
+<span class="nc" id="L353">    }</span>
+
+    private void getFrameLabels(StackMapFrame frame, Set labels) {
+<span class="nc" id="L356">        labels.add(frame.label);</span>
+<span class="nc" id="L357">        getTypeInfoLabels(labels, frame.locals);</span>
+<span class="nc" id="L358">        getTypeInfoLabels(labels, frame.stack);</span>
+<span class="nc" id="L359">    }</span>
+
+    private void getTypeInfoLabels(Set labels, List info) {
+<span class="nc bnc" id="L362" title="All 2 branches missed.">        for (Iterator it = info.iterator(); it.hasNext();) {</span>
+<span class="nc" id="L363">            StackMapType typeInfo = (StackMapType) it.next();</span>
+<span class="nc bnc" id="L364" title="All 2 branches missed.">            if (typeInfo.getType() == StackMapType.ITEM_Uninitialized) {</span>
+<span class="nc" id="L365">                labels.add(typeInfo.getLabel());</span>
+            }
+<span class="nc" id="L367">        }</span>
+<span class="nc" id="L368">    }</span>
+
+    public String toString() {
+<span class="nc" id="L371">        StringBuffer sb = new StringBuffer(&quot;StackMap[&quot;);</span>
+<span class="nc bnc" id="L372" title="All 2 branches missed.">        for (int i = 0; i &lt; frames.size(); i++) {</span>
+<span class="nc" id="L373">            sb.append('\n').append('[').append(frames.get(i)).append(']');</span>
+        }
+<span class="nc" id="L375">        sb.append(&quot;\n]&quot;);</span>
+<span class="nc" id="L376">        return sb.toString();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

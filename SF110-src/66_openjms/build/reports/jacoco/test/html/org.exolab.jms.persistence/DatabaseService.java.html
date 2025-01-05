@@ -1,0 +1,358 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DatabaseService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.persistence</a> &gt; <span class="el_source">DatabaseService.java</span></div><h1>DatabaseService.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2001-2004 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: DatabaseService.java,v 1.4 2006/02/23 11:17:39 tanderson Exp $
+ */
+package org.exolab.jms.persistence;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.exolab.jms.common.threads.ThreadListener;
+import org.exolab.jms.config.Configuration;
+import org.exolab.jms.config.DatabaseConfiguration;
+import org.exolab.jms.config.RdbmsDatabaseConfiguration;
+import org.exolab.jms.service.Service;
+import org.exolab.jms.service.ServiceException;
+import org.exolab.jms.service.ServiceThreadListener;
+
+
+/**
+ * The DatabaseService is used for managing the persistence aspect of this
+ * project.
+ *
+ * @author &lt;a href=&quot;mailto:jima@comware.com.au&quot;&gt;Jim Alateras&lt;/a&gt;
+ * @version $Revision: 1.4 $ $Date: 2006/02/23 11:17:39 $
+ */
+public class DatabaseService extends Service {
+
+    /**
+     * The configuration.
+     */
+    private final DatabaseConfiguration _config;
+
+    /**
+     * The persistence adapter.
+     */
+    private PersistenceAdapter _adapter;
+
+    /**
+     * Thread listener.
+     */
+    private ServiceThreadListener _listener;
+
+    /**
+     * State monitor.
+     */
+    private ThreadListener _monitor;
+
+    /**
+     * The service state associated with the current thread.
+     */
+<span class="nc" id="L93">    private static final ThreadLocal _state = new ThreadLocal();</span>
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L98">    private static final Log _log = LogFactory.getLog(DatabaseService.class);</span>
+
+
+    /**
+     * Construct a new &lt;code&gt;DatabaseService&lt;/code&gt;.
+     *
+     * @param config the configuration
+     */
+    public DatabaseService(Configuration config) {
+<span class="nc" id="L107">        super(&quot;DatabaseService&quot;);</span>
+<span class="nc" id="L108">        _config = config.getDatabaseConfiguration();</span>
+<span class="nc" id="L109">        _monitor = new Monitor();</span>
+<span class="nc" id="L110">    }</span>
+
+    /**
+     * Sets the service thread listener.
+     *
+     * @param listener the service thread listener
+     */
+    public void setServiceThreadListener(ServiceThreadListener listener) {
+<span class="nc" id="L118">        _listener = listener;</span>
+<span class="nc" id="L119">    }</span>
+
+    /**
+     * Returns the database service associated with the current thread.
+     *
+     * @return the database service associated with the current thread
+     * @throws PersistenceException if no instance is registered
+     */
+    public static DatabaseService getInstance() throws PersistenceException {
+<span class="nc" id="L128">        State state = (State) _state.get();</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        if (state == null) {</span>
+<span class="nc" id="L130">            throw new PersistenceException(&quot;No DatabaseService registered&quot;);</span>
+        }
+<span class="nc" id="L132">        return state.getInstance();</span>
+    }
+
+    /**
+     * Returns the {@link PersistenceAdapter} created by this service.
+     *
+     * @return the persistence adapter
+     */
+    public PersistenceAdapter getAdapter() {
+<span class="nc" id="L141">        return _adapter;</span>
+    }
+
+    /**
+     * Begin a transaction.
+     *
+     * @throws PersistenceException if a transaction cannot be started
+     */
+    public void begin() throws PersistenceException {
+<span class="nc" id="L150">        State state = (State) _state.get();</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        if (state == null) {</span>
+<span class="nc" id="L152">            _state.set(new State());</span>
+        } else {
+<span class="nc bnc" id="L154" title="All 2 branches missed.">            if (state.getInstance() != this) {</span>
+<span class="nc" id="L155">                throw new PersistenceException(</span>
+                        &quot;State not associated with current service&quot;);
+            }
+<span class="nc" id="L158">            _log.error(&quot;Transaction in progress, allocated at &quot;, state.STACK);</span>
+<span class="nc" id="L159">            throw new PersistenceException(&quot;Transaction already in progress&quot;);</span>
+
+        }
+<span class="nc" id="L162">    }</span>
+
+    /**
+     * Returns the connection associated with the current thread.
+     *
+     * @return the connection associated with the current thread
+     * @throws PersistenceException if no connection is associated
+     */
+    public Connection getConnection() throws PersistenceException {
+<span class="nc" id="L171">        State state = getState();</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">        if (state.getConnection() == null) {</span>
+<span class="nc" id="L173">            state.setConnection(_adapter.getConnection());</span>
+        }
+<span class="nc" id="L175">        return state.getConnection();</span>
+    }
+
+    /**
+     * Commit the current transaction.
+     *
+     * @throws PersistenceException if the transaction can't be committed
+     */
+    public void commit() throws PersistenceException {
+<span class="nc" id="L184">        State state = getState();</span>
+<span class="nc" id="L185">        Connection connection = state.getConnection();</span>
+        try {
+<span class="nc bnc" id="L187" title="All 2 branches missed.">            if (connection != null) {</span>
+<span class="nc" id="L188">                connection.commit();</span>
+            }
+<span class="nc" id="L190">        } catch (SQLException exception) {</span>
+<span class="nc" id="L191">            throw new PersistenceException(&quot;Failed to commit&quot;, exception);</span>
+        } finally {
+<span class="nc" id="L193">            SQLHelper.close(connection);</span>
+<span class="nc" id="L194">            _state.set(null);</span>
+        }
+<span class="nc" id="L196">    }</span>
+
+    /**
+     * Rollback the current transaction.
+     *
+     * @throws PersistenceException if the transaction can't be rolled back
+     */
+    public void rollback() throws PersistenceException {
+<span class="nc" id="L204">        State state = getState();</span>
+<span class="nc" id="L205">        Connection connection = state.getConnection();</span>
+        try {
+<span class="nc bnc" id="L207" title="All 2 branches missed.">            if (connection != null) {</span>
+<span class="nc" id="L208">                connection.rollback();</span>
+            }
+<span class="nc" id="L210">        } catch (SQLException exception) {</span>
+<span class="nc" id="L211">            throw new PersistenceException(&quot;Failed to rollback&quot;, exception);</span>
+        } finally {
+<span class="nc" id="L213">            SQLHelper.close(connection);</span>
+<span class="nc" id="L214">            _state.set(null);</span>
+        }
+<span class="nc" id="L216">    }</span>
+
+    /**
+     * Determines if a transaction is in progress.
+     *
+     * @return &lt;code&gt;true&lt;/code&gt; if a transaction is in progress; otherwise
+     *         &lt;code&gt;false&lt;/code&gt;
+     */
+    public boolean isTransacted() {
+<span class="nc bnc" id="L225" title="All 2 branches missed.">        return (_state.get() != null);</span>
+    }
+
+    /**
+     * Start the service.
+     *
+     * @throws ServiceException if the service fails to start
+     */
+    protected void doStart() throws ServiceException {
+<span class="nc bnc" id="L234" title="All 2 branches missed.">        if (_listener != null) {</span>
+<span class="nc" id="L235">            _listener.addThreadListener(_monitor);</span>
+        } else {
+<span class="nc" id="L237">            _log.info(&quot;Not monitoring service threads&quot;);</span>
+        }
+
+<span class="nc" id="L240">        _adapter = createAdapter(_config);</span>
+
+        // remove the expired messages
+        try {
+<span class="nc" id="L244">            begin();</span>
+<span class="nc" id="L245">            Connection connection = getConnection();</span>
+
+<span class="nc" id="L247">            getAdapter().removeExpiredMessages(connection);</span>
+<span class="nc" id="L248">            _log.info(&quot;Removed expired messages.&quot;);</span>
+<span class="nc" id="L249">            commit();</span>
+<span class="nc" id="L250">        } catch (PersistenceException exception) {</span>
+            try {
+<span class="nc" id="L252">                rollback();</span>
+<span class="nc" id="L253">            } catch (PersistenceException ignore) {</span>
+                // no-op
+<span class="nc" id="L255">            }</span>
+<span class="nc" id="L256">            throw exception;</span>
+<span class="nc" id="L257">        } catch (Exception exception) {</span>
+            // rethrow as an appropriate exception
+<span class="nc" id="L259">            throw new ServiceException(&quot;Failed to start the DatabaseService&quot;,</span>
+                    exception);
+<span class="nc" id="L261">        }</span>
+<span class="nc" id="L262">    }</span>
+
+    /**
+     * Stop the service.
+     *
+     * @throws ServiceException if the service fails to stop
+     */
+    protected void doStop() throws ServiceException {
+<span class="nc bnc" id="L270" title="All 2 branches missed.">        if (_listener != null) {</span>
+<span class="nc" id="L271">            _listener.removeThreadListener(_monitor);</span>
+        }
+<span class="nc" id="L273">        _adapter.close();</span>
+<span class="nc" id="L274">        _state.set(null);</span>
+<span class="nc" id="L275">    }</span>
+
+    /**
+     * Returns the current transaction state.
+     *
+     * @return the current transaction state
+     * @throws PersistenceException if there is no current transaction
+     */
+    private State getState() throws PersistenceException {
+<span class="nc" id="L284">        State state = (State) _state.get();</span>
+<span class="nc bnc" id="L285" title="All 2 branches missed.">        if (state == null) {</span>
+<span class="nc" id="L286">            throw new PersistenceException(&quot;No transaction in progress&quot;);</span>
+        }
+<span class="nc bnc" id="L288" title="All 2 branches missed.">        if (state.getInstance() != this) {</span>
+<span class="nc" id="L289">            throw new PersistenceException(</span>
+                    &quot;State not associated with current service&quot;);
+        }
+<span class="nc" id="L292">        return state;</span>
+    }
+
+    /**
+     * Create an instance of an persistence adapter using the specified database
+     * configuration.
+     *
+     * @param dbConfig database configuration
+     * @return the created adapter
+     * @throws PersistenceException if the adapter cant be created
+     */
+    private PersistenceAdapter createAdapter(
+            DatabaseConfiguration dbConfig) throws PersistenceException {
+<span class="nc" id="L305">        PersistenceAdapter adapter = null;</span>
+        RdbmsDatabaseConfiguration
+<span class="nc" id="L307">                config = dbConfig.getRdbmsDatabaseConfiguration();</span>
+
+<span class="nc" id="L309">        _log.info(&quot;Creating RdbmsAdapter for &quot;</span>
+<span class="nc" id="L310">                + config.getDriver());</span>
+<span class="nc" id="L311">        adapter = new RDBMSAdapter(dbConfig, config.getDriver(),</span>
+<span class="nc" id="L312">                config.getUrl(),</span>
+<span class="nc" id="L313">                config.getUser(),</span>
+<span class="nc" id="L314">                config.getPassword());</span>
+
+<span class="nc" id="L316">        return adapter;</span>
+    }
+
+<span class="nc" id="L319">    class State {</span>
+
+<span class="nc" id="L321">        public final Exception STACK = new Exception();</span>
+
+        private Connection _connection;
+
+        public DatabaseService getInstance() {
+<span class="nc" id="L326">            return DatabaseService.this;</span>
+        }
+
+        public Connection getConnection() {
+<span class="nc" id="L330">            return _connection;</span>
+        }
+
+        public void setConnection(Connection connection) {
+<span class="nc" id="L334">            _connection = connection;</span>
+<span class="nc" id="L335">        }</span>
+    }
+
+<span class="nc" id="L338">    static class Monitor implements ThreadListener {</span>
+
+        public void begin(Runnable command) {
+<span class="nc" id="L341">        }</span>
+
+        public void end(Runnable command) {
+<span class="nc" id="L344">            State state = (State) _state.get();</span>
+<span class="nc bnc" id="L345" title="All 2 branches missed.">            if (state != null) {</span>
+<span class="nc" id="L346">                _state.set(null);</span>
+<span class="nc" id="L347">                _log.error(&quot;Transaction not finished by &quot; + command</span>
+                        + &quot;. Allocated at &quot;, state.STACK);
+<span class="nc" id="L349">                SQLHelper.close(state.getConnection());</span>
+            }
+<span class="nc" id="L351">        }</span>
+
+    }
+
+}
+
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

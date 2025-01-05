@@ -1,0 +1,264 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PerfMethodAdapter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">51_jiprof</a> &gt; <a href="index.source.html" class="el_package">com.mentorgen.tools.profile.instrument</a> &gt; <span class="el_source">PerfMethodAdapter.java</span></div><h1>PerfMethodAdapter.java</h1><pre class="source lang-java linenums">/*
+Copyright (c) 2005-2006, MentorGen, LLC
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without 
+modification, are permitted provided that the following conditions are met:
+
++ Redistributions of source code must retain the above copyright notice, 
+  this list of conditions and the following disclaimer.
++ Redistributions in binary form must reproduce the above copyright notice, 
+  this list of conditions and the following disclaimer in the documentation 
+  and/or other materials provided with the distribution.
++ Neither the name of MentorGen LLC nor the names of its contributors may be 
+  used to endorse or promote products derived from this software without 
+  specific prior written permission.
+
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS &quot;AS IS&quot; 
+  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
+  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+  ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE 
+  LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
+  CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+  SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS 
+  INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN 
+  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) 
+  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
+  POSSIBILITY OF SUCH DAMAGE.
+ */
+package com.mentorgen.tools.profile.instrument;
+
+import org.objectweb.asm.jip.Label;
+import org.objectweb.asm.jip.MethodAdapter;
+import org.objectweb.asm.jip.MethodVisitor;
+import org.objectweb.asm.jip.Opcodes;
+
+import com.mentorgen.tools.profile.Controller;
+
+import static org.objectweb.asm.jip.Opcodes.INVOKESTATIC;
+
+/**
+ * This class is responsible for instrumenting a method to 
+ * call the profiler in order for performance
+ * data to be gathered. The basic idea is that the profiler is called
+ * when a method starts and when it exists which allows the profiler
+ * to gather performance data (note that a method can be exited from
+ * when an exception is thrown as well as when return is called). The
+ * one big caveate is static initializers. They are not called as part
+ * of the flow of the program &amp;mdash; they are called by the classloader.
+ * Since they whole premise of the profiler is built on the idea of a
+ * orderly call stack, static initializers are not instrumented. 
+ * 
+ * @author Andrew Wilcox
+ *
+ */
+public class PerfMethodAdapter extends MethodAdapter {
+	private String _className, _methodName;
+<span class="nc" id="L57">	private boolean _clinit = false;</span>
+<span class="nc" id="L58">	private boolean _init = false;</span>
+	
+	public PerfMethodAdapter(MethodVisitor visitor, 
+			String className,
+			String methodName) { 
+<span class="nc" id="L63">		super(visitor);</span>
+<span class="nc" id="L64">		_className = className;</span>
+<span class="nc" id="L65">		_methodName = methodName;</span>
+
+		// Static initializers are excluded. The reason for this
+		// is the the profiling algorithm we're using mirrors the call stack.
+		// Since static initializers are called by the classloader
+		// and therefore aren't part of the programs flow of control,
+		// static initializers can really mess up the profiler, especially
+		// when they're called before the program's flow of control is started
+		// (for example, the when the class with the main() method has a 
+		// static initalizer). So yes, this is a short comming in the
+		// design of the profiler, but we're willing to live with it because
+		// this profiler is lightweight and allows us to use it interactively.
+		//
+<span class="nc bnc" id="L78" title="All 2 branches missed.">		if (methodName.equals(&quot;&lt;clinit&gt;&quot;)) {</span>
+<span class="nc" id="L79">			_clinit = true;</span>
+<span class="nc bnc" id="L80" title="All 2 branches missed.">		} else if (methodName.startsWith(&quot;&lt;init&gt;&quot;)) {</span>
+<span class="nc" id="L81">			_init = true;</span>
+		}
+<span class="nc" id="L83">	}</span>
+
+	public void visitCode() {
+<span class="nc bnc" id="L86" title="All 2 branches missed.">		if (_clinit) {</span>
+<span class="nc" id="L87">			super.visitCode();</span>
+<span class="nc" id="L88">			return;</span>
+		} 
+		
+		// Because the alloc method looks at the class + method of the caller
+		// this call needs to come before the call to Profile.start
+		//
+<span class="nc bnc" id="L94" title="All 4 branches missed.">		if (Controller._trackObjectAlloc &amp;&amp; _init) {</span>
+<span class="nc" id="L95">			this.visitLdcInsn(_className);</span>
+<span class="nc" id="L96">			this.visitMethodInsn(INVOKESTATIC, </span>
+					Controller._profiler, 
+					&quot;alloc&quot;, 
+					&quot;(Ljava/lang/String;)V&quot;);			
+		}
+		
+<span class="nc" id="L102">		this.visitLdcInsn(_className);</span>
+<span class="nc" id="L103">		this.visitLdcInsn(_methodName);</span>
+<span class="nc" id="L104">		this.visitMethodInsn(INVOKESTATIC, </span>
+				Controller._profiler, 
+				&quot;start&quot;, 
+				&quot;(Ljava/lang/String;Ljava/lang/String;)V&quot;);
+		
+<span class="nc" id="L109">		super.visitCode();</span>
+<span class="nc" id="L110">	}</span>
+
+	public void visitInsn(int inst) {
+<span class="nc bnc" id="L113" title="All 2 branches missed.">		if (_clinit) {</span>
+<span class="nc" id="L114">			super.visitInsn(inst);</span>
+<span class="nc" id="L115">			return;</span>
+		}
+
+<span class="nc bnc" id="L118" title="All 2 branches missed.">		switch (inst) {</span>
+		case Opcodes.ARETURN:
+		case Opcodes.DRETURN:
+		case Opcodes.FRETURN:
+		case Opcodes.IRETURN:
+		case Opcodes.LRETURN:
+		case Opcodes.RETURN:
+		case Opcodes.ATHROW:
+			
+<span class="nc" id="L127">			this.visitLdcInsn(_className);</span>
+<span class="nc" id="L128">			this.visitLdcInsn(_methodName);</span>
+						
+<span class="nc" id="L130">			this.visitMethodInsn(INVOKESTATIC, </span>
+					Controller._profiler, 
+					&quot;end&quot;, 
+					&quot;(Ljava/lang/String;Ljava/lang/String;)V&quot;);
+<span class="nc" id="L134">			break;</span>
+
+		default:
+			break;
+		}
+		
+<span class="nc bnc" id="L140" title="All 2 branches missed.">		if (Opcodes.MONITORENTER == inst) {</span>
+<span class="nc" id="L141">			this.visitLdcInsn(_className);</span>
+<span class="nc" id="L142">			this.visitLdcInsn(_methodName);</span>
+						
+<span class="nc" id="L144">			this.visitMethodInsn(INVOKESTATIC, </span>
+					Controller._profiler, 
+					&quot;beginWait&quot;, 
+					&quot;(Ljava/lang/String;Ljava/lang/String;)V&quot;);
+			
+<span class="nc" id="L149">			super.visitInsn(inst);</span>
+
+<span class="nc" id="L151">			this.visitLdcInsn(_className);</span>
+<span class="nc" id="L152">			this.visitLdcInsn(_methodName);</span>
+						
+<span class="nc" id="L154">			this.visitMethodInsn(INVOKESTATIC, </span>
+					Controller._profiler, 
+					&quot;endWait&quot;, 
+					&quot;(Ljava/lang/String;Ljava/lang/String;)V&quot;);			
+		} else {
+<span class="nc" id="L159">			super.visitInsn(inst);</span>
+		}
+<span class="nc" id="L161">	}</span>
+
+	@Override
+	public void visitMethodInsn(int opcode, String owner, String name, String desc) {
+<span class="nc bnc" id="L165" title="All 2 branches missed.">		if (isWaitInsn(opcode, owner, name, desc)) {</span>
+
+<span class="nc" id="L167">			this.visitLdcInsn(_className);</span>
+<span class="nc" id="L168">			this.visitLdcInsn(_methodName);</span>
+						
+<span class="nc" id="L170">			this.visitMethodInsn(INVOKESTATIC, </span>
+					Controller._profiler, 
+					&quot;beginWait&quot;, 
+					&quot;(Ljava/lang/String;Ljava/lang/String;)V&quot;);
+			
+<span class="nc" id="L175">			super.visitMethodInsn(opcode, owner, name, desc);</span>
+
+<span class="nc" id="L177">			this.visitLdcInsn(_className);</span>
+<span class="nc" id="L178">			this.visitLdcInsn(_methodName);</span>
+						
+<span class="nc" id="L180">			this.visitMethodInsn(INVOKESTATIC, </span>
+					Controller._profiler, 
+					&quot;endWait&quot;, 
+					&quot;(Ljava/lang/String;Ljava/lang/String;)V&quot;);
+		} else {
+<span class="nc" id="L185">			super.visitMethodInsn(opcode, owner, name, desc);</span>
+		}
+<span class="nc" id="L187">	}</span>
+	
+	//
+	// code to handle unwinding the call stack when an exception is thrown
+	// (many thanks to Fredrik Svar�n for posting this code in the help forum!)
+	//
+	
+	@Override
+	public void visitTryCatchBlock(Label start, Label end, Label handler, String type) {
+<span class="nc" id="L196">		super.visitTryCatchBlock(start, end, handler, type);</span>
+		
+		// Note: static initializers aren't measured, so make sure that the exception
+		// isn't being caught in one
+<span class="nc bnc" id="L200" title="All 4 branches missed.">		if (type != null &amp;&amp; !_clinit) {</span>
+<span class="nc" id="L201">			handler.info = new ExceptionInfo(type);</span>
+		}
+<span class="nc" id="L203">	}</span>
+	
+	@Override
+	public void visitLabel(Label label) {
+<span class="nc" id="L207">		super.visitLabel(label);</span>
+		
+<span class="nc bnc" id="L209" title="All 2 branches missed.">		if (label.info instanceof ExceptionInfo) {</span>
+<span class="nc" id="L210">			this.visitLdcInsn(_className);</span>
+<span class="nc" id="L211">			this.visitLdcInsn(_methodName);</span>
+<span class="nc" id="L212">			this.visitLdcInsn(((ExceptionInfo)label.info).type);</span>
+
+<span class="nc" id="L214">			this.visitMethodInsn(INVOKESTATIC, </span>
+					Controller._profiler, 
+					&quot;unwind&quot;, 
+					&quot;(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V&quot;);
+		}
+<span class="nc" id="L219">	}</span>
+
+	class ExceptionInfo {
+		String type;
+<span class="nc" id="L223">		ExceptionInfo(String type) {</span>
+<span class="nc" id="L224">			this.type = type;</span>
+<span class="nc" id="L225">		}</span>
+	}
+	
+	//
+	// private methods
+	//
+
+	private static boolean isWaitInsn(int opcode, String owner, String name, String desc) {
+<span class="nc bnc" id="L233" title="All 2 branches missed.">		boolean isWait = (opcode == Opcodes.INVOKEVIRTUAL </span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">				&amp;&amp; &quot;java/lang/Object&quot;.equals(owner) </span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">				&amp;&amp; &quot;wait&quot;.equals(name)</span>
+<span class="nc bnc" id="L236" title="All 6 branches missed.">				&amp;&amp; (&quot;()V&quot;.equals(desc) || &quot;(J)V&quot;.equals(desc) || &quot;(JI)V&quot;.equals(desc)));		</span>
+<span class="nc bnc" id="L237" title="All 2 branches missed.">		if (isWait) return true;</span>
+
+<span class="nc bnc" id="L239" title="All 2 branches missed.">		isWait = (opcode == Opcodes.INVOKEVIRTUAL</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">				&amp;&amp; &quot;java/lang/Thread&quot;.equals(owner) </span>
+<span class="nc bnc" id="L241" title="All 2 branches missed.">				&amp;&amp; &quot;join&quot;.equals(name)</span>
+<span class="nc bnc" id="L242" title="All 6 branches missed.">				&amp;&amp; (&quot;()V&quot;.equals(desc) || &quot;(J)V&quot;.equals(desc) || &quot;(JI)V&quot;.equals(desc)));</span>
+<span class="nc bnc" id="L243" title="All 2 branches missed.">		if (isWait) return true;</span>
+		
+<span class="nc bnc" id="L245" title="All 2 branches missed.">		isWait = (opcode == Opcodes.INVOKESTATIC </span>
+<span class="nc bnc" id="L246" title="All 2 branches missed.">				&amp;&amp; &quot;java/lang/Thread&quot;.equals(owner) </span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">				&amp;&amp; &quot;sleep&quot;.equals(name)</span>
+<span class="nc bnc" id="L248" title="All 4 branches missed.">				&amp;&amp; (&quot;(J)V&quot;.equals(desc) || &quot;(JI)V&quot;.equals(desc)));</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">		if (isWait) return true;</span>
+		
+<span class="nc bnc" id="L251" title="All 2 branches missed.">		isWait = (opcode == Opcodes.INVOKESTATIC </span>
+<span class="nc bnc" id="L252" title="All 2 branches missed.">				&amp;&amp; &quot;java/lang/Thread&quot;.equals(owner) </span>
+<span class="nc bnc" id="L253" title="All 2 branches missed.">				&amp;&amp; &quot;yield&quot;.equals(name)</span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">				&amp;&amp; &quot;()V&quot;.equals(desc));</span>
+<span class="nc bnc" id="L255" title="All 2 branches missed.">		if (isWait) return true;</span>
+		
+<span class="nc" id="L257">		return isWait;</span>
+	}
+	
+	
+	
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

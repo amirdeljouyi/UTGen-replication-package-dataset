@@ -1,0 +1,523 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>QueueDestinationCache.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.messagemgr</a> &gt; <span class="el_source">QueueDestinationCache.java</span></div><h1>QueueDestinationCache.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2001-2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: QueueDestinationCache.java,v 1.9 2006/06/09 12:58:56 tanderson Exp $
+ */
+package org.exolab.jms.messagemgr;
+
+import java.sql.Connection;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
+import javax.jms.JMSException;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import org.exolab.jms.client.JmsDestination;
+import org.exolab.jms.client.JmsQueue;
+import org.exolab.jms.client.JmsTemporaryDestination;
+import org.exolab.jms.lease.LeaseManager;
+import org.exolab.jms.message.MessageImpl;
+import org.exolab.jms.persistence.DatabaseService;
+import org.exolab.jms.persistence.PersistenceException;
+import org.exolab.jms.selector.Selector;
+import org.exolab.jms.server.ServerConnectionManager;
+
+
+/**
+ * A {@link DestinationCache} for queues.
+ *
+ * @author &lt;a href=&quot;mailto:jima@comware.com.au&quot;&gt;Jim Alateras&lt;/a&gt;
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.9 $ $Date: 2006/06/09 12:58:56 $
+ */
+public class QueueDestinationCache extends AbstractDestinationCache {
+
+    /**
+     * Maintains a list of {@link QueueConsumerMessageHandle} instances.
+     */
+<span class="nc" id="L80">    private final MessageQueue _handles = new MessageQueue();</span>
+
+    /**
+     * Maintains a list of queue browsers for this cache.
+     */
+<span class="nc" id="L85">    private final List _browsers</span>
+<span class="nc" id="L86">            = Collections.synchronizedList(new LinkedList());</span>
+
+    /**
+     * The connection manager.
+     */
+    private final ServerConnectionManager _connections;
+
+    /**
+     * Synchronization helper.
+     */
+<span class="nc" id="L96">    private final Object _lock = new Object();</span>
+
+    /**
+     * Index of the last {@link QueueConsumerEndpoint} that received a message
+     * from this destination. If multiple consumers are attached to this queue
+     * then messages will be sent to each in a round robin fashion
+     */
+<span class="nc" id="L103">    private int _lastConsumerIndex = 0;</span>
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L108">    private static final Log _log = LogFactory.getLog(</span>
+            QueueDestinationCache.class);
+
+
+    /**
+     * Construct a new &lt;code&gt;QueueDestinationCache&lt;/code&gt;.
+     *
+     * @param queue       the queue to cache messages for
+     * @param database    the database service
+     * @param leases      the lease manager
+     * @param connections the connection manager
+     * @throws JMSException if the cache can't be initialised
+     */
+    public QueueDestinationCache(JmsQueue queue,
+                                 DatabaseService database,
+                                 LeaseManager leases,
+                                 ServerConnectionManager connections)
+            throws JMSException {
+<span class="nc" id="L126">        super(queue, database, leases);</span>
+<span class="nc bnc" id="L127" title="All 2 branches missed.">        if (connections == null) {</span>
+<span class="nc" id="L128">            throw new IllegalArgumentException(</span>
+                    &quot;Argument 'connections' is null&quot;);
+        }
+<span class="nc" id="L131">        _connections = connections;</span>
+
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        if (queue.getPersistent()) {</span>
+<span class="nc" id="L134">            init();</span>
+        }
+<span class="nc" id="L136">    }</span>
+
+    /**
+     * A Queue can also hav a queue listener, which simply gets informed of all
+     * messages that arrive at this destination.
+     *
+     * @param listener - queue listener
+     */
+    public void addQueueListener(QueueBrowserEndpoint listener) {
+        // add if not present
+<span class="nc bnc" id="L146" title="All 2 branches missed.">        if (!_browsers.contains(listener)) {</span>
+<span class="nc" id="L147">            _browsers.add(listener);</span>
+        }
+<span class="nc" id="L149">    }</span>
+
+    /**
+     * Remove the queue listener associated with this cache
+     *
+     * @param listener - queue listener to remove
+     */
+    public void removeQueueListener(QueueBrowserEndpoint listener) {
+        // add if not present
+<span class="nc bnc" id="L158" title="All 2 branches missed.">        if (_browsers.contains(listener)) {</span>
+<span class="nc" id="L159">            _browsers.remove(listener);</span>
+        }
+<span class="nc" id="L161">    }</span>
+
+    /**
+     * Invoked when the {@link MessageMgr} receives a non-persistent message.
+     *
+     * @param destination the message's destination
+     * @param message     the message
+     * @throws JMSException if the listener fails to handle the message
+     */
+    public void messageAdded(JmsDestination destination, MessageImpl message)
+            throws JMSException {
+<span class="nc" id="L172">        MessageRef reference = new CachedMessageRef(message, false,</span>
+<span class="nc" id="L173">                getMessageCache());</span>
+<span class="nc" id="L174">        MessageHandle shared = new SharedMessageHandle(this, reference,</span>
+                message);
+<span class="nc" id="L176">        MessageHandle handle = new QueueConsumerMessageHandle(shared);</span>
+
+        // all messages are added to this queue. Receivers will
+        // then pick messages from it as required.
+<span class="nc" id="L180">        addMessage(reference, message, handle);</span>
+
+        // if we have any registered consumers then we need to
+        // send the message to one of them first.
+<span class="nc" id="L184">        ConsumerEndpoint consumer = getConsumerForMessage(message);</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">        if (consumer != null) {</span>
+<span class="nc" id="L186">            consumer.messageAdded(handle, message);</span>
+        }
+<span class="nc" id="L188">    }</span>
+
+    /**
+     * Invoked when the {@link MessageMgr} receives a persistent message.
+     *
+     * @param destination the message's destination
+     * @param message     the message
+     * @throws JMSException         if the listener fails to handle the message
+     * @throws PersistenceException if there is a persistence related problem
+     */
+    public void persistentMessageAdded(JmsDestination destination,
+                                       MessageImpl message)
+            throws JMSException, PersistenceException {
+<span class="nc" id="L201">        MessageRef reference = new CachedMessageRef(message, true,</span>
+<span class="nc" id="L202">                getMessageCache());</span>
+<span class="nc" id="L203">        MessageHandle shared = new SharedMessageHandle(this, reference,</span>
+                message);
+<span class="nc" id="L205">        MessageHandle handle = new QueueConsumerMessageHandle(shared);</span>
+<span class="nc" id="L206">        handle.add();</span>
+
+<span class="nc" id="L208">        addMessage(reference, message, handle);</span>
+
+        // if there are any registered consumers, notify one of them that
+        // a message has arrived
+<span class="nc" id="L212">        ConsumerEndpoint consumer = getConsumerForMessage(message);</span>
+<span class="nc bnc" id="L213" title="All 2 branches missed.">        if (consumer != null) {</span>
+<span class="nc" id="L214">            consumer.persistentMessageAdded(handle, message);</span>
+        }
+<span class="nc" id="L216">    }</span>
+
+    /**
+     * Returns the first available message matching the supplied message
+     * selector.
+     *
+     * @param selector the message selector to use. May be &lt;code&gt;null&lt;/code&gt;
+     * @param cancel
+     * @return handle to the first message, or &lt;code&gt;null&lt;/code&gt; if there are no
+     *         messages, or none matching &lt;code&gt;selector&lt;/code&gt;
+     * @throws JMSException for any error
+     */
+    public synchronized MessageHandle getMessage(Selector selector,
+                                                 Condition cancel)
+            throws JMSException {
+<span class="nc" id="L231">        QueueConsumerMessageHandle handle = null;</span>
+<span class="nc bnc" id="L232" title="All 2 branches missed.">        if (selector == null) {</span>
+            // if no selector has been specified then remove and return
+            // the first message
+<span class="nc" id="L235">            handle = (QueueConsumerMessageHandle) _handles.removeFirst();</span>
+        } else {
+            // for non null selector we must find the first matching
+<span class="nc" id="L238">            MessageHandle[] handles = _handles.toArray();</span>
+<span class="nc bnc" id="L239" title="All 4 branches missed.">            for (int i = 0; i &lt; handles.length &amp;&amp; !cancel.get(); ++i) {</span>
+<span class="nc" id="L240">                MessageHandle hdl = handles[i];</span>
+<span class="nc" id="L241">                MessageImpl message = hdl.getMessage();</span>
+<span class="nc bnc" id="L242" title="All 4 branches missed.">                if (message != null &amp;&amp; selector.selects(message)) {</span>
+<span class="nc" id="L243">                    handle = (QueueConsumerMessageHandle) hdl;</span>
+<span class="nc" id="L244">                    _handles.remove(handle);</span>
+<span class="nc" id="L245">                    break;</span>
+                }
+            }
+        }
+<span class="nc" id="L249">        return handle;</span>
+    }
+
+    /**
+     * Playback all the messages in the cache to the specified {@link
+     * QueueBrowserEndpoint}.
+     *
+     * @param browser the queue browser
+     * @throws JMSException for any error
+     */
+    public void playbackMessages(QueueBrowserEndpoint browser)
+            throws JMSException {
+<span class="nc" id="L261">        MessageHandle[] handles = _handles.toArray();</span>
+<span class="nc bnc" id="L262" title="All 2 branches missed.">        for (int i = 0; i &lt; handles.length; ++i) {</span>
+<span class="nc" id="L263">            MessageHandle handle = handles[i];</span>
+<span class="nc" id="L264">            MessageImpl message = handle.getMessage();</span>
+<span class="nc bnc" id="L265" title="All 2 branches missed.">            if (message != null) {</span>
+<span class="nc" id="L266">                browser.messageAdded(handle, message);</span>
+            }
+        }
+<span class="nc" id="L269">    }</span>
+
+    /**
+     * Return a message handle back to the cache, to recover unsent or
+     * unacknowledged messages.
+     *
+     * @param handle the message handle to return
+     */
+    public void returnMessageHandle(MessageHandle handle) {
+        // add the message to the destination cache
+<span class="nc" id="L279">        _handles.add(handle);</span>
+        try {
+<span class="nc" id="L281">            MessageImpl message = handle.getMessage();</span>
+<span class="nc bnc" id="L282" title="All 2 branches missed.">            if (message != null) {</span>
+                // if there are any registered consumers, notify one of them
+                // that a message has arrived
+<span class="nc" id="L285">                ConsumerEndpoint consumer = getConsumerForMessage(message);</span>
+<span class="nc bnc" id="L286" title="All 2 branches missed.">                if (consumer != null) {</span>
+<span class="nc" id="L287">                    consumer.messageAdded(handle, message);</span>
+                }
+            }
+<span class="nc" id="L290">        } catch (JMSException exception) {</span>
+<span class="nc" id="L291">            _log.debug(exception, exception);</span>
+<span class="nc" id="L292">        }</span>
+<span class="nc" id="L293">    }</span>
+
+    /**
+     * Determines if there are any registered consumers.
+     *
+     * @return &lt;code&gt;true&lt;/code&gt; if there are registered consumers
+     */
+    public boolean hasConsumers() {
+<span class="nc" id="L301">        boolean active = super.hasConsumers();</span>
+<span class="nc bnc" id="L302" title="All 4 branches missed.">        if (!active &amp;&amp; !_browsers.isEmpty()) {</span>
+<span class="nc" id="L303">            active = true;</span>
+        }
+<span class="nc bnc" id="L305" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L306">            _log.debug(&quot;hasActiveConsumers()[queue=&quot; + getDestination() + &quot;]=&quot;</span>
+                    + active);
+        }
+<span class="nc" id="L309">        return active;</span>
+    }
+
+    /**
+     * Returns the number of messages in the cache.
+     *
+     * @return the number of messages in the cache
+     */
+    public int getMessageCount() {
+<span class="nc" id="L318">        return _handles.size();</span>
+    }
+
+    /**
+     * Determines if this cache can be destroyed. A &lt;code&gt;QueueDestinationCache&lt;/code&gt;
+     * can be destroyed if there are no active consumers and: &lt;ul&gt; &lt;li&gt;the queue
+     * is persistent and there are no messages&lt;/li&gt; &lt;li&gt; the queue is temporary
+     * and the corresponding connection is closed &lt;/li&gt; &lt;/ul&gt;
+     *
+     * @return &lt;code&gt;true&lt;/code&gt; if the cache can be destroyed, otherwise
+     *         &lt;code&gt;false&lt;/code&gt;
+     */
+    public boolean canDestroy() {
+<span class="nc" id="L331">        boolean destroy = false;</span>
+<span class="nc bnc" id="L332" title="All 2 branches missed.">        if (!hasConsumers()) {</span>
+<span class="nc" id="L333">            JmsDestination queue = getDestination();</span>
+<span class="nc bnc" id="L334" title="All 4 branches missed.">            if (queue.getPersistent() &amp;&amp; getMessageCount() == 0) {</span>
+<span class="nc" id="L335">                destroy = true;</span>
+<span class="nc bnc" id="L336" title="All 2 branches missed.">            } else if (queue.isTemporaryDestination()) {</span>
+                // check if there is a corresponding connection. If
+                // not, it has been closed, and the cache can be removed
+<span class="nc" id="L339">                long connectionId =</span>
+<span class="nc" id="L340">                        ((JmsTemporaryDestination) queue).getConnectionId();</span>
+<span class="nc bnc" id="L341" title="All 2 branches missed.">                if (_connections.getConnection(connectionId) == null) {</span>
+<span class="nc" id="L342">                    destroy = true;</span>
+                }
+            }
+        }
+<span class="nc" id="L346">        return destroy;</span>
+    }
+
+    /**
+     * Destroy this object.
+     */
+    public void destroy() {
+<span class="nc" id="L353">        super.destroy();</span>
+<span class="nc" id="L354">        _browsers.clear();</span>
+<span class="nc" id="L355">    }</span>
+
+    /**
+     * Initialise the cache. This removes all the expired messages, and then
+     * retrieves all unacked messages from the database and stores them
+     * locally.
+     *
+     * @throws JMSException if the cache can't be initialised
+     */
+    protected void init() throws JMSException {
+<span class="nc" id="L365">        JmsDestination queue = getDestination();</span>
+
+        List handles;
+<span class="nc" id="L368">        DatabaseService service = null;</span>
+        try {
+<span class="nc" id="L370">            service = DatabaseService.getInstance();</span>
+<span class="nc" id="L371">            Connection connection = service.getConnection();</span>
+<span class="nc" id="L372">            service.getAdapter().removeExpiredMessageHandles(connection,</span>
+<span class="nc" id="L373">                    queue.getName());</span>
+<span class="nc" id="L374">            handles = service.getAdapter().getMessageHandles(connection, queue,</span>
+<span class="nc" id="L375">                    queue.getName());</span>
+<span class="nc" id="L376">        } catch (PersistenceException exception) {</span>
+<span class="nc" id="L377">            _log.error(exception, exception);</span>
+            try {
+<span class="nc bnc" id="L379" title="All 2 branches missed.">                if (service != null) {</span>
+<span class="nc" id="L380">                    service.rollback();</span>
+                }
+<span class="nc" id="L382">            } catch (PersistenceException error) {</span>
+<span class="nc" id="L383">                _log.error(error, error);</span>
+<span class="nc" id="L384">            }</span>
+<span class="nc" id="L385">            throw new JMSException(exception.getMessage());</span>
+<span class="nc" id="L386">        }</span>
+
+<span class="nc" id="L388">        Iterator iterator = handles.iterator();</span>
+<span class="nc" id="L389">        DefaultMessageCache cache = getMessageCache();</span>
+<span class="nc bnc" id="L390" title="All 2 branches missed.">        while (iterator.hasNext()) {</span>
+<span class="nc" id="L391">            PersistentMessageHandle handle = (PersistentMessageHandle) iterator.next();</span>
+<span class="nc" id="L392">            String messageId = handle.getMessageId();</span>
+<span class="nc" id="L393">            MessageRef reference = cache.getMessageRef(messageId);</span>
+<span class="nc bnc" id="L394" title="All 2 branches missed.">            if (reference == null) {</span>
+<span class="nc" id="L395">                reference = new CachedMessageRef(messageId, true, cache);</span>
+            }
+<span class="nc" id="L397">            cache.addMessageRef(reference);</span>
+<span class="nc" id="L398">            handle.reference(reference);</span>
+<span class="nc" id="L399">            handle.setDestinationCache(this);</span>
+<span class="nc" id="L400">            _handles.add(new QueueConsumerMessageHandle(handle));</span>
+
+<span class="nc" id="L402">            checkMessageExpiry(reference, handle.getExpiryTime());</span>
+<span class="nc" id="L403">        }</span>
+<span class="nc" id="L404">    }</span>
+
+    /**
+     * Add a message, and notify any listeners.
+     *
+     * @param reference a reference to the message
+     * @param message   the message
+     * @param handle    the handle to add
+     * @throws JMSException for any error
+     */
+    protected void addMessage(MessageRef reference, MessageImpl message,
+                              MessageHandle handle) throws JMSException {
+<span class="nc" id="L416">        addMessage(reference, message);</span>
+<span class="nc" id="L417">        _handles.add(handle);</span>
+
+        // notify any queue listeners that a message has arrived
+<span class="nc" id="L420">        notifyQueueListeners(handle, message);</span>
+
+        // create a lease iff one is required
+<span class="nc" id="L423">        checkMessageExpiry(reference, message);</span>
+<span class="nc" id="L424">    }</span>
+
+
+    /**
+     * Notify queue browsers that a message has arrived.
+     *
+     * @param handle  a handle to the message
+     * @param message the message
+     * @throws JMSException if a browser fails to handle the message
+     */
+    protected void notifyQueueListeners(MessageHandle handle,
+                                        MessageImpl message)
+            throws JMSException {
+<span class="nc" id="L437">        QueueBrowserEndpoint[] browsers =</span>
+<span class="nc" id="L438">                (QueueBrowserEndpoint[]) _browsers.toArray(</span>
+                        new QueueBrowserEndpoint[0]);
+
+<span class="nc bnc" id="L441" title="All 2 branches missed.">        for (int index = 0; index &lt; browsers.length; ++index) {</span>
+<span class="nc" id="L442">            QueueBrowserEndpoint browser = browsers[index];</span>
+<span class="nc" id="L443">            browser.messageAdded(handle, message);</span>
+        }
+<span class="nc" id="L445">    }</span>
+
+    /**
+     * Remove an expired non-peristent message, and notify any listeners.
+     *
+     * @param reference the reference to the expired message
+     * @throws JMSException for any error
+     */
+    protected void messageExpired(MessageRef reference) throws JMSException {
+<span class="nc" id="L454">        _handles.remove(reference.getMessageId());</span>
+        // @todo - notify browser
+<span class="nc" id="L456">        super.messageExpired(reference);</span>
+<span class="nc" id="L457">    }</span>
+
+    /**
+     * Remove an expired persistent message, and notify any listeners.
+     *
+     * @param reference the reference to the expired message
+     * @throws JMSException         if a listener fails to handle the
+     *                              expiration
+     * @throws PersistenceException if there is a persistence related problem
+     */
+    protected void persistentMessageExpired(MessageRef reference)
+            throws JMSException, PersistenceException {
+<span class="nc" id="L469">        _handles.remove(reference.getMessageId());</span>
+        // @todo - notify browsers
+<span class="nc" id="L471">        super.messageExpired(reference);</span>
+<span class="nc" id="L472">    }</span>
+
+    /**
+     * Return the next QueueConsumerEndpoint that can consume the specified
+     * message or null if there is none.
+     *
+     * @param message - the message to consume
+     * @return the consumer who should receive this message, or null
+     */
+    private ConsumerEndpoint getConsumerForMessage(MessageImpl message) {
+<span class="nc" id="L482">        ConsumerEndpoint result = null;</span>
+
+<span class="nc" id="L484">        ConsumerEndpoint[] consumers = getConsumerArray();</span>
+<span class="nc" id="L485">        final int size = consumers.length;</span>
+<span class="nc bnc" id="L486" title="All 2 branches missed.">        if (size &gt; 0) {</span>
+<span class="nc" id="L487">            synchronized (_lock) {</span>
+                // roll over the consumer index if it is greater
+                // than the number of registered consumers
+<span class="nc bnc" id="L490" title="All 2 branches missed.">                if ((_lastConsumerIndex + 1) &gt; size) {</span>
+<span class="nc" id="L491">                    _lastConsumerIndex = 0;</span>
+                }
+
+                // look over the list of consumers and return the
+                // first endpoint that can process this message
+<span class="nc" id="L496">                int index = _lastConsumerIndex;</span>
+                do {
+<span class="nc" id="L498">                    ConsumerEndpoint consumer = consumers[index];</span>
+                    // if the endpoint has a message listener registered
+                    // or the endpoint is waiting for a message and the
+                    // message satisfies the selector then return it to
+                    // the client.
+<span class="nc bnc" id="L503" title="All 2 branches missed.">                    if ((consumer.isAsynchronous()</span>
+<span class="nc bnc" id="L504" title="All 2 branches missed.">                            || consumer.isWaitingForMessage())</span>
+<span class="nc bnc" id="L505" title="All 2 branches missed.">                            &amp;&amp; consumer.selects(message)) {</span>
+<span class="nc" id="L506">                        _lastConsumerIndex = ++index;</span>
+<span class="nc" id="L507">                        result = consumer;</span>
+<span class="nc" id="L508">                        break;</span>
+                    }
+
+                    // advance to the next consumer
+<span class="nc bnc" id="L512" title="All 2 branches missed.">                    if (++index &gt;= size) {</span>
+<span class="nc" id="L513">                        index = 0;</span>
+                    }
+<span class="nc bnc" id="L515" title="All 2 branches missed.">                } while (index != _lastConsumerIndex);</span>
+<span class="nc" id="L516">            }</span>
+        }
+
+<span class="nc" id="L519">        return result;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

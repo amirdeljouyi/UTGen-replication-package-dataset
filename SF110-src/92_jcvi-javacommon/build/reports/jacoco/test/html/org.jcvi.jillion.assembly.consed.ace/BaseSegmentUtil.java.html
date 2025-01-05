@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BaseSegmentUtil.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.assembly.consed.ace</a> &gt; <span class="el_source">BaseSegmentUtil.java</span></div><h1>BaseSegmentUtil.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+package org.jcvi.jillion.assembly.consed.ace;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.SortedMap;
+import java.util.TreeMap;
+
+import org.jcvi.jillion.core.Range;
+import org.jcvi.jillion.core.residue.nt.Nucleotide;
+import org.jcvi.jillion.core.residue.nt.NucleotideSequence;
+import org.jcvi.jillion.core.residue.nt.ReferenceMappedNucleotideSequence;
+import org.jcvi.jillion.core.util.MapValueComparator;
+import org.jcvi.jillion.core.util.iter.IteratorUtil;
+import org.jcvi.jillion.core.util.iter.PeekableIterator;
+import org.jcvi.jillion.core.util.iter.PeekableStreamingIterator;
+/**
+ * Utility class for working with {@link AceBaseSegment}s.
+ * @author dkatzel
+ *
+ */
+final class BaseSegmentUtil {
+	
+	private BaseSegmentUtil(){
+		//can not instantiate
+	}
+	/**
+	 * Compute the {@link AceBaseSegment}s for the given contig
+	 * @param contig
+	 * @return
+	 * @throws NoReadMatchesConsensusException if there no aligned
+	 * read has an exact basecall match to the consensus.  This
+	 * can often happen when the consensus has ambiguity values
+	 * and the underlying sequences are the bases
+	 * that make up the ambiguity. 
+	 */
+	public static List&lt;AceBaseSegment&gt; computeBestSegmentsFor(AceContig contig){
+<span class="nc" id="L61">		List&lt;AceBaseSegment&gt; baseSegments = new ArrayList&lt;AceBaseSegment&gt;();</span>
+<span class="nc" id="L62">		NucleotideSequence consensus =contig.getConsensusSequence();</span>
+<span class="nc" id="L63">		PeekableIterator&lt;Nucleotide&gt; consensusIterator = IteratorUtil.createPeekableIterator(consensus.iterator());</span>
+<span class="nc" id="L64">		PeekableStreamingIterator&lt;AceAssembledRead&gt; readIter = IteratorUtil.createPeekableStreamingIterator(contig.getReadIterator());</span>
+		
+<span class="nc" id="L66">		SortedMap&lt;String,Range&gt; sortedReadRanges = createSortedRangeMapFor(readIter,0);			</span>
+<span class="nc" id="L67">		Nucleotide consensusBase = consensusIterator.peek();</span>
+<span class="nc" id="L68">		CurrentMatchingRead currentMatchingRead = findFirstReadThatMatchesConsensus(contig, sortedReadRanges,consensusBase);</span>
+
+<span class="nc" id="L70">		long consensusOffsetToBeCovered = computeNextBaseSegment(baseSegments,</span>
+													0, 
+													consensusIterator,
+													currentMatchingRead);
+<span class="nc bnc" id="L74" title="All 2 branches missed.">		while(consensusIterator.hasNext()){</span>
+<span class="nc" id="L75">			consensusBase = consensusIterator.peek();</span>
+<span class="nc" id="L76">			sortedReadRanges = createSortedRangeMapFor(readIter,consensusOffsetToBeCovered,sortedReadRanges);</span>
+<span class="nc" id="L77">			currentMatchingRead = findReadThatMatchesConsensus(contig, sortedReadRanges,consensusBase,consensusOffsetToBeCovered);</span>
+			
+<span class="nc" id="L79">			consensusOffsetToBeCovered = computeNextBaseSegment(baseSegments,</span>
+													consensusOffsetToBeCovered, 
+													consensusIterator,
+													currentMatchingRead);
+		}
+<span class="nc" id="L84">		return baseSegments;</span>
+	}
+	private static long computeNextBaseSegment(
+			List&lt;AceBaseSegment&gt; bestSegments, long offset,
+			PeekableIterator&lt;Nucleotide&gt; consensusIterator,
+			CurrentMatchingRead currentMatchingRead) {
+		Nucleotide consensusBase;
+<span class="nc" id="L91">		boolean stillMatches=true;</span>
+<span class="nc" id="L92">		long consensusOffsetToBeCovered = offset;</span>
+<span class="nc bnc" id="L93" title="All 6 branches missed.">		while(consensusIterator.hasNext() &amp;&amp; currentMatchingRead.getBaseIterator().hasNext() &amp;&amp; stillMatches){</span>
+			
+<span class="nc" id="L95">			consensusBase = consensusIterator.peek();</span>
+<span class="nc" id="L96">			Nucleotide readBase = currentMatchingRead.getBaseIterator().next();</span>
+<span class="nc" id="L97">			stillMatches = consensusBase.equals(readBase);	</span>
+<span class="nc bnc" id="L98" title="All 2 branches missed.">			if(stillMatches){</span>
+<span class="nc" id="L99">				consensusOffsetToBeCovered++;</span>
+<span class="nc" id="L100">				consensusIterator.next();</span>
+			}
+<span class="nc" id="L102">		}</span>
+		//here we have a current matching read that no longer matches
+<span class="nc" id="L104">		bestSegments.add(new DefaultAceBaseSegment(currentMatchingRead.getRead().getId(), </span>
+<span class="nc" id="L105">				Range.of(currentMatchingRead.getStartMatchOffset(), consensusOffsetToBeCovered-1)));</span>
+<span class="nc" id="L106">		return consensusOffsetToBeCovered;</span>
+	}
+
+	private static SortedMap&lt;String, Range&gt; createSortedRangeMapFor(
+			PeekableStreamingIterator&lt;AceAssembledRead&gt; readIter, long offset,
+			SortedMap&lt;String, Range&gt; sortedReadRanges) {
+		//remove any reads that no longer provide coverage
+		//this map should be sorted by end offset
+		//so if we see a read that still covers
+		//then the rest of the reads do too.
+		//this is an optimization over having to compute
+		//and then iterate over a coverage map and slice map for each slice
+<span class="nc" id="L118">		Iterator&lt;Entry&lt;String, Range&gt;&gt; iter = sortedReadRanges.entrySet().iterator();</span>
+		//our new map
+<span class="nc" id="L120">		Map&lt;String, Range&gt; map = new LinkedHashMap&lt;String, Range&gt;();</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">		while(iter.hasNext()){</span>
+<span class="nc" id="L122">			Entry&lt;String, Range&gt; entry =iter.next();</span>
+<span class="nc bnc" id="L123" title="All 2 branches missed.">			if(entry.getValue().getEnd()&lt;offset){</span>
+<span class="nc" id="L124">				iter.remove();</span>
+			}else{
+<span class="nc" id="L126">				map.put(entry.getKey(),entry.getValue());</span>
+			}
+<span class="nc" id="L128">		}</span>
+<span class="nc" id="L129">		boolean done=false;</span>
+		
+<span class="nc bnc" id="L131" title="All 4 branches missed.">		while(readIter.hasNext() &amp;&amp; !done){</span>
+			//we peek incase we get to a read that starts beyond
+			//our current consensus offset
+<span class="nc" id="L134">			AceAssembledRead currentRead = readIter.peek();</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">			if(currentRead.getGappedStartOffset()&lt;=offset){</span>
+<span class="nc" id="L136">				readIter.next();</span>
+<span class="nc" id="L137">				map.put(currentRead.getId(), currentRead.asRange());</span>
+			}else{
+<span class="nc" id="L139">				done=true;</span>
+			}
+<span class="nc" id="L141">		}</span>
+		
+<span class="nc" id="L143">		return MapValueComparator.sortAscending(map, Range.Comparators.DEPARTURE);</span>
+	}
+
+	private static CurrentMatchingRead findFirstReadThatMatchesConsensus(AceContig contig,
+			SortedMap&lt;String, Range&gt; sortedReadRanges,
+			Nucleotide consensusBase) {
+<span class="nc" id="L149">		return findReadThatMatchesConsensus(contig, sortedReadRanges, consensusBase, 0);</span>
+	}
+	private static CurrentMatchingRead findReadThatMatchesConsensus(AceContig contig,
+			SortedMap&lt;String, Range&gt; sortedReadRanges,
+			Nucleotide consensusBase, long consensusOffset) {
+<span class="nc" id="L154">		Iterator&lt;String&gt; idIterator = sortedReadRanges.keySet().iterator();</span>
+<span class="nc" id="L155">		boolean foundMatch=false;</span>
+<span class="nc" id="L156">		AceAssembledRead currentBestRead=null;</span>
+<span class="nc bnc" id="L157" title="All 4 branches missed.">		while(!foundMatch &amp;&amp; idIterator.hasNext()){</span>
+<span class="nc" id="L158">			String id = idIterator.next();</span>
+<span class="nc" id="L159">			AceAssembledRead read = contig.getRead(id);</span>
+<span class="nc" id="L160">			ReferenceMappedNucleotideSequence readSequence =read.getNucleotideSequence();</span>
+<span class="nc" id="L161">			long gappedStartOffset = read.getGappedStartOffset();</span>
+<span class="nc" id="L162">			long readOffset = consensusOffset-gappedStartOffset;</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">			if(readSequence.getLength()&gt;readOffset){</span>
+<span class="nc" id="L164">				Nucleotide base =readSequence.get(readOffset);</span>
+<span class="nc bnc" id="L165" title="All 2 branches missed.">				if(base.equals(consensusBase)){</span>
+<span class="nc" id="L166">					foundMatch=true;</span>
+<span class="nc" id="L167">					currentBestRead = read;</span>
+				}
+			}
+<span class="nc" id="L170">		}</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">		if(currentBestRead==null){</span>
+<span class="nc" id="L172">			throw new NoReadMatchesConsensusException(consensusBase,consensusOffset);</span>
+		}
+<span class="nc" id="L174">		Range readRange = Range.of(consensusOffset- currentBestRead.getGappedStartOffset(), currentBestRead.getGappedEndOffset()- currentBestRead.getGappedStartOffset());</span>
+<span class="nc" id="L175">		return new CurrentMatchingRead(currentBestRead, </span>
+<span class="nc" id="L176">				currentBestRead.getNucleotideSequence().iterator(readRange),</span>
+				consensusOffset);
+	}
+	private static SortedMap&lt;String, Range&gt; createSortedRangeMapFor(
+			PeekableStreamingIterator&lt;AceAssembledRead&gt; readIter, long offset) {
+<span class="nc" id="L181">		return createSortedRangeMapFor(readIter, offset, new TreeMap&lt;String, Range&gt;());</span>
+	}
+	
+	public static class NoReadMatchesConsensusException extends IllegalStateException{
+		/**
+		 * 
+		 */
+		private static final long serialVersionUID = 2738190645917425718L;
+
+		NoReadMatchesConsensusException(Nucleotide consensusBase, long offset){
+<span class="nc" id="L191">			super(String.format(&quot;consensus ='%s' at offset %d&quot;,consensusBase, offset));</span>
+<span class="nc" id="L192">		}</span>
+	}
+	
+	private static class CurrentMatchingRead{
+		private final AceAssembledRead read;
+		private final Iterator&lt;Nucleotide&gt; baseIterator;
+		private final long startMatchOffset;
+		
+		public CurrentMatchingRead(AceAssembledRead read,
+				Iterator&lt;Nucleotide&gt; baseIterator,
+<span class="nc" id="L202">				long startMatchOffset) {</span>
+<span class="nc" id="L203">			this.read = read;</span>
+<span class="nc" id="L204">			this.baseIterator = baseIterator;</span>
+<span class="nc" id="L205">			this.startMatchOffset = startMatchOffset;</span>
+<span class="nc" id="L206">		}</span>
+		protected final AceAssembledRead getRead() {
+<span class="nc" id="L208">			return read;</span>
+		}
+		protected final Iterator&lt;Nucleotide&gt; getBaseIterator() {
+<span class="nc" id="L211">			return baseIterator;</span>
+		}
+		protected final long getStartMatchOffset() {
+<span class="nc" id="L214">			return startMatchOffset;</span>
+		}
+		
+		
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,1430 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Frame.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">51_jiprof</a> &gt; <a href="index.source.html" class="el_package">org.objectweb.asm.jip</a> &gt; <span class="el_source">Frame.java</span></div><h1>Frame.java</h1><pre class="source lang-java linenums">/***
+ * ASM: a very small and fast Java bytecode manipulation framework
+ * Copyright (c) 2000-2007 INRIA, France Telecom
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the copyright holders nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS &quot;AS IS&quot;
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+package org.objectweb.asm.jip;
+
+/**
+ * Information about the input and output stack map frames of a basic block.
+ * 
+ * @author Eric Bruneton
+ */
+<span class="fc" id="L37">final class Frame {</span>
+
+    /*
+     * Frames are computed in a two steps process: during the visit of each
+     * instruction, the state of the frame at the end of current basic block is
+     * updated by simulating the action of the instruction on the previous state
+     * of this so called &quot;output frame&quot;. In visitMaxs, a fix point algorithm is
+     * used to compute the &quot;input frame&quot; of each basic block, i.e. the stack map
+     * frame at the beginning of the basic block, starting from the input frame
+     * of the first basic block (which is computed from the method descriptor),
+     * and by using the previously computed output frames to compute the input
+     * state of the other blocks.
+     * 
+     * All output and input frames are stored as arrays of integers. Reference
+     * and array types are represented by an index into a type table (which is
+     * not the same as the constant pool of the class, in order to avoid adding
+     * unnecessary constants in the pool - not all computed frames will end up
+     * being stored in the stack map table). This allows very fast type
+     * comparisons.
+     * 
+     * Output stack map frames are computed relatively to the input frame of the
+     * basic block, which is not yet known when output frames are computed. It
+     * is therefore necessary to be able to represent abstract types such as
+     * &quot;the type at position x in the input frame locals&quot; or &quot;the type at
+     * position x from the top of the input frame stack&quot; or even &quot;the type at
+     * position x in the input frame, with y more (or less) array dimensions&quot;.
+     * This explains the rather complicated type format used in output frames.
+     * 
+     * This format is the following: DIM KIND VALUE (4, 4 and 24 bits). DIM is a
+     * signed number of array dimensions (from -8 to 7). KIND is either BASE,
+     * LOCAL or STACK. BASE is used for types that are not relative to the input
+     * frame. LOCAL is used for types that are relative to the input local
+     * variable types. STACK is used for types that are relative to the input
+     * stack types. VALUE depends on KIND. For LOCAL types, it is an index in
+     * the input local variable types. For STACK types, it is a position
+     * relatively to the top of input frame stack. For BASE types, it is either
+     * one of the constants defined in FrameVisitor, or for OBJECT and
+     * UNINITIALIZED types, a tag and an index in the type table.
+     * 
+     * Output frames can contain types of any kind and with a positive or
+     * negative dimension (and even unassigned types, represented by 0 - which
+     * does not correspond to any valid type value). Input frames can only
+     * contain BASE types of positive or null dimension. In all cases the type
+     * table contains only internal type names (array type descriptors are
+     * forbidden - dimensions must be represented through the DIM field).
+     * 
+     * The LONG and DOUBLE types are always represented by using two slots (LONG +
+     * TOP or DOUBLE + TOP), for local variable types as well as in the operand
+     * stack. This is necessary to be able to simulate DUPx_y instructions,
+     * whose effect would be dependent on the actual type values if types were
+     * always represented by a single slot in the stack (and this is not
+     * possible, since actual type values are not always known - cf LOCAL and
+     * STACK type kinds).
+     */
+
+    /**
+     * Mask to get the dimension of a frame type. This dimension is a signed
+     * integer between -8 and 7.
+     */
+    static final int DIM = 0xF0000000;
+
+    /**
+     * Constant to be added to a type to get a type with one more dimension.
+     */
+    static final int ARRAY_OF = 0x10000000;
+
+    /**
+     * Constant to be added to a type to get a type with one less dimension.
+     */
+    static final int ELEMENT_OF = 0xF0000000;
+
+    /**
+     * Mask to get the kind of a frame type.
+     * 
+     * @see #BASE
+     * @see #LOCAL
+     * @see #STACK
+     */
+    static final int KIND = 0xF000000;
+
+    /**
+     * Flag used for LOCAL and STACK types. Indicates that if this type happens
+     * to be a long or double type (during the computations of input frames), 
+     * then it must be set to TOP because the second word of this value has
+     * been reused to store other data in the basic block. Hence the first word 
+     * no longer stores a valid long or double value.
+     */
+    static final int TOP_IF_LONG_OR_DOUBLE = 0x800000;
+
+    /**
+     * Mask to get the value of a frame type.
+     */
+    static final int VALUE = 0x7FFFFF;
+
+    /**
+     * Mask to get the kind of base types.
+     */
+    static final int BASE_KIND = 0xFF00000;
+
+    /**
+     * Mask to get the value of base types.
+     */
+    static final int BASE_VALUE = 0xFFFFF;
+
+    /**
+     * Kind of the types that are not relative to an input stack map frame.
+     */
+    static final int BASE = 0x1000000;
+
+    /**
+     * Base kind of the base reference types. The BASE_VALUE of such types is an
+     * index into the type table.
+     */
+    static final int OBJECT = BASE | 0x700000;
+
+    /**
+     * Base kind of the uninitialized base types. The BASE_VALUE of such types
+     * in an index into the type table (the Item at that index contains both an
+     * instruction offset and an internal class name).
+     */
+    static final int UNINITIALIZED = BASE | 0x800000;
+
+    /**
+     * Kind of the types that are relative to the local variable types of an
+     * input stack map frame. The value of such types is a local variable index.
+     */
+    private static final int LOCAL = 0x2000000;
+
+    /**
+     * Kind of the the types that are relative to the stack of an input stack
+     * map frame. The value of such types is a position relatively to the top of
+     * this stack.
+     */
+    private static final int STACK = 0x3000000;
+
+    /**
+     * The TOP type. This is a BASE type.
+     */
+    static final int TOP = BASE | 0;
+
+    /**
+     * The BOOLEAN type. This is a BASE type mainly used for array types.
+     */
+    static final int BOOLEAN = BASE | 9;
+
+    /**
+     * The BYTE type. This is a BASE type mainly used for array types.
+     */
+    static final int BYTE = BASE | 10;
+
+    /**
+     * The CHAR type. This is a BASE type mainly used for array types.
+     */
+    static final int CHAR = BASE | 11;
+
+    /**
+     * The SHORT type. This is a BASE type mainly used for array types.
+     */
+    static final int SHORT = BASE | 12;
+
+    /**
+     * The INTEGER type. This is a BASE type.
+     */
+    static final int INTEGER = BASE | 1;
+
+    /**
+     * The FLOAT type. This is a BASE type.
+     */
+    static final int FLOAT = BASE | 2;
+
+    /**
+     * The DOUBLE type. This is a BASE type.
+     */
+    static final int DOUBLE = BASE | 3;
+
+    /**
+     * The LONG type. This is a BASE type.
+     */
+    static final int LONG = BASE | 4;
+
+    /**
+     * The NULL type. This is a BASE type.
+     */
+    static final int NULL = BASE | 5;
+
+    /**
+     * The UNINITIALIZED_THIS type. This is a BASE type.
+     */
+    static final int UNINITIALIZED_THIS = BASE | 6;
+
+    /**
+     * The stack size variation corresponding to each JVM instruction. This
+     * stack variation is equal to the size of the values produced by an
+     * instruction, minus the size of the values consumed by this instruction.
+     */
+    static final int[] SIZE;
+
+    /**
+     * Computes the stack size variation corresponding to each JVM instruction.
+     */
+    static {
+        int i;
+<span class="fc" id="L239">        int[] b = new int[202];</span>
+<span class="fc" id="L240">        String s = &quot;EFFFFFFFFGGFFFGGFFFEEFGFGFEEEEEEEEEEEEEEEEEEEEDEDEDDDDD&quot;</span>
+                + &quot;CDCDEEEEEEEEEEEEEEEEEEEEBABABBBBDCFFFGGGEDCDCDCDCDCDCDCDCD&quot;
+                + &quot;CDCEEEEDDDDDDDCDCDCEFEFDDEEFFDEDEEEBDDBBDDDDDDCCCCCCCCEFED&quot;
+                + &quot;DDCDCDEEEEEEEEEEFEEEEEEDDEEDDEE&quot;;
+<span class="fc bfc" id="L244" title="All 2 branches covered.">        for (i = 0; i &lt; b.length; ++i) {</span>
+<span class="fc" id="L245">            b[i] = s.charAt(i) - 'E';</span>
+        }
+<span class="fc" id="L247">        SIZE = b;</span>
+
+        // code to generate the above string
+        //
+        // int NA = 0; // not applicable (unused opcode or variable size opcode)
+        //
+        // b = new int[] {
+        // 0, //NOP, // visitInsn
+        // 1, //ACONST_NULL, // -
+        // 1, //ICONST_M1, // -
+        // 1, //ICONST_0, // -
+        // 1, //ICONST_1, // -
+        // 1, //ICONST_2, // -
+        // 1, //ICONST_3, // -
+        // 1, //ICONST_4, // -
+        // 1, //ICONST_5, // -
+        // 2, //LCONST_0, // -
+        // 2, //LCONST_1, // -
+        // 1, //FCONST_0, // -
+        // 1, //FCONST_1, // -
+        // 1, //FCONST_2, // -
+        // 2, //DCONST_0, // -
+        // 2, //DCONST_1, // -
+        // 1, //BIPUSH, // visitIntInsn
+        // 1, //SIPUSH, // -
+        // 1, //LDC, // visitLdcInsn
+        // NA, //LDC_W, // -
+        // NA, //LDC2_W, // -
+        // 1, //ILOAD, // visitVarInsn
+        // 2, //LLOAD, // -
+        // 1, //FLOAD, // -
+        // 2, //DLOAD, // -
+        // 1, //ALOAD, // -
+        // NA, //ILOAD_0, // -
+        // NA, //ILOAD_1, // -
+        // NA, //ILOAD_2, // -
+        // NA, //ILOAD_3, // -
+        // NA, //LLOAD_0, // -
+        // NA, //LLOAD_1, // -
+        // NA, //LLOAD_2, // -
+        // NA, //LLOAD_3, // -
+        // NA, //FLOAD_0, // -
+        // NA, //FLOAD_1, // -
+        // NA, //FLOAD_2, // -
+        // NA, //FLOAD_3, // -
+        // NA, //DLOAD_0, // -
+        // NA, //DLOAD_1, // -
+        // NA, //DLOAD_2, // -
+        // NA, //DLOAD_3, // -
+        // NA, //ALOAD_0, // -
+        // NA, //ALOAD_1, // -
+        // NA, //ALOAD_2, // -
+        // NA, //ALOAD_3, // -
+        // -1, //IALOAD, // visitInsn
+        // 0, //LALOAD, // -
+        // -1, //FALOAD, // -
+        // 0, //DALOAD, // -
+        // -1, //AALOAD, // -
+        // -1, //BALOAD, // -
+        // -1, //CALOAD, // -
+        // -1, //SALOAD, // -
+        // -1, //ISTORE, // visitVarInsn
+        // -2, //LSTORE, // -
+        // -1, //FSTORE, // -
+        // -2, //DSTORE, // -
+        // -1, //ASTORE, // -
+        // NA, //ISTORE_0, // -
+        // NA, //ISTORE_1, // -
+        // NA, //ISTORE_2, // -
+        // NA, //ISTORE_3, // -
+        // NA, //LSTORE_0, // -
+        // NA, //LSTORE_1, // -
+        // NA, //LSTORE_2, // -
+        // NA, //LSTORE_3, // -
+        // NA, //FSTORE_0, // -
+        // NA, //FSTORE_1, // -
+        // NA, //FSTORE_2, // -
+        // NA, //FSTORE_3, // -
+        // NA, //DSTORE_0, // -
+        // NA, //DSTORE_1, // -
+        // NA, //DSTORE_2, // -
+        // NA, //DSTORE_3, // -
+        // NA, //ASTORE_0, // -
+        // NA, //ASTORE_1, // -
+        // NA, //ASTORE_2, // -
+        // NA, //ASTORE_3, // -
+        // -3, //IASTORE, // visitInsn
+        // -4, //LASTORE, // -
+        // -3, //FASTORE, // -
+        // -4, //DASTORE, // -
+        // -3, //AASTORE, // -
+        // -3, //BASTORE, // -
+        // -3, //CASTORE, // -
+        // -3, //SASTORE, // -
+        // -1, //POP, // -
+        // -2, //POP2, // -
+        // 1, //DUP, // -
+        // 1, //DUP_X1, // -
+        // 1, //DUP_X2, // -
+        // 2, //DUP2, // -
+        // 2, //DUP2_X1, // -
+        // 2, //DUP2_X2, // -
+        // 0, //SWAP, // -
+        // -1, //IADD, // -
+        // -2, //LADD, // -
+        // -1, //FADD, // -
+        // -2, //DADD, // -
+        // -1, //ISUB, // -
+        // -2, //LSUB, // -
+        // -1, //FSUB, // -
+        // -2, //DSUB, // -
+        // -1, //IMUL, // -
+        // -2, //LMUL, // -
+        // -1, //FMUL, // -
+        // -2, //DMUL, // -
+        // -1, //IDIV, // -
+        // -2, //LDIV, // -
+        // -1, //FDIV, // -
+        // -2, //DDIV, // -
+        // -1, //IREM, // -
+        // -2, //LREM, // -
+        // -1, //FREM, // -
+        // -2, //DREM, // -
+        // 0, //INEG, // -
+        // 0, //LNEG, // -
+        // 0, //FNEG, // -
+        // 0, //DNEG, // -
+        // -1, //ISHL, // -
+        // -1, //LSHL, // -
+        // -1, //ISHR, // -
+        // -1, //LSHR, // -
+        // -1, //IUSHR, // -
+        // -1, //LUSHR, // -
+        // -1, //IAND, // -
+        // -2, //LAND, // -
+        // -1, //IOR, // -
+        // -2, //LOR, // -
+        // -1, //IXOR, // -
+        // -2, //LXOR, // -
+        // 0, //IINC, // visitIincInsn
+        // 1, //I2L, // visitInsn
+        // 0, //I2F, // -
+        // 1, //I2D, // -
+        // -1, //L2I, // -
+        // -1, //L2F, // -
+        // 0, //L2D, // -
+        // 0, //F2I, // -
+        // 1, //F2L, // -
+        // 1, //F2D, // -
+        // -1, //D2I, // -
+        // 0, //D2L, // -
+        // -1, //D2F, // -
+        // 0, //I2B, // -
+        // 0, //I2C, // -
+        // 0, //I2S, // -
+        // -3, //LCMP, // -
+        // -1, //FCMPL, // -
+        // -1, //FCMPG, // -
+        // -3, //DCMPL, // -
+        // -3, //DCMPG, // -
+        // -1, //IFEQ, // visitJumpInsn
+        // -1, //IFNE, // -
+        // -1, //IFLT, // -
+        // -1, //IFGE, // -
+        // -1, //IFGT, // -
+        // -1, //IFLE, // -
+        // -2, //IF_ICMPEQ, // -
+        // -2, //IF_ICMPNE, // -
+        // -2, //IF_ICMPLT, // -
+        // -2, //IF_ICMPGE, // -
+        // -2, //IF_ICMPGT, // -
+        // -2, //IF_ICMPLE, // -
+        // -2, //IF_ACMPEQ, // -
+        // -2, //IF_ACMPNE, // -
+        // 0, //GOTO, // -
+        // 1, //JSR, // -
+        // 0, //RET, // visitVarInsn
+        // -1, //TABLESWITCH, // visiTableSwitchInsn
+        // -1, //LOOKUPSWITCH, // visitLookupSwitch
+        // -1, //IRETURN, // visitInsn
+        // -2, //LRETURN, // -
+        // -1, //FRETURN, // -
+        // -2, //DRETURN, // -
+        // -1, //ARETURN, // -
+        // 0, //RETURN, // -
+        // NA, //GETSTATIC, // visitFieldInsn
+        // NA, //PUTSTATIC, // -
+        // NA, //GETFIELD, // -
+        // NA, //PUTFIELD, // -
+        // NA, //INVOKEVIRTUAL, // visitMethodInsn
+        // NA, //INVOKESPECIAL, // -
+        // NA, //INVOKESTATIC, // -
+        // NA, //INVOKEINTERFACE, // -
+        // NA, //INVOKEDYNAMIC, // -
+        // 1, //NEW, // visitTypeInsn
+        // 0, //NEWARRAY, // visitIntInsn
+        // 0, //ANEWARRAY, // visitTypeInsn
+        // 0, //ARRAYLENGTH, // visitInsn
+        // NA, //ATHROW, // -
+        // 0, //CHECKCAST, // visitTypeInsn
+        // 0, //INSTANCEOF, // -
+        // -1, //MONITORENTER, // visitInsn
+        // -1, //MONITOREXIT, // -
+        // NA, //WIDE, // NOT VISITED
+        // NA, //MULTIANEWARRAY, // visitMultiANewArrayInsn
+        // -1, //IFNULL, // visitJumpInsn
+        // -1, //IFNONNULL, // -
+        // NA, //GOTO_W, // -
+        // NA, //JSR_W, // -
+        // };
+        // for (i = 0; i &lt; b.length; ++i) {
+        // System.err.print((char)('E' + b[i]));
+        // }
+        // System.err.println();
+<span class="fc" id="L461">    }</span>
+
+    /**
+     * The label (i.e. basic block) to which these input and output stack map
+     * frames correspond.
+     */
+    Label owner;
+
+    /**
+     * The input stack map frame locals.
+     */
+    int[] inputLocals;
+
+    /**
+     * The input stack map frame stack.
+     */
+    int[] inputStack;
+
+    /**
+     * The output stack map frame locals.
+     */
+    private int[] outputLocals;
+
+    /**
+     * The output stack map frame stack.
+     */
+    private int[] outputStack;
+
+    /**
+     * Relative size of the output stack. The exact semantics of this field
+     * depends on the algorithm that is used.
+     * 
+     * When only the maximum stack size is computed, this field is the size of
+     * the output stack relatively to the top of the input stack.
+     * 
+     * When the stack map frames are completely computed, this field is the
+     * actual number of types in {@link #outputStack}.
+     */
+    private int outputStackTop;
+
+    /**
+     * Number of types that are initialized in the basic block.
+     * 
+     * @see #initializations
+     */
+    private int initializationCount;
+
+    /**
+     * The types that are initialized in the basic block. A constructor
+     * invocation on an UNINITIALIZED or UNINITIALIZED_THIS type must replace
+     * &lt;i&gt;every occurence&lt;/i&gt; of this type in the local variables and in the
+     * operand stack. This cannot be done during the first phase of the
+     * algorithm since, during this phase, the local variables and the operand
+     * stack are not completely computed. It is therefore necessary to store the
+     * types on which constructors are invoked in the basic block, in order to
+     * do this replacement during the second phase of the algorithm, where the
+     * frames are fully computed. Note that this array can contain types that
+     * are relative to input locals or to the input stack (see below for the
+     * description of the algorithm).
+     */
+    private int[] initializations;
+
+    /**
+     * Returns the output frame local variable type at the given index.
+     * 
+     * @param local the index of the local that must be returned.
+     * @return the output frame local variable type at the given index.
+     */
+    private int get(final int local) {
+<span class="pc bpc" id="L530" title="1 of 4 branches missed.">        if (outputLocals == null || local &gt;= outputLocals.length) {</span>
+            // this local has never been assigned in this basic block,
+            // so it is still equal to its value in the input frame
+<span class="fc" id="L533">            return LOCAL | local;</span>
+        } else {
+<span class="fc" id="L535">            int type = outputLocals[local];</span>
+<span class="fc bfc" id="L536" title="All 2 branches covered.">            if (type == 0) {</span>
+                // this local has never been assigned in this basic block,
+                // so it is still equal to its value in the input frame
+<span class="fc" id="L539">                type = outputLocals[local] = LOCAL | local;</span>
+            }
+<span class="fc" id="L541">            return type;</span>
+        }
+    }
+
+    /**
+     * Sets the output frame local variable type at the given index.
+     * 
+     * @param local the index of the local that must be set.
+     * @param type the value of the local that must be set.
+     */
+    private void set(final int local, final int type) {
+        // creates and/or resizes the output local variables array if necessary
+<span class="fc bfc" id="L553" title="All 2 branches covered.">        if (outputLocals == null) {</span>
+<span class="fc" id="L554">            outputLocals = new int[10];</span>
+        }
+<span class="fc" id="L556">        int n = outputLocals.length;</span>
+<span class="fc bfc" id="L557" title="All 2 branches covered.">        if (local &gt;= n) {</span>
+<span class="fc" id="L558">            int[] t = new int[Math.max(local + 1, 2 * n)];</span>
+<span class="fc" id="L559">            System.arraycopy(outputLocals, 0, t, 0, n);</span>
+<span class="fc" id="L560">            outputLocals = t;</span>
+        }
+        // sets the local variable
+<span class="fc" id="L563">        outputLocals[local] = type;</span>
+<span class="fc" id="L564">    }</span>
+
+    /**
+     * Pushes a new type onto the output frame stack.
+     * 
+     * @param type the type that must be pushed.
+     */
+    private void push(final int type) {
+        // creates and/or resizes the output stack array if necessary
+<span class="fc bfc" id="L573" title="All 2 branches covered.">        if (outputStack == null) {</span>
+<span class="fc" id="L574">            outputStack = new int[10];</span>
+        }
+<span class="fc" id="L576">        int n = outputStack.length;</span>
+<span class="pc bpc" id="L577" title="1 of 2 branches missed.">        if (outputStackTop &gt;= n) {</span>
+<span class="nc" id="L578">            int[] t = new int[Math.max(outputStackTop + 1, 2 * n)];</span>
+<span class="nc" id="L579">            System.arraycopy(outputStack, 0, t, 0, n);</span>
+<span class="nc" id="L580">            outputStack = t;</span>
+        }
+        // pushes the type on the output stack
+<span class="fc" id="L583">        outputStack[outputStackTop++] = type;</span>
+        // updates the maximun height reached by the output stack, if needed
+<span class="fc" id="L585">        int top = owner.inputStackTop + outputStackTop;</span>
+<span class="fc bfc" id="L586" title="All 2 branches covered.">        if (top &gt; owner.outputStackMax) {</span>
+<span class="fc" id="L587">            owner.outputStackMax = top;</span>
+        }
+<span class="fc" id="L589">    }</span>
+
+    /**
+     * Pushes a new type onto the output frame stack.
+     * 
+     * @param cw the ClassWriter to which this label belongs.
+     * @param desc the descriptor of the type to be pushed. Can also be a method
+     *        descriptor (in this case this method pushes its return type onto
+     *        the output frame stack).
+     */
+    private void push(final ClassWriter cw, final String desc) {
+<span class="fc" id="L600">        int type = type(cw, desc);</span>
+<span class="fc bfc" id="L601" title="All 2 branches covered.">        if (type != 0) {</span>
+<span class="fc" id="L602">            push(type);</span>
+<span class="pc bpc" id="L603" title="2 of 4 branches missed.">            if (type == LONG || type == DOUBLE) {</span>
+<span class="nc" id="L604">                push(TOP);</span>
+            }
+        }
+<span class="fc" id="L607">    }</span>
+
+    /**
+     * Returns the int encoding of the given type.
+     * 
+     * @param cw the ClassWriter to which this label belongs.
+     * @param desc a type descriptor.
+     * @return the int encoding of the given type.
+     */
+    private static int type(final ClassWriter cw, final String desc) {
+        String t;
+<span class="fc bfc" id="L618" title="All 2 branches covered.">        int index = desc.charAt(0) == '(' ? desc.indexOf(')') + 1 : 0;</span>
+<span class="pc bpc" id="L619" title="3 of 7 branches missed.">        switch (desc.charAt(index)) {</span>
+            case 'V':
+<span class="fc" id="L621">                return 0;</span>
+            case 'Z':
+            case 'C':
+            case 'B':
+            case 'S':
+            case 'I':
+<span class="fc" id="L627">                return INTEGER;</span>
+            case 'F':
+<span class="nc" id="L629">                return FLOAT;</span>
+            case 'J':
+<span class="nc" id="L631">                return LONG;</span>
+            case 'D':
+<span class="nc" id="L633">                return DOUBLE;</span>
+            case 'L':
+                // stores the internal name, not the descriptor!
+<span class="fc" id="L636">                t = desc.substring(index + 1, desc.length() - 1);</span>
+<span class="fc" id="L637">                return OBJECT | cw.addType(t);</span>
+                // case '[':
+            default:
+                // extracts the dimensions and the element type
+                int data;
+<span class="fc" id="L642">                int dims = index + 1;</span>
+<span class="pc bpc" id="L643" title="1 of 2 branches missed.">                while (desc.charAt(dims) == '[') {</span>
+<span class="nc" id="L644">                    ++dims;</span>
+                }
+<span class="pc bpc" id="L646" title="6 of 9 branches missed.">                switch (desc.charAt(dims)) {</span>
+                    case 'Z':
+<span class="nc" id="L648">                        data = BOOLEAN;</span>
+<span class="nc" id="L649">                        break;</span>
+                    case 'C':
+<span class="nc" id="L651">                        data = CHAR;</span>
+<span class="nc" id="L652">                        break;</span>
+                    case 'B':
+<span class="fc" id="L654">                        data = BYTE;</span>
+<span class="fc" id="L655">                        break;</span>
+                    case 'S':
+<span class="nc" id="L657">                        data = SHORT;</span>
+<span class="nc" id="L658">                        break;</span>
+                    case 'I':
+<span class="fc" id="L660">                        data = INTEGER;</span>
+<span class="fc" id="L661">                        break;</span>
+                    case 'F':
+<span class="nc" id="L663">                        data = FLOAT;</span>
+<span class="nc" id="L664">                        break;</span>
+                    case 'J':
+<span class="nc" id="L666">                        data = LONG;</span>
+<span class="nc" id="L667">                        break;</span>
+                    case 'D':
+<span class="nc" id="L669">                        data = DOUBLE;</span>
+<span class="nc" id="L670">                        break;</span>
+                    // case 'L':
+                    default:
+                        // stores the internal name, not the descriptor
+<span class="fc" id="L674">                        t = desc.substring(dims + 1, desc.length() - 1);</span>
+<span class="fc" id="L675">                        data = OBJECT | cw.addType(t);</span>
+                }
+<span class="fc" id="L677">                return (dims - index) &lt;&lt; 28 | data;</span>
+        }
+    }
+
+    /**
+     * Pops a type from the output frame stack and returns its value.
+     * 
+     * @return the type that has been popped from the output frame stack.
+     */
+    private int pop() {
+<span class="fc bfc" id="L687" title="All 2 branches covered.">        if (outputStackTop &gt; 0) {</span>
+<span class="fc" id="L688">            return outputStack[--outputStackTop];</span>
+        } else {
+            // if the output frame stack is empty, pops from the input stack
+<span class="fc" id="L691">            return STACK | -(--owner.inputStackTop);</span>
+        }
+    }
+
+    /**
+     * Pops the given number of types from the output frame stack.
+     * 
+     * @param elements the number of types that must be popped.
+     */
+    private void pop(final int elements) {
+<span class="fc bfc" id="L701" title="All 2 branches covered.">        if (outputStackTop &gt;= elements) {</span>
+<span class="fc" id="L702">            outputStackTop -= elements;</span>
+        } else {
+            // if the number of elements to be popped is greater than the number
+            // of elements in the output stack, clear it, and pops the remaining
+            // elements from the input stack.
+<span class="fc" id="L707">            owner.inputStackTop -= elements - outputStackTop;</span>
+<span class="fc" id="L708">            outputStackTop = 0;</span>
+        }
+<span class="fc" id="L710">    }</span>
+
+    /**
+     * Pops a type from the output frame stack.
+     * 
+     * @param desc the descriptor of the type to be popped. Can also be a method
+     *        descriptor (in this case this method pops the types corresponding
+     *        to the method arguments).
+     */
+    private void pop(final String desc) {
+<span class="fc" id="L720">        char c = desc.charAt(0);</span>
+<span class="fc bfc" id="L721" title="All 2 branches covered.">        if (c == '(') {</span>
+<span class="fc" id="L722">            pop((Type.getArgumentsAndReturnSizes(desc) &gt;&gt; 2) - 1);</span>
+<span class="pc bpc" id="L723" title="2 of 4 branches missed.">        } else if (c == 'J' || c == 'D') {</span>
+<span class="nc" id="L724">            pop(2);</span>
+        } else {
+<span class="fc" id="L726">            pop(1);</span>
+        }
+<span class="fc" id="L728">    }</span>
+
+    /**
+     * Adds a new type to the list of types on which a constructor is invoked in
+     * the basic block.
+     * 
+     * @param var a type on a which a constructor is invoked.
+     */
+    private void init(final int var) {
+        // creates and/or resizes the initializations array if necessary
+<span class="fc bfc" id="L738" title="All 2 branches covered.">        if (initializations == null) {</span>
+<span class="fc" id="L739">            initializations = new int[2];</span>
+        }
+<span class="fc" id="L741">        int n = initializations.length;</span>
+<span class="pc bpc" id="L742" title="1 of 2 branches missed.">        if (initializationCount &gt;= n) {</span>
+<span class="nc" id="L743">            int[] t = new int[Math.max(initializationCount + 1, 2 * n)];</span>
+<span class="nc" id="L744">            System.arraycopy(initializations, 0, t, 0, n);</span>
+<span class="nc" id="L745">            initializations = t;</span>
+        }
+        // stores the type to be initialized
+<span class="fc" id="L748">        initializations[initializationCount++] = var;</span>
+<span class="fc" id="L749">    }</span>
+
+    /**
+     * Replaces the given type with the appropriate type if it is one of the
+     * types on which a constructor is invoked in the basic block.
+     * 
+     * @param cw the ClassWriter to which this label belongs.
+     * @param t a type
+     * @return t or, if t is one of the types on which a constructor is invoked
+     *         in the basic block, the type corresponding to this constructor.
+     */
+    private int init(final ClassWriter cw, final int t) {
+        int s;
+<span class="pc bpc" id="L762" title="1 of 2 branches missed.">        if (t == UNINITIALIZED_THIS) {</span>
+<span class="nc" id="L763">            s = OBJECT | cw.addType(cw.thisName);</span>
+<span class="fc bfc" id="L764" title="All 2 branches covered.">        } else if ((t &amp; (DIM | BASE_KIND)) == UNINITIALIZED) {</span>
+<span class="fc" id="L765">            String type = cw.typeTable[t &amp; BASE_VALUE].strVal1;</span>
+<span class="fc" id="L766">            s = OBJECT | cw.addType(type);</span>
+<span class="fc" id="L767">        } else {</span>
+<span class="fc" id="L768">            return t;</span>
+        }
+<span class="pc bpc" id="L770" title="1 of 2 branches missed.">        for (int j = 0; j &lt; initializationCount; ++j) {</span>
+<span class="fc" id="L771">            int u = initializations[j];</span>
+<span class="fc" id="L772">            int dim = u &amp; DIM;</span>
+<span class="fc" id="L773">            int kind = u &amp; KIND;</span>
+<span class="pc bpc" id="L774" title="1 of 2 branches missed.">            if (kind == LOCAL) {</span>
+<span class="nc" id="L775">                u = dim + inputLocals[u &amp; VALUE];</span>
+<span class="pc bpc" id="L776" title="1 of 2 branches missed.">            } else if (kind == STACK) {</span>
+<span class="nc" id="L777">                u = dim + inputStack[inputStack.length - (u &amp; VALUE)];</span>
+            }
+<span class="fc bfc" id="L779" title="All 2 branches covered.">            if (t == u) {</span>
+<span class="fc" id="L780">                return s;</span>
+            }
+        }
+<span class="nc" id="L783">        return t;</span>
+    }
+
+    /**
+     * Initializes the input frame of the first basic block from the method
+     * descriptor.
+     * 
+     * @param cw the ClassWriter to which this label belongs.
+     * @param access the access flags of the method to which this label belongs.
+     * @param args the formal parameter types of this method.
+     * @param maxLocals the maximum number of local variables of this method.
+     */
+    void initInputFrame(
+        final ClassWriter cw,
+        final int access,
+        final Type[] args,
+        final int maxLocals)
+    {
+<span class="fc" id="L801">        inputLocals = new int[maxLocals];</span>
+<span class="fc" id="L802">        inputStack = new int[0];</span>
+<span class="fc" id="L803">        int i = 0;</span>
+<span class="fc bfc" id="L804" title="All 2 branches covered.">        if ((access &amp; Opcodes.ACC_STATIC) == 0) {</span>
+<span class="fc bfc" id="L805" title="All 2 branches covered.">            if ((access &amp; MethodWriter.ACC_CONSTRUCTOR) == 0) {</span>
+<span class="fc" id="L806">                inputLocals[i++] = OBJECT | cw.addType(cw.thisName);</span>
+            } else {
+<span class="fc" id="L808">                inputLocals[i++] = UNINITIALIZED_THIS;</span>
+            }
+        }
+<span class="fc bfc" id="L811" title="All 2 branches covered.">        for (int j = 0; j &lt; args.length; ++j) {</span>
+<span class="fc" id="L812">            int t = type(cw, args[j].getDescriptor());</span>
+<span class="fc" id="L813">            inputLocals[i++] = t;</span>
+<span class="pc bpc" id="L814" title="2 of 4 branches missed.">            if (t == LONG || t == DOUBLE) {</span>
+<span class="nc" id="L815">                inputLocals[i++] = TOP;</span>
+            }
+        }
+<span class="fc bfc" id="L818" title="All 2 branches covered.">        while (i &lt; maxLocals) {</span>
+<span class="fc" id="L819">            inputLocals[i++] = TOP;</span>
+        }
+<span class="fc" id="L821">    }</span>
+
+    /**
+     * Simulates the action of the given instruction on the output stack frame.
+     * 
+     * @param opcode the opcode of the instruction.
+     * @param arg the operand of the instruction, if any.
+     * @param cw the class writer to which this label belongs.
+     * @param item the operand of the instructions, if any.
+     */
+    void execute(
+        final int opcode,
+        final int arg,
+        final ClassWriter cw,
+        final Item item)
+    {
+        int t1, t2, t3, t4;
+<span class="pc bpc" id="L838" title="21 of 49 branches missed.">        switch (opcode) {</span>
+            case Opcodes.NOP:
+            case Opcodes.INEG:
+            case Opcodes.LNEG:
+            case Opcodes.FNEG:
+            case Opcodes.DNEG:
+            case Opcodes.I2B:
+            case Opcodes.I2C:
+            case Opcodes.I2S:
+            case Opcodes.GOTO:
+            case Opcodes.RETURN:
+<span class="fc" id="L849">                break;</span>
+            case Opcodes.ACONST_NULL:
+<span class="fc" id="L851">                push(NULL);</span>
+<span class="fc" id="L852">                break;</span>
+            case Opcodes.ICONST_M1:
+            case Opcodes.ICONST_0:
+            case Opcodes.ICONST_1:
+            case Opcodes.ICONST_2:
+            case Opcodes.ICONST_3:
+            case Opcodes.ICONST_4:
+            case Opcodes.ICONST_5:
+            case Opcodes.BIPUSH:
+            case Opcodes.SIPUSH:
+            case Opcodes.ILOAD:
+<span class="fc" id="L863">                push(INTEGER);</span>
+<span class="fc" id="L864">                break;</span>
+            case Opcodes.LCONST_0:
+            case Opcodes.LCONST_1:
+            case Opcodes.LLOAD:
+<span class="nc" id="L868">                push(LONG);</span>
+<span class="nc" id="L869">                push(TOP);</span>
+<span class="nc" id="L870">                break;</span>
+            case Opcodes.FCONST_0:
+            case Opcodes.FCONST_1:
+            case Opcodes.FCONST_2:
+            case Opcodes.FLOAD:
+<span class="nc" id="L875">                push(FLOAT);</span>
+<span class="nc" id="L876">                break;</span>
+            case Opcodes.DCONST_0:
+            case Opcodes.DCONST_1:
+            case Opcodes.DLOAD:
+<span class="fc" id="L880">                push(DOUBLE);</span>
+<span class="fc" id="L881">                push(TOP);</span>
+<span class="fc" id="L882">                break;</span>
+            case Opcodes.LDC:
+<span class="pc bpc" id="L884" title="3 of 6 branches missed.">                switch (item.type) {</span>
+                    case ClassWriter.INT:
+<span class="fc" id="L886">                        push(INTEGER);</span>
+<span class="fc" id="L887">                        break;</span>
+                    case ClassWriter.LONG:
+<span class="nc" id="L889">                        push(LONG);</span>
+<span class="nc" id="L890">                        push(TOP);</span>
+<span class="nc" id="L891">                        break;</span>
+                    case ClassWriter.FLOAT:
+<span class="nc" id="L893">                        push(FLOAT);</span>
+<span class="nc" id="L894">                        break;</span>
+                    case ClassWriter.DOUBLE:
+<span class="nc" id="L896">                        push(DOUBLE);</span>
+<span class="nc" id="L897">                        push(TOP);</span>
+<span class="nc" id="L898">                        break;</span>
+                    case ClassWriter.CLASS:
+<span class="fc" id="L900">                        push(OBJECT | cw.addType(&quot;java/lang/Class&quot;));</span>
+<span class="fc" id="L901">                        break;</span>
+                    // case ClassWriter.STR:
+                    default:
+<span class="fc" id="L904">                        push(OBJECT | cw.addType(&quot;java/lang/String&quot;));</span>
+                }
+<span class="fc" id="L906">                break;</span>
+            case Opcodes.ALOAD:
+<span class="fc" id="L908">                push(get(arg));</span>
+<span class="fc" id="L909">                break;</span>
+            case Opcodes.IALOAD:
+            case Opcodes.BALOAD:
+            case Opcodes.CALOAD:
+            case Opcodes.SALOAD:
+<span class="fc" id="L914">                pop(2);</span>
+<span class="fc" id="L915">                push(INTEGER);</span>
+<span class="fc" id="L916">                break;</span>
+            case Opcodes.LALOAD:
+            case Opcodes.D2L:
+<span class="nc" id="L919">                pop(2);</span>
+<span class="nc" id="L920">                push(LONG);</span>
+<span class="nc" id="L921">                push(TOP);</span>
+<span class="nc" id="L922">                break;</span>
+            case Opcodes.FALOAD:
+<span class="nc" id="L924">                pop(2);</span>
+<span class="nc" id="L925">                push(FLOAT);</span>
+<span class="nc" id="L926">                break;</span>
+            case Opcodes.DALOAD:
+            case Opcodes.L2D:
+<span class="nc" id="L929">                pop(2);</span>
+<span class="nc" id="L930">                push(DOUBLE);</span>
+<span class="nc" id="L931">                push(TOP);</span>
+<span class="nc" id="L932">                break;</span>
+            case Opcodes.AALOAD:
+<span class="fc" id="L934">                pop(1);</span>
+<span class="fc" id="L935">                t1 = pop();</span>
+<span class="fc" id="L936">                push(ELEMENT_OF + t1);</span>
+<span class="fc" id="L937">                break;</span>
+            case Opcodes.ISTORE:
+            case Opcodes.FSTORE:
+            case Opcodes.ASTORE:
+<span class="fc" id="L941">                t1 = pop();</span>
+<span class="fc" id="L942">                set(arg, t1);</span>
+<span class="fc bfc" id="L943" title="All 2 branches covered.">                if (arg &gt; 0) {</span>
+<span class="fc" id="L944">                    t2 = get(arg - 1);</span>
+                    // if t2 is of kind STACK or LOCAL we cannot know its size!
+<span class="pc bpc" id="L946" title="2 of 4 branches missed.">                    if (t2 == LONG || t2 == DOUBLE) {</span>
+<span class="nc" id="L947">                        set(arg - 1, TOP);</span>
+<span class="fc bfc" id="L948" title="All 2 branches covered.">                    } else if ((t2 &amp; KIND) != BASE) {</span>
+<span class="fc" id="L949">                        set(arg - 1, t2 | TOP_IF_LONG_OR_DOUBLE);</span>
+                    }
+                }
+                break;
+            case Opcodes.LSTORE:
+            case Opcodes.DSTORE:
+<span class="nc" id="L955">                pop(1);</span>
+<span class="nc" id="L956">                t1 = pop();</span>
+<span class="nc" id="L957">                set(arg, t1);</span>
+<span class="nc" id="L958">                set(arg + 1, TOP);</span>
+<span class="nc bnc" id="L959" title="All 2 branches missed.">                if (arg &gt; 0) {</span>
+<span class="nc" id="L960">                    t2 = get(arg - 1);</span>
+                    // if t2 is of kind STACK or LOCAL we cannot know its size!
+<span class="nc bnc" id="L962" title="All 4 branches missed.">                    if (t2 == LONG || t2 == DOUBLE) {</span>
+<span class="nc" id="L963">                        set(arg - 1, TOP);</span>
+<span class="nc bnc" id="L964" title="All 2 branches missed.">                    } else if ((t2 &amp; KIND) != BASE) {</span>
+<span class="nc" id="L965">                        set(arg - 1, t2 | TOP_IF_LONG_OR_DOUBLE);</span>
+                    }
+                }
+                break;
+            case Opcodes.IASTORE:
+            case Opcodes.BASTORE:
+            case Opcodes.CASTORE:
+            case Opcodes.SASTORE:
+            case Opcodes.FASTORE:
+            case Opcodes.AASTORE:
+<span class="fc" id="L975">                pop(3);</span>
+<span class="fc" id="L976">                break;</span>
+            case Opcodes.LASTORE:
+            case Opcodes.DASTORE:
+<span class="nc" id="L979">                pop(4);</span>
+<span class="nc" id="L980">                break;</span>
+            case Opcodes.POP:
+            case Opcodes.IFEQ:
+            case Opcodes.IFNE:
+            case Opcodes.IFLT:
+            case Opcodes.IFGE:
+            case Opcodes.IFGT:
+            case Opcodes.IFLE:
+            case Opcodes.IRETURN:
+            case Opcodes.FRETURN:
+            case Opcodes.ARETURN:
+            case Opcodes.TABLESWITCH:
+            case Opcodes.LOOKUPSWITCH:
+            case Opcodes.ATHROW:
+            case Opcodes.MONITORENTER:
+            case Opcodes.MONITOREXIT:
+            case Opcodes.IFNULL:
+            case Opcodes.IFNONNULL:
+<span class="fc" id="L998">                pop(1);</span>
+<span class="fc" id="L999">                break;</span>
+            case Opcodes.POP2:
+            case Opcodes.IF_ICMPEQ:
+            case Opcodes.IF_ICMPNE:
+            case Opcodes.IF_ICMPLT:
+            case Opcodes.IF_ICMPGE:
+            case Opcodes.IF_ICMPGT:
+            case Opcodes.IF_ICMPLE:
+            case Opcodes.IF_ACMPEQ:
+            case Opcodes.IF_ACMPNE:
+            case Opcodes.LRETURN:
+            case Opcodes.DRETURN:
+<span class="fc" id="L1011">                pop(2);</span>
+<span class="fc" id="L1012">                break;</span>
+            case Opcodes.DUP:
+<span class="fc" id="L1014">                t1 = pop();</span>
+<span class="fc" id="L1015">                push(t1);</span>
+<span class="fc" id="L1016">                push(t1);</span>
+<span class="fc" id="L1017">                break;</span>
+            case Opcodes.DUP_X1:
+<span class="fc" id="L1019">                t1 = pop();</span>
+<span class="fc" id="L1020">                t2 = pop();</span>
+<span class="fc" id="L1021">                push(t1);</span>
+<span class="fc" id="L1022">                push(t2);</span>
+<span class="fc" id="L1023">                push(t1);</span>
+<span class="fc" id="L1024">                break;</span>
+            case Opcodes.DUP_X2:
+<span class="fc" id="L1026">                t1 = pop();</span>
+<span class="fc" id="L1027">                t2 = pop();</span>
+<span class="fc" id="L1028">                t3 = pop();</span>
+<span class="fc" id="L1029">                push(t1);</span>
+<span class="fc" id="L1030">                push(t3);</span>
+<span class="fc" id="L1031">                push(t2);</span>
+<span class="fc" id="L1032">                push(t1);</span>
+<span class="fc" id="L1033">                break;</span>
+            case Opcodes.DUP2:
+<span class="nc" id="L1035">                t1 = pop();</span>
+<span class="nc" id="L1036">                t2 = pop();</span>
+<span class="nc" id="L1037">                push(t2);</span>
+<span class="nc" id="L1038">                push(t1);</span>
+<span class="nc" id="L1039">                push(t2);</span>
+<span class="nc" id="L1040">                push(t1);</span>
+<span class="nc" id="L1041">                break;</span>
+            case Opcodes.DUP2_X1:
+<span class="nc" id="L1043">                t1 = pop();</span>
+<span class="nc" id="L1044">                t2 = pop();</span>
+<span class="nc" id="L1045">                t3 = pop();</span>
+<span class="nc" id="L1046">                push(t2);</span>
+<span class="nc" id="L1047">                push(t1);</span>
+<span class="nc" id="L1048">                push(t3);</span>
+<span class="nc" id="L1049">                push(t2);</span>
+<span class="nc" id="L1050">                push(t1);</span>
+<span class="nc" id="L1051">                break;</span>
+            case Opcodes.DUP2_X2:
+<span class="nc" id="L1053">                t1 = pop();</span>
+<span class="nc" id="L1054">                t2 = pop();</span>
+<span class="nc" id="L1055">                t3 = pop();</span>
+<span class="nc" id="L1056">                t4 = pop();</span>
+<span class="nc" id="L1057">                push(t2);</span>
+<span class="nc" id="L1058">                push(t1);</span>
+<span class="nc" id="L1059">                push(t4);</span>
+<span class="nc" id="L1060">                push(t3);</span>
+<span class="nc" id="L1061">                push(t2);</span>
+<span class="nc" id="L1062">                push(t1);</span>
+<span class="nc" id="L1063">                break;</span>
+            case Opcodes.SWAP:
+<span class="nc" id="L1065">                t1 = pop();</span>
+<span class="nc" id="L1066">                t2 = pop();</span>
+<span class="nc" id="L1067">                push(t1);</span>
+<span class="nc" id="L1068">                push(t2);</span>
+<span class="nc" id="L1069">                break;</span>
+            case Opcodes.IADD:
+            case Opcodes.ISUB:
+            case Opcodes.IMUL:
+            case Opcodes.IDIV:
+            case Opcodes.IREM:
+            case Opcodes.IAND:
+            case Opcodes.IOR:
+            case Opcodes.IXOR:
+            case Opcodes.ISHL:
+            case Opcodes.ISHR:
+            case Opcodes.IUSHR:
+            case Opcodes.L2I:
+            case Opcodes.D2I:
+            case Opcodes.FCMPL:
+            case Opcodes.FCMPG:
+<span class="fc" id="L1085">                pop(2);</span>
+<span class="fc" id="L1086">                push(INTEGER);</span>
+<span class="fc" id="L1087">                break;</span>
+            case Opcodes.LADD:
+            case Opcodes.LSUB:
+            case Opcodes.LMUL:
+            case Opcodes.LDIV:
+            case Opcodes.LREM:
+            case Opcodes.LAND:
+            case Opcodes.LOR:
+            case Opcodes.LXOR:
+<span class="nc" id="L1096">                pop(4);</span>
+<span class="nc" id="L1097">                push(LONG);</span>
+<span class="nc" id="L1098">                push(TOP);</span>
+<span class="nc" id="L1099">                break;</span>
+            case Opcodes.FADD:
+            case Opcodes.FSUB:
+            case Opcodes.FMUL:
+            case Opcodes.FDIV:
+            case Opcodes.FREM:
+            case Opcodes.L2F:
+            case Opcodes.D2F:
+<span class="nc" id="L1107">                pop(2);</span>
+<span class="nc" id="L1108">                push(FLOAT);</span>
+<span class="nc" id="L1109">                break;</span>
+            case Opcodes.DADD:
+            case Opcodes.DSUB:
+            case Opcodes.DMUL:
+            case Opcodes.DDIV:
+            case Opcodes.DREM:
+<span class="nc" id="L1115">                pop(4);</span>
+<span class="nc" id="L1116">                push(DOUBLE);</span>
+<span class="nc" id="L1117">                push(TOP);</span>
+<span class="nc" id="L1118">                break;</span>
+            case Opcodes.LSHL:
+            case Opcodes.LSHR:
+            case Opcodes.LUSHR:
+<span class="nc" id="L1122">                pop(3);</span>
+<span class="nc" id="L1123">                push(LONG);</span>
+<span class="nc" id="L1124">                push(TOP);</span>
+<span class="nc" id="L1125">                break;</span>
+            case Opcodes.IINC:
+<span class="fc" id="L1127">                set(arg, INTEGER);</span>
+<span class="fc" id="L1128">                break;</span>
+            case Opcodes.I2L:
+            case Opcodes.F2L:
+<span class="nc" id="L1131">                pop(1);</span>
+<span class="nc" id="L1132">                push(LONG);</span>
+<span class="nc" id="L1133">                push(TOP);</span>
+<span class="nc" id="L1134">                break;</span>
+            case Opcodes.I2F:
+<span class="nc" id="L1136">                pop(1);</span>
+<span class="nc" id="L1137">                push(FLOAT);</span>
+<span class="nc" id="L1138">                break;</span>
+            case Opcodes.I2D:
+            case Opcodes.F2D:
+<span class="nc" id="L1141">                pop(1);</span>
+<span class="nc" id="L1142">                push(DOUBLE);</span>
+<span class="nc" id="L1143">                push(TOP);</span>
+<span class="nc" id="L1144">                break;</span>
+            case Opcodes.F2I:
+            case Opcodes.ARRAYLENGTH:
+            case Opcodes.INSTANCEOF:
+<span class="fc" id="L1148">                pop(1);</span>
+<span class="fc" id="L1149">                push(INTEGER);</span>
+<span class="fc" id="L1150">                break;</span>
+            case Opcodes.LCMP:
+            case Opcodes.DCMPL:
+            case Opcodes.DCMPG:
+<span class="nc" id="L1154">                pop(4);</span>
+<span class="nc" id="L1155">                push(INTEGER);</span>
+<span class="nc" id="L1156">                break;</span>
+            case Opcodes.JSR:
+            case Opcodes.RET:
+<span class="nc" id="L1159">                throw new RuntimeException(&quot;JSR/RET are not supported with computeFrames option&quot;);</span>
+            case Opcodes.GETSTATIC:
+<span class="fc" id="L1161">                push(cw, item.strVal3);</span>
+<span class="fc" id="L1162">                break;</span>
+            case Opcodes.PUTSTATIC:
+<span class="fc" id="L1164">                pop(item.strVal3);</span>
+<span class="fc" id="L1165">                break;</span>
+            case Opcodes.GETFIELD:
+<span class="fc" id="L1167">                pop(1);</span>
+<span class="fc" id="L1168">                push(cw, item.strVal3);</span>
+<span class="fc" id="L1169">                break;</span>
+            case Opcodes.PUTFIELD:
+<span class="fc" id="L1171">                pop(item.strVal3);</span>
+<span class="fc" id="L1172">                pop();</span>
+<span class="fc" id="L1173">                break;</span>
+            case Opcodes.INVOKEVIRTUAL:
+            case Opcodes.INVOKESPECIAL:
+            case Opcodes.INVOKESTATIC:
+            case Opcodes.INVOKEINTERFACE:
+<span class="fc" id="L1178">                pop(item.strVal3);</span>
+<span class="fc bfc" id="L1179" title="All 2 branches covered.">                if (opcode != Opcodes.INVOKESTATIC) {</span>
+<span class="fc" id="L1180">                    t1 = pop();</span>
+<span class="fc bfc" id="L1181" title="All 2 branches covered.">                    if (opcode == Opcodes.INVOKESPECIAL</span>
+<span class="fc bfc" id="L1182" title="All 2 branches covered.">                            &amp;&amp; item.strVal2.charAt(0) == '&lt;')</span>
+                    {
+<span class="fc" id="L1184">                        init(t1);</span>
+                    }
+                }
+<span class="fc" id="L1187">                push(cw, item.strVal3);</span>
+<span class="fc" id="L1188">                break;</span>
+            case Opcodes.INVOKEDYNAMIC:
+<span class="nc" id="L1190">                pop(item.strVal2);</span>
+<span class="nc" id="L1191">                push(cw, item.strVal2);</span>
+<span class="nc" id="L1192">                break;</span>
+            case Opcodes.NEW:
+<span class="fc" id="L1194">                push(UNINITIALIZED | cw.addUninitializedType(item.strVal1, arg));</span>
+<span class="fc" id="L1195">                break;</span>
+            case Opcodes.NEWARRAY:
+<span class="fc" id="L1197">                pop();</span>
+<span class="pc bpc" id="L1198" title="7 of 8 branches missed.">                switch (arg) {</span>
+                    case Opcodes.T_BOOLEAN:
+<span class="nc" id="L1200">                        push(ARRAY_OF | BOOLEAN);</span>
+<span class="nc" id="L1201">                        break;</span>
+                    case Opcodes.T_CHAR:
+<span class="nc" id="L1203">                        push(ARRAY_OF | CHAR);</span>
+<span class="nc" id="L1204">                        break;</span>
+                    case Opcodes.T_BYTE:
+<span class="nc" id="L1206">                        push(ARRAY_OF | BYTE);</span>
+<span class="nc" id="L1207">                        break;</span>
+                    case Opcodes.T_SHORT:
+<span class="nc" id="L1209">                        push(ARRAY_OF | SHORT);</span>
+<span class="nc" id="L1210">                        break;</span>
+                    case Opcodes.T_INT:
+<span class="fc" id="L1212">                        push(ARRAY_OF | INTEGER);</span>
+<span class="fc" id="L1213">                        break;</span>
+                    case Opcodes.T_FLOAT:
+<span class="nc" id="L1215">                        push(ARRAY_OF | FLOAT);</span>
+<span class="nc" id="L1216">                        break;</span>
+                    case Opcodes.T_DOUBLE:
+<span class="nc" id="L1218">                        push(ARRAY_OF | DOUBLE);</span>
+<span class="nc" id="L1219">                        break;</span>
+                    // case Opcodes.T_LONG:
+                    default:
+<span class="nc" id="L1222">                        push(ARRAY_OF | LONG);</span>
+<span class="nc" id="L1223">                        break;</span>
+                }
+                break;
+            case Opcodes.ANEWARRAY:
+<span class="fc" id="L1227">                String s = item.strVal1;</span>
+<span class="fc" id="L1228">                pop();</span>
+<span class="pc bpc" id="L1229" title="1 of 2 branches missed.">                if (s.charAt(0) == '[') {</span>
+<span class="nc" id="L1230">                    push(cw, '[' + s);</span>
+                } else {
+<span class="fc" id="L1232">                    push(ARRAY_OF | OBJECT | cw.addType(s));</span>
+                }
+<span class="fc" id="L1234">                break;</span>
+            case Opcodes.CHECKCAST:
+<span class="fc" id="L1236">                s = item.strVal1;</span>
+<span class="fc" id="L1237">                pop();</span>
+<span class="fc bfc" id="L1238" title="All 2 branches covered.">                if (s.charAt(0) == '[') {</span>
+<span class="fc" id="L1239">                    push(cw, s);</span>
+                } else {
+<span class="fc" id="L1241">                    push(OBJECT | cw.addType(s));</span>
+                }
+<span class="fc" id="L1243">                break;</span>
+            // case Opcodes.MULTIANEWARRAY:
+            default:
+<span class="fc" id="L1246">                pop(arg);</span>
+<span class="fc" id="L1247">                push(cw, item.strVal1);</span>
+                break;
+        }
+<span class="fc" id="L1250">    }</span>
+
+    /**
+     * Merges the input frame of the given basic block with the input and output
+     * frames of this basic block. Returns &lt;tt&gt;true&lt;/tt&gt; if the input frame of
+     * the given label has been changed by this operation.
+     * 
+     * @param cw the ClassWriter to which this label belongs.
+     * @param frame the basic block whose input frame must be updated.
+     * @param edge the kind of the {@link Edge} between this label and 'label'.
+     *        See {@link Edge#info}.
+     * @return &lt;tt&gt;true&lt;/tt&gt; if the input frame of the given label has been
+     *         changed by this operation.
+     */
+    boolean merge(final ClassWriter cw, final Frame frame, final int edge) {
+<span class="fc" id="L1265">        boolean changed = false;</span>
+        int i, s, dim, kind, t;
+
+<span class="fc" id="L1268">        int nLocal = inputLocals.length;</span>
+<span class="fc" id="L1269">        int nStack = inputStack.length;</span>
+<span class="fc bfc" id="L1270" title="All 2 branches covered.">        if (frame.inputLocals == null) {</span>
+<span class="fc" id="L1271">            frame.inputLocals = new int[nLocal];</span>
+<span class="fc" id="L1272">            changed = true;</span>
+        }
+
+<span class="fc bfc" id="L1275" title="All 2 branches covered.">        for (i = 0; i &lt; nLocal; ++i) {</span>
+<span class="fc bfc" id="L1276" title="All 4 branches covered.">            if (outputLocals != null &amp;&amp; i &lt; outputLocals.length) {</span>
+<span class="fc" id="L1277">                s = outputLocals[i];</span>
+<span class="fc bfc" id="L1278" title="All 2 branches covered.">                if (s == 0) {</span>
+<span class="fc" id="L1279">                    t = inputLocals[i];</span>
+                } else {
+<span class="fc" id="L1281">                    dim = s &amp; DIM;</span>
+<span class="fc" id="L1282">                    kind = s &amp; KIND;</span>
+<span class="fc bfc" id="L1283" title="All 2 branches covered.">                    if (kind == BASE) {</span>
+<span class="fc" id="L1284">                        t = s;</span>
+                    } else {
+<span class="fc bfc" id="L1286" title="All 2 branches covered.">                        if (kind == LOCAL) {</span>
+<span class="fc" id="L1287">                            t = dim + inputLocals[s &amp; VALUE];</span>
+                        } else {
+<span class="fc" id="L1289">                            t = dim + inputStack[nStack - (s &amp; VALUE)];</span>
+                        }
+<span class="pc bpc" id="L1291" title="2 of 6 branches missed.">                        if ((s &amp; TOP_IF_LONG_OR_DOUBLE) != 0 &amp;&amp; (t == LONG || t == DOUBLE)) {</span>
+<span class="nc" id="L1292">                            t = TOP;</span>
+                        }
+                    }
+                }
+            } else {
+<span class="fc" id="L1297">                t = inputLocals[i];</span>
+            }
+<span class="fc bfc" id="L1299" title="All 2 branches covered.">            if (initializations != null) {</span>
+<span class="fc" id="L1300">                t = init(cw, t);</span>
+            }
+<span class="fc" id="L1302">            changed |= merge(cw, t, frame.inputLocals, i);</span>
+        }
+
+<span class="fc bfc" id="L1305" title="All 2 branches covered.">        if (edge &gt; 0) {</span>
+<span class="fc bfc" id="L1306" title="All 2 branches covered.">            for (i = 0; i &lt; nLocal; ++i) {</span>
+<span class="fc" id="L1307">                t = inputLocals[i];</span>
+<span class="fc" id="L1308">                changed |= merge(cw, t, frame.inputLocals, i);</span>
+            }
+<span class="fc bfc" id="L1310" title="All 2 branches covered.">            if (frame.inputStack == null) {</span>
+<span class="fc" id="L1311">                frame.inputStack = new int[1];</span>
+<span class="fc" id="L1312">                changed = true;</span>
+            }
+<span class="fc" id="L1314">            changed |= merge(cw, edge, frame.inputStack, 0);</span>
+<span class="fc" id="L1315">            return changed;</span>
+        }
+
+<span class="fc" id="L1318">        int nInputStack = inputStack.length + owner.inputStackTop;</span>
+<span class="fc bfc" id="L1319" title="All 2 branches covered.">        if (frame.inputStack == null) {</span>
+<span class="fc" id="L1320">            frame.inputStack = new int[nInputStack + outputStackTop];</span>
+<span class="fc" id="L1321">            changed = true;</span>
+        }
+
+<span class="fc bfc" id="L1324" title="All 2 branches covered.">        for (i = 0; i &lt; nInputStack; ++i) {</span>
+<span class="fc" id="L1325">            t = inputStack[i];</span>
+<span class="pc bpc" id="L1326" title="1 of 2 branches missed.">            if (initializations != null) {</span>
+<span class="nc" id="L1327">                t = init(cw, t);</span>
+            }
+<span class="fc" id="L1329">            changed |= merge(cw, t, frame.inputStack, i);</span>
+        }
+<span class="fc bfc" id="L1331" title="All 2 branches covered.">        for (i = 0; i &lt; outputStackTop; ++i) {</span>
+<span class="fc" id="L1332">            s = outputStack[i];</span>
+<span class="fc" id="L1333">            dim = s &amp; DIM;</span>
+<span class="fc" id="L1334">            kind = s &amp; KIND;</span>
+<span class="fc bfc" id="L1335" title="All 2 branches covered.">            if (kind == BASE) {</span>
+<span class="fc" id="L1336">                t = s;</span>
+            } else {
+<span class="pc bpc" id="L1338" title="1 of 2 branches missed.">                if (kind == LOCAL) {</span>
+<span class="fc" id="L1339">                    t = dim + inputLocals[s &amp; VALUE];</span>
+                } else {
+<span class="nc" id="L1341">                    t = dim + inputStack[nStack - (s &amp; VALUE)];</span>
+                }
+<span class="pc bpc" id="L1343" title="5 of 6 branches missed.">                if ((s &amp; TOP_IF_LONG_OR_DOUBLE) != 0 &amp;&amp; (t == LONG || t == DOUBLE)) {</span>
+<span class="nc" id="L1344">                    t = TOP;</span>
+                }
+            }
+<span class="fc bfc" id="L1347" title="All 2 branches covered.">            if (initializations != null) {</span>
+<span class="fc" id="L1348">                t = init(cw, t);</span>
+            }
+<span class="fc" id="L1350">            changed |= merge(cw, t, frame.inputStack, nInputStack + i);</span>
+        }
+<span class="fc" id="L1352">        return changed;</span>
+    }
+
+    /**
+     * Merges the type at the given index in the given type array with the given
+     * type. Returns &lt;tt&gt;true&lt;/tt&gt; if the type array has been modified by this
+     * operation.
+     * 
+     * @param cw the ClassWriter to which this label belongs.
+     * @param t the type with which the type array element must be merged.
+     * @param types an array of types.
+     * @param index the index of the type that must be merged in 'types'.
+     * @return &lt;tt&gt;true&lt;/tt&gt; if the type array has been modified by this
+     *         operation.
+     */
+    private static boolean merge(
+        final ClassWriter cw,
+        int t,
+        final int[] types,
+        final int index)
+    {
+<span class="fc" id="L1373">        int u = types[index];</span>
+<span class="fc bfc" id="L1374" title="All 2 branches covered.">        if (u == t) {</span>
+            // if the types are equal, merge(u,t)=u, so there is no change
+<span class="fc" id="L1376">            return false;</span>
+        }
+<span class="fc bfc" id="L1378" title="All 2 branches covered.">        if ((t &amp; ~DIM) == NULL) {</span>
+<span class="pc bpc" id="L1379" title="1 of 2 branches missed.">            if (u == NULL) {</span>
+<span class="nc" id="L1380">                return false;</span>
+            }
+<span class="fc" id="L1382">            t = NULL;</span>
+        }
+<span class="fc bfc" id="L1384" title="All 2 branches covered.">        if (u == 0) {</span>
+            // if types[index] has never been assigned, merge(u,t)=t
+<span class="fc" id="L1386">            types[index] = t;</span>
+<span class="fc" id="L1387">            return true;</span>
+        }
+        int v;
+<span class="pc bpc" id="L1390" title="1 of 4 branches missed.">        if ((u &amp; BASE_KIND) == OBJECT || (u &amp; DIM) != 0) {</span>
+            // if u is a reference type of any dimension
+<span class="fc bfc" id="L1392" title="All 2 branches covered.">            if (t == NULL) {</span>
+                // if t is the NULL type, merge(u,t)=u, so there is no change
+<span class="fc" id="L1394">                return false;</span>
+<span class="fc bfc" id="L1395" title="All 2 branches covered.">            } else if ((t &amp; (DIM | BASE_KIND)) == (u &amp; (DIM | BASE_KIND))) {</span>
+<span class="pc bpc" id="L1396" title="1 of 2 branches missed.">                if ((u &amp; BASE_KIND) == OBJECT) {</span>
+                    // if t is also a reference type, and if u and t have the
+                    // same dimension merge(u,t) = dim(t) | common parent of the
+                    // element types of u and t
+<span class="fc" id="L1400">                    v = (t &amp; DIM) | OBJECT</span>
+<span class="fc" id="L1401">                            | cw.getMergedType(t &amp; BASE_VALUE, u &amp; BASE_VALUE);</span>
+                } else {
+                    // if u and t are array types, but not with the same element
+                    // type, merge(u,t)=java/lang/Object
+<span class="nc" id="L1405">                    v = OBJECT | cw.addType(&quot;java/lang/Object&quot;);</span>
+                }
+<span class="pc bpc" id="L1407" title="1 of 4 branches missed.">            } else if ((t &amp; BASE_KIND) == OBJECT || (t &amp; DIM) != 0) {</span>
+                // if t is any other reference or array type,
+                // merge(u,t)=java/lang/Object
+<span class="fc" id="L1410">                v = OBJECT | cw.addType(&quot;java/lang/Object&quot;);</span>
+            } else {
+                // if t is any other type, merge(u,t)=TOP
+<span class="fc" id="L1413">                v = TOP;</span>
+            }
+<span class="fc bfc" id="L1415" title="All 2 branches covered.">        } else if (u == NULL) {</span>
+            // if u is the NULL type, merge(u,t)=t,
+            // or TOP if t is not a reference type
+<span class="pc bpc" id="L1418" title="3 of 4 branches missed.">            v = (t &amp; BASE_KIND) == OBJECT || (t &amp; DIM) != 0 ? t : TOP;</span>
+        } else {
+            // if u is any other type, merge(u,t)=TOP whatever t
+<span class="fc" id="L1421">            v = TOP;</span>
+        }
+<span class="fc bfc" id="L1423" title="All 2 branches covered.">        if (u != v) {</span>
+<span class="fc" id="L1424">            types[index] = v;</span>
+<span class="fc" id="L1425">            return true;</span>
+        }
+<span class="fc" id="L1427">        return false;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

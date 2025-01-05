@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ContigCoverageMapBuilder.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.assembly.util</a> &gt; <span class="el_source">ContigCoverageMapBuilder.java</span></div><h1>ContigCoverageMapBuilder.java</h1><pre class="source lang-java linenums">package org.jcvi.jillion.assembly.util;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.jcvi.jillion.assembly.AssembledRead;
+import org.jcvi.jillion.assembly.Contig;
+import org.jcvi.jillion.core.io.IOUtil;
+import org.jcvi.jillion.core.util.MapUtil;
+import org.jcvi.jillion.core.util.iter.StreamingIterator;
+/**
+ * {@code ContigCoverageMapBuilder} will build
+ * a {@link CoverageMap} where each {@link CoverageRegion}
+ * will contain {@link AssembledRead}s.
+ * 
+ * The Builder has optional methods for filtering
+ * what reads get included in the CoverageMap to be built.
+ * Once all the options have been set, {@link #build()}
+ * will construct the actual {@link CoverageMap} instance.
+ * 
+ * @author dkatzel
+ *
+ * @param &lt;R&gt; the {@link AssembledRead} type in the Contig
+ * that will be used to back the {@link CoverageMap}.
+ */
+public final class ContigCoverageMapBuilder&lt;R extends AssembledRead&gt; {
+
+	
+	private static final int NOT_SET = -1;
+	private final Contig&lt;R&gt; contig;
+	
+<span class="nc" id="L32">	private ReadFilter&lt;? super R&gt; filter = null;</span>
+	
+<span class="nc" id="L34">	private int maxCoverage=NOT_SET;</span>
+	
+<span class="nc" id="L36">	private boolean useUngappedCoordinates=false;</span>
+	
+
+	
+	/**
+	 * Create a new Builder instance that will
+	 * use the given contig to eventually
+	 * build a {@link CoverageMap}.
+	 * @param contig the contig to use;
+	 * should not be null.
+	 * @throws NullPointerException if contig is null.
+	 */
+<span class="nc" id="L48">	public ContigCoverageMapBuilder(Contig&lt;R&gt; contig){</span>
+<span class="nc bnc" id="L49" title="All 2 branches missed.">		if(contig ==null){</span>
+<span class="nc" id="L50">			throw new NullPointerException(&quot;contig can not be null&quot;);</span>
+		}
+<span class="nc" id="L52">		this.contig = contig;</span>
+<span class="nc" id="L53">	}</span>
+	/**
+	 * Set the maximum coverage depth any {@link CoverageRegion}
+	 * in the resulting CoverageMap will have,
+	 * any {@link AssembledRead} in the {@link Contig}
+	 *  that provides additional coverage than
+	 * the specified max will not be included in the CoverageMap. 
+	 * This exclusion is performed AFTER any read filtering
+	 * performed by the filter specified by
+	 * {@link #filter(ReadFilter)}.  So it is possible for 
+	 * a {@link ReadFilter} to accept a read and still have that
+	 * read excluded due to the maxCoverage threshold.
+	 * &lt;p/&gt;
+	 * This exclusion is performed by computing
+	 * read arrival and departure values so the first reads
+	 * providing coverage by start coordinate will be included while
+	 * the &quot;maxCoverage-th&quot; read will be excluded:
+	 * 
+	 * In the following diagram, if maxCoverage is set to 4,
+	 * then read7 will be excluded because it causes 5x coverage
+	 * at some of its offsets.
+	 * &lt;pre&gt;
+	 * ---------------------------
+	 * 1x|	=read1=   =read5=
+	 * 2x|	  =read2=    =read6=
+	 * 3x|	  =read3=     =read8=
+	 * 4x|	    =read4=   
+	 * 5x|	     =read7=
+	 * &lt;/pre&gt;
+	 * @param maxCoverage the maxCoverage any {@link CoverageRegion}
+	 * will be allowed to have; must be &gt;=0.
+	 * @return this
+	 */
+	public ContigCoverageMapBuilder&lt;R&gt; maxAllowedCoverage(int maxCoverage){
+<span class="nc bnc" id="L87" title="All 2 branches missed.">		if(maxCoverage&lt;0){</span>
+<span class="nc" id="L88">			throw new IllegalArgumentException(&quot;maxCoverage must be positive&quot;);</span>
+		}
+<span class="nc" id="L90">		this.maxCoverage = maxCoverage;</span>
+<span class="nc" id="L91">		return this;</span>
+	}
+	/**
+	 * Apply the given {@link ReadFilter} to each {@link AssembledRead}
+	 * in the contig, only reads that are accepted by the filter
+	 * will be considered when building the {@link CoverageMap}.
+	 * The filter will be called by the {@link #build()}
+	 * but before any reads are excluded by the max coverage threshold.
+	 * @param filter the {@link ReadFilter} to use, can not be null;
+	 * if no filter is required, do not call this method.
+	 * @return this
+	 * @see #maxAllowedCoverage(int)
+	 * @throws NullPointerException if filter is null.
+	 */
+	public ContigCoverageMapBuilder&lt;R&gt; filter(ReadFilter&lt;? super R&gt; filter){
+<span class="nc bnc" id="L106" title="All 2 branches missed.">		if(filter==null){</span>
+<span class="nc" id="L107">			throw new IllegalArgumentException(&quot;filter can not be null&quot;);</span>
+		}
+<span class="nc" id="L109">		this.filter = filter;</span>
+<span class="nc" id="L110">		return this;</span>
+	}
+	/**
+	 * Calling this method will force the resulting CoverageMap
+	 * to use each read's ungapped consensus start and end 
+	 * values instead of the read's gapped consensus start and end values.
+	 * Coordinates are only determined by the consensus gapped vs ungapped coordiantes
+	 * so if a read has it's own gaps but the corresponding consensus offset is not a 
+	 * gap then the coordinate is unchanged.  Conversely, if the read has a non-gap,
+	 * but the consensus is a gap, then the coverageRegion will be adjusted.
+	 * @return this.
+	 */
+	public ContigCoverageMapBuilder&lt;R&gt; useUngappedCoordinates(){
+<span class="nc" id="L123">		useUngappedCoordinates = true;</span>
+<span class="nc" id="L124">		return this;</span>
+	}
+	/**
+	 * Create a new {@link CoverageMap} instance using the contig provided
+	 * by this constructor and filtered by any options set.
+	 * @return a new {@link CoverageMap}; will never be null
+	 * but may be empty.
+	 */
+	public CoverageMap&lt;R&gt; build(){
+<span class="nc" id="L133">		StreamingIterator&lt;R&gt; iter = null;</span>
+<span class="nc" id="L134">		List&lt;R&gt; readsToInclude = new ArrayList&lt;R&gt;(MapUtil.computeMinHashMapSizeWithoutRehashing(contig.getNumberOfReads()));</span>
+		try{
+<span class="nc" id="L136">			iter = contig.getReadIterator();</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">			while(iter.hasNext()){</span>
+<span class="nc" id="L138">				R read = iter.next();</span>
+<span class="nc bnc" id="L139" title="All 4 branches missed.">				if(filter==null || filter.accept(read)){</span>
+<span class="nc" id="L140">					readsToInclude.add(read);</span>
+				}
+<span class="nc" id="L142">			}</span>
+			final CoverageMap&lt;R&gt; gappedCoverageMap;
+<span class="nc bnc" id="L144" title="All 2 branches missed.">			if(maxCoverage == NOT_SET){</span>
+<span class="nc" id="L145">				gappedCoverageMap = CoverageMapFactory.create(readsToInclude);</span>
+			}else{
+<span class="nc" id="L147">				gappedCoverageMap = CoverageMapFactory.create(readsToInclude, maxCoverage);</span>
+			}
+<span class="nc bnc" id="L149" title="All 2 branches missed.">			if(useUngappedCoordinates){</span>
+<span class="nc" id="L150">				return CoverageMapFactory.createUngappedCoverageMap(contig.getConsensusSequence(), gappedCoverageMap);</span>
+			}else{
+<span class="nc" id="L152">				return gappedCoverageMap;</span>
+			}
+		}finally{
+<span class="nc" id="L155">			IOUtil.closeAndIgnoreErrors(iter);</span>
+		}
+	}
+	
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

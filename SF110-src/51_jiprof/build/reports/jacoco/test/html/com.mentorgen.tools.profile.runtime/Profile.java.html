@@ -1,0 +1,423 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Profile.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">51_jiprof</a> &gt; <a href="index.source.html" class="el_package">com.mentorgen.tools.profile.runtime</a> &gt; <span class="el_source">Profile.java</span></div><h1>Profile.java</h1><pre class="source lang-java linenums">/*
+Copyright (c) 2005-2006, MentorGen, LLC
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without 
+modification, are permitted provided that the following conditions are met:
+
++ Redistributions of source code must retain the above copyright notice, 
+  this list of conditions and the following disclaimer.
++ Redistributions in binary form must reproduce the above copyright notice, 
+  this list of conditions and the following disclaimer in the documentation 
+  and/or other materials provided with the distribution.
++ Neither the name of MentorGen LLC nor the names of its contributors may be 
+  used to endorse or promote products derived from this software without 
+  specific prior written permission.
+
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS &quot;AS IS&quot; 
+  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
+  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+  ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE 
+  LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
+  CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+  SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS 
+  INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN 
+  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) 
+  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
+  POSSIBILITY OF SUCH DAMAGE.
+ */
+package com.mentorgen.tools.profile.runtime;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import com.mentorgen.tools.profile.Controller;
+import com.mentorgen.tools.profile.output.ProfileDump;
+
+/**
+ * The &lt;code&gt;Profiler&lt;/code&gt; is the class that actually profiles the code.
+ * Code to be profiled is instrumented, when the byte code is loaded,
+ * to make calls to this class:
+ * &lt;ul&gt;
+ * 	&lt;li&gt;At the beginning of each method (calls &lt;code&gt;Profiler.start()&lt;/cdoe&gt;)&lt;/li&gt;
+ * 	&lt;li&gt;At the end of each method (that is, when return is called, which
+ * 		might not actaully be at the end of the method) 
+ * 		(calls &lt;code&gt;Profiler.end()&lt;/cdoe&gt;)&lt;/li&gt;
+ * 	&lt;li&gt;When an exception is thrown (also calls &lt;code&gt;Profiler.end()&lt;/cdoe&gt;)&lt;/li&gt;
+ * 	&lt;li&gt;Each time a constructor is called (optional)&lt;/li&gt;
+ * &lt;/ul&gt;
+ * 
+ * &lt;blockquote&gt;
+ * Note: Instrumenting code can interfer with line numbers that are added to
+ * the code for debugging. If you are debugging code and your stack traces
+ * don't have line numbers, don't use the profiler (ie, don't use &lt;code&gt;
+ * -javaagent)&lt;/code&gt;
+ * &lt;/blockquote&gt;
+ * 
+ * 
+ * @author Andrew Wilcox
+ *
+ */
+<span class="fc" id="L66">public final class Profile implements Runnable {</span>
+<span class="fc" id="L67">	private static boolean _debugStart = false;</span>
+<span class="fc" id="L68">	private static boolean _debugException = false;</span>
+	
+	private static ThreadDictionary _threadDictionary;
+	private static List&lt;Frame&gt; _frameList;
+	private static Map&lt;Long, Frame&gt; _threadActiveFrame;
+	private static Map&lt;String, Method&gt; _methodDictionary;
+	private static Object _lock;
+	
+	private static Map&lt;String, ClassAllocation&gt; _allocList;
+	
+	private static Controller _controller;
+	private static Thread _controllerThread;
+	
+	public static void initProfiler() {
+<span class="fc" id="L82">		System.err.println(&quot;Java Interactive Profiler: starting&quot;);</span>
+		
+<span class="fc" id="L84">		init();</span>
+<span class="fc" id="L85">		Runtime.getRuntime().addShutdownHook(new Thread(new Profile()));</span>
+<span class="fc" id="L86">		_controller = new Controller();</span>
+		
+<span class="fc bfc" id="L88" title="All 2 branches covered.">		if (Controller._remote) {</span>
+<span class="fc" id="L89">			_controllerThread = new Thread(_controller);</span>
+<span class="fc" id="L90">			_controllerThread.start();</span>
+		}
+<span class="fc" id="L92">	}</span>
+	
+	
+	public static void init() {
+<span class="fc" id="L96">		_threadActiveFrame = new HashMap&lt;Long, Frame&gt;(1001);</span>
+<span class="fc" id="L97">		_threadDictionary = new ThreadDictionary();</span>
+<span class="fc" id="L98">		_methodDictionary = new HashMap&lt;String, Method&gt;(2003);</span>
+<span class="fc" id="L99">		_frameList = new ArrayList&lt;Frame&gt;(1001);</span>
+<span class="fc" id="L100">		_lock = new Object();</span>
+		
+<span class="fc" id="L102">		_allocList = new HashMap&lt;String, ClassAllocation&gt;();</span>
+<span class="fc" id="L103">	}	</span>
+	
+//
+// Methods to programatically manipulate the Profiler
+//
+	
+	public static void clear() {
+<span class="fc" id="L110">		init();</span>
+<span class="fc" id="L111">	}</span>
+	
+	public static void start() {
+<span class="fc" id="L114">		_controller.start();</span>
+<span class="fc" id="L115">	}</span>
+	
+	public static void stop() {
+<span class="fc" id="L118">		_controller.stop();</span>
+<span class="fc" id="L119">	}</span>
+	
+	public static void setFileName(String fileName) {
+<span class="fc" id="L122">		_controller.setFileName(fileName);</span>
+<span class="fc" id="L123">	}</span>
+	
+	public static void shutdown() {
+<span class="fc" id="L126">		synchronized (_lock) {</span>
+<span class="fc" id="L127">			Controller._profile = false;</span>
+			
+<span class="fc bfc" id="L129" title="All 2 branches covered.">			for (Long threadId: _threadDictionary.keySet()) {</span>
+<span class="fc" id="L130">				Frame f = _threadDictionary.getMostRecentFrame(threadId);</span>
+<span class="fc" id="L131">				f.close();</span>
+<span class="fc" id="L132">			}</span>
+		
+<span class="fc bfc" id="L134" title="All 2 branches covered.">			for (Frame frame: frameList()) {</span>
+<span class="fc" id="L135">				frame.computeNetTime();</span>
+<span class="fc" id="L136">			}</span>
+<span class="fc" id="L137">		} // synchronized</span>
+<span class="fc" id="L138">	}	</span>
+	
+//
+// Methods called when generating output
+// 
+	
+	public static Iterable&lt;Long&gt; threads() {
+<span class="fc" id="L145">		return _threadDictionary.threads();</span>
+	}
+	
+	public static Iterable&lt;Frame&gt; interactions(long threadId) {
+<span class="fc" id="L149">		return _threadDictionary.interactions((threadId));</span>
+	}
+	
+	public static Iterable&lt;Frame&gt; frameList() {
+<span class="fc" id="L153">		return _frameList;</span>
+	}
+	
+	public static Iterable&lt;ClassAllocation&gt; allocations() {
+<span class="fc" id="L157">		return _allocList.values();</span>
+	}
+	
+	public static long getThreadTotalTime(long threadId) {
+<span class="fc" id="L161">		return _threadDictionary.getThreadTotalTime(threadId);</span>
+	}
+	
+	public static void sortFrameList(Comparator&lt;Frame&gt; comp) {
+<span class="fc" id="L165">		synchronized (_lock) {</span>
+<span class="fc" id="L166">			Collections.sort(_frameList, comp);</span>
+<span class="fc" id="L167">		}</span>
+<span class="fc" id="L168">	}</span>
+		
+//
+// Methods that are called by instrumented code
+//
+
+	public static void start(String className, String methodName) {
+<span class="fc" id="L175">		long start = System.nanoTime();</span>
+		
+<span class="fc" id="L177">		long threadId = Thread.currentThread().getId();</span>
+		
+<span class="fc" id="L179">		synchronized (_lock) {</span>
+			
+<span class="fc bfc" id="L181" title="All 2 branches covered.">			if (!Controller._profile) {</span>
+<span class="fc" id="L182">				return;</span>
+			}
+	
+			// try to get the method from the method pool
+			//
+<span class="fc" id="L187">			Method method = new Method(className, methodName);</span>
+				
+<span class="fc bfc" id="L189" title="All 2 branches covered.">			if (_methodDictionary.get(method.toString()) == null) {</span>
+<span class="fc" id="L190">				_methodDictionary.put(method.toString(), method);</span>
+			}
+			
+<span class="fc" id="L193">			Frame parent = (Frame) _threadActiveFrame.get(threadId);</span>
+<span class="fc" id="L194">			Frame target = null;</span>
+			
+<span class="fc bfc" id="L196" title="All 2 branches covered.">			if (parent != null) {</span>
+<span class="fc" id="L197">				target = (Frame) parent.getChild(method);</span>
+				
+<span class="fc bfc" id="L199" title="All 2 branches covered.">				if (target == null) {</span>
+<span class="fc" id="L200">					target = new Frame(parent, method, threadId);</span>
+<span class="fc" id="L201">					_frameList.add(target);</span>
+				}
+			} else {
+<span class="fc" id="L204">				target = new Frame(null, method, threadId);</span>
+<span class="fc" id="L205">				_frameList.add(target);</span>
+<span class="fc" id="L206">				_threadDictionary.add(threadId, target);</span>
+			}
+	
+<span class="pc bpc" id="L209" title="1 of 2 branches missed.">			if (_debugStart) {</span>
+<span class="nc" id="L210">				System.out.print(&quot;  (&quot;);</span>
+<span class="nc" id="L211">				System.out.print(className);</span>
+<span class="nc" id="L212">				System.out.print(&quot; : &quot;);</span>
+<span class="nc" id="L213">				System.out.print(methodName);</span>
+<span class="nc" id="L214">				System.out.println(')');</span>
+				
+<span class="nc" id="L216">				Frame root = _threadDictionary.getMostRecentFrame(threadId);</span>
+<span class="nc" id="L217">				System.out.println(root);</span>
+			}
+			
+			// &quot;push&quot;
+<span class="fc" id="L221">			_threadActiveFrame.put(threadId, target);</span>
+			
+<span class="fc" id="L223">			target.overhead(System.nanoTime() - start);</span>
+<span class="fc" id="L224">			target.setBeginTime(start);</span>
+<span class="fc" id="L225">		} // synchronized </span>
+<span class="fc" id="L226">	}</span>
+	
+	public static void end(String className, String method) {
+<span class="fc" id="L229">		long start = System.nanoTime();</span>
+		
+<span class="fc" id="L231">		synchronized (_lock) {</span>
+<span class="fc" id="L232">			long threadId = Thread.currentThread().getId();</span>
+<span class="fc" id="L233">			Frame target = findFrame(threadId, className, method);</span>
+			
+<span class="fc bfc" id="L235" title="All 2 branches covered.">			if (target == null) {</span>
+<span class="fc" id="L236">				return;</span>
+			}
+		
+<span class="pc bpc" id="L239" title="1 of 2 branches missed.">			if (target.getParent() != null) {</span>
+				// &quot;pop&quot;
+<span class="fc" id="L241">				_threadActiveFrame.put(threadId, target.getParent());	</span>
+			} else {
+<span class="nc" id="L243">				_threadActiveFrame.put(threadId, null);</span>
+			}
+		
+<span class="fc" id="L246">			target.overhead(System.nanoTime() - start);</span>
+<span class="fc" id="L247">			target.setEndTime(System.nanoTime());</span>
+<span class="fc" id="L248">		} // synchronized</span>
+<span class="fc" id="L249">	}</span>
+	
+	public static void beginWait(String className, String methodName) {
+<span class="fc" id="L252">		long start = System.nanoTime();</span>
+		
+<span class="fc" id="L254">		synchronized (_lock) {</span>
+<span class="fc" id="L255">			Frame target = findFrame(Thread.currentThread().getId(), className, methodName);</span>
+			
+<span class="pc bpc" id="L257" title="1 of 2 branches missed.">			if (target == null) {</span>
+<span class="fc" id="L258">				return;</span>
+			}
+		
+<span class="nc" id="L261">			target.overhead(System.nanoTime() - start);</span>
+<span class="nc" id="L262">			target.beginWait(System.nanoTime());</span>
+<span class="nc" id="L263">		}</span>
+<span class="nc" id="L264">	}</span>
+	
+	public static void endWait(String className, String methodName) {
+<span class="fc" id="L267">		long start = System.nanoTime();</span>
+		
+<span class="fc" id="L269">		synchronized (_lock) {</span>
+<span class="fc" id="L270">			Frame target = findFrame(Thread.currentThread().getId(), className, methodName);</span>
+			
+<span class="fc bfc" id="L272" title="All 2 branches covered.">			if (target == null) {</span>
+<span class="fc" id="L273">				return;</span>
+			}
+		
+<span class="fc" id="L276">			target.overhead(System.nanoTime() - start);</span>
+<span class="fc" id="L277">			target.endWait(System.nanoTime());</span>
+<span class="fc" id="L278">		}</span>
+<span class="fc" id="L279">	}</span>
+	
+	public static void unwind(String className, String methodName, String exception) {
+<span class="pc bpc" id="L282" title="2 of 4 branches missed.">		if (_debugException || Controller._debug) {</span>
+<span class="fc" id="L283">			System.out.println(&quot;Catch: &quot; + exception);</span>
+		}
+		
+<span class="fc" id="L286">		synchronized (_lock) {</span>
+<span class="fc" id="L287">			long threadId = Thread.currentThread().getId();</span>
+<span class="fc" id="L288">			Frame target = findFrame(threadId, className, methodName);</span>
+			
+<span class="pc bpc" id="L290" title="1 of 2 branches missed.">			if (target == null) {</span>
+<span class="fc" id="L291">				return;</span>
+			}
+			
+<span class="nc" id="L294">			_threadActiveFrame.put(threadId, target);</span>
+<span class="nc" id="L295">		} // synchronized</span>
+<span class="nc" id="L296">	}</span>
+	
+	// MUST be called from a block that has synchronized on _lock!
+	//
+	private static final Frame findFrame(long threadId, String className, String methodName) {
+<span class="fc bfc" id="L301" title="All 2 branches covered.">		if (!Controller._profile) {</span>
+<span class="fc" id="L302">			return null;</span>
+		}
+		
+<span class="fc" id="L305">		Frame target = (Frame) _threadActiveFrame.get(threadId);</span>
+		
+<span class="pc bpc" id="L307" title="1 of 2 branches missed.">		if (target == null) {</span>
+<span class="nc" id="L308">			return null;</span>
+		}
+		
+		// The flow of control is interrupted when an exception is
+		// thrown. This code will detect this an unwind the stack
+		// until it figures out where we are.
+		// Note that this method has its problems. Because it tries to figure
+		// out were it is based on the class name method name, it's possible
+		// that it could unwind the call stack to the wrong place. Worse yet,
+		// if the flow of control is transfered to the same method, but at a
+		// different point in the call stack,the exception will not be detected
+		// at all.
+		//
+<span class="fc" id="L321">		boolean detectedException = false;</span>
+		
+		while (true) {
+			
+<span class="pc bpc" id="L325" title="1 of 2 branches missed.">			if (target.getClassName().equals(className) </span>
+<span class="pc bpc" id="L326" title="1 of 2 branches missed.">					&amp;&amp; target.getMethodName().equals(methodName)) {</span>
+<span class="fc" id="L327">				break;</span>
+			}
+			
+<span class="nc bnc" id="L330" title="All 2 branches missed.">			if (!detectedException) {</span>
+<span class="nc" id="L331">				detectedException = true;</span>
+				
+<span class="nc bnc" id="L333" title="All 4 branches missed.">				if (_debugException || Controller._debug) {</span>
+<span class="nc" id="L334">					System.err.print(&quot;Detected an exception at &quot;);</span>
+<span class="nc" id="L335">					System.err.print(className);</span>
+<span class="nc" id="L336">					System.err.print('.');</span>
+<span class="nc" id="L337">					System.err.println(methodName);</span>
+				}
+<span class="nc bnc" id="L339" title="All 2 branches missed.">			} else if (_debugException) {</span>
+<span class="nc" id="L340">				System.err.print(&quot;Unwinding &quot;);</span>
+<span class="nc" id="L341">				System.err.print(target.getClassName());</span>
+<span class="nc" id="L342">				System.err.print('.');</span>
+<span class="nc" id="L343">				System.err.println(target.getMethodName());</span>
+			}
+			
+<span class="nc" id="L346">			target.setEndTime(System.nanoTime());</span>
+<span class="nc" id="L347">			target = target.getParent();</span>
+			
+			// the stack has been unwound to pass the point where
+			// we started to profile.
+			//
+<span class="nc bnc" id="L352" title="All 2 branches missed.">			if (target == null) {</span>
+				
+<span class="nc bnc" id="L354" title="All 2 branches missed.">				if (_debugException) {</span>
+<span class="nc" id="L355">					System.err.println(&quot;Stack completely unwound.&quot;);</span>
+				}
+				
+<span class="nc" id="L358">				return null;</span>
+			}
+		}
+		
+<span class="fc" id="L362">		return target;</span>
+	}
+
+	// Uses synchronization for thread safety. I thought this 
+	// would slow things down a whole bunch, but on Java 5
+	// I haven't seen any major performance problems.
+	//
+	public static void alloc(String className) {
+		
+<span class="fc" id="L371">		synchronized (_lock) {</span>
+			
+<span class="fc bfc" id="L373" title="All 2 branches covered.">			if (!Controller._profile) {</span>
+<span class="fc" id="L374">				return;</span>
+			}
+			
+			// this code guards against a constructor calling another constructor 
+			// in the same class
+<span class="fc" id="L379">			long threadId = Thread.currentThread().getId();</span>
+<span class="fc" id="L380">			Frame target = (Frame) _threadActiveFrame.get(threadId);</span>
+			
+<span class="pc bpc" id="L382" title="2 of 4 branches missed.">			if (target != null &amp;&amp; target.getClassName().equals(className)</span>
+<span class="nc bnc" id="L383" title="All 2 branches missed.">					&amp;&amp; target.getMethodName().equals(&quot;&lt;init&gt;&quot;)) {</span>
+<span class="nc" id="L384">				return;</span>
+			}
+			
+<span class="fc" id="L387">			ClassAllocation ca = _allocList.get(className);</span>
+			
+<span class="pc bpc" id="L389" title="1 of 2 branches missed.">			if (ca == null) {</span>
+<span class="fc" id="L390">				ca = new ClassAllocation(className);</span>
+<span class="fc" id="L391">				_allocList.put(className, ca);</span>
+			}
+			
+<span class="fc" id="L394">			ca.incAllocCount();</span>
+<span class="fc" id="L395">		} // synchronized</span>
+<span class="fc" id="L396">	}</span>
+		
+	/**
+	 * ShutdownHook: This will dump the profiling info when the VM shutsdown.
+	 */
+	public void run() {
+		try {
+<span class="fc bfc" id="L403" title="All 2 branches covered.">			if (_threadDictionary.size() &gt; 0) {</span>
+<span class="fc" id="L404">				shutdown();</span>
+<span class="fc" id="L405">				ProfileDump.dump();</span>
+			}
+			
+			// fix up the Controller
+			//
+<span class="fc" id="L410">			_controller.close(); //closes the socket</span>
+			
+<span class="pc bpc" id="L412" title="1 of 2 branches missed.">			if (_controllerThread != null) {</span>
+<span class="fc" id="L413">				_controllerThread.interrupt();</span>
+			}
+			
+<span class="nc" id="L416">		} catch (IOException e) {</span>
+<span class="nc" id="L417">			e.printStackTrace();</span>
+<span class="fc" id="L418">		}</span>
+<span class="fc" id="L419">	}</span>
+
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

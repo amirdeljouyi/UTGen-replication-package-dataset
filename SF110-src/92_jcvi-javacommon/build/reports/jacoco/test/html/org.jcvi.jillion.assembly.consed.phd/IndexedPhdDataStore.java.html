@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IndexedPhdDataStore.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.assembly.consed.phd</a> &gt; <span class="el_source">IndexedPhdDataStore.java</span></div><h1>IndexedPhdDataStore.java</h1><pre class="source lang-java linenums">package org.jcvi.jillion.assembly.consed.phd;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.jcvi.jillion.assembly.consed.phd.PhdBallVisitorCallback.PhdBallVisitorMemento;
+import org.jcvi.jillion.core.datastore.DataStoreClosedException;
+import org.jcvi.jillion.core.datastore.DataStoreException;
+import org.jcvi.jillion.core.datastore.DataStoreFilter;
+import org.jcvi.jillion.core.pos.PositionSequence;
+import org.jcvi.jillion.core.qual.QualitySequence;
+import org.jcvi.jillion.core.residue.nt.NucleotideSequence;
+import org.jcvi.jillion.core.util.MapUtil;
+import org.jcvi.jillion.core.util.iter.IteratorUtil;
+import org.jcvi.jillion.core.util.iter.StreamingIterator;
+import org.jcvi.jillion.internal.core.datastore.DataStoreStreamingIterator;
+
+final class IndexedPhdDataStore implements PhdDataStore{
+
+	
+
+
+<span class="nc" id="L27">	private volatile boolean closed=false;</span>
+	private final File phdFile;
+	private final Map&lt;String, PhdBallVisitorMemento&gt; mementos;
+	private final DataStoreFilter filter;
+	private final PhdBallParser parser;
+	
+	public static PhdDataStore create(File phdBall, DataStoreFilter filter) throws FileNotFoundException, IOException{
+		
+<span class="nc" id="L35">		PhdBallParser parser = PhdBallParser.create(phdBall);</span>
+		
+<span class="nc" id="L37">		BuilderVisitor visitor = new BuilderVisitor(parser, phdBall, filter);</span>
+<span class="nc" id="L38">		parser.accept(visitor);</span>
+<span class="nc" id="L39">		return visitor.build();</span>
+	}
+	
+	private IndexedPhdDataStore(PhdBallParser parser,
+			File phdFile,
+			Map&lt;String, PhdBallVisitorMemento&gt; mementos,
+<span class="nc" id="L45">			DataStoreFilter filter) {</span>
+<span class="nc" id="L46">		this.parser = parser;</span>
+<span class="nc" id="L47">		this.phdFile = phdFile;</span>
+<span class="nc" id="L48">		this.mementos = mementos;</span>
+<span class="nc" id="L49">		this.filter = filter;</span>
+<span class="nc" id="L50">	}</span>
+
+	private void verifyNotClosed(){
+<span class="nc bnc" id="L53" title="All 2 branches missed.">		if(closed){</span>
+<span class="nc" id="L54">			throw new DataStoreClosedException(&quot;already closed&quot;);</span>
+		}
+<span class="nc" id="L56">	}</span>
+	@Override
+	public StreamingIterator&lt;String&gt; idIterator() throws DataStoreException {
+<span class="nc" id="L59">		return IteratorUtil.createStreamingIterator(mementos.keySet().iterator());</span>
+	}
+
+	@Override
+	public Phd get(String id) throws DataStoreException {
+<span class="nc" id="L64">		verifyNotClosed();</span>
+<span class="nc" id="L65">		PhdBallVisitorMemento memento = mementos.get(id);</span>
+		//null memento means we don't have it
+<span class="nc bnc" id="L67" title="All 2 branches missed.">		if(memento ==null){</span>
+<span class="nc" id="L68">			return null;</span>
+		}
+<span class="nc" id="L70">		SinglePhdVisitor visitor = new SinglePhdVisitor(id);</span>
+		try {
+<span class="nc" id="L72">			parser.accept(visitor, memento);</span>
+<span class="nc" id="L73">			return visitor.phd;</span>
+<span class="nc" id="L74">		} catch (IOException e) {</span>
+<span class="nc" id="L75">			throw new DataStoreException(&quot;error re-parsing phd file for &quot; + id, e);</span>
+		}
+
+	}
+
+	@Override
+	public boolean contains(String id) throws DataStoreException {
+<span class="nc" id="L82">		verifyNotClosed();</span>
+<span class="nc" id="L83">		return mementos.containsKey(id);</span>
+	}
+
+	@Override
+	public long getNumberOfRecords() throws DataStoreException {
+<span class="nc" id="L88">		verifyNotClosed();</span>
+<span class="nc" id="L89">		return mementos.size();</span>
+	}
+
+	@Override
+	public boolean isClosed() {
+<span class="nc" id="L94">		return closed;</span>
+	}
+
+	@Override
+	public StreamingIterator&lt;Phd&gt; iterator() throws DataStoreException {
+		//use large iterator to re-parse entire file in one pass
+		//instead of using out get(id) which requires a parse and seek
+		//for each record
+<span class="nc" id="L102">		return DataStoreStreamingIterator.create(this,</span>
+<span class="nc" id="L103">				PhdBallIterator.createNewIterator(phdFile, filter));</span>
+	}
+
+	@Override
+	public void close() throws IOException {
+<span class="nc" id="L108">		closed=true;		</span>
+<span class="nc" id="L109">	}</span>
+	
+	
+	private static final class BuilderVisitor implements PhdBallVisitor{
+<span class="nc" id="L113">		private static final int INITIAL_MAP_SIZE = MapUtil.computeMinHashMapSizeWithoutRehashing(8192);</span>
+		
+<span class="nc" id="L115">		private final Map&lt;String, PhdBallVisitorMemento&gt; mementos = new LinkedHashMap&lt;String, PhdBallVisitorCallback.PhdBallVisitorMemento&gt;(INITIAL_MAP_SIZE);</span>
+		
+		private final DataStoreFilter filter;
+		
+		private final File phdBall;
+		
+<span class="nc" id="L121">		private boolean visitedEntireFile=false;</span>
+		private final PhdBallParser parser;
+		
+<span class="nc" id="L124">		public BuilderVisitor(PhdBallParser parser, File phdBall, DataStoreFilter filter) {</span>
+<span class="nc" id="L125">			this.phdBall = phdBall;</span>
+<span class="nc" id="L126">			this.filter = filter;</span>
+<span class="nc" id="L127">			this.parser = parser;</span>
+<span class="nc" id="L128">		}</span>
+
+		@Override
+		public void visitFileComment(String comment) {
+			//ignore			
+<span class="nc" id="L133">		}</span>
+
+		@Override
+		public PhdVisitor visitPhd(PhdBallVisitorCallback callback, String id,
+				Integer version) {
+<span class="nc bnc" id="L138" title="All 2 branches missed.">			if(filter.accept(id)){</span>
+<span class="nc" id="L139">				mementos.put(id, callback.createMemento());</span>
+			}
+<span class="nc" id="L141">			return null;</span>
+		}
+		
+
+
+		@Override
+		public void visitEnd() {
+<span class="nc" id="L148">			visitedEntireFile=true;</span>
+			
+<span class="nc" id="L150">		}</span>
+
+		@Override
+		public void halted() {
+			//no-op			
+<span class="nc" id="L155">		}</span>
+		
+		public PhdDataStore build(){
+<span class="nc bnc" id="L158" title="All 2 branches missed.">			if(!visitedEntireFile){</span>
+<span class="nc" id="L159">				throw new IllegalStateException(&quot;did not visit entire file&quot;);</span>
+			}
+<span class="nc" id="L161">			return new IndexedPhdDataStore(parser,phdBall, mementos, filter);</span>
+		}
+		
+	}
+	
+	public static class SinglePhdVisitor extends AbstractPhdBallVisitor{
+
+		private Phd phd;
+		private final String idWeWant;
+		
+		
+<span class="nc" id="L172">		public SinglePhdVisitor(String idWeWant) {</span>
+<span class="nc" id="L173">			this.idWeWant = idWeWant;</span>
+<span class="nc" id="L174">		}</span>
+
+
+		@Override
+		public PhdVisitor visitPhd(final PhdBallVisitorCallback callback, String id,
+				Integer version) {
+<span class="nc bnc" id="L180" title="All 2 branches missed.">			if(phd !=null){</span>
+<span class="nc" id="L181">				throw new IllegalStateException(&quot;should only see one phd&quot;);</span>
+			}
+<span class="nc bnc" id="L183" title="All 2 branches missed.">			if(!idWeWant.equals(id)){</span>
+<span class="nc" id="L184">				throw new IllegalStateException(&quot;did not visit correct id: expected &quot;+ idWeWant + &quot; but was &quot;+ id);</span>
+			}
+<span class="nc" id="L186">			return new AbstractPhdVisitor(id, version) {</span>
+				
+				@Override
+				protected void visitPhd(String id, Integer version,
+						NucleotideSequence basecalls, QualitySequence qualities,
+						PositionSequence positions, Map&lt;String, String&gt; comments,
+						List&lt;PhdWholeReadItem&gt; wholeReadItems, List&lt;PhdReadTag&gt; readTags) {
+<span class="nc" id="L193">					SinglePhdVisitor.this.phd = new DefaultPhd(id, basecalls, qualities, positions, comments, wholeReadItems,readTags); </span>
+<span class="nc" id="L194">					callback.haltParsing();</span>
+<span class="nc" id="L195">				}</span>
+			};
+		}
+		
+
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

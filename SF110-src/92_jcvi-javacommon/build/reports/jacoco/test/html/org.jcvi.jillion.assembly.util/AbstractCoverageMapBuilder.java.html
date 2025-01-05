@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractCoverageMapBuilder.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.assembly.util</a> &gt; <span class="el_source">AbstractCoverageMapBuilder.java</span></div><h1>AbstractCoverageMapBuilder.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+/*
+ * Created on Jun 22, 2009
+ *
+ * @author dkatzel
+ */
+package org.jcvi.jillion.assembly.util;
+
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.ArrayBlockingQueue;
+
+import org.jcvi.jillion.core.Range;
+import org.jcvi.jillion.core.Rangeable;
+import org.jcvi.jillion.core.util.Builder;
+
+
+abstract class AbstractCoverageMapBuilder&lt;P extends Rangeable&gt; implements Builder&lt;CoverageMap&lt;P&gt;&gt; {
+
+    private P enteringObject;
+    private P leavingObject;
+    private final Queue&lt;P&gt; coveringObjects;
+    private Iterator&lt;P&gt; enteringIterator;
+    private Iterator&lt;P&gt; leavingIterator;
+    private List&lt;CoverageRegionBuilder&lt;P&gt;&gt; coverageRegionBuilders;
+    private final Integer maxAllowedCoverage;
+    protected abstract Iterator&lt;P&gt; createEnteringIterator();
+    protected abstract Iterator&lt;P&gt; createLeavingIterator();
+    
+    protected abstract CoverageMap&lt;P&gt; build(List&lt;CoverageRegionBuilder&lt;P&gt;&gt; coverageRegionBuilders);
+    
+<span class="nc" id="L55">    public AbstractCoverageMapBuilder(){</span>
+<span class="nc" id="L56">        coveringObjects =  new ArrayDeque&lt;P&gt;();</span>
+<span class="nc" id="L57">        this.maxAllowedCoverage =null;</span>
+<span class="nc" id="L58">    }</span>
+<span class="nc" id="L59">    public AbstractCoverageMapBuilder(int maxAllowedCoverage) {</span>
+<span class="nc" id="L60">        coveringObjects =  new ArrayBlockingQueue&lt;P&gt;(maxAllowedCoverage);</span>
+<span class="nc" id="L61">        this.maxAllowedCoverage = maxAllowedCoverage;</span>
+<span class="nc" id="L62">    }</span>
+    @Override
+    public CoverageMap&lt;P&gt; build() {
+<span class="nc" id="L65">        initialize();</span>
+<span class="nc" id="L66">        createListOfRegionBuilders();</span>
+<span class="nc" id="L67">        return build(coverageRegionBuilders);</span>
+    }
+    private void initialize() {
+<span class="nc" id="L70">        enteringIterator = createEnteringIterator();</span>
+<span class="nc" id="L71">        leavingIterator = createLeavingIterator();</span>
+
+<span class="nc" id="L73">        enteringObject = getNextObject(enteringIterator);</span>
+<span class="nc" id="L74">        leavingObject = getNextObject(leavingIterator);</span>
+<span class="nc" id="L75">        coverageRegionBuilders = new ArrayList&lt;CoverageRegionBuilder&lt;P&gt;&gt;();</span>
+<span class="nc" id="L76">    }</span>
+
+    private void createListOfRegionBuilders() {
+<span class="nc" id="L79">        createAllRegionBuilders();</span>
+<span class="nc bnc" id="L80" title="All 2 branches missed.">        if (anyRegionBuildersCreated()) {</span>
+<span class="nc" id="L81">            removeLastRegionBuilder();</span>
+<span class="nc" id="L82">            removeAnyBuildersWithEmptyRanges();</span>
+<span class="nc" id="L83">            combineConsecutiveRegionsWithSameCoveringObjects();</span>
+        }
+<span class="nc" id="L85">    }</span>
+    /**
+     * If we restrict the max coverage
+     * then we could have adjacent coverageRegions
+     * that actually have the same covering objects
+     * but different start and end coordinates.
+     * (These would have different coverage depths
+     * but we didn't add the missing read since it would
+     * put us over the limit)
+     */
+    private void combineConsecutiveRegionsWithSameCoveringObjects() {
+    	//iterate backwards to avoid concurrent modification errors
+<span class="nc" id="L97">    	CoverageRegionBuilder&lt;P&gt; previousBuilder=null;</span>
+<span class="nc bnc" id="L98" title="All 2 branches missed.">        for (int i = coverageRegionBuilders.size() - 1; i &gt;= 0; i--) {</span>
+<span class="nc" id="L99">            CoverageRegionBuilder&lt;P&gt; builder = coverageRegionBuilders.get(i);</span>
+<span class="nc bnc" id="L100" title="All 4 branches missed.">            if(previousBuilder!=null &amp;&amp; previousBuilder.getElements().equals(builder.getElements())){</span>
+            	//merge region
+<span class="nc" id="L102">            	builder.end(previousBuilder.end());</span>
+            	//remove previous
+<span class="nc" id="L104">            	coverageRegionBuilders.remove(i+1);</span>
+            }   
+<span class="nc" id="L106">            previousBuilder=builder;</span>
+        }
+		
+<span class="nc" id="L109">	}</span>
+	private void removeAnyBuildersWithEmptyRanges() {
+        //iterate backwards to avoid concurrent modification errors
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        for (int i = coverageRegionBuilders.size() - 1; i &gt;= 0; i--) {</span>
+<span class="nc" id="L113">            CoverageRegionBuilder&lt;P&gt; builder = coverageRegionBuilders.get(i);</span>
+<span class="nc" id="L114">            Range range = Range.of(builder.start(), builder.end());</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">            if (range.isEmpty()) {</span>
+<span class="nc" id="L116">                coverageRegionBuilders.remove(i);</span>
+            }
+        }
+
+<span class="nc" id="L120">    }</span>
+
+    private boolean anyRegionBuildersCreated() {
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        return !coverageRegionBuilders.isEmpty();</span>
+    }
+
+    private void removeLastRegionBuilder() {
+        // last is invalid, not only should it be empty,
+        // but it doesn't have an end set so just chop it off.
+<span class="nc" id="L129">        coverageRegionBuilders.remove(coverageRegionBuilders.size() - 1);</span>
+<span class="nc" id="L130">    }</span>
+
+    private void createAllRegionBuilders() {
+<span class="nc" id="L133">        computeRegionsForAllEnteringObjects();</span>
+<span class="nc" id="L134">        computeRemainingRegions();</span>
+<span class="nc" id="L135">    }</span>
+
+    private void computeRegionsForAllEnteringObjects() {
+<span class="nc bnc" id="L138" title="All 2 branches missed.">        while (stillHaveEnteringObjects()) {</span>
+<span class="nc bnc" id="L139" title="All 2 branches missed.">            if (isEntering()) {</span>
+<span class="nc" id="L140">                handleEnteringObject();</span>
+<span class="nc bnc" id="L141" title="All 2 branches missed.">            } else if (isAbutment()) {</span>
+<span class="nc" id="L142">                removeAndAdvanceLeavingObject();</span>
+            } else {
+<span class="nc" id="L144">                handleLeavingObject();</span>
+            }
+        }
+<span class="nc" id="L147">    }</span>
+
+    private boolean stillHaveEnteringObjects() {
+<span class="nc bnc" id="L150" title="All 2 branches missed.">        return enteringObject != null;</span>
+    }
+
+    private void computeRemainingRegions() {
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        while (stillHaveLeavingObjects()) {</span>
+<span class="nc" id="L155">            createNewRegionWithoutCurrentLeavingObject();</span>
+<span class="nc" id="L156">            skipAllLeavingObjectsWithSameEndCoordinate();</span>
+        }
+<span class="nc" id="L158">    }</span>
+
+    private boolean stillHaveLeavingObjects() {
+<span class="nc bnc" id="L161" title="All 2 branches missed.">        return leavingObject != null;</span>
+    }
+
+    private void skipAllLeavingObjectsWithSameEndCoordinate() {
+<span class="nc" id="L165">        long endCoord = leavingObject.asRange().getEnd();</span>
+<span class="nc" id="L166">        leavingObject = getNextObject(leavingIterator);</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">        while (stillHaveLeavingObjects()</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">                &amp;&amp; currentLeavingObjectHasEndCoordinate(endCoord)) {</span>
+<span class="nc" id="L169">            removeLeavingObjectFromPreviousRegionBuilder();</span>
+<span class="nc" id="L170">            removeAndAdvanceLeavingObject();</span>
+        }
+<span class="nc" id="L172">    }</span>
+
+    private void removeLeavingObjectFromPreviousRegionBuilder() {
+<span class="nc" id="L175">        getPreviousRegion().remove(leavingObject);</span>
+<span class="nc" id="L176">    }</span>
+
+    private boolean currentLeavingObjectHasEndCoordinate(long endCoord) {
+<span class="nc bnc" id="L179" title="All 2 branches missed.">        return leavingObject.asRange().getEnd() == endCoord;</span>
+    }
+
+    private void handleEnteringObject() {
+<span class="nc" id="L183">        long startCoord = enteringObject.asRange().getBegin();</span>
+<span class="nc" id="L184">        createNewRegionWithEnteringAmplicon();</span>
+<span class="nc" id="L185">        enteringObject = getNextObject(enteringIterator);</span>
+<span class="nc" id="L186">        handleAmpliconsWithSameStartCoord(startCoord);</span>
+<span class="nc" id="L187">    }</span>
+
+    private void handleLeavingObject() {
+<span class="nc" id="L190">        createNewRegionWithoutCurrentLeavingObject();</span>
+<span class="nc" id="L191">        skipAllLeavingObjectsWithSameEndCoordinate();</span>
+<span class="nc" id="L192">    }</span>
+
+    private void removeAndAdvanceLeavingObject() {
+<span class="nc" id="L195">        coveringObjects.remove(leavingObject);</span>
+<span class="nc" id="L196">        leavingObject = getNextObject(leavingIterator);</span>
+<span class="nc" id="L197">    }</span>
+
+    private boolean isAbutment() {
+<span class="nc bnc" id="L200" title="All 2 branches missed.">        return leavingObject.asRange().getEnd() == enteringObject.asRange().getBegin() - 1;</span>
+
+    }
+
+    private void handleAmpliconsWithSameStartCoord(long regionStart) {
+<span class="nc bnc" id="L205" title="All 2 branches missed.">        while (stillHaveEnteringObjects()</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">                &amp;&amp; enteringObject.asRange().getBegin() == regionStart) {</span>
+            // next amplicon also starts here, add this to current region
+<span class="nc" id="L208">            addEnteringObjectToPreviousRegionBuilder();</span>
+<span class="nc" id="L209">            addAndAdvanceEnteringObject();</span>
+        }
+<span class="nc" id="L211">    }</span>
+
+    private void addEnteringObjectToPreviousRegionBuilder() {
+<span class="nc" id="L214">        CoverageRegionBuilder&lt;P&gt; builder =getPreviousRegion();</span>
+<span class="nc bnc" id="L215" title="All 4 branches missed.">        if(this.maxAllowedCoverage !=null &amp;&amp; builder.getElements().size()&gt;=maxAllowedCoverage.intValue()){</span>
+<span class="nc" id="L216">            return;</span>
+        }
+<span class="nc" id="L218">        getPreviousRegion().offer(enteringObject);</span>
+<span class="nc" id="L219">    }</span>
+
+    private void addAndAdvanceEnteringObject() {
+<span class="nc" id="L222">        coveringObjects.offer(enteringObject);</span>
+<span class="nc" id="L223">        enteringObject = getNextObject(enteringIterator);</span>
+<span class="nc" id="L224">    }</span>
+
+    private boolean isEntering() {
+<span class="nc bnc" id="L227" title="All 2 branches missed.">        return enteringObject.asRange().getBegin() &lt;= leavingObject.asRange().getEnd() ;</span>
+    }
+
+    private void createNewRegionWithoutCurrentLeavingObject() {
+<span class="nc" id="L231">        coveringObjects.remove(leavingObject);</span>
+<span class="nc" id="L232">        final long endCoordinate = leavingObject.asRange().getEnd();</span>
+
+<span class="nc" id="L234">        setEndCoordinateOfPreviousRegion(endCoordinate);</span>
+<span class="nc" id="L235">        coverageRegionBuilders.add(createNewCoverageRegionBuilder(coveringObjects, leavingObject.asRange().getEnd() + 1, maxAllowedCoverage ));</span>
+
+<span class="nc" id="L237">    }</span>
+
+    private void setEndCoordinateOfPreviousRegion(final long endCoordinate) {
+<span class="nc" id="L240">        getPreviousRegion().end(endCoordinate);</span>
+<span class="nc" id="L241">    }</span>
+
+    private void createNewRegionWithEnteringAmplicon() {
+<span class="nc bnc" id="L244" title="All 2 branches missed.">        if (!coverageRegionBuilders.isEmpty()) {</span>
+<span class="nc" id="L245">            final long endCoordinate = enteringObject.asRange().getBegin() - 1;</span>
+<span class="nc" id="L246">            setEndCoordinateOfPreviousRegion(endCoordinate);</span>
+        }
+<span class="nc" id="L248">        coveringObjects.offer(enteringObject);</span>
+<span class="nc" id="L249">        coverageRegionBuilders.add(createNewCoverageRegionBuilder(coveringObjects, enteringObject.asRange().getBegin(), maxAllowedCoverage ));</span>
+
+<span class="nc" id="L251">    }</span>
+
+    protected abstract CoverageRegionBuilder&lt;P&gt; createNewCoverageRegionBuilder(
+            Collection&lt;P&gt; elements, long start, Integer maxAllowedCoverage);
+    
+    private CoverageRegionBuilder&lt;P&gt; getPreviousRegion() {
+<span class="nc" id="L257">        return coverageRegionBuilders.get(coverageRegionBuilders.size() - 1);</span>
+    }
+
+    private P getNextObject(Iterator&lt;P&gt; iterator) {
+<span class="nc bnc" id="L261" title="All 2 branches missed.">        return iterator.hasNext() ? iterator.next() : null;</span>
+    }
+
+    
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

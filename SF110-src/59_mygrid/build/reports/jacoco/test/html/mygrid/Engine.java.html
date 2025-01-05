@@ -1,0 +1,342 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Engine.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">59_mygrid</a> &gt; <a href="index.source.html" class="el_package">mygrid</a> &gt; <span class="el_source">Engine.java</span></div><h1>Engine.java</h1><pre class="source lang-java linenums">/*
+	MyGrid - platform for distributed grid computing
+	
+	Copyright (C) 2004 Kevin Ashley
+	e-mail: kashliki@yahoo.com
+	Web: http://mygrid.sourceforge.net
+
+	This program is free software; you can redistribute it and/or
+	modify it under the terms of the GNU General Public License
+	as published by the Free Software Foundation; either version 2
+	of the License, or (at your option) any later version.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this program; if not, write to the Free Software
+	Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+	
+*/
+
+package mygrid;
+
+import java.rmi.RemoteException;
+import java.util.Enumeration;
+import java.util.Hashtable;
+import java.util.ResourceBundle;
+import java.util.Timer;
+import java.util.TimerTask;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import javax.xml.rpc.ServiceException;
+
+import mygrid.web.GridJobStatus;
+import mygrid.web.Job;
+import mygrid.web.MyGridServiceLocator;
+import mygrid.web.MyGridServiceSoap;
+import mygrid.web._Complete;
+import mygrid.web._Fail;
+import mygrid.web._Logon;
+import mygrid.web._Progress;
+import mygrid.web._Request;
+import mygrid.web._SetEngineInfo;
+
+import org.apache.log4j.Logger;
+
+/**
+ * Class containing MyGrid.Engine implementation in Java.
+ * 
+ * @author ashleyke
+ *
+ */
+public class Engine {
+
+<span class="nc" id="L58">	static Logger logger = Logger.getLogger(Engine.class);</span>
+
+	MyGridServiceSoap grid; // proxy to remote MyGrid.Cluster
+	Timer timer; // polling timer
+<span class="nc" id="L62">	Hashtable jobsProcessors = new Hashtable();</span>
+<span class="nc" id="L63">	Hashtable processors = new Hashtable(); // actual processors loaded</span>
+	
+	// holds jobs and associated processors	
+	mygrid.web.Engine engine; // proxy to remote MyGrid.Engine
+	String engineName; // current engine name (optional)
+<span class="nc" id="L68">	long pollClusterTimeout = 0; // means no timeout</span>
+	PollJobs poller; // inner class for acquiring jobs
+<span class="nc" id="L70">	boolean available = true; // availability</span>
+
+<span class="nc" id="L72">	class PollJobs extends TimerTask implements IJobProcessorEvent {</span>
+
+<span class="nc" id="L74">		Logger logger = Logger.getLogger(PollJobs.class);</span>
+
+		public synchronized void JobProcessorResponse(
+			GridJobStatus status,
+			Job job) {
+
+<span class="nc" id="L80">			boolean makeAvailable = true;</span>
+
+<span class="nc" id="L82">			logger.debug(&quot;[JOB PROCESSOR EVENT] &quot; + status);</span>
+			
+			try {
+
+<span class="nc bnc" id="L86" title="All 2 branches missed.">				if (status == GridJobStatus.Complete) {</span>
+<span class="nc" id="L87">					_Complete args = new _Complete();</span>
+<span class="nc" id="L88">					args.setJob(job);</span>
+<span class="nc" id="L89">					grid.complete(args);</span>
+<span class="nc bnc" id="L90" title="All 2 branches missed.">				} else if (status == GridJobStatus.Failed) {</span>
+<span class="nc" id="L91">					_Fail args = new _Fail();</span>
+<span class="nc" id="L92">					args.setJob(job);</span>
+<span class="nc" id="L93">					grid.fail(args);</span>
+<span class="nc bnc" id="L94" title="All 2 branches missed.">				} else if (status == GridJobStatus.Progress) {</span>
+<span class="nc" id="L95">					makeAvailable = false;</span>
+<span class="nc" id="L96">					_Progress args = new _Progress();</span>
+<span class="nc" id="L97">					args.setJob(job);</span>
+<span class="nc" id="L98">					grid.progress(args);</span>
+<span class="nc" id="L99">				} else {</span>
+<span class="nc" id="L100">					logger.debug(</span>
+						&quot;[JOB PROCESSOR EVENT] Unknown response from job processor.&quot;);
+				}
+<span class="nc" id="L103">			} catch (RemoteException ex) {</span>
+<span class="nc" id="L104">				logger.warn(</span>
+					&quot;[ENGINE] Cannot communicate job status to the cluster.&quot;);
+<span class="nc" id="L106">			}</span>
+
+<span class="nc bnc" id="L108" title="All 2 branches missed.">			if (makeAvailable) {</span>
+				// remove the job and the processor from the hashtable
+<span class="nc" id="L110">				logger.info(&quot;*** make available &quot;);</span>
+<span class="nc" id="L111">				jobsProcessors.remove(job.getId());</span>
+<span class="nc" id="L112">				logger.info(</span>
+					&quot;[ENGINE] job \&quot;&quot;
+<span class="nc" id="L114">						+ job.getName()</span>
+						+ &quot;\&quot; removed from internal queue.&quot;);
+<span class="nc" id="L116">				available = true;</span>
+<span class="nc" id="L117">				notifyAll();</span>
+			}
+
+<span class="nc" id="L120">		}</span>
+
+		boolean isAllowedForJob(Job job) {
+
+<span class="nc" id="L124">			logger.info(&quot;[ENGINE] checking job compilance...&quot;);</span>
+<span class="nc" id="L125">			boolean allowed = false;</span>
+			try {
+<span class="nc bnc" id="L127" title="All 2 branches missed.">				if (job.getDiscriminators().getAllowedEngines() != null</span>
+					&amp;&amp; job
+<span class="nc" id="L129">						.getDiscriminators()</span>
+<span class="nc" id="L130">						.getAllowedEngines()</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">						.getString()</span>
+						.length
+						!= 0) {
+<span class="nc" id="L134">					for (int i = 0;</span>
+						i
+<span class="nc" id="L136">							&lt; job</span>
+<span class="nc" id="L137">								.getDiscriminators()</span>
+<span class="nc" id="L138">								.getAllowedEngines()</span>
+<span class="nc bnc" id="L139" title="All 2 branches missed.">								.getString()</span>
+								.length;
+<span class="nc" id="L141">						i++) {</span>
+<span class="nc" id="L142">						String engineDiscriminator =</span>
+							job
+<span class="nc" id="L144">								.getDiscriminators()</span>
+<span class="nc" id="L145">								.getAllowedEngines()</span>
+<span class="nc" id="L146">								.getString()[i];</span>
+<span class="nc" id="L147">						Pattern rx = Pattern.compile(engineDiscriminator);</span>
+<span class="nc" id="L148">						Matcher m = rx.matcher(engineName);</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">						if (m.matches()) {</span>
+<span class="nc" id="L150">							allowed = true;</span>
+<span class="nc" id="L151">							break;</span>
+						}
+					}
+				} else
+<span class="nc" id="L155">					allowed = true;</span>
+
+				// engine is allowed if nothing is specified
+<span class="nc bnc" id="L158" title="All 2 branches missed.">				if (allowed) {</span>
+<span class="nc" id="L159">					logger.debug(&quot;[ENGINE] discriminator: engine name OK.&quot;);</span>
+				} else {
+<span class="nc" id="L161">					logger.info(&quot;[ENGINE] discriminator: engine name &quot; + job.getName());</span>
+<span class="nc" id="L162">					return false;</span>
+				}
+
+<span class="nc" id="L165">				if (processors</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">					.containsKey(</span>
+<span class="nc" id="L167">						job.getDiscriminators().getProcessor().getType())) {</span>
+					try {
+						// store it in the hashtable with Job as the key
+<span class="nc" id="L170">						jobsProcessors.put(job.getId(), processors.get(job.getDiscriminators().getProcessor().getType()));</span>
+<span class="nc" id="L171">						allowed = true;</span>
+<span class="nc" id="L172">						logger.debug(&quot;[ENGINE] discriminator: job processor OK.&quot;);</span>
+<span class="nc" id="L173">					} catch (Exception ex) {</span>
+<span class="nc" id="L174">						logger.info(</span>
+							&quot;[ENGINE] discriminator: job processor loading problem: job \&quot;&quot;
+<span class="nc" id="L176">								+ job.getName()</span>
+								+ &quot;\&quot; cannot run.&quot;,
+							ex);
+<span class="nc" id="L179">						return false;</span>
+<span class="nc" id="L180">					}</span>
+				} else {
+<span class="nc" id="L182">					logger.info(</span>
+						&quot;[ENGINE] discriminator: job processor: job \&quot;&quot;
+<span class="nc" id="L184">							+ job.getName()</span>
+							+ &quot;\&quot; cannot run.&quot;);
+<span class="nc" id="L186">					return false;</span>
+				}
+
+				//				/// restrictions, or &quot;discriminators&quot;
+				//				engine.CPU = performance.getCurrentCpuUsage();
+				//				engine.RAM = performance.getAvailableRAM();
+				//
+				//				if(viaWebService)
+				//					webservice.BeginSetEngineInfo(engine.Name, engine.CPU, engine.RAM, engine.OS, null, null);
+				//
+				//				if(	engine.CPU &lt;= job.Discriminators.CPU &amp;&amp; // i.e. current CPU usage on the machine is less than Maximum required by the Job
+				//					engine.RAM &gt;= job.Discriminators.RAM &amp;&amp;
+				//					(engine.OS == job.Discriminators.OS || job.Discriminators.OS == null) // same os, or os-independent
+				//					)
+				//				{
+				//					logger.Log(Logger.Level.Debug, &quot;[ENGINE] Discriminators. OK&quot;);
+				//					allowed = true;
+				//				}
+				//				else
+				//				{
+				//					logger.Log(Logger.Level.Info, string.Format(&quot;[ENGINE] Discriminators: job \&quot;{0}\&quot; cannot run.&quot;, job.Name));
+				//					return false;
+				//				}
+
+<span class="nc" id="L210">			} catch (Exception ex) {</span>
+<span class="nc" id="L211">				logger.info(</span>
+<span class="nc" id="L212">					&quot;[ENGINE] job \&quot;&quot; + job.getName() + &quot;\&quot; cannot run.&quot;,</span>
+					ex);
+<span class="nc" id="L214">				return false;</span>
+<span class="nc" id="L215">			}</span>
+<span class="nc" id="L216">			return allowed;</span>
+		}
+
+		public void run() {
+
+<span class="nc" id="L221">			logger.info(&quot;[ENGINE] polling jobs...&quot;);</span>
+
+<span class="nc bnc" id="L223" title="All 2 branches missed.">			while (available == false) {</span>
+				try {
+<span class="nc" id="L225">					synchronized(this){</span>
+						// wait for job processor to put value
+<span class="nc" id="L227">						logger.debug(&quot;*** waiting... &quot;);</span>
+<span class="nc" id="L228">						wait();</span>
+<span class="nc" id="L229">						logger.debug(&quot;*** availability signalled &quot;);</span>
+<span class="nc" id="L230">					}</span>
+<span class="nc" id="L231">				} catch (InterruptedException e) {</span>
+<span class="nc" id="L232">				}</span>
+			}
+<span class="nc" id="L234">			available = false;</span>
+
+			// poll jobs
+			try {
+<span class="nc" id="L238">				Job[] jobs =</span>
+<span class="nc" id="L239">					grid.availableJobs(null).getAvailableJobsResult().getJob();</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">				for (int i = 0; i &lt; jobs.length; i++) {</span>
+<span class="nc" id="L241">					Job job = jobs[i];</span>
+<span class="nc" id="L242">					logger.info(</span>
+						&quot;[ENGINE] acquiring cluster job: &quot;
+<span class="nc" id="L244">							+ job.getName()</span>
+							+ &quot; &quot;
+<span class="nc" id="L246">							+ job.getId());</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">					if (isAllowedForJob(job)) {</span>
+<span class="nc" id="L248">						job.setCurrentEngineId(engine.getId());</span>
+						// request the job from the cluster
+<span class="nc" id="L250">						_Request r = new _Request();</span>
+<span class="nc" id="L251">						r.setJob(job);</span>
+<span class="nc bnc" id="L252" title="All 2 branches missed.">						if (grid.request(r).isRequestResult()) {</span>
+							// invoke the job processor (already loaded and stored) 
+<span class="nc" id="L254">							(</span>
+<span class="nc" id="L255">								(JobProcessor) jobsProcessors.get(</span>
+<span class="nc" id="L256">									job.getId())).run(</span>
+								job);
+						}
+					}
+				}
+<span class="nc" id="L261">				logger.debug(&quot;*** finished polling for jobs &quot; + available);</span>
+<span class="nc" id="L262">				available = true;</span>
+				//notifyAll();
+<span class="nc" id="L264">			} catch (RemoteException ex) {</span>
+<span class="nc" id="L265">				logger.debug(</span>
+					&quot;[ENGINE] Polling for jobs failed. Retrying...&quot;,
+					ex);
+<span class="nc" id="L268">			}</span>
+
+<span class="nc" id="L270">		}</span>
+	}
+
+<span class="nc" id="L273">	public Engine(String name, int pollClusterSec) {</span>
+<span class="nc" id="L274">		engineName = name;</span>
+<span class="nc" id="L275">		pollClusterTimeout = pollClusterSec * 1000;</span>
+<span class="nc" id="L276">		logger.info(&quot;MyGrid.Engine (for Java) mygrid.sourceforge.net \n (c) Kevin Ashley 2004 \n GPL (GNU Public License)&quot;);</span>
+<span class="nc" id="L277">		poller = new PollJobs();</span>
+<span class="nc" id="L278">		probeJobProcessors();</span>
+<span class="nc" id="L279">	}</span>
+
+	void probeJobProcessors() {
+<span class="nc" id="L282">		ResourceBundle bundle = ResourceBundle.getBundle(&quot;mygrid.engine&quot;) ;</span>
+<span class="nc" id="L283">		Enumeration bundleKeys = bundle.getKeys();</span>
+		
+<span class="nc bnc" id="L285" title="All 2 branches missed.">		while (bundleKeys.hasMoreElements()) {</span>
+<span class="nc" id="L286">		    String key = (String)bundleKeys.nextElement();</span>
+		    
+<span class="nc bnc" id="L288" title="All 2 branches missed.">		    if(key.startsWith(&quot;processor&quot;)){</span>
+<span class="nc" id="L289">		    	 String value = bundle.getString(key);</span>
+		    	 try
+			      {
+<span class="nc" id="L292">		    	 	JobProcessor processor = (JobProcessor)Class.forName(value).newInstance();</span>
+<span class="nc" id="L293">		    	 	processor.setEvent(poller);</span>
+<span class="nc" id="L294">			        processors.put(processor.getClass().getName(), processor) ;</span>
+<span class="nc" id="L295">			        logger.info( &quot;+ processor: &quot; + processor.getClass().getName() );</span>
+			      }
+<span class="nc" id="L297">			      catch( Exception ex ) // InstantiationException or IllegalAccessException or ClassNotFoundException</span>
+			      {
+<span class="nc" id="L299">			        logger.info( &quot;Error &quot; + ex + &quot; trying to instantiate &quot; + key ) ;</span>
+<span class="nc" id="L300">			        ex.printStackTrace();</span>
+<span class="nc" id="L301">  			      }</span>
+		    }
+<span class="nc" id="L303">		}</span>
+<span class="nc" id="L304">	}</span>
+
+	public void Start(
+		String user,
+		String password,
+		String webServiceUrl,
+		String clusterUrl) {
+		try {
+<span class="nc" id="L312">			MyGridServiceLocator gridService = new MyGridServiceLocator();</span>
+<span class="nc" id="L313">			gridService.setMaintainSession(true); // CookieContainer in .NET</span>
+<span class="nc" id="L314">			grid = gridService.getMyGridServiceSoap();</span>
+<span class="nc" id="L315">			_Logon logon = new _Logon();</span>
+<span class="nc" id="L316">			logon.setUser(user);</span>
+<span class="nc" id="L317">			logon.setPassword(password);</span>
+<span class="nc" id="L318">			logon.setClusterUrl(clusterUrl);</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">			if (grid.logon(logon).isLogonResult()) {</span>
+				// we're logged onto the grid
+<span class="nc" id="L321">				engine = grid.getEngine(null).getGetEngineResult();</span>
+				// discriminators
+<span class="nc" id="L323">				engine.setRAM(Performance.ram());</span>
+<span class="nc" id="L324">				engine.setOS(System.getProperty(&quot;os.name&quot;));</span>
+<span class="nc" id="L325">				engine.setName(engineName);</span>
+<span class="nc" id="L326">				_SetEngineInfo ei = new _SetEngineInfo();</span>
+<span class="nc" id="L327">				ei.setOs(engine.getOS());</span>
+<span class="nc" id="L328">				ei.setRam(engine.getRAM());</span>
+<span class="nc" id="L329">				ei.setName(engine.getName());</span>
+<span class="nc" id="L330">				grid.setEngineInfo(ei);</span>
+<span class="nc" id="L331">				timer = new Timer(); // daemon</span>
+<span class="nc" id="L332">				timer.schedule(poller, 0, pollClusterTimeout);</span>
+			}
+<span class="nc" id="L334">		} catch (RemoteException ex) {</span>
+<span class="nc" id="L335">			logger.error(&quot;[ENGINE] Connection Error&quot;, ex);</span>
+<span class="nc" id="L336">		} catch (ServiceException ex) {</span>
+<span class="nc" id="L337">			logger.error(&quot;[ENGINE] Connection Error&quot;, ex);</span>
+<span class="nc" id="L338">		}</span>
+<span class="nc" id="L339">	}</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

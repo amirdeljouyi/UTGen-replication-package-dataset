@@ -1,0 +1,555 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>StatisticsPanel.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">43_lilith</a> &gt; <a href="index.source.html" class="el_package">de.huxhorn.lilith.swing.statistics</a> &gt; <span class="el_source">StatisticsPanel.java</span></div><h1>StatisticsPanel.java</h1><pre class="source lang-java linenums">/*
+ * Lilith - a log event viewer.
+ * Copyright (C) 2007-2009 Joern Huxhorn
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see &lt;http://www.gnu.org/licenses/&gt;.
+ */
+package de.huxhorn.lilith.swing.statistics;
+
+import de.huxhorn.lilith.data.eventsource.SourceIdentifier;
+import de.huxhorn.lilith.swing.EventWrapperViewPanel;
+import de.huxhorn.lilith.swing.MainFrame;
+import de.huxhorn.lilith.swing.filefilters.PngFileFilter;
+
+import org.apache.commons.io.IOUtils;
+import org.rrd4j.core.Util;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.image.BufferedImage;
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.SortedMap;
+
+import javax.imageio.ImageIO;
+import javax.swing.*;
+import javax.swing.filechooser.FileFilter;
+
+public class StatisticsPanel
+	extends JPanel
+{
+<span class="nc" id="L52">	private final Logger logger = LoggerFactory.getLogger(StatisticsPanel.class);</span>
+
+	private static final long REFRESH_DELAY = 10000;
+
+	private SourceIdentifier sourceIdentifier;
+	private MainFrame mainFrame;
+	private boolean running;
+	private GraphImageProducer[] graphImageFactories;
+	private int selectedGraph;
+	private JComboBox timerangeComboBox;
+	private JFileChooser saveFileChooser;
+	private BufferedImage[] imageToggle;
+	private int imageIndex;
+	private JLabel graphLabel;
+	private JCheckBox showMaxCheckBox;
+	private JComboBox sourcesComboBox;
+	private Thread updateThread;
+	public static final String SOURCE_IDENTIFIER_PROPERTY = &quot;sourceIdentifier&quot;;
+	private Object[] previousSourcesArray;
+
+	public StatisticsPanel(MainFrame owner)
+<span class="nc" id="L73">	{</span>
+<span class="nc" id="L74">		this.mainFrame = owner;</span>
+<span class="nc" id="L75">		this.imageToggle = new BufferedImage[2];</span>
+<span class="nc" id="L76">		this.imageIndex = 0;</span>
+<span class="nc" id="L77">		this.running = false;</span>
+<span class="nc" id="L78">		createUI();</span>
+<span class="nc" id="L79">	}</span>
+
+	public void setSourceIdentifier(SourceIdentifier sourceIdentifier)
+	{
+<span class="nc" id="L83">		Object oldValue = this.sourceIdentifier;</span>
+<span class="nc" id="L84">		this.sourceIdentifier = sourceIdentifier;</span>
+<span class="nc" id="L85">		Object newValue = this.sourceIdentifier;</span>
+<span class="nc" id="L86">		initUI();</span>
+<span class="nc" id="L87">		updateGraph();</span>
+<span class="nc" id="L88">		firePropertyChange(SOURCE_IDENTIFIER_PROPERTY, oldValue, newValue);</span>
+<span class="nc" id="L89">	}</span>
+
+
+	public SourceIdentifier getSourceIdentifier()
+	{
+<span class="nc" id="L94">		return sourceIdentifier;</span>
+	}
+
+	private void createUI()
+	{
+<span class="nc" id="L99">		ShowMaxAction showMaxAction = new ShowMaxAction();</span>
+<span class="nc" id="L100">		showMaxCheckBox = new JCheckBox(showMaxAction);</span>
+<span class="nc" id="L101">		showMaxCheckBox.setOpaque(false);</span>
+<span class="nc" id="L102">		showMaxCheckBox.setSelected(true);</span>
+<span class="nc" id="L103">		saveFileChooser = new JFileChooser();</span>
+<span class="nc" id="L104">		saveFileChooser.setFileSelectionMode(JFileChooser.FILES_ONLY);</span>
+<span class="nc" id="L105">		FileFilter pngFileFilter = new PngFileFilter();</span>
+<span class="nc" id="L106">		saveFileChooser.setFileFilter(pngFileFilter);</span>
+<span class="nc" id="L107">		graphImageFactories = new GraphImageProducer[]{</span>
+			new TwentyMinutesProducer(mainFrame),
+			new TwoHoursProducer(mainFrame),
+			new TenHoursProducer(mainFrame),
+			new OneDayProducer(mainFrame),
+			new SevenDaysProducer(mainFrame),
+			new ThirtyDaysProducer(mainFrame),
+			new NinetyDaysProducer(mainFrame),
+			new OneYearProducer(mainFrame),
+		};
+
+<span class="nc" id="L118">		JPanel graphPanel = new JPanel(new GridLayout(1, 1));</span>
+<span class="nc" id="L119">		graphLabel = new JLabel();</span>
+<span class="nc" id="L120">		graphPanel.add(graphLabel);</span>
+
+<span class="nc" id="L122">		setLayout(new BorderLayout());</span>
+<span class="nc" id="L123">		add(graphPanel, BorderLayout.CENTER);</span>
+<span class="nc" id="L124">		timerangeComboBox = new JComboBox(new Object[]{</span>
+			&quot;20 minutes&quot;,
+			&quot;2 hours&quot;,
+			&quot;10 hours&quot;,
+			&quot;1 day&quot;,
+			&quot;7 days&quot;,
+			&quot;30 days&quot;,
+			&quot;90 days&quot;,
+			&quot;1 year&quot;,
+		});
+<span class="nc" id="L134">		timerangeComboBox.addActionListener(new TimerangeActionListener());</span>
+
+<span class="nc" id="L136">		sourcesComboBox = new JComboBox();</span>
+<span class="nc" id="L137">		sourcesComboBox.addActionListener(new SourcesActionListener());</span>
+
+<span class="nc" id="L139">		JToolBar toolbar = new JToolBar();</span>
+<span class="nc" id="L140">		toolbar.setFloatable(false);</span>
+<span class="nc" id="L141">		toolbar.add(new JLabel(&quot;Source: &quot;));</span>
+<span class="nc" id="L142">		toolbar.add(sourcesComboBox);</span>
+<span class="nc" id="L143">		toolbar.addSeparator();</span>
+<span class="nc" id="L144">		toolbar.add(new JLabel(&quot;Timerange: &quot;));</span>
+<span class="nc" id="L145">		toolbar.add(timerangeComboBox);</span>
+<span class="nc" id="L146">		toolbar.add(showMaxCheckBox);</span>
+<span class="nc" id="L147">		toolbar.addSeparator();</span>
+<span class="nc" id="L148">		toolbar.add(new JButton(new SaveAction()));</span>
+<span class="nc" id="L149">		add(toolbar, BorderLayout.NORTH);</span>
+<span class="nc" id="L150">		setSelectedGraph(0);</span>
+<span class="nc" id="L151">	}</span>
+
+	private void initUI()
+	{
+<span class="nc" id="L155">		SortedMap&lt;String, SourceIdentifier&gt; stats = mainFrame.getAvailableStatistics();</span>
+
+<span class="nc" id="L157">		List&lt;WrappedSourceIdentifier&gt; wrappedSources = new ArrayList&lt;WrappedSourceIdentifier&gt;(stats.size() + 1);</span>
+<span class="nc" id="L158">		wrappedSources.add(new WrappedSourceIdentifier(&quot;Global&quot;, new SourceIdentifier(&quot;global&quot;)));</span>
+<span class="nc bnc" id="L159" title="All 2 branches missed.">		for(Map.Entry&lt;String, SourceIdentifier&gt; current : stats.entrySet())</span>
+		{
+<span class="nc" id="L161">			WrappedSourceIdentifier wrapped = new WrappedSourceIdentifier(current.getKey(), current.getValue());</span>
+<span class="nc" id="L162">			wrappedSources.add(wrapped);</span>
+<span class="nc" id="L163">		}</span>
+<span class="nc" id="L164">		Object[] newSourcesArray = wrappedSources.toArray();</span>
+<span class="nc bnc" id="L165" title="All 2 branches missed.">		if(!Arrays.equals(previousSourcesArray, newSourcesArray))</span>
+		{
+<span class="nc" id="L167">			previousSourcesArray = newSourcesArray;</span>
+<span class="nc" id="L168">			DefaultComboBoxModel model = new DefaultComboBoxModel(newSourcesArray);</span>
+<span class="nc" id="L169">			sourcesComboBox.setModel(model);</span>
+		}
+<span class="nc" id="L171">		int index = 0;</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">		if(sourceIdentifier != null)</span>
+		{
+<span class="nc" id="L174">			ComboBoxModel model = sourcesComboBox.getModel();</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">			for(int i = 0; i &lt; model.getSize(); i++)</span>
+			{
+<span class="nc" id="L177">				Object current = model.getElementAt(i);</span>
+<span class="nc bnc" id="L178" title="All 2 branches missed.">				if(current instanceof WrappedSourceIdentifier)</span>
+				{
+<span class="nc" id="L180">					WrappedSourceIdentifier wrapped = (WrappedSourceIdentifier) current;</span>
+<span class="nc bnc" id="L181" title="All 2 branches missed.">					if(sourceIdentifier.getIdentifier().equals(wrapped.sourceIdentifier.getIdentifier()))</span>
+					{
+<span class="nc bnc" id="L183" title="All 2 branches missed.">						if(logger.isDebugEnabled()) logger.debug(&quot;Equal&quot;);</span>
+<span class="nc" id="L184">						index = i;</span>
+<span class="nc" id="L185">						break;</span>
+					}
+					else
+					{
+<span class="nc bnc" id="L189" title="All 2 branches missed.">						if(logger.isDebugEnabled())</span>
+						{
+<span class="nc" id="L191">							logger.debug(&quot;Not equal: {} != {}&quot;, sourceIdentifier, wrapped.sourceIdentifier);</span>
+						}
+					}
+<span class="nc" id="L194">				}</span>
+				else
+				{
+<span class="nc bnc" id="L197" title="All 2 branches missed.">					if(logger.isWarnEnabled()) logger.warn(&quot;Not instanceof WrappedSourceIdentifier&quot;);</span>
+				}
+			}
+		}
+<span class="nc" id="L201">		sourcesComboBox.setSelectedIndex(index);</span>
+<span class="nc" id="L202">	}</span>
+
+	private void setSelectedGraph(int i)
+	{
+<span class="nc bnc" id="L206" title="All 4 branches missed.">		if(i &gt;= 0 &amp;&amp; i &lt; graphImageFactories.length)</span>
+		{
+<span class="nc" id="L208">			selectedGraph = i;</span>
+		}
+		else
+		{
+<span class="nc" id="L212">			selectedGraph = 0;</span>
+		}
+<span class="nc" id="L214">		updateGraph();</span>
+<span class="nc" id="L215">	}</span>
+
+	private void updateGraph()
+	{
+<span class="nc bnc" id="L219" title="All 6 branches missed.">		if(sourceIdentifier != null &amp;&amp; selectedGraph &gt;= 0 &amp;&amp; selectedGraph &lt; graphImageFactories.length)</span>
+		{
+<span class="nc" id="L221">			GraphImageProducer graphImageFactory = graphImageFactories[selectedGraph];</span>
+<span class="nc" id="L222">			imageToggle[imageIndex] = graphImageFactory</span>
+<span class="nc" id="L223">				.createGraphImage(Util.getTime(), sourceIdentifier, imageToggle[imageIndex], showMaxCheckBox.isSelected());</span>
+<span class="nc bnc" id="L224" title="All 2 branches missed.">			if(imageToggle[imageIndex] != null)</span>
+			{
+<span class="nc" id="L226">				ImageIcon graphImageIcon = new ImageIcon();</span>
+<span class="nc" id="L227">				graphImageIcon.setImage(imageToggle[imageIndex]);</span>
+<span class="nc" id="L228">				graphLabel.setIcon(graphImageIcon);</span>
+<span class="nc" id="L229">				graphLabel.setText(&quot;&quot;);</span>
+<span class="nc" id="L230">			}</span>
+			else
+			{
+<span class="nc" id="L233">				graphLabel.setIcon(null);</span>
+<span class="nc" id="L234">				graphLabel.setText(&quot;Couldn't create graph image!&quot;);</span>
+			}
+<span class="nc bnc" id="L236" title="All 2 branches missed.">			if(imageIndex == 0)</span>
+			{
+<span class="nc" id="L238">				imageIndex = 1;</span>
+			}
+			else
+			{
+<span class="nc" id="L242">				imageIndex = 0;</span>
+			}
+<span class="nc" id="L244">			graphLabel.repaint();</span>
+		}
+<span class="nc" id="L246">	}</span>
+
+	/**
+	 * Notifies this component that it now has a parent component.
+	 * When this method is invoked, the chain of parent components is
+	 * set up with &lt;code&gt;KeyboardAction&lt;/code&gt; event listeners.
+	 *
+	 * @see #registerKeyboardAction
+	 */
+	@Override
+	public void addNotify()
+	{
+<span class="nc" id="L258">		super.addNotify();</span>
+<span class="nc" id="L259">		setRunning(true);</span>
+<span class="nc bnc" id="L260" title="All 2 branches missed.">		if(updateThread == null)</span>
+		{
+<span class="nc" id="L262">			updateThread = new Thread(new GraphUpdateRunnable());</span>
+<span class="nc" id="L263">			updateThread.setDaemon(true);</span>
+<span class="nc" id="L264">			updateThread.start();</span>
+		}
+<span class="nc bnc" id="L266" title="All 2 branches missed.">		if(logger.isDebugEnabled()) logger.debug(&quot;addNotify!&quot;);</span>
+<span class="nc" id="L267">	}</span>
+
+	/**
+	 * Notifies this component that it no longer has a parent component.
+	 * When this method is invoked, any &lt;code&gt;KeyboardAction&lt;/code&gt;s
+	 * set up in the the chain of parent components are removed.
+	 *
+	 * @see #registerKeyboardAction
+	 */
+	@Override
+	public void removeNotify()
+	{
+<span class="nc" id="L279">		super.removeNotify();</span>
+<span class="nc" id="L280">		setRunning(false);</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">		if(logger.isDebugEnabled()) logger.debug(&quot;removeNotify!&quot;);</span>
+<span class="nc" id="L282">	}</span>
+
+	private synchronized void setRunning(boolean running)
+	{
+<span class="nc" id="L286">		this.running = running;</span>
+<span class="nc bnc" id="L287" title="All 2 branches missed.">		if(running)</span>
+		{
+		}
+		else
+		{
+<span class="nc" id="L292">			graphLabel.setIcon(null);</span>
+<span class="nc bnc" id="L293" title="All 2 branches missed.">			for(int i = 0; i &lt; imageToggle.length; i++)</span>
+			{
+<span class="nc bnc" id="L295" title="All 2 branches missed.">				if(imageToggle[i] != null)</span>
+				{
+<span class="nc" id="L297">					imageToggle[i].flush();</span>
+<span class="nc" id="L298">					imageToggle[i] = null;</span>
+<span class="nc bnc" id="L299" title="All 2 branches missed.">					if(logger.isInfoEnabled()) logger.info(&quot;Flushed image.&quot;);</span>
+				}
+			}
+		}
+<span class="nc" id="L303">		notifyAll();</span>
+<span class="nc" id="L304">	}</span>
+
+<span class="nc" id="L306">	class GraphUpdateRunnable</span>
+		implements Runnable
+	{
+
+		public void run()
+		{
+			for(; ;)
+			{
+				for(; ;)
+				{
+<span class="nc" id="L316">					synchronized(StatisticsPanel.this)</span>
+					{
+<span class="nc bnc" id="L318" title="All 2 branches missed.">						if(!running)</span>
+						{
+							try
+							{
+<span class="nc" id="L322">								StatisticsPanel.this.wait();</span>
+							}
+<span class="nc" id="L324">							catch(InterruptedException ex)</span>
+							{
+<span class="nc bnc" id="L326" title="All 2 branches missed.">								if(logger.isInfoEnabled()) logger.info(&quot;Interrupted...&quot;, ex);</span>
+<span class="nc" id="L327">								return;</span>
+<span class="nc" id="L328">							}</span>
+						}
+						else
+						{
+<span class="nc" id="L332">							break;</span>
+						}
+<span class="nc" id="L334">					}</span>
+				}
+<span class="nc" id="L336">				SwingUtilities.invokeLater(new SwingUpdateRunnable());</span>
+				try
+				{
+<span class="nc" id="L339">					Thread.sleep(REFRESH_DELAY);</span>
+				}
+<span class="nc" id="L341">				catch(InterruptedException ex)</span>
+				{
+<span class="nc bnc" id="L343" title="All 2 branches missed.">					if(logger.isInfoEnabled()) logger.info(&quot;Interrupted...&quot;, ex);</span>
+<span class="nc" id="L344">					return;</span>
+<span class="nc" id="L345">				}</span>
+			}
+		}
+	}
+
+	private void writeImage(File imageFile)
+		throws IOException
+	{
+<span class="nc" id="L353">		BufferedImage resultImage = null;</span>
+<span class="nc bnc" id="L354" title="All 4 branches missed.">		if(selectedGraph &gt;= 0 &amp;&amp; selectedGraph &lt; graphImageFactories.length)</span>
+		{
+<span class="nc" id="L356">			resultImage = graphImageFactories[selectedGraph]</span>
+<span class="nc" id="L357">				.createGraphImage(Util.getTime(), sourceIdentifier, null, showMaxCheckBox.isSelected());</span>
+		}
+<span class="nc bnc" id="L359" title="All 2 branches missed.">		if(resultImage != null)</span>
+		{
+<span class="nc" id="L361">			final String format = &quot;png&quot;;</span>
+<span class="nc" id="L362">			BufferedOutputStream imageOutput = null;</span>
+			try
+			{
+<span class="nc" id="L365">				imageOutput = new BufferedOutputStream(new FileOutputStream(imageFile));</span>
+<span class="nc" id="L366">				boolean writerFound = ImageIO.write(resultImage, format, imageOutput);</span>
+<span class="nc bnc" id="L367" title="All 2 branches missed.">				if(!writerFound)</span>
+				{
+<span class="nc" id="L369">					String msg = &quot;Couldn't write image! No writer found for format '&quot; + format + &quot;'!&quot;;</span>
+<span class="nc bnc" id="L370" title="All 2 branches missed.">					if(logger.isErrorEnabled()) logger.error(msg);</span>
+<span class="nc" id="L371">					throw new IOException(msg);</span>
+				}
+			}
+			finally
+			{
+				// close output stream no matter what. shouldn't be necessary...
+<span class="nc" id="L377">				IOUtils.closeQuietly(imageOutput);</span>
+<span class="nc" id="L378">				resultImage.flush();</span>
+			}
+		}
+<span class="nc" id="L381">	}</span>
+
+<span class="nc" id="L383">	class SwingUpdateRunnable</span>
+		implements Runnable
+	{
+
+		public void run()
+		{
+<span class="nc" id="L389">			updateGraph();</span>
+<span class="nc bnc" id="L390" title="All 2 branches missed.">			if(logger.isInfoEnabled()) logger.info(&quot;Updated statistics...&quot;);</span>
+<span class="nc" id="L391">		}</span>
+	}
+
+<span class="nc" id="L394">	private class TimerangeActionListener</span>
+		implements ActionListener
+	{
+
+		public void actionPerformed(ActionEvent e)
+		{
+<span class="nc" id="L400">			int index = timerangeComboBox.getSelectedIndex();</span>
+<span class="nc" id="L401">			setSelectedGraph(index);</span>
+<span class="nc" id="L402">		}</span>
+	}
+
+<span class="nc" id="L405">	private class SourcesActionListener</span>
+		implements ActionListener
+	{
+
+		public void actionPerformed(ActionEvent e)
+		{
+<span class="nc" id="L411">			Object selected = sourcesComboBox.getSelectedItem();</span>
+<span class="nc bnc" id="L412" title="All 2 branches missed.">			if(logger.isInfoEnabled()) logger.info(&quot;Selected source: {}&quot;, selected);</span>
+<span class="nc" id="L413">			SourceIdentifier si = null;</span>
+<span class="nc bnc" id="L414" title="All 2 branches missed.">			if(selected instanceof WrappedSourceIdentifier)</span>
+			{
+<span class="nc" id="L416">				si = ((WrappedSourceIdentifier) selected).sourceIdentifier;</span>
+<span class="nc bnc" id="L417" title="All 2 branches missed.">				if(logger.isInfoEnabled()) logger.info(&quot;Selected sourceIdentifier: {}&quot;, si);</span>
+			}
+			else
+			{
+<span class="nc bnc" id="L421" title="All 2 branches missed.">				if(logger.isWarnEnabled()) logger.warn(&quot;Not instanceof WrappedSourceIdentifier: {}&quot;);</span>
+			}
+<span class="nc" id="L423">			setSourceIdentifier(si);</span>
+<span class="nc" id="L424">		}</span>
+	}
+
+	private class SaveAction
+		extends AbstractAction
+	{
+		public SaveAction()
+<span class="nc" id="L431">		{</span>
+<span class="nc" id="L432">			super();</span>
+			Icon icon;
+			{
+<span class="nc" id="L435">				URL url = EventWrapperViewPanel.class.getResource(&quot;/tango/32x32/actions/document-save-as.png&quot;);</span>
+				//URL url=EventWrapperViewPanel.class.getResource(&quot;/tango/scalable/actions/document-save-as.svg&quot;);
+<span class="nc bnc" id="L437" title="All 2 branches missed.">				if(url != null)</span>
+				{
+//					try
+//					{
+//						//InputStreamReader reader = new InputStreamReader(url.openStream(), &quot;utf-8&quot;);
+//						String svg=IOUtils.toString(url.openStream(), &quot;utf-8&quot;);
+//						if(logger.isInfoEnabled()) logger.info(&quot;SVG: {}&quot;, svg);
+//						StringReader reader=new StringReader(svg);
+//						URI uri = SVGCache.getSVGUniverse().loadSVG(reader, &quot;document-save-as&quot;);
+//						SVGIcon svgIcon = new SVGIcon();
+//						svgIcon.setSvgURI(uri);
+//						svgIcon.setAntiAlias(true);
+//						svgIcon.setPreferredSize(new Dimension(80, 80));
+//						svgIcon.setScaleToFit(true);
+//						icon = svgIcon;
+//					}
+//					catch (IOException e)
+//					{
+//						e.printStackTrace();
+//					}
+//					//svgIcon.setSvgURI(uri);
+//					if(logger.isInfoEnabled()) logger.info(&quot;icon: {}&quot;,icon);
+<span class="nc" id="L459">					icon = new ImageIcon(url);</span>
+				}
+				else
+				{
+<span class="nc" id="L463">					icon = null;</span>
+				}
+			}
+<span class="nc" id="L466">			putValue(Action.SMALL_ICON, icon);</span>
+<span class="nc" id="L467">			putValue(Action.SHORT_DESCRIPTION, &quot;Save as...&quot;);</span>
+
+<span class="nc" id="L469">		}</span>
+
+		public void actionPerformed(ActionEvent e)
+		{
+<span class="nc" id="L473">			saveFileChooser.setCurrentDirectory(mainFrame.getApplicationPreferences().getImagePath());</span>
+<span class="nc" id="L474">			int returnVal = saveFileChooser.showDialog(StatisticsPanel.this, &quot;Save&quot;);</span>
+<span class="nc bnc" id="L475" title="All 2 branches missed.">			if(returnVal == JFileChooser.APPROVE_OPTION)</span>
+			{
+<span class="nc" id="L477">				File file = saveFileChooser.getSelectedFile();</span>
+<span class="nc" id="L478">				String filename = file.getAbsolutePath();</span>
+<span class="nc bnc" id="L479" title="All 2 branches missed.">				if(!filename.toLowerCase().endsWith(&quot;.png&quot;))</span>
+				{
+<span class="nc" id="L481">					filename = filename + &quot;.png&quot;;</span>
+				}
+<span class="nc" id="L483">				file = new File(filename);</span>
+				try
+				{
+<span class="nc" id="L486">					writeImage(file);</span>
+<span class="nc bnc" id="L487" title="All 2 branches missed.">					if(logger.isInfoEnabled()) logger.info(&quot;Wrote file '&quot; + file.getAbsolutePath() + &quot;'.&quot;);</span>
+<span class="nc" id="L488">					File parent = file.getParentFile();</span>
+<span class="nc" id="L489">					mainFrame.getApplicationPreferences().setImagePath(parent);</span>
+				}
+<span class="nc" id="L491">				catch(IOException ex)</span>
+				{
+<span class="nc bnc" id="L493" title="All 2 branches missed.">					if(logger.isWarnEnabled())</span>
+					{
+<span class="nc" id="L495">						logger.warn(&quot;Exception while writing file '&quot; + file.getAbsolutePath() + &quot;'!&quot;, ex);</span>
+					}
+<span class="nc" id="L497">				}</span>
+			}
+<span class="nc" id="L499">		}</span>
+	}
+
+	private class ShowMaxAction
+		extends AbstractAction
+	{
+		public ShowMaxAction()
+<span class="nc" id="L506">		{</span>
+<span class="nc" id="L507">			super(&quot;Show Max&quot;);</span>
+<span class="nc" id="L508">			putValue(Action.SHORT_DESCRIPTION, &quot;Show Max&quot;);</span>
+<span class="nc" id="L509">		}</span>
+
+		public void actionPerformed(ActionEvent e)
+		{
+<span class="nc" id="L513">			updateGraph();</span>
+<span class="nc" id="L514">		}</span>
+	}
+
+	private static class WrappedSourceIdentifier
+	{
+		public String resolvedName;
+		public SourceIdentifier sourceIdentifier;
+
+		public WrappedSourceIdentifier(String resolvedName, SourceIdentifier sourceIdentifier)
+<span class="nc" id="L523">		{</span>
+<span class="nc" id="L524">			this.resolvedName = resolvedName;</span>
+<span class="nc" id="L525">			this.sourceIdentifier = sourceIdentifier;</span>
+<span class="nc" id="L526">		}</span>
+
+		@Override
+		public String toString()
+		{
+<span class="nc" id="L531">			return resolvedName;</span>
+		}
+
+		public boolean equals(Object o)
+		{
+<span class="nc bnc" id="L536" title="All 2 branches missed.">			if(this == o) return true;</span>
+<span class="nc bnc" id="L537" title="All 4 branches missed.">			if(o == null || getClass() != o.getClass()) return false;</span>
+
+<span class="nc" id="L539">			final WrappedSourceIdentifier that = (WrappedSourceIdentifier) o;</span>
+
+<span class="nc bnc" id="L541" title="All 6 branches missed.">			if(resolvedName != null ? !resolvedName.equals(that.resolvedName) : that.resolvedName != null) return false;</span>
+<span class="nc bnc" id="L542" title="All 2 branches missed.">			return !(sourceIdentifier != null ? !sourceIdentifier</span>
+<span class="nc bnc" id="L543" title="All 4 branches missed.">				.equals(that.sourceIdentifier) : that.sourceIdentifier != null);</span>
+		}
+
+		public int hashCode()
+		{
+			int result;
+<span class="nc bnc" id="L549" title="All 2 branches missed.">			result = (resolvedName != null ? resolvedName.hashCode() : 0);</span>
+<span class="nc bnc" id="L550" title="All 2 branches missed.">			result = 29 * result + (sourceIdentifier != null ? sourceIdentifier.hashCode() : 0);</span>
+<span class="nc" id="L551">			return result;</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

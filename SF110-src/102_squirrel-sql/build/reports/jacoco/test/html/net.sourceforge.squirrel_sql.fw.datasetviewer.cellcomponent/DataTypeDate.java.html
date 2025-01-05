@@ -1,0 +1,936 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DataTypeDate.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent</a> &gt; <span class="el_source">DataTypeDate.java</span></div><h1>DataTypeDate.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent;
+/*
+ * Copyright (C) 2001-2004 Colin Bell
+ * colbell@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.Insets;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.sql.Date;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.text.DateFormat;
+
+import javax.swing.BorderFactory;
+import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
+import javax.swing.JTable;
+import javax.swing.JTextArea;
+import javax.swing.JTextField;
+import javax.swing.SwingUtilities;
+import javax.swing.event.ChangeEvent;
+import javax.swing.event.ChangeListener;
+import javax.swing.text.JTextComponent;
+
+import net.sourceforge.squirrel_sql.fw.datasetviewer.CellDataPopup;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.ColumnDisplayDefinition;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.whereClause.IWhereClausePart;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.whereClause.IsNullWhereClausePart;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.whereClause.NoParameterWhereClausePart;
+import net.sourceforge.squirrel_sql.fw.dialects.DialectFactory;
+import net.sourceforge.squirrel_sql.fw.gui.OkJPanel;
+import net.sourceforge.squirrel_sql.fw.gui.RightLabel;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.ThreadSafeDateFormat;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+/**
+ * @author gwg
+ *
+ * This class provides the display components for handling Date data types,
+ * specifically SQL type DATE.
+ * The display components are for:
+ * &lt;UL&gt;
+ * &lt;LI&gt; read-only display within a table cell
+ * &lt;LI&gt; editing within a table cell
+ * &lt;LI&gt; read-only or editing display within a separate window
+ * &lt;/UL&gt;
+ * The class also contains 
+ * &lt;UL&gt;
+ * &lt;LI&gt; a function to compare two display values
+ * to see if they are equal.  This is needed because the display format
+ * may not be the same as the internal format, and all internal object
+ * types may not provide an appropriate equals() function.
+ * &lt;LI&gt; a function to return a printable text form of the cell contents,
+ * which is used in the text version of the table.
+ * &lt;/UL&gt;
+ * &lt;P&gt;
+ * The components returned from this class extend RestorableJTextField
+ * and RestorableJTextArea for use in editing table cells that
+ * contain values of this data type.  It provides the special behavior for null
+ * handling and resetting the cell to the original value.
+ */
+
+public class DataTypeDate extends BaseDataTypeComponent
+	implements IDataTypeComponent
+{
+<span class="nc" id="L92">	private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L93">		StringManagerFactory.getStringManager(DataTypeDate.class);</span>
+
+   /** Logger for this class. */
+<span class="nc" id="L96">   private static ILogger s_log = LoggerController.createLogger(DataTypeDate.class);</span>
+
+	/* whether nulls are allowed or not */
+	private boolean _isNullable;
+
+	/* table of which we are part (needed for creating popup dialog) */
+	private JTable _table;
+
+	/* The JTextComponent that is being used for editing */
+	private IRestorableTextComponent _textComponent;
+
+	/* The CellRenderer used for this data type */
+	//??? For now, use the same renderer as everyone else.
+	//??
+	//?? IN FUTURE: change this to use a new instance of renederer
+	//?? for this data type.
+<span class="nc" id="L112">	private DefaultColumnRenderer _renderer = DefaultColumnRenderer.getInstance();</span>
+
+	/**
+	 * Name of this class, which is needed because the class name is needed
+	 * by the static method getControlPanel, so we cannot use something
+	 * like getClass() to find this name.
+	 */
+	private static final String thisClassName =
+		&quot;net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.DataTypeDate&quot;;
+
+
+	/** Default date format */
+<span class="nc" id="L124">	private static int DEFAULT_LOCALE_FORMAT = DateFormat.SHORT;</span>
+
+	/*
+	 * Properties settable by the user
+	 */
+	 // flag for whether we have already loaded the properties or not
+<span class="nc" id="L130">	 private static boolean propertiesAlreadyLoaded = false;</span>
+
+	 // flag for whether to use the default Java format (true)
+	 // or the Locale-dependent format (false)
+<span class="nc" id="L134">	 private static boolean useJavaDefaultFormat = true;</span>
+
+	 // which locale-dependent format to use; short, medium, long, or full
+<span class="nc" id="L137">	 private static int localeFormat = DEFAULT_LOCALE_FORMAT;</span>
+
+	 // Whether to force user to enter dates in exact format or use heuristics to guess it
+<span class="nc" id="L140">	 private static boolean lenient = true;</span>
+
+     // Whether or not to read date type columns with rs.getTimestamp() 
+<span class="nc" id="L143">     private static boolean readDateAsTimestamp = false;</span>
+     
+	 // The DateFormat object to use for all locale-dependent formatting.
+	 // This is reset each time the user changes the previous settings.
+<span class="nc" id="L147">	 private static ThreadSafeDateFormat dateFormat = </span>
+	     new ThreadSafeDateFormat(localeFormat);
+    private boolean _renderExceptionHasBeenLogged;
+
+
+   /**
+    * Constructor - save the data needed by this data type.
+    */
+<span class="nc" id="L155">   public DataTypeDate(JTable table, ColumnDisplayDefinition colDef) {</span>
+<span class="nc" id="L156">      _table = table;</span>
+<span class="nc" id="L157">      _colDef = colDef;</span>
+<span class="nc" id="L158">      _isNullable = colDef.isNullable();</span>
+
+<span class="nc" id="L160">      loadProperties();</span>
+<span class="nc" id="L161">   }</span>
+
+	/** Internal function to get the user-settable properties from the DTProperties,
+	 * if they exist, and to ensure that defaults are set if the properties have
+	 * not yet been created.
+	 * &lt;P&gt;
+	 * This method may be called from different places depending on whether
+	 * an instance of this class is created before the user brings up the Session
+	 * Properties window.  In either case, the data is static and is set only
+	 * the first time we are called.
+	 */
+	private static void loadProperties() {
+
+		//set the property values
+		// Note: this may have already been done by another instance of
+		// this DataType created to handle a different column.
+<span class="nc bnc" id="L177" title="All 2 branches missed.">		if (propertiesAlreadyLoaded == false) {</span>
+<span class="nc" id="L178">            propertiesAlreadyLoaded = true;</span>
+			// get parameters previously set by user, or set default values
+<span class="nc" id="L180">			useJavaDefaultFormat =true;	// set to use the Java default</span>
+<span class="nc" id="L181">			String useJavaDefaultFormatString = DTProperties.get(</span>
+				thisClassName, &quot;useJavaDefaultFormat&quot;);
+<span class="nc bnc" id="L183" title="All 4 branches missed.">			if (useJavaDefaultFormatString != null &amp;&amp; useJavaDefaultFormatString.equals(&quot;false&quot;))</span>
+<span class="nc" id="L184">				useJavaDefaultFormat =false;</span>
+
+			// get which locale-dependent format to use
+<span class="nc" id="L187">			localeFormat =DateFormat.SHORT;	// set to use the Java default</span>
+<span class="nc" id="L188">			String localeFormatString = DTProperties.get(</span>
+				thisClassName, &quot;localeFormat&quot;);
+<span class="nc bnc" id="L190" title="All 2 branches missed.">			if (localeFormatString != null)</span>
+<span class="nc" id="L191">				localeFormat = Integer.parseInt(localeFormatString);</span>
+
+			// use lenient input or force user to enter exact format
+<span class="nc" id="L194">			lenient = true;	// set to allow less stringent input</span>
+<span class="nc" id="L195">			String lenientString = DTProperties.get(</span>
+				thisClassName, &quot;lenient&quot;);
+<span class="nc bnc" id="L197" title="All 4 branches missed.">			if (lenientString != null &amp;&amp; lenientString.equals(&quot;false&quot;))</span>
+<span class="nc" id="L198">				lenient =false;</span>
+            
+            // Bug #1757076
+            // always use false unless user specifies otherwise; this breaks
+            // date editing in Derby (possibly DB2 as well)
+<span class="nc" id="L203">            readDateAsTimestamp = false;</span>
+<span class="nc" id="L204">            String readDateAsTimestampString = </span>
+<span class="nc" id="L205">                DTProperties.get(thisClassName, &quot;readDateAsTimestamp&quot;);</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">            if (readDateAsTimestampString != null &amp;&amp; </span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">                    readDateAsTimestampString.equals(&quot;true&quot;)) </span>
+            {
+<span class="nc" id="L209">                readDateAsTimestamp = true;</span>
+            }
+            
+            /*
+             * After loading the properties, we must initialize the dateFormat.
+             * See Bug 3086444
+             */
+<span class="nc" id="L216">            initDateFormat(localeFormat, lenient);</span>
+		}
+<span class="nc" id="L218">	}</span>
+	
+	/**
+	 * Defines the dateFormat with the specific format and lenient options
+	 */
+	private static void initDateFormat(int format, boolean lenient) {
+<span class="nc" id="L224">		 dateFormat = new ThreadSafeDateFormat(format);	// lenient is set next</span>
+<span class="nc" id="L225">		 dateFormat.setLenient(lenient);</span>
+<span class="nc" id="L226">	}</span>
+
+    public static boolean getReadDateAsTimestamp() {
+<span class="nc" id="L229">        propertiesAlreadyLoaded = false;</span>
+<span class="nc" id="L230">        loadProperties();</span>
+<span class="nc" id="L231">        return readDateAsTimestamp;</span>
+    }
+    
+	/**
+	 * Return the name of the java class used to hold this data type.
+	 */
+	public String getClassName() {
+<span class="nc" id="L238">		return &quot;java.sql.Date&quot;;</span>
+	}
+
+	/*
+	 * First we have the methods for in-cell and Text-table operations
+	 */
+
+	/**
+	 * Render a value into text for this DataType.
+	 */
+	public String renderObject(Object value) {
+		// use the Java default date-to-string
+<span class="nc bnc" id="L250" title="All 4 branches missed.">		if (useJavaDefaultFormat == true || value == null)</span>
+<span class="nc" id="L251">			return (String)_renderer.renderObject(value);</span>
+
+		// use a date formatter
+		try
+		{
+<span class="nc" id="L256">		    return (String)_renderer.renderObject(dateFormat.format(value));</span>
+		}
+<span class="nc" id="L258">		catch (Exception e)</span>
+		{
+<span class="nc bnc" id="L260" title="All 2 branches missed.">		    if(false == _renderExceptionHasBeenLogged)</span>
+		    {
+<span class="nc" id="L262">		        _renderExceptionHasBeenLogged = true;</span>
+<span class="nc" id="L263">		        s_log.error(&quot;Could not format \&quot;&quot; + value + &quot;\&quot; as date type&quot;, e);</span>
+		    }
+<span class="nc" id="L265">		    return (String) _renderer.renderObject(value);</span>
+		}
+   }
+
+	/**
+	 * This Data Type can be edited in a table cell.
+	 */
+	public boolean isEditableInCell(Object originalValue) {
+<span class="nc" id="L273">		return true;</span>
+	}
+
+	/**
+	 * See if a value in a column has been limited in some way and
+	 * needs to be re-read before being used for editing.
+	 * For read-only tables this may actually return true since we want
+	 * to be able to view the entire contents of the cell even if it was not
+	 * completely loaded during the initial table setup.
+	 */
+	public boolean needToReRead(Object originalValue) {
+		// this DataType does not limit the data read during the initial load of the table,
+		// so there is no need to re-read the complete data later
+<span class="nc" id="L286">		return false;</span>
+	}
+
+	/**
+	 * Return a JTextField usable in a CellEditor.
+	 */
+	public JTextField getJTextField() {
+<span class="nc" id="L293">		_textComponent = new RestorableJTextField();</span>
+
+		// special handling of operations while editing this data type
+<span class="nc" id="L296">		((RestorableJTextField)_textComponent).addKeyListener(new KeyTextHandler());</span>
+
+		//
+		// handle mouse events for double-click creation of popup dialog.
+		// This happens only in the JTextField, not the JTextArea, so we can
+		// make this an inner class within this method rather than a separate
+		// inner class as is done with the KeyTextHandler class.
+		//
+<span class="nc" id="L304">		((RestorableJTextField)_textComponent).addMouseListener(new MouseAdapter()</span>
+<span class="nc" id="L305">		{</span>
+			public void mousePressed(MouseEvent evt)
+			{
+<span class="nc bnc" id="L308" title="All 2 branches missed.">				if (evt.getClickCount() == 2)</span>
+				{
+<span class="nc" id="L310">					MouseEvent tableEvt = SwingUtilities.convertMouseEvent(</span>
+<span class="nc" id="L311">						(RestorableJTextField)DataTypeDate.this._textComponent,</span>
+<span class="nc" id="L312">						evt, DataTypeDate.this._table);</span>
+<span class="nc" id="L313">					CellDataPopup.showDialog(DataTypeDate.this._table,</span>
+						DataTypeDate.this._colDef, tableEvt, true);
+				}
+<span class="nc" id="L316">			}</span>
+		});	// end of mouse listener
+
+<span class="nc" id="L319">		return (JTextField)_textComponent;</span>
+	}
+
+	/**
+	 * Implement the interface for validating and converting to internal object.
+	 * Null is a valid successful return, so errors are indicated only by
+	 * existance or not of a message in the messageBuffer.
+	 */
+	public Object validateAndConvert(String value, Object originalValue, StringBuffer messageBuffer) {
+		// handle null, which is shown as the special string &quot;&lt;null&gt;&quot;
+<span class="nc bnc" id="L329" title="All 4 branches missed.">		if (value.equals(&quot;&lt;null&gt;&quot;) || value.equals(&quot;&quot;))</span>
+<span class="nc" id="L330">			return null;</span>
+
+		// Do the conversion into the object in a safe manner
+		try {
+<span class="nc bnc" id="L334" title="All 2 branches missed.">			if (useJavaDefaultFormat) {</span>
+<span class="nc" id="L335">				Object obj = Date.valueOf(value);</span>
+<span class="nc" id="L336">				return obj;</span>
+			}
+			else {
+				// use the DateFormat to parse
+<span class="nc" id="L340">				java.util.Date javaDate = dateFormat.parse(value);</span>
+<span class="nc" id="L341">				java.sql.Date sqlDate = new java.sql.Date(javaDate.getTime());</span>
+<span class="nc" id="L342">				return sqlDate;</span>
+			}
+		}
+<span class="nc" id="L345">		catch (Exception e) {</span>
+<span class="nc" id="L346">			messageBuffer.append(e.toString()+&quot;\n&quot;);</span>
+			//?? do we need the message also, or is it automatically part of the toString()?
+			//messageBuffer.append(e.getMessage());
+<span class="nc" id="L349">			return null;</span>
+		}
+	}
+
+	/**
+	 * If true, this tells the PopupEditableIOPanel to use the
+	 * binary editing panel rather than a pure text panel.
+	 * The binary editing panel assumes the data is an array of bytes,
+	 * converts it into text form, allows the user to change how that
+	 * data is displayed (e.g. Hex, Decimal, etc.), and converts
+	 * the data back from text to bytes when the user editing is completed.
+	 * If this returns false, this DataType class must
+	 * convert the internal data into a text string that
+	 * can be displayed (and edited, if allowed) in a TextField
+	 * or TextArea, and must handle all
+	 * user key strokes related to editing of that data.
+	 */
+	public boolean useBinaryEditingPanel() {
+<span class="nc" id="L367">		return false;</span>
+	}
+
+
+	/*
+		 * Now the functions for the Popup-related operations.
+		 */
+
+	/**
+	 * Returns true if data type may be edited in the popup,
+	 * false if not.
+	 */
+	public boolean isEditableInPopup(Object originalValue) {
+<span class="nc" id="L380">		return true;</span>
+	}
+
+	/*
+	 * Return a JTextArea usable in the CellPopupDialog
+	 * and fill in the value.
+	 */
+	 public JTextArea getJTextArea(Object value) {
+<span class="nc" id="L388">		_textComponent = new RestorableJTextArea();</span>
+
+		// value is a simple string representation of the data,
+		// the same one used in Text and in-cell operations.
+<span class="nc" id="L392">		((RestorableJTextArea)_textComponent).setText(renderObject(value));</span>
+
+		// special handling of operations while editing this data type
+<span class="nc" id="L395">		((RestorableJTextArea)_textComponent).addKeyListener(new KeyTextHandler());</span>
+
+<span class="nc" id="L397">		return (RestorableJTextArea)_textComponent;</span>
+	 }
+
+	/**
+	 * Validating and converting in Popup is identical to cell-related operation.
+	 */
+	public Object validateAndConvertInPopup(String value, Object originalValue, StringBuffer messageBuffer) {
+<span class="nc" id="L404">		return validateAndConvert(value, originalValue, messageBuffer);</span>
+	}
+
+	/*
+	 * The following is used in both cell and popup operations.
+	 */
+
+	/*
+		 * Internal class for handling key events during editing
+		 * of both JTextField and JTextArea.
+		 */
+<span class="nc" id="L415">	 private class KeyTextHandler extends BaseKeyTextHandler {</span>
+		 public void keyTyped(KeyEvent e) {
+<span class="nc" id="L417">				char c = e.getKeyChar();</span>
+
+				// as a coding convenience, create a reference to the text component
+				// that is typecast to JTextComponent.  this is not essential, as we
+				// could typecast every reference, but this makes the code cleaner
+<span class="nc" id="L422">				JTextComponent _theComponent = (JTextComponent)DataTypeDate.this._textComponent;</span>
+<span class="nc" id="L423">				String text = _theComponent.getText();</span>
+
+
+				// tabs and newlines get put into the text before this check,
+				// so remove them
+				// This only applies to Popup editing since these chars are
+				// not passed to this level by the in-cell editor.
+<span class="nc bnc" id="L430" title="All 4 branches missed.">				if (c == KeyEvent.VK_TAB || c == KeyEvent.VK_ENTER) {</span>
+					// remove all instances of the offending char
+<span class="nc" id="L432">					int index = text.indexOf(c);</span>
+<span class="nc bnc" id="L433" title="All 2 branches missed.">					if (index != -1) {</span>
+<span class="nc bnc" id="L434" title="All 2 branches missed.">						if (index == text.length() -1) {</span>
+<span class="nc" id="L435">							text = text.substring(0, text.length()-1);	// truncate string</span>
+						}
+						else {
+<span class="nc" id="L438">							text = text.substring(0, index) + text.substring(index+1);</span>
+						}
+<span class="nc" id="L440">						((IRestorableTextComponent)_theComponent).updateText( text);</span>
+<span class="nc" id="L441">						_beepHelper.beep(_theComponent);</span>
+					}
+<span class="nc" id="L443">					e.consume();</span>
+				}
+
+
+				// handle cases of null
+				// The processing is different when nulls are allowed and when they are not.
+				//
+
+<span class="nc bnc" id="L451" title="All 2 branches missed.">				if ( DataTypeDate.this._isNullable) {</span>
+
+					// user enters something when field is null
+<span class="nc bnc" id="L454" title="All 2 branches missed.">					if (text.equals(&quot;&lt;null&gt;&quot;)) {</span>
+<span class="nc bnc" id="L455" title="All 4 branches missed.">						if ((c==KeyEvent.VK_BACK_SPACE) || (c == KeyEvent.VK_DELETE)) {</span>
+							// delete when null =&gt; original value
+<span class="nc" id="L457">							DataTypeDate.this._textComponent.restoreText();</span>
+<span class="nc" id="L458">							e.consume();</span>
+						}
+						else {
+							// non-delete when null =&gt; clear field and add text
+<span class="nc" id="L462">							DataTypeDate.this._textComponent.updateText(&quot;&quot;);</span>
+							// fall through to normal processing of this key stroke
+						}
+					}
+					else {
+						// check for user deletes last thing in field
+<span class="nc bnc" id="L468" title="All 4 branches missed.">						if ((c == KeyEvent.VK_BACK_SPACE) || (c == KeyEvent.VK_DELETE)) {</span>
+<span class="nc bnc" id="L469" title="All 2 branches missed.">							if (text.length() &lt;= 1 ) {</span>
+								// about to delete last thing in field, so replace with null
+<span class="nc" id="L471">								DataTypeDate.this._textComponent.updateText(&quot;&lt;null&gt;&quot;);</span>
+<span class="nc" id="L472">								e.consume();</span>
+							}
+						}
+					}
+				}
+				else {
+						  // field is not nullable
+						  //
+<span class="nc" id="L480">						  handleNotNullableField(text, c, e, _textComponent);</span>
+				}
+<span class="nc" id="L482">			}</span>
+		}
+
+
+
+
+	/*
+		 * DataBase-related functions
+		 */
+
+	 /**
+	  * On input from the DB, read the data from the ResultSet into the appropriate
+	  * type of object to be stored in the table cell.
+	  */
+	public Object readResultSet(ResultSet rs, int index, boolean limitDataRead)
+		throws java.sql.SQLException 
+    {
+	    
+<span class="nc" id="L500">	    return staticReadResultSet(rs, index, limitDataRead);</span>
+    }
+
+     /**
+      * On input from the DB, read the data from the ResultSet into the appropriate
+      * type of object to be stored in the table cell.
+      */
+    public static Object staticReadResultSet(ResultSet rs, int index, boolean limitDataRead)
+        throws java.sql.SQLException 
+    {
+<span class="nc" id="L510">        loadProperties();</span>
+<span class="nc" id="L511">        Object data = null;</span>
+
+<span class="nc" id="L513">        data = rs.getDate(index);</span>
+
+<span class="nc bnc" id="L515" title="All 2 branches missed.">        if (rs.wasNull()) {</span>
+<span class="nc" id="L516">            return null;</span>
+        } else {
+<span class="nc" id="L518">            return data;</span>
+        }
+    }
+    
+	/**
+	 * When updating the database, generate a string form of this object value
+	 * that can be used in the WHERE clause to match the value in the database.
+	 * A return value of null means that this column cannot be used in the WHERE
+	 * clause, while a return of &quot;null&quot; (or &quot;is null&quot;, etc) means that the column
+	 * can be used in the WHERE clause and the value is actually a null value.
+	 * This function must also include the column label so that its output
+	 * is of the form:
+	 * 	&quot;columnName = value&quot;
+	 * or
+	 * 	&quot;columnName is null&quot;
+	 * or whatever is appropriate for this column in the database.
+	 */
+	public IWhereClausePart getWhereClauseValue(Object value, ISQLDatabaseMetaData md)
+	{
+<span class="nc bnc" id="L537" title="All 6 branches missed.">		if (value == null || value.toString() == null || value.toString().length() == 0)</span>
+		{
+<span class="nc" id="L539">			return new IsNullWhereClausePart(_colDef);</span>
+		}
+		else
+		{
+            // if value contains &quot;:&quot; it probably has a time component
+<span class="nc bnc" id="L544" title="All 2 branches missed.">            boolean hasTimeComponent = (value.toString().indexOf(&quot;:&quot;) != -1);</span>
+            
+            // if value contains &quot;-&quot; it probably has a date component
+<span class="nc bnc" id="L547" title="All 2 branches missed.">            boolean hasDateComponent = (value.toString().indexOf(&quot;-&quot;) != -1);</span>
+            
+<span class="nc bnc" id="L549" title="All 4 branches missed.">            if (hasTimeComponent &amp;&amp; hasDateComponent) {</span>
+                // treat it like a timestamp
+<span class="nc" id="L551">                return new NoParameterWhereClausePart(_colDef, _colDef.getColumnName() + &quot;={ts '&quot; + value.toString() + &quot;'}&quot;);</span>
+<span class="nc bnc" id="L552" title="All 2 branches missed.">            } else if (hasTimeComponent) {</span>
+                // treat it like a time - no date component
+<span class="nc" id="L554">                return new NoParameterWhereClausePart(_colDef, _colDef.getColumnName() + &quot;={t '&quot; + value.toString() + &quot;'}&quot;);</span>
+            } else {
+<span class="nc bnc" id="L556" title="All 2 branches missed.">                if (DialectFactory.isOracle(md)) {</span>
+                    // Oracle stores time information in java.sql.Types.Date columns
+                    // This tells Oracle that we are only talking about the date part.                    
+<span class="nc" id="L559">                    return new NoParameterWhereClausePart(_colDef, &quot;trunc(&quot; + _colDef.getColumnName() + &quot;)={d '&quot; + value.toString() + &quot;'}&quot;);</span>
+                } else {
+<span class="nc" id="L561">                    return new NoParameterWhereClausePart(_colDef, _colDef.getColumnName() + &quot;={d '&quot; + value.toString() + &quot;'}&quot;);</span>
+                }
+            }               
+		}
+	}
+
+
+	/**
+	 * When updating the database, insert the appropriate datatype into the
+	 * prepared statment at the given variable position.
+	 */
+	public void setPreparedStatementValue(PreparedStatement pstmt, Object value, int position)
+		throws java.sql.SQLException {
+<span class="nc bnc" id="L574" title="All 2 branches missed.">		if (value == null) {</span>
+<span class="nc" id="L575">			pstmt.setNull(position, _colDef.getSqlType());</span>
+		}
+		else {
+<span class="nc" id="L578">			pstmt.setDate(position, ((Date)value));</span>
+		}
+<span class="nc" id="L580">	}</span>
+
+	/**
+	 * Get a default value for the table used to input data for a new row
+	 * to be inserted into the DB.
+	 */
+	public Object getDefaultValue(String dbDefaultValue) {
+<span class="nc bnc" id="L587" title="All 2 branches missed.">		if (dbDefaultValue != null) {</span>
+			// try to use the DB default value
+<span class="nc" id="L589">			StringBuffer mbuf = new StringBuffer();</span>
+<span class="nc" id="L590">			Object newObject = validateAndConvert(dbDefaultValue, null, mbuf);</span>
+
+			// if there was a problem with converting, then just fall through
+			// and continue as if there was no default given in the DB.
+			// Otherwise, use the converted object
+<span class="nc bnc" id="L595" title="All 2 branches missed.">			if (mbuf.length() == 0)</span>
+<span class="nc" id="L596">				return newObject;</span>
+		}
+
+		// no default in DB.  If nullable, use null.
+<span class="nc bnc" id="L600" title="All 2 branches missed.">		if (_isNullable)</span>
+<span class="nc" id="L601">			return null;</span>
+
+		// field is not nullable, so create a reasonable default value
+<span class="nc" id="L604">		return new Date( new java.util.Date().getTime());</span>
+	}
+
+
+	/*
+		 * File IO related functions
+		 */
+
+
+	 /**
+	  * Say whether or not object can be exported to and imported from
+	  * a file.  We put both export and import together in one test
+	  * on the assumption that all conversions can be done both ways.
+	  */
+	 public boolean canDoFileIO() {
+<span class="nc" id="L619">		 return true;</span>
+	 }
+
+	 /**
+	  * Read a file and construct a valid object from its contents.
+	  * Errors are returned by throwing an IOException containing the
+	  * cause of the problem as its message.
+	  * &lt;P&gt;
+	  * DataType is responsible for validating that the imported
+	  * data can be converted to an object, and then must return
+	  * a text string that can be used in the Popup window text area.
+	  * This object-to-text conversion is the same as is done by
+	  * the DataType object internally in the getJTextArea() method.
+	  * 
+	  * &lt;P&gt;
+	  * File is assumed to be and ASCII string of digits
+	  * representing a value of this data type.
+	  */
+	public String importObject(FileInputStream inStream)
+		 throws IOException {
+
+<span class="nc" id="L640">		 InputStreamReader inReader = new InputStreamReader(inStream);</span>
+
+<span class="nc" id="L642">		 int fileSize = inStream.available();</span>
+
+<span class="nc" id="L644">		 char charBuf[] = new char[fileSize];</span>
+
+<span class="nc" id="L646">		 int count = inReader.read(charBuf, 0, fileSize);</span>
+
+<span class="nc bnc" id="L648" title="All 2 branches missed.">		 if (count != fileSize)</span>
+<span class="nc" id="L649">			 throw new IOException(</span>
+				 &quot;Could read only &quot;+ count +
+				 &quot; chars from a total file size of &quot; + fileSize +
+				 &quot;. Import failed.&quot;);
+
+		 // convert file text into a string
+		 // Special case: some systems tack a newline at the end of
+		 // the text read.  Assume that if last char is a newline that
+		 // we want everything else in the line.
+		 String fileText;
+<span class="nc bnc" id="L659" title="All 2 branches missed.">		 if (charBuf[count-1] == KeyEvent.VK_ENTER)</span>
+<span class="nc" id="L660">			 fileText = new String(charBuf, 0, count-1);</span>
+<span class="nc" id="L661">		 else fileText = new String(charBuf);</span>
+
+		 // test that the string is valid by converting it into an
+		 // object of this data type
+<span class="nc" id="L665">		 StringBuffer messageBuffer = new StringBuffer();</span>
+<span class="nc" id="L666">		 validateAndConvertInPopup(fileText, null, messageBuffer);</span>
+<span class="nc bnc" id="L667" title="All 2 branches missed.">		 if (messageBuffer.length() &gt; 0) {</span>
+			 // convert number conversion issue into IO issue for consistancy
+<span class="nc" id="L669">			 throw new IOException(</span>
+<span class="nc" id="L670">				 &quot;Text does not represent data of type &quot;+getClassName()+</span>
+				 &quot;.  Text was:\n&quot;+fileText);
+		 }
+
+		 // return the text from the file since it does
+		 // represent a valid data value
+<span class="nc" id="L676">		 return fileText;</span>
+	}
+
+
+	 /**
+	  * Construct an appropriate external representation of the object
+	  * and write it to a file.
+	  * Errors are returned by throwing an IOException containing the
+	  * cause of the problem as its message.
+	  * &lt;P&gt;
+	  * DataType is responsible for validating that the given text
+	  * text from a Popup JTextArea can be converted to an object.
+	  * This text-to-object conversion is the same as validateAndConvertInPopup,
+	  * which may be used internally by the object to do the validation.
+	  * &lt;P&gt;
+	  * The DataType object must flush and close the output stream before returning.
+	  * Typically it will create another object (e.g. an OutputWriter), and
+	  * that is the object that must be flushed and closed.
+	  * 
+	  * &lt;P&gt;
+	  * File is assumed to be and ASCII string of digits
+	  * representing a value of this data type.
+	  */
+	 public void exportObject(FileOutputStream outStream, String text)
+		 throws IOException {
+
+<span class="nc" id="L702">		 OutputStreamWriter outWriter = new OutputStreamWriter(outStream);</span>
+
+		 // check that the text is a valid representation
+<span class="nc" id="L705">		 StringBuffer messageBuffer = new StringBuffer();</span>
+<span class="nc" id="L706">		 validateAndConvertInPopup(text, null, messageBuffer);</span>
+<span class="nc bnc" id="L707" title="All 2 branches missed.">		 if (messageBuffer.length() &gt; 0) {</span>
+			 // there was an error in the conversion
+<span class="nc" id="L709">			 throw new IOException(new String(messageBuffer));</span>
+		 }
+
+		 // just send the text to the output file
+<span class="nc" id="L713">		outWriter.write(text);</span>
+<span class="nc" id="L714">		outWriter.flush();</span>
+<span class="nc" id="L715">		outWriter.close();</span>
+<span class="nc" id="L716">	 }</span>
+
+
+	/*
+		 * Property change control panel
+		 */
+
+	 /**
+	  * Generate a JPanel containing controls that allow the user
+	  * to adjust the properties for this DataType.
+	  * All properties are static accross all instances of this DataType. 
+	  * However, the class may choose to apply the information differentially,
+	  * such as keeping a list (also entered by the user) of table/column names
+	  * for which certain properties should be used.
+	  * &lt;P&gt;
+	  * This is called ONLY if there is at least one property entered into the DTProperties
+	  * for this class.
+	  * &lt;P&gt;
+	  * Since this method is called by reflection on the Method object derived from this class,
+	  * it does not need to be included in the Interface.
+	  * It would be nice to include this in the Interface for consistancy, documentation, etc,
+	  * but the Interface does not seem to like static methods.
+	  */
+	 public static OkJPanel getControlPanel() {
+
+		/*
+				 * If you add this method to one of the standard DataTypes in the
+				 * fw/datasetviewer/cellcomponent directory, you must also add the name
+				 * of that DataType class to the list in CellComponentFactory, method
+				 * getControlPanels, variable named initialClassNameList.
+				 * If the class is being registered with the factory using registerDataType,
+				 * then you should not include the class name in the list (it will be found
+				 * automatically), but if the DataType is part of the case statement in the
+				 * factory method getDataTypeObject, then it does need to be explicitly listed
+				 * in the getControlPanels method also.
+				 */
+
+		 // if this panel is called before any instances of the class have been
+		 // created, we need to load the properties from the DTProperties.
+<span class="nc" id="L755">		 loadProperties();</span>
+
+<span class="nc" id="L757">		return new DateOkJPanel();</span>
+	 }
+
+	// Class that displays the various formats available for dates
+	public static class DateFormatTypeCombo extends JComboBox
+	{
+        private static final long serialVersionUID = 1L;
+
+        public DateFormatTypeCombo()
+<span class="nc" id="L766">		{</span>
+			// i18n[dataTypeDate.full=Full ({0})]
+<span class="nc" id="L768">			addItem(s_stringMgr.getString(&quot;dataTypeDate.full&quot;, DateFormat.getDateInstance(DateFormat.FULL).format(new java.util.Date())));</span>
+			// i18n[dataTypeDate.long=Long ({0})]
+<span class="nc" id="L770">			addItem(s_stringMgr.getString(&quot;dataTypeDate.long&quot;, DateFormat.getDateInstance(DateFormat.LONG).format(new java.util.Date())));</span>
+			// i18n[dataTypeDate.medium=Medium ({0})]
+<span class="nc" id="L772">			addItem(s_stringMgr.getString(&quot;dataTypeDate.medium&quot;, DateFormat.getDateInstance(DateFormat.MEDIUM).format(new java.util.Date())));</span>
+			// i18n[dataTypeDate.short=Short ({0})]
+<span class="nc" id="L774">			addItem(s_stringMgr.getString(&quot;dataTypeDate.short&quot;, DateFormat.getDateInstance(DateFormat.SHORT).format(new java.util.Date())));</span>
+<span class="nc" id="L775">		}</span>
+
+		public void setSelectedIndex(int option) {
+<span class="nc bnc" id="L778" title="All 2 branches missed.">			if (option == DateFormat.SHORT)</span>
+<span class="nc" id="L779">				super.setSelectedIndex(3);</span>
+<span class="nc bnc" id="L780" title="All 2 branches missed.">			else if (option == DateFormat.MEDIUM)</span>
+<span class="nc" id="L781">				super.setSelectedIndex(2);</span>
+<span class="nc bnc" id="L782" title="All 2 branches missed.">			else if (option == DateFormat.LONG)</span>
+<span class="nc" id="L783">				super.setSelectedIndex(1);</span>
+<span class="nc" id="L784">			else super.setSelectedIndex(0);</span>
+<span class="nc" id="L785">		}</span>
+
+		public int getValue() {
+<span class="nc bnc" id="L788" title="All 2 branches missed.">			if (getSelectedIndex() == 3)</span>
+<span class="nc" id="L789">				return DateFormat.SHORT;</span>
+<span class="nc bnc" id="L790" title="All 2 branches missed.">			else if (getSelectedIndex() == 2)</span>
+<span class="nc" id="L791">				return DateFormat.MEDIUM;</span>
+<span class="nc bnc" id="L792" title="All 2 branches missed.">			else if (getSelectedIndex() == 1)</span>
+<span class="nc" id="L793">				return DateFormat.LONG;</span>
+<span class="nc" id="L794">			else return DateFormat.FULL;</span>
+		}
+	}
+
+
+	 /**
+	  * Inner class that extends OkJPanel so that we can call the ok()
+	  * method to save the data when the user is happy with it.
+	  */
+	 private static class DateOkJPanel extends OkJPanel
+	 {
+        private static final long serialVersionUID = 1L;
+
+        /*
+		 * GUI components - need to be here because they need to be
+		 * accessible from the event handlers to alter each other's state.
+		 */
+		 // check box for whether to use Java Default or a Locale-dependent format
+<span class="nc" id="L812">		 private JCheckBox useJavaDefaultFormatChk = new JCheckBox(</span>
+			 // i18n[dataTypeDate.useDefaultFormat=Use default format ({0})]
+<span class="nc" id="L814">			 s_stringMgr.getString(&quot;dataTypeDate.useDefaultFormat&quot;, new java.sql.Date(new java.util.Date().getTime()).toString()));</span>
+
+		 // label for the date format combo, used to enable/disable text
+		 // i18n[dataTypeDate.orlocaleIndependent= or locale-dependent format:]
+<span class="nc" id="L818">		 private RightLabel dateFormatTypeDropLabel = new RightLabel(s_stringMgr.getString(&quot;dataTypeDate.orlocaleIndependent&quot;));</span>
+
+		 // Combo box for read-all/read-part of blob
+<span class="nc" id="L821">		 private DateFormatTypeCombo dateFormatTypeDrop = new DateFormatTypeCombo();</span>
+
+		 // checkbox for whether to interpret input leniently or not
+		 // i18n[dataTypeDate.allowInexact=allow inexact format on input]
+<span class="nc" id="L825">		 private JCheckBox lenientChk = new JCheckBox(s_stringMgr.getString(&quot;dataTypeDate.allowInexact&quot;));</span>
+
+         // whether or not to read date type columns with rs.getTimestamp()
+         // i18n[dataTypeDate.readDateAsTimestamp=Interpret DATE columns as TIMESTAMP]
+<span class="nc" id="L829">         private JCheckBox readdDateAsTimestampChk = </span>
+<span class="nc" id="L830">             new JCheckBox(s_stringMgr.getString(&quot;dataTypeDate.readDateAsTimestamp&quot;));</span>
+         
+		 public DateOkJPanel()
+<span class="nc" id="L833">		 {</span>
+
+			 /* set up the controls */
+			 // checkbox for Java default/non-default format
+<span class="nc" id="L837">			 useJavaDefaultFormatChk.setSelected(useJavaDefaultFormat);</span>
+<span class="nc" id="L838">			 useJavaDefaultFormatChk.addChangeListener(new ChangeListener()</span>
+<span class="nc" id="L839">			 {</span>
+				 public void stateChanged(ChangeEvent e)
+				 {
+<span class="nc bnc" id="L842" title="All 2 branches missed.">					 dateFormatTypeDrop.setEnabled(! useJavaDefaultFormatChk.isSelected());</span>
+<span class="nc bnc" id="L843" title="All 2 branches missed.">					 dateFormatTypeDropLabel.setEnabled(! useJavaDefaultFormatChk.isSelected());</span>
+<span class="nc bnc" id="L844" title="All 2 branches missed.">					 lenientChk.setEnabled(! useJavaDefaultFormatChk.isSelected());</span>
+<span class="nc" id="L845">				 }</span>
+			 });
+
+			 // Combo box for read-all/read-part of blob
+<span class="nc" id="L849">			 dateFormatTypeDrop = new DateFormatTypeCombo();</span>
+<span class="nc" id="L850">			 dateFormatTypeDrop.setSelectedIndex(localeFormat);</span>
+
+			 // lenient checkbox
+<span class="nc" id="L853">			 lenientChk.setSelected(lenient);</span>
+             
+             // readdDateAsTimestamp checkbox
+<span class="nc" id="L856">             readdDateAsTimestampChk.setSelected(readDateAsTimestamp);</span>
+
+			 // handle cross-connection between fields
+<span class="nc bnc" id="L859" title="All 2 branches missed.">			 dateFormatTypeDrop.setEnabled(! useJavaDefaultFormatChk.isSelected());</span>
+<span class="nc bnc" id="L860" title="All 2 branches missed.">			 dateFormatTypeDropLabel.setEnabled(! useJavaDefaultFormatChk.isSelected());</span>
+<span class="nc bnc" id="L861" title="All 2 branches missed.">			 lenientChk.setEnabled(! useJavaDefaultFormatChk.isSelected());</span>
+
+             /*
+              * Create the panel and add the GUI items to it
+              */
+
+<span class="nc" id="L867">			 setLayout(new GridBagLayout());</span>
+
+			 // i18n[dataTypeDate.typeDate=Date   (SQL type 91)]
+<span class="nc" id="L870">			 setBorder(BorderFactory.createTitledBorder(s_stringMgr.getString(&quot;dataTypeDate.typeDate&quot;)));</span>
+<span class="nc" id="L871">			 final GridBagConstraints gbc = new GridBagConstraints();</span>
+<span class="nc" id="L872">			 gbc.fill = GridBagConstraints.HORIZONTAL;</span>
+<span class="nc" id="L873">			 gbc.insets = new Insets(4, 4, 4, 4);</span>
+<span class="nc" id="L874">			 gbc.anchor = GridBagConstraints.WEST;</span>
+
+<span class="nc" id="L876">			 gbc.gridx = 0;</span>
+<span class="nc" id="L877">			 gbc.gridy = 0;</span>
+
+<span class="nc" id="L879">			 gbc.gridwidth = GridBagConstraints.REMAINDER;</span>
+<span class="nc" id="L880">			 add(useJavaDefaultFormatChk, gbc);</span>
+
+<span class="nc" id="L882">			 gbc.gridwidth = 1;</span>
+<span class="nc" id="L883">			 gbc.gridx = 0;</span>
+<span class="nc" id="L884">			 ++gbc.gridy;</span>
+<span class="nc" id="L885">			 add(dateFormatTypeDropLabel, gbc);</span>
+
+<span class="nc" id="L887">			 ++gbc.gridx;</span>
+<span class="nc" id="L888">			 add(dateFormatTypeDrop, gbc);</span>
+
+<span class="nc" id="L890">			 gbc.gridx = 0;</span>
+<span class="nc" id="L891">			 ++gbc.gridy;</span>
+<span class="nc" id="L892">			 add(lenientChk, gbc);</span>
+
+<span class="nc" id="L894">             gbc.gridx = 0;</span>
+<span class="nc" id="L895">             ++gbc.gridy;</span>
+<span class="nc" id="L896">             add(readdDateAsTimestampChk, gbc);             </span>
+<span class="nc" id="L897">		 } // end of constructor for inner class</span>
+
+
+		 /**
+		  * User has clicked OK in the surrounding JPanel,
+		  * so save the current state of all variables
+		  */
+		 public void ok()
+		 {
+			 // get the values from the controls and set them in the static properties
+<span class="nc" id="L907">			 useJavaDefaultFormat = useJavaDefaultFormatChk.isSelected();</span>
+<span class="nc" id="L908">			 DTProperties.put(thisClassName,</span>
+			                  &quot;useJavaDefaultFormat&quot;, 
+<span class="nc" id="L910">			                  Boolean.valueOf(useJavaDefaultFormat).toString());</span>
+
+
+<span class="nc" id="L913">			 localeFormat = dateFormatTypeDrop.getValue();</span>
+<span class="nc" id="L914">			 dateFormat = new ThreadSafeDateFormat(localeFormat);	// lenient is set next</span>
+<span class="nc" id="L915">			 DTProperties.put(thisClassName,</span>
+			                  &quot;localeFormat&quot;, 
+<span class="nc" id="L917">			                  Integer.toString(localeFormat));</span>
+
+<span class="nc" id="L919">			 lenient = lenientChk.isSelected();</span>
+<span class="nc" id="L920">			 dateFormat.setLenient(lenient);</span>
+<span class="nc" id="L921">			 DTProperties.put(thisClassName,</span>
+			                  &quot;lenient&quot;, 
+<span class="nc" id="L923">			                  Boolean.valueOf(lenient).toString());</span>
+             
+<span class="nc" id="L925">             readDateAsTimestamp = readdDateAsTimestampChk.isSelected();</span>
+<span class="nc" id="L926">             DTProperties.put(thisClassName,</span>
+                              &quot;readDateAsTimestamp&quot;,
+<span class="nc" id="L928">                              Boolean.valueOf(readDateAsTimestamp).toString());</span>
+             
+<span class="nc" id="L930">             initDateFormat(localeFormat, lenient);</span>
+             
+<span class="nc" id="L932">		 }</span>
+
+	 } // end of inner class
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

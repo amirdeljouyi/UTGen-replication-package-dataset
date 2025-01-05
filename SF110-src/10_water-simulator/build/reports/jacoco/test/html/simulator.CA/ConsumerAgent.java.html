@@ -1,0 +1,719 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ConsumerAgent.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">10_water-simulator</a> &gt; <a href="index.source.html" class="el_package">simulator.CA</a> &gt; <span class="el_source">ConsumerAgent.java</span></div><h1>ConsumerAgent.java</h1><pre class="source lang-java linenums">package simulator.CA;
+
+import jade.gui.*;
+import jade.core.AID;
+
+import jade.core.behaviours.SequentialBehaviour;
+import jade.core.behaviours.DataStore;
+
+import jade.content.lang.Codec;
+import jade.content.lang.sl.SLCodec;
+
+import jade.lang.acl.ACLMessage;
+import jade.lang.acl.MessageTemplate;
+import jade.content.ContentElement;
+
+import jade.content.lang.Codec.CodecException;
+import jade.content.onto.OntologyException;
+
+import jade.content.AgentAction;
+import jade.content.onto.basic.Action;
+
+import java.util.Vector;
+import java.util.Iterator;
+import java.util.Hashtable;
+import java.io.*;
+
+import org.apache.log4j.Logger;
+
+import simulator.CA.gui.ConsumerGUI;
+import simulator.ontology.*;
+import simulator.util.*;
+
+/**
+ * Consumer Agent
+ * @author Vartalas Panagiotis
+ * @author Ioannis N. Athanasiadis
+ * @version 1.9
+ * @since 2003-2006
+ */
+
+<span class="fc" id="L41">public class ConsumerAgent extends GuiAgent {</span>
+<span class="fc" id="L42">	private Logger log = Logger.getLogger(ConsumerAgent.class);</span>
+	private static final long serialVersionUID = -534407554583019863L;
+
+	public static final int GUI_REQUEST = 100;
+
+	public static final int SAVE_RESULTS = 101;
+
+	// DataStore KEYS
+	protected static final String STEP_KEY = &quot;CurrentStepId&quot;;
+
+	protected static final String QUERY_KEY = &quot;QueryFromWSA&quot;;
+
+	protected static final String REPLIES_KEY = &quot;RepliesFromNeighbourhood&quot;;
+
+	// Ontology
+<span class="fc" id="L57">	protected Codec codec = new SLCodec();</span>
+
+<span class="fc" id="L59">	protected WDS_Ontology ontology = WDS_Ontology.getInstance();</span>
+
+	// Neighbours taken from arguments
+	private ConsumerAttributes[] myNeighbours;
+
+	// Price Type (average/marginal)
+	private String priceType;
+
+	private boolean consumptionLn;
+
+	private Float initialConsumption;
+
+	// Demand Curve parameters taken from arguments
+	private ParameterAttributes[] myParameters;
+
+	// The subset of demand curve parameters that are social (used in GUI &amp; consumerWater())
+<span class="fc" id="L75">	private ParameterAttributes[] socialParameters = new ParameterAttributes[0];</span>
+
+	// Key = social parameter name
+	// Value = position in myParameters array
+<span class="fc" id="L79">	private Hashtable socialHashTable = new Hashtable();</span>
+
+	//All weights stored
+	private Object[] socialParametersWeightsPerStep;
+
+	// Every step consumption is stored here
+<span class="fc" id="L85">	private Vector personalConsumptions = new Vector(0, 1);</span>
+
+	// One common datastore for all behaviours
+<span class="fc" id="L88">	private DataStore myDataStore = new DataStore();</span>
+
+	// GUI
+	private ConsumerGUI myGui;
+
+	public void setup() {
+
+		// Register SLCodec (language) and Ontology
+<span class="fc" id="L96">		getContentManager().registerLanguage(codec);</span>
+<span class="fc" id="L97">		getContentManager().registerOntology(ontology);</span>
+
+		// Get arguments and fill the array myNeighbours
+		// Get arguments and fill the array myParameters
+<span class="nc" id="L101">		unpackArguments(&quot;&quot;);</span>
+
+		// BEHAVIOURS
+<span class="nc" id="L104">		MatchRequestContent match1 = new MatchRequestContent(new LaunchGUI());</span>
+<span class="nc" id="L105">		MessageTemplate template1 = new MessageTemplate(match1);</span>
+<span class="nc" id="L106">		MessageTemplate mT1 = MessageTemplate.and(MessageTemplate</span>
+<span class="nc" id="L107">				.MatchPerformative(ACLMessage.REQUEST), template1);</span>
+
+<span class="nc" id="L109">		MatchRequestContent match2 = new MatchRequestContent(</span>
+				new SavePersonalData());
+<span class="nc" id="L111">		MessageTemplate template2 = new MessageTemplate(match2);</span>
+<span class="nc" id="L112">		MessageTemplate mT2 = MessageTemplate.and(MessageTemplate</span>
+<span class="nc" id="L113">				.MatchPerformative(ACLMessage.REQUEST), template2);</span>
+		/////////////////////////
+<span class="nc" id="L115">		addBehaviour(new BehaviourLaunchGUI(this, mT1));</span>
+<span class="nc" id="L116">		addBehaviour(new BehaviourReceiveSavePersonalDataRequest(this, mT2));</span>
+		////////////////////////
+
+<span class="nc" id="L119">		SequentialBehaviour behaviourSeq = new SequentialBehaviour(this) {</span>
+			private static final long serialVersionUID = 6617016302747624329L;
+
+			public int onEnd() {
+<span class="nc" id="L123">				reset();</span>
+<span class="nc" id="L124">				myAgent.addBehaviour(this);</span>
+<span class="nc" id="L125">				return super.onEnd();</span>
+			}
+		};
+
+<span class="nc" id="L129">		behaviourSeq.addSubBehaviour(new BehaviourReceivePriceAndMetData(this,</span>
+				myDataStore));
+
+		// If no neighbours OR no social parameters don't add these behaviours
+		// BehaviourContactBehaviour &amp; BehaviourReplyNeighbours
+
+<span class="nc bnc" id="L135" title="All 2 branches missed.">		if (myNeighbours.length != 0) {</span>
+<span class="nc" id="L136">			socialParameters = socialParameters(myParameters);</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">			if (socialParameters.length != 0) {</span>
+				//Initialize storage
+<span class="nc" id="L139">				socialParametersWeightsPerStep = new Object[socialParameters.length];</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">				for (int i = 0; i &lt; socialParameters.length; i++) {</span>
+<span class="nc" id="L141">					Vector v = new Vector(1, 1);</span>
+<span class="nc" id="L142">					socialParametersWeightsPerStep[i] = v;</span>
+				}
+
+<span class="nc" id="L145">				behaviourSeq.addSubBehaviour(new BehaviourContactNeighbours(</span>
+<span class="nc" id="L146">						this, createQueryMsgForNeighbourhood(),</span>
+						socialParameters, myDataStore));
+
+<span class="nc" id="L149">				MatchNeighbourhood myMatch = new MatchNeighbourhood(</span>
+						myNeighbours);
+<span class="nc" id="L151">				MessageTemplate myTemplate = new MessageTemplate(myMatch);</span>
+
+<span class="nc" id="L153">				MessageTemplate mT = MessageTemplate.and(MessageTemplate</span>
+<span class="nc" id="L154">						.MatchPerformative(ACLMessage.QUERY_REF), myTemplate);</span>
+<span class="nc" id="L155">				addBehaviour(new BehaviourReplyNeighbour(this, mT,</span>
+						socialParameters, myDataStore));
+
+			}// END if-inner
+		}//ENd if
+
+<span class="nc" id="L161">		behaviourSeq.addSubBehaviour(new BehaviourSendPersonalConsumption(this,</span>
+				myDataStore));
+
+<span class="nc" id="L164">		addBehaviour(behaviourSeq);</span>
+
+<span class="nc" id="L166">	} // SETUP</span>
+
+	/**
+	 * unpackArguments :
+	 * @param str PRINT for printing the neighbours List
+	 */
+
+	@SuppressWarnings(&quot;unchecked&quot;)
+	private void unpackArguments(String str) {
+
+		// get the list with your neighbours
+<span class="nc" id="L177">		Object[] allArguments = getArguments();</span>
+
+		// firsst argument initial consumption
+<span class="nc" id="L180">		initialConsumption = (Float) allArguments[0];</span>
+
+<span class="nc" id="L182">		personalConsumptions.addElement(initialConsumption);</span>
+
+		// second argument AP/ MP price type
+<span class="nc" id="L185">		priceType = allArguments[1].toString();</span>
+
+		// third argument neighbours
+<span class="nc" id="L188">		Vector neighs = (Vector) allArguments[2];</span>
+<span class="nc" id="L189">		this.myNeighbours = new ConsumerAttributes[neighs.size()];</span>
+<span class="nc" id="L190">		neighs.copyInto(this.myNeighbours);</span>
+
+<span class="nc" id="L192">		this.consumptionLn = ((Boolean) allArguments[3]).booleanValue();</span>
+
+<span class="nc bnc" id="L194" title="All 2 branches missed.">		for (int i = 0; i &lt; this.myNeighbours.length; i++)</span>
+<span class="nc" id="L195">			this.myNeighbours[i].setAID(new AID(this.myNeighbours[i].getName(),</span>
+					false));
+
+		// fourth argument demand curve parameters
+<span class="nc" id="L199">		this.myParameters = new ParameterAttributes[allArguments.length - 4];</span>
+
+		// Get Parameters
+<span class="nc bnc" id="L202" title="All 2 branches missed.">		for (int i = 4; i &lt; allArguments.length; i++) {</span>
+<span class="nc" id="L203">			ParameterAttributes p = (ParameterAttributes) allArguments[i];</span>
+<span class="nc" id="L204">			this.myParameters[i - 4] = p;</span>
+		}
+
+<span class="nc bnc" id="L207" title="All 2 branches missed.">		if (this.myNeighbours.length == 0) {</span>
+<span class="nc" id="L208">			log.info(this.getLocalName() + &quot; has NO Neighbours !!! &quot;);</span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">		} else if (str.equals(&quot;PRINT&quot;)) {</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">			for (int i = 0; i &lt; this.myNeighbours.length; i++) {</span>
+<span class="nc" id="L211">				log.info(this.getLocalName() + &quot; : &quot;</span>
+<span class="nc" id="L212">						+ this.myNeighbours[i].getName());</span>
+			} // FOR
+<span class="nc" id="L214">			log.info(this.getLocalName() + &quot; : PARAMETERS --&gt;&quot;);</span>
+<span class="nc bnc" id="L215" title="All 2 branches missed.">			for (int i = 0; i &lt; myParameters.length; i++) {</span>
+<span class="nc" id="L216">				log.info(this.myParameters[i].getName() + &quot;  &quot;);</span>
+			} // FOR
+		} // if
+
+<span class="nc" id="L220">	}// END of unpackArguments()</span>
+
+	@SuppressWarnings(&quot;unchecked&quot;)
+	private ParameterAttributes[] socialParameters(
+			ParameterAttributes[] myParameters) {
+
+<span class="nc" id="L226">		Vector v = new Vector(0);</span>
+<span class="nc bnc" id="L227" title="All 2 branches missed.">		for (int i = 0; i &lt; myParameters.length; i++) {</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">			if (myParameters[i].isSocial()) {</span>
+<span class="nc" id="L229">				v.addElement(myParameters[i]);</span>
+<span class="nc" id="L230">				socialHashTable.put(myParameters[i].getName(), new Integer(v</span>
+<span class="nc" id="L231">						.indexOf(myParameters[i])));</span>
+			}
+		}
+
+<span class="nc" id="L235">		ParameterAttributes[] send = new ParameterAttributes[v.size()];</span>
+<span class="nc" id="L236">		v.copyInto(send);</span>
+
+<span class="nc" id="L238">		return send;</span>
+
+	}
+
+	/**
+	 * CreateQueryMsgForNeighbourhood
+	 * @return : A FIPA_QUERY message in SL language and domain's ontology to be send
+	 * to this agent's neighbours
+	 */
+	protected ACLMessage createQueryMsgForNeighbourhood() {
+
+<span class="fc" id="L249">		ACLMessage msg = new ACLMessage(ACLMessage.QUERY_REF);</span>
+<span class="fc" id="L250">		msg.setProtocol(jade.domain.FIPANames.InteractionProtocol.FIPA_QUERY);</span>
+<span class="pc bnc" id="L251" title="All 2 branches missed.">		for (int i = 0; i &lt; myNeighbours.length; i++) {</span>
+<span class="nc" id="L252">			msg.addReceiver(myNeighbours[i].getAID());</span>
+		}
+<span class="nc" id="L254">		msg.setLanguage(codec.getName());</span>
+<span class="nc" id="L255">		msg.setOntology(ontology.getName());</span>
+
+<span class="nc" id="L257">		return msg;</span>
+	}
+
+	/**
+	 *  onFailure(ACLMessage msg)
+	 * @param msg
+	 */
+
+	protected void onFailure(ACLMessage msg) {
+<span class="fc" id="L266">		ACLMessage failure = new ACLMessage(ACLMessage.FAILURE);</span>
+<span class="fc" id="L267">		failure.addReceiver(AIDs.SIMULATOR);</span>
+<span class="fc" id="L268">		failure.setContent(msg.getSender() + &quot; -  &quot; + msg.getContent());</span>
+<span class="fc" id="L269">		send(failure);</span>
+<span class="fc" id="L270">	}</span>
+
+	/**
+	 * consumeWater : calculate personal water consumption for this simulation step
+	 * @param step : simulation step number
+	 * @return
+	 */
+
+	@SuppressWarnings(&quot;unchecked&quot;)
+	protected WaterConsumption consumeWater() {
+
+		// Temporary method variables
+<span class="fc" id="L282">		int step = 0;</span>
+<span class="fc" id="L283">		float temperature = 0, rainfall = 0, consumption = 0, socialization = 0;</span>
+<span class="fc" id="L284">		float p, price = 0;</span>
+
+<span class="fc" id="L286">		ACLMessage queryFromWSA = (ACLMessage) myDataStore.get(QUERY_KEY);</span>
+<span class="pc bpc" id="L287" title="1 of 2 branches missed.">		Vector neighboursReplies = (Vector) ((myDataStore.get(REPLIES_KEY) == null) ? null</span>
+<span class="pc" id="L288">				: myDataStore.get(REPLIES_KEY));</span>
+
+		// filled with VariableAttributes from all social replies
+<span class="fc" id="L291">		Vector allWeights = new Vector(0);</span>
+
+		// Read all new data from WSA's query
+		try {
+<span class="fc" id="L295">			ContentElement ce = getContentManager()</span>
+<span class="nc" id="L296">					.extractContent(queryFromWSA);</span>
+<span class="nc bnc" id="L297" title="All 2 branches missed.">			if (ce instanceof Consumes) {</span>
+<span class="nc" id="L298">				Consumes cs = (Consumes) ce;</span>
+				// Read simulation step Id
+<span class="nc" id="L300">				StepAttr sa = cs.getStep2();</span>
+<span class="nc" id="L301">				step = sa.getId().intValue();</span>
+
+				// Read met data (temperature &amp; rainfall)
+<span class="nc" id="L304">				MetData md = cs.getMeteoData();</span>
+<span class="nc" id="L305">				temperature = md.getTemperature().floatValue();</span>
+<span class="nc" id="L306">				rainfall = md.getRainfall().floatValue();</span>
+
+				// Read water price
+<span class="nc" id="L309">				price = calculatePriceVariable(queryFromWSA,</span>
+<span class="nc" id="L310">						((Float) this.personalConsumptions.lastElement())</span>
+<span class="nc" id="L311">								.floatValue());</span>
+
+				// Read all new data from socialization
+<span class="nc bnc" id="L314" title="All 4 branches missed.">				if ((myNeighbours.length != 0) &amp;&amp; (neighboursReplies != null)) {</span>
+<span class="nc" id="L315">					Iterator ite = neighboursReplies.iterator();</span>
+<span class="nc bnc" id="L316" title="All 2 branches missed.">					while (ite.hasNext()) {</span>
+<span class="nc" id="L317">						ce = getContentManager().extractContent(</span>
+<span class="nc" id="L318">								(ACLMessage) ite.next());</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">						if (ce instanceof AskWeightsFor) {</span>
+<span class="nc" id="L320">							AskWeightsFor av = (AskWeightsFor) ce;</span>
+<span class="nc" id="L321">							Iterator iteIn = av.getAllParameters();</span>
+<span class="nc bnc" id="L322" title="All 2 branches missed.">							while (iteIn.hasNext()) {</span>
+<span class="nc" id="L323">								Parameter va = (Parameter) iteIn.next();</span>
+<span class="nc" id="L324">								allWeights.addElement(va);</span>
+<span class="nc" id="L325">							}</span>
+
+<span class="nc" id="L327">						}// END if</span>
+
+					}// END while-out
+				}
+			}
+<span class="nc" id="L332">		} catch (CodecException ce) {</span>
+<span class="nc" id="L333">			log.error(ce.getStackTrace());</span>
+<span class="nc" id="L334">		} catch (OntologyException oe) {</span>
+<span class="nc" id="L335">			log.error(oe.getStackTrace());</span>
+<span class="nc" id="L336">		}</span>
+
+		// Socialization TOO...
+<span class="nc" id="L339">		Parameter[] vas = new Parameter[allWeights.size()];</span>
+<span class="nc" id="L340">		allWeights.copyInto(vas);</span>
+
+<span class="nc bnc" id="L342" title="All 2 branches missed.">		for (int i = 0; i &lt; this.myParameters.length; i++) {</span>
+<span class="nc bnc" id="L343" title="All 4 branches missed.">			if (this.myParameters[i].isSocial()</span>
+					&amp;&amp; (this.myNeighbours.length != 0)) {
+<span class="nc bnc" id="L345" title="All 2 branches missed.">				for (int j = 0; j &lt; vas.length; j++) {</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">					if (vas[j].getName().equals(this.myParameters[i].getName()))</span>
+<span class="nc" id="L347">						socialization += vas[j].getWeight().floatValue(); //Sum all weights for this parameter</span>
+				}
+<span class="nc" id="L349">				p = this.myParameters[i].valueFor(socialization);</span>
+<span class="nc" id="L350">				Integer k = (Integer) socialHashTable.get(this.myParameters[i]</span>
+<span class="nc" id="L351">						.getName());</span>
+<span class="nc" id="L352">				((Vector) socialParametersWeightsPerStep[k.intValue()])</span>
+<span class="nc" id="L353">						.addElement(new Float(socialization));</span>
+				try {
+<span class="nc" id="L355">					myGui.updateSocialTable(socialization, step, k.intValue());</span>
+<span class="nc" id="L356">				} catch (Exception e) {</span>
+<span class="nc" id="L357">				}</span>
+<span class="nc" id="L358">				socialization = 0;</span>
+<span class="nc" id="L359">			}</span>
+			// maybe checking based on function type (MetData)
+<span class="nc bnc" id="L361" title="All 2 branches missed.">			else if (this.myParameters[i].getName().toUpperCase().equals(</span>
+					&quot;TEMPERATURE&quot;))
+<span class="nc" id="L363">				p = this.myParameters[i].valueFor(temperature);</span>
+<span class="nc bnc" id="L364" title="All 2 branches missed.">			else if (this.myParameters[i].getName().toUpperCase().equals(</span>
+					&quot;RAINFALL&quot;))
+<span class="nc" id="L366">				p = this.myParameters[i].valueFor(rainfall);</span>
+<span class="nc" id="L367">			else if (this.myParameters[i].getDemandCurveFunction()</span>
+<span class="nc bnc" id="L368" title="All 2 branches missed.">					.getFunctionName().equals(&quot;PRICE&quot;))</span>
+<span class="nc" id="L369">				p = this.myParameters[i].valueFor(price);</span>
+			else
+<span class="nc" id="L371">				p = this.myParameters[i].valueFor((this.myParameters[i]</span>
+<span class="nc bnc" id="L372" title="All 2 branches missed.">						.isSocial() ? 0 : (float) step));</span>
+
+<span class="nc" id="L374">			consumption += p;</span>
+
+			
+<span class="nc" id="L377">			log.debug(this.myParameters[i].getName() + &quot;: &quot; + p + &quot;\t&quot;);</span>
+
+		} // END FOR
+
+		// always consumption is stored in (m3)
+<span class="nc bnc" id="L382" title="All 2 branches missed.">		consumption = (this.consumptionLn ? (float) Math.exp(consumption)</span>
+				: consumption);
+
+<span class="nc" id="L385">		log.debug(this.getLocalName() + &quot; CONSUME : &quot; + consumption);</span>
+
+<span class="nc" id="L387">		WaterConsumption wc = new WaterConsumption();</span>
+<span class="nc" id="L388">		wc.setQuantity(new Float(consumption));</span>
+
+		// store your consumption
+<span class="nc" id="L391">		personalConsumptions.addElement(new Float(consumption));</span>
+		try {
+<span class="nc" id="L393">			myGui.updateChart((double) consumption, (double) step);</span>
+<span class="nc" id="L394">		} catch (NullPointerException npe) {</span>
+<span class="nc" id="L395">		}</span>
+
+<span class="nc" id="L397">		return wc;</span>
+
+	}
+
+	/**
+	 * calculatePriceVariable : checks whether to use Average Price or Marginal Price
+	 * @param queryFromWSA the message with price blocks
+	 * @param previousConsumption the previous personal consumption
+	 * @return the price value to be used in demand curve
+	 */
+	private float calculatePriceVariable(ACLMessage queryFromWSA,
+			float lastConsumption) {
+
+<span class="nc bnc" id="L410" title="All 2 branches missed.">		float previousConsumption = (this.consumptionLn ? (float) Math</span>
+<span class="nc" id="L411">				.log(lastConsumption) : lastConsumption);</span>
+
+<span class="nc bnc" id="L413" title="All 2 branches missed.">		if (previousConsumption &lt; 0) {</span>
+<span class="nc" id="L414">			previousConsumption = (float) 0.1;</span>
+<span class="nc" id="L415">			this.sendFailureMessage(&quot;My last consumption was &lt;0...&quot;);</span>
+		}
+
+		PriceBlock[] priceBlocks;
+<span class="nc" id="L419">		float price = 0;</span>
+		try {
+<span class="nc" id="L421">			ContentElement ce = getContentManager()</span>
+<span class="nc" id="L422">					.extractContent(queryFromWSA);</span>
+<span class="nc" id="L423">			Consumes cs = (Consumes) ce;</span>
+<span class="nc" id="L424">			Object[] temp = cs.getPricingScale().toArray();</span>
+<span class="nc" id="L425">			priceBlocks = new PriceBlock[temp.length];</span>
+<span class="nc bnc" id="L426" title="All 2 branches missed.">			for (int i = 0; i &lt; priceBlocks.length; i++) {</span>
+<span class="nc" id="L427">				priceBlocks[i] = (PriceBlock) temp[i];</span>
+			}
+
+<span class="nc bnc" id="L430" title="All 2 branches missed.">			if (this.priceType.equals(&quot;AP&quot;))</span>
+<span class="nc" id="L431">				price = getAveragePrice(priceBlocks, previousConsumption);</span>
+<span class="nc bnc" id="L432" title="All 2 branches missed.">			else if (this.priceType.equals(&quot;MP&quot;))</span>
+<span class="nc" id="L433">				price = getMarginalPrice(priceBlocks, previousConsumption);</span>
+<span class="nc" id="L434">		} catch (CodecException coe) {</span>
+<span class="nc" id="L435">			log.error(coe.getStackTrace());</span>
+<span class="nc" id="L436">		} catch (OntologyException one) {</span>
+<span class="nc" id="L437">			log.error(one.getStackTrace());</span>
+<span class="nc" id="L438">		}</span>
+<span class="nc" id="L439">		return price;</span>
+
+	}
+
+	private float getAveragePrice(PriceBlock[] priceBlocks,
+			float previousConsumption) {
+<span class="nc" id="L445">		boolean ok = false;</span>
+<span class="nc" id="L446">		int i = 0;</span>
+<span class="nc" id="L447">		float AP = 0;</span>
+
+<span class="nc bnc" id="L449" title="All 4 branches missed.">		while (!ok &amp;&amp; i &lt; priceBlocks.length) {</span>
+
+<span class="nc bnc" id="L451" title="All 2 branches missed.">			if (priceBlocks[i].getLimitUp().intValue() &gt; previousConsumption) {</span>
+<span class="nc" id="L452">				ok = true;</span>
+<span class="nc" id="L453">				AP = (AP + (priceBlocks[i].getPrice().floatValue() * (previousConsumption - priceBlocks[i]</span>
+<span class="nc" id="L454">						.getLimitDown().intValue())))</span>
+						/ previousConsumption;
+			} else {
+<span class="nc" id="L457">				int d = priceBlocks[i].getLimitUp().intValue()</span>
+<span class="nc" id="L458">						- priceBlocks[i].getLimitDown().intValue();</span>
+<span class="nc" id="L459">				AP = AP + (d * priceBlocks[i].getPrice().floatValue());</span>
+<span class="nc" id="L460">				i++;</span>
+<span class="nc" id="L461">			}</span>
+
+		}// End of while-loop
+
+		// 1 KLIMAKA --&gt;PAGIO
+<span class="nc bnc" id="L466" title="All 2 branches missed.">		if (i == 0)</span>
+<span class="nc" id="L467">			AP = priceBlocks[0].getPrice().floatValue();// * priceBlocks[0].getLimitUp().floatValue() )</span>
+		//previousConsumption;
+		//TEST
+<span class="nc" id="L470">		log.debug(&quot;Price policy is now: &quot; + &quot;i,AP = &quot; + i + &quot;  &quot; + AP);</span>
+<span class="nc" id="L471">		return AP;</span>
+	}
+
+	private float getMarginalPrice(PriceBlock[] priceBlocks,
+			float previousConsumption) {
+<span class="nc" id="L476">		boolean ok = false;</span>
+<span class="nc" id="L477">		int i = 0;</span>
+<span class="nc" id="L478">		float MP = 0;</span>
+
+<span class="nc bnc" id="L480" title="All 2 branches missed.">		while (!ok) {</span>
+<span class="nc bnc" id="L481" title="All 2 branches missed.">			if (priceBlocks[i].getLimitUp().intValue() &gt; previousConsumption) {</span>
+<span class="nc" id="L482">				ok = true;</span>
+<span class="nc" id="L483">				MP = priceBlocks[i].getPrice().floatValue();</span>
+			} else
+<span class="nc" id="L485">				i++;</span>
+		}//END of while-loop
+
+<span class="nc bnc" id="L488" title="All 2 branches missed.">		if (i == 0)</span>
+<span class="nc" id="L489">			MP = priceBlocks[1].getPrice().floatValue();</span>
+<span class="nc" id="L490">		return MP;</span>
+	}
+
+	/**
+	 *  MatchNeighbourhood : help inner class for matching neighbours AIDs
+	 * &lt;p&gt;Title: Simulator&lt;/p&gt;
+	 * &lt;p&gt;Description: &lt;/p&gt;
+	 * &lt;p&gt;Copyright: Copyright (c) 2003&lt;/p&gt;
+	 * &lt;p&gt;Company: &lt;/p&gt;
+	 * @author Vartalas Panagiotis
+	 * @version 1.0
+	 */
+
+	class MatchNeighbourhood implements MessageTemplate.MatchExpression {
+
+		private static final long serialVersionUID = 5136444092348930313L;
+
+		ConsumerAttributes[] neighbours;
+
+		// Constructor
+<span class="nc" id="L510">		MatchNeighbourhood(ConsumerAttributes[] t) {</span>
+<span class="nc" id="L511">			neighbours = t;</span>
+<span class="nc" id="L512">		}</span>
+
+		//This method verifies if the ACLMessage was sent from one of the expected senders.
+		public boolean match(ACLMessage msg) {
+
+<span class="nc" id="L517">			AID sender = msg.getSender();</span>
+<span class="nc" id="L518">			boolean out = false;</span>
+<span class="nc" id="L519">			int i = 0;</span>
+<span class="nc bnc" id="L520" title="All 4 branches missed.">			while (!out &amp;&amp; i &lt; neighbours.length) {</span>
+<span class="nc bnc" id="L521" title="All 2 branches missed.">				if (sender.equals(neighbours[i].getAID()))</span>
+<span class="nc" id="L522">					out = true;</span>
+<span class="nc" id="L523">				i++;</span>
+			}
+
+<span class="nc" id="L526">			return out;</span>
+		}
+
+	} // END MatchNeighbourhood
+
+	/**
+	 *
+	 * &lt;p&gt;Title: Simulator&lt;/p&gt;
+	 * &lt;p&gt;Description: &lt;/p&gt;
+	 * &lt;p&gt;Copyright: Copyright (c) 2003&lt;/p&gt;
+	 * &lt;p&gt;Company: &lt;/p&gt;
+	 * @author Vartalas Panagiotis
+	 * @version 1.0
+	 */
+
+	class MatchRequestContent implements MessageTemplate.MatchExpression {
+		private static final long serialVersionUID = 4393818617360583909L;
+
+		int myAction;
+
+		// Constructor
+<span class="nc" id="L547">		MatchRequestContent(AgentAction action) {</span>
+<span class="nc bnc" id="L548" title="All 2 branches missed.">			if (action instanceof LaunchGUI)</span>
+<span class="nc" id="L549">				this.myAction = 0;</span>
+<span class="nc bnc" id="L550" title="All 2 branches missed.">			else if (action instanceof SavePersonalData)</span>
+<span class="nc" id="L551">				this.myAction = 1;</span>
+<span class="nc" id="L552">		}</span>
+
+		//This method verifies the action of the Request ACLMessage.
+		public boolean match(ACLMessage msg) {
+			try {
+<span class="nc" id="L557">				ContentElement ce = ConsumerAgent.this.getContentManager()</span>
+<span class="nc" id="L558">						.extractContent(msg);</span>
+<span class="nc bnc" id="L559" title="All 2 branches missed.">				if (ce instanceof Action) {</span>
+<span class="nc" id="L560">					Action rc = (Action) ce;</span>
+<span class="nc bnc" id="L561" title="All 3 branches missed.">					switch (myAction) {</span>
+					case 0:
+<span class="nc bnc" id="L563" title="All 2 branches missed.">						if (rc.getAction() instanceof LaunchGUI)</span>
+<span class="nc" id="L564">							return true;</span>
+						break;
+					case 1:
+<span class="nc bnc" id="L567" title="All 2 branches missed.">						if (rc.getAction() instanceof SavePersonalData)</span>
+<span class="nc" id="L568">							return true;</span>
+						break;
+					default:
+<span class="nc" id="L571">						return false;</span>
+					}
+
+				}// END-if
+<span class="nc" id="L575">			} catch (CodecException cee) {</span>
+<span class="nc" id="L576">				log.error(cee.getStackTrace());</span>
+<span class="nc" id="L577">			} catch (OntologyException oe) {</span>
+<span class="nc" id="L578">				log.error(oe.getStackTrace());</span>
+<span class="nc" id="L579">			} catch (Exception ioe) {</span>
+<span class="nc" id="L580">				log.error(ioe.getStackTrace());</span>
+<span class="nc" id="L581">			}</span>
+
+<span class="nc" id="L583">			return false;</span>
+		}
+
+	} // END MatchRequestContent
+
+	public void onGuiEvent(GuiEvent e) {
+<span class="nc bnc" id="L589" title="All 3 branches missed.">		switch (e.getType()) {</span>
+		case GUI_REQUEST:
+<span class="nc" id="L591">			launchGui();</span>
+<span class="nc" id="L592">			break;</span>
+		case SAVE_RESULTS:
+<span class="nc bnc" id="L594" title="All 2 branches missed.">			if (((File) e.getParameter(0)) != null)</span>
+<span class="nc bnc" id="L595" title="All 2 branches missed.">				if (saveResultsToFile((File) e.getParameter(0)) != 0)</span>
+<span class="nc" id="L596">					sendFailureMessage(&quot;An error occured while saving results&quot;);</span>
+			break;
+
+		}
+<span class="nc" id="L600">	}</span>
+
+	/**
+	 * launchGui
+	 */
+	private void launchGui() {
+
+<span class="nc" id="L607">		myGui = new ConsumerGUI(this, personalConsumptions, myNeighbours,</span>
+				socialParameters, socialParametersWeightsPerStep);
+<span class="nc" id="L609">		ACLMessage reply = new ACLMessage(ACLMessage.INFORM);</span>
+<span class="nc" id="L610">		reply.addReceiver(AIDs.SIMULATOR);</span>
+//		reply.addReceiver(new AID(&quot;dawn&quot;, false));
+<span class="nc" id="L612">		reply.setContent(&quot;my GUI is launched&quot;);</span>
+<span class="nc" id="L613">		send(reply);</span>
+<span class="nc" id="L614">	}</span>
+
+	/**
+	 *
+	 * @param directory
+	 * @return
+	 */
+
+	private int saveResultsToFile(File directory) {
+<span class="nc" id="L623">		int ok = 0;</span>
+
+		try {
+<span class="nc" id="L626">			String fileName = directory.getPath() + &quot;\\&quot;</span>
+<span class="nc" id="L627">					+ this.getAID().getLocalName() + &quot;.txt&quot;;</span>
+<span class="nc" id="L628">			@SuppressWarnings(&quot;unused&quot;) File file = new File(fileName);</span>
+<span class="nc" id="L629">			FileWriter out = new FileWriter(fileName);</span>
+<span class="nc bnc" id="L630" title="All 2 branches missed.">			out.write(&quot;Step\tTotal Consumption\t&quot;</span>
+					+ (this.consumptionLn ? &quot; (lnC) &quot; : &quot;&quot;));
+<span class="nc" id="L632">			out</span>
+<span class="nc" id="L633">					.write(&quot;\n------------------------------------------------------\n&quot;);</span>
+<span class="nc bnc" id="L634" title="All 2 branches missed.">			for (int i = 0; i &lt; this.personalConsumptions.capacity(); i++) {</span>
+
+<span class="nc" id="L636">				out.write(new Integer(i).toString());</span>
+<span class="nc" id="L637">				out.write('\t');</span>
+<span class="nc" id="L638">				out.write(((Float) this.personalConsumptions.elementAt(i))</span>
+<span class="nc" id="L639">						.toString());</span>
+
+<span class="nc bnc" id="L641" title="All 2 branches missed.">				if (this.consumptionLn) {</span>
+<span class="nc" id="L642">					out.write('\t');</span>
+<span class="nc" id="L643">					out.write('\t');</span>
+<span class="nc" id="L644">					float LNconsumption = (float) Math</span>
+<span class="nc" id="L645">							.log(((Float) this.personalConsumptions</span>
+<span class="nc" id="L646">									.elementAt(i)).floatValue());</span>
+<span class="nc" id="L647">					out.write(Float.toString(LNconsumption));</span>
+				}
+<span class="nc" id="L649">				out.write('\n');</span>
+			}
+
+<span class="nc" id="L652">			out.write(&quot;\n\n***********************************\n&quot;);</span>
+<span class="nc" id="L653">			out.write(&quot;Neighbourhood\n&quot;);</span>
+<span class="nc" id="L654">			out.write(&quot;***********************************\n&quot;);</span>
+<span class="nc" id="L655">			out.write(&quot;Neighbour\tConsumer Type\n&quot;);</span>
+<span class="nc" id="L656">			out.write(&quot;-----------------------------------\n&quot;);</span>
+<span class="nc bnc" id="L657" title="All 2 branches missed.">			for (int i = 0; i &lt; this.myNeighbours.length; i++) {</span>
+
+<span class="nc" id="L659">				out.write(this.myNeighbours[i].getName());</span>
+<span class="nc" id="L660">				out.write('\t');</span>
+<span class="nc" id="L661">				out.write(this.myNeighbours[i].getConsumerType());</span>
+<span class="nc" id="L662">				out.write('\n');</span>
+			}
+
+<span class="nc bnc" id="L665" title="All 2 branches missed.">			if (this.socialParameters.length &gt; 0) {</span>
+<span class="nc" id="L666">				out</span>
+<span class="nc" id="L667">						.write(&quot;\n\n****************************************************\n&quot;);</span>
+<span class="nc" id="L668">				out.write(&quot;Socialization\n&quot;);</span>
+<span class="nc" id="L669">				out</span>
+<span class="nc" id="L670">						.write(&quot;****************************************************\n&quot;);</span>
+<span class="nc" id="L671">				out.write(&quot;Step&quot;);</span>
+
+<span class="nc bnc" id="L673" title="All 2 branches missed.">				for (int i = 0; i &lt; this.socialParameters.length; i++)</span>
+<span class="nc" id="L674">					out.write(&quot;\t&quot; + this.socialParameters[i].getName());</span>
+
+<span class="nc" id="L676">				out</span>
+<span class="nc" id="L677">						.write(&quot;\n----------------------------------------------------&quot;);</span>
+
+<span class="nc" id="L679">				for (int i = 0; i &lt; ((Vector) this.socialParametersWeightsPerStep[0])</span>
+<span class="nc bnc" id="L680" title="All 2 branches missed.">						.capacity(); i++) {</span>
+<span class="nc" id="L681">					out.write('\n');</span>
+<span class="nc" id="L682">					out.write(new Integer(i + 1).toString());</span>
+
+<span class="nc bnc" id="L684" title="All 2 branches missed.">					for (int j = 0; j &lt; this.socialParametersWeightsPerStep.length; j++) {</span>
+<span class="nc" id="L685">						out.write('\t');</span>
+<span class="nc" id="L686">						out</span>
+<span class="nc" id="L687">								.write(((Float) ((Vector) this.socialParametersWeightsPerStep[j])</span>
+<span class="nc" id="L688">										.elementAt(i)).toString());</span>
+
+					}// for-j
+				}// for-i
+			}
+<span class="nc" id="L693">			out.close();</span>
+<span class="nc" id="L694">		} catch (FileNotFoundException fnfe) {</span>
+<span class="nc" id="L695">			log.error(fnfe.getStackTrace());</span>
+<span class="nc" id="L696">			ok = 1;</span>
+<span class="nc" id="L697">		} catch (IOException ioe) {</span>
+<span class="nc" id="L698">			log.error(ioe.getStackTrace());</span>
+<span class="nc" id="L699">			ok = 2;</span>
+<span class="nc" id="L700">		}</span>
+
+<span class="nc" id="L702">		ACLMessage reply = new ACLMessage(ACLMessage.INFORM);</span>
+<span class="nc" id="L703">		reply.addReceiver(AIDs.SIMULATOR);</span>
+<span class="nc" id="L704">		reply.setContent(&quot;my personal data are saved&quot;);</span>
+<span class="nc" id="L705">		send(reply);</span>
+
+<span class="nc" id="L707">		return ok;</span>
+	}
+
+	private void sendFailureMessage(String msg) {
+<span class="nc" id="L711">		ACLMessage reply = new ACLMessage(ACLMessage.FAILURE);</span>
+<span class="nc" id="L712">		reply.addReceiver(AIDs.SIMULATOR);</span>
+//		reply.addReceiver(new AID(&quot;dawn&quot;, false));
+<span class="nc" id="L714">		reply.setContent(msg);</span>
+<span class="nc" id="L715">		send(reply);</span>
+<span class="nc" id="L716">	}</span>
+} // END of AGENT
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

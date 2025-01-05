@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TagCloudDAO.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">96_heal</a> &gt; <a href="index.source.html" class="el_package">org.heal.servlet.tagcloud</a> &gt; <span class="el_source">TagCloudDAO.java</span></div><h1>TagCloudDAO.java</h1><pre class="source lang-java linenums">package org.heal.servlet.tagcloud;
+
+import java.sql.SQLException;
+import javax.servlet.ServletException;
+import javax.sql.DataSource;
+import com.ora.jsp.sql.NoSuchColumnException;
+import com.ora.jsp.sql.Row;
+import org.heal.servlet.*;
+
+import javax.sql.DataSource;
+import java.io.Serializable;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Date;
+import com.ora.jsp.sql.SQLCommandBean;
+import com.ora.jsp.sql.UnsupportedTypeException;
+import java.util.Iterator;
+import java.util.Vector;
+import javax.servlet.http.HttpServlet;
+
+// this is where all the database access work is done.
+public class TagCloudDAO extends HttpServlet implements Serializable {
+<span class="nc" id="L25">    public TagCloudDAO() {}</span>
+
+    private DataSource dataSource;
+
+    // insert new tag.
+    private static final String TAG_INSERT_SQL = &quot;INSERT INTO Tags (Tag, MetaDataID, UserID, EntryDate) VALUES(?, ?, ?, ?)&quot;;
+    // get tag and tagcount by metadataid 
+    private static final String TAG_SELECT_BY_MDID_SQL = &quot;SELECT Tag, COUNT(*) AS tagCount FROM Tags where metadataId = &quot;;
+    // get cloud size
+    private static final String GET_TAG_CLOUD_SIZE_SQL = &quot;select count(distinct tag) as cloudsize from tags where metadataId = &quot;;
+    // get max frequency in cloud
+    private static final String GET_MAX_TAG_FREQ_SQL = &quot;select max(tagcount) as maxfreq from (select tag, count(*) as tagcount from tags where metadataid =&quot;;
+    // get min frequency in cloud
+    private static final String GET_MIN_TAG_FREQ_SQL = &quot;select min(tagcount) as minfreq from (select tag, count(*) as tagcount from tags where metadataid =&quot;;
+    //get the top N tags
+    private static final String GET_TOP_TAGS_SQL = &quot;SELECT Tag, tagcount FROM (SELECT TOP 50 COUNT(Tag) AS tagcount, Tag FROM Tags GROUP BY Tag ORDER BY tagcount DESC) DERIVEDTBL ORDER BY Tag&quot;;
+    // get max and min frequency within the top N
+    private static final String GET_MIN_MAX_TAG_COUNT_SQL = &quot;SELECT MAX(tagcount) AS maxc, MIN(tagcount) AS minc FROM (SELECT TOP 50 COUNT(Tag) AS tagcount, Tag FROM Tags GROUP BY Tag ORDER BY tagcount DESC) dt&quot;;
+
+    public void setDataSource(DataSource dataSource) {
+<span class="nc" id="L45">        this.dataSource = dataSource;</span>
+<span class="nc" id="L46">    }</span>
+
+      // used to open a database connection and then calls the function below.
+    public void saveTagEntry(TagBean tagEntry) throws SQLException {
+<span class="nc" id="L50">            Connection conn = dataSource.getConnection();</span>
+
+        try {
+<span class="nc" id="L53">            saveTagEntry(tagEntry, conn);</span>
+        } finally {
+            try {
+<span class="nc" id="L56">                conn.close();</span>
+<span class="nc" id="L57">            } catch(SQLException ex) {</span>
+<span class="nc" id="L58">                ex.printStackTrace();</span>
+<span class="nc" id="L59">            } </span>
+        }
+<span class="nc" id="L61">    }</span>
+
+    public void saveTagEntry(TagBean tagEntry, Connection conn) throws SQLException {
+<span class="nc" id="L64">        java.util.Date utilDate = new Date();</span>
+<span class="nc" id="L65">        java.sql.Date sqlDate = new java.sql.Date(utilDate.getTime());</span>
+
+        try {
+<span class="nc" id="L68">            PreparedStatement ps = conn.prepareStatement(TAG_INSERT_SQL);</span>
+
+            // set up all the data to be inputted.
+<span class="nc" id="L71">            ps.setString(1, tagEntry.getTag());</span>
+<span class="nc" id="L72">            ps.setString(2, tagEntry.getMetadataId());</span>
+<span class="nc" id="L73">            ps.setString(3, tagEntry.getUserId());</span>
+<span class="nc" id="L74">            ps.setDate(4, sqlDate);</span>
+
+            // execute the database update.
+<span class="nc" id="L77">            ps.executeUpdate();</span>
+        }			
+<span class="nc" id="L79">        catch(SQLException e) {</span>
+<span class="nc" id="L80">            System.err.println(&quot;In saveTagEntry, SQLException: &quot; + e.getMessage());</span>
+<span class="nc" id="L81">        }</span>
+
+<span class="nc" id="L83">    }</span>
+
+    public ArrayList getTags (String metadataId) throws SQLException {
+<span class="nc" id="L86">        Connection conn = dataSource.getConnection();</span>
+<span class="nc" id="L87">        Vector rs = new Vector();</span>
+<span class="nc" id="L88">        Row row = null;</span>
+<span class="nc" id="L89">        String tag = null;</span>
+<span class="nc" id="L90">        int tagCount = 0;</span>
+<span class="nc" id="L91">        int fontSize = 0;</span>
+<span class="nc" id="L92">        int cloudSize = 0;</span>
+<span class="nc" id="L93">        int maxfreq = 0;</span>
+<span class="nc" id="L94">        int minfreq = 0;</span>
+        
+<span class="nc" id="L96">        ArrayList tagArray = new ArrayList();                </span>
+<span class="nc" id="L97">        String getTAGSQL = TAG_SELECT_BY_MDID_SQL + metadataId + &quot; group by tag&quot;;</span>
+<span class="nc" id="L98">        String cloudSizeSQL = GET_TAG_CLOUD_SIZE_SQL + metadataId;</span>
+<span class="nc" id="L99">        String maxFreqSQL = GET_MAX_TAG_FREQ_SQL + metadataId + &quot; group by tag) DERIVEDTBL&quot;;</span>
+<span class="nc" id="L100">        String minFreqSQL = GET_MIN_TAG_FREQ_SQL + metadataId + &quot; group by tag) DERIVEDTBL&quot;;</span>
+
+<span class="nc" id="L102">        SQLCommandBean sqlCommandBean = new SQLCommandBean();</span>
+<span class="nc" id="L103">        sqlCommandBean.setConnection(conn);</span>
+
+        try{
+<span class="nc" id="L106">            sqlCommandBean.setSqlValue(cloudSizeSQL);</span>
+<span class="nc" id="L107">            rs = sqlCommandBean.executeQuery();</span>
+<span class="nc" id="L108">            Iterator rowIterator = rs.iterator();</span>
+<span class="nc bnc" id="L109" title="All 2 branches missed.">            while (rowIterator.hasNext()){</span>
+<span class="nc" id="L110">                row = (Row) rowIterator.next();</span>
+<span class="nc" id="L111">                cloudSize = Integer.parseInt(row.getString(&quot;cloudSize&quot;));</span>
+            }
+<span class="nc" id="L113">            sqlCommandBean.setSqlValue(maxFreqSQL);</span>
+<span class="nc" id="L114">            rs = sqlCommandBean.executeQuery();</span>
+<span class="nc" id="L115">            rowIterator = rs.iterator();</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">            while (rowIterator.hasNext()){</span>
+<span class="nc" id="L117">                row = (Row) rowIterator.next();</span>
+<span class="nc" id="L118">                maxfreq = Integer.parseInt(row.getString(&quot;maxfreq&quot;));</span>
+            }
+<span class="nc" id="L120">            sqlCommandBean.setSqlValue(minFreqSQL);</span>
+<span class="nc" id="L121">            rs = sqlCommandBean.executeQuery();</span>
+<span class="nc" id="L122">            rowIterator = rs.iterator();</span>
+<span class="nc bnc" id="L123" title="All 2 branches missed.">            while (rowIterator.hasNext()){</span>
+<span class="nc" id="L124">                row = (Row) rowIterator.next();</span>
+<span class="nc" id="L125">                minfreq = Integer.parseInt(row.getString(&quot;minfreq&quot;));</span>
+            }
+            
+        }
+<span class="nc" id="L129">        catch (NoSuchColumnException ex) {</span>
+<span class="nc" id="L130">            ex.printStackTrace();</span>
+        }        
+<span class="nc" id="L132">        catch (UnsupportedTypeException ute){</span>
+<span class="nc" id="L133">            System.err.println(&quot;UnsupportedTypeException: &quot; + ute.getMessage());</span>
+<span class="nc" id="L134">        }</span>
+            
+<span class="nc" id="L136">        sqlCommandBean.setSqlValue(getTAGSQL);</span>
+        
+        try{
+<span class="nc" id="L139">            rs = sqlCommandBean.executeQuery();</span>
+<span class="nc" id="L140">            Iterator rowIterator = rs.iterator();</span>
+<span class="nc bnc" id="L141" title="All 2 branches missed.">            while (rowIterator.hasNext()){</span>
+<span class="nc" id="L142">                TagBean tagBean = new TagBean();</span>
+<span class="nc" id="L143">                row = (Row) rowIterator.next();</span>
+<span class="nc" id="L144">                tag = row.getString(&quot;tag&quot;);</span>
+<span class="nc" id="L145">                tagCount = Integer.parseInt(row.getString(&quot;tagCount&quot;));</span>
+<span class="nc" id="L146">                tagBean.setTag(tag);</span>
+<span class="nc" id="L147">                tagBean.setTagCount(tagCount);</span>
+<span class="nc" id="L148">                fontSize = CalcFontSize(tagCount, minfreq, maxfreq);</span>
+<span class="nc" id="L149">                tagBean.setFontSize(fontSize);</span>
+<span class="nc" id="L150">                tagArray.add(tagBean);</span>
+<span class="nc" id="L151">            }</span>
+        }
+<span class="nc" id="L153">        catch (NoSuchColumnException ex) {</span>
+<span class="nc" id="L154">            ex.printStackTrace();</span>
+        }        
+<span class="nc" id="L156">        catch (UnsupportedTypeException ute){</span>
+<span class="nc" id="L157">            System.err.println(&quot;UnsupportedTypeException: &quot; + ute.getMessage());</span>
+        }
+            
+        finally {
+            try {
+<span class="nc" id="L162">                conn.close();</span>
+<span class="nc" id="L163">            } catch(SQLException ex) {</span>
+<span class="nc" id="L164">                ex.printStackTrace();</span>
+<span class="nc" id="L165">            } </span>
+        }
+
+<span class="nc" id="L168">        return tagArray;</span>
+    }
+    
+    public ArrayList getTopTags() throws ServletException, SQLException{
+<span class="nc" id="L172">        Connection conn = dataSource.getConnection();</span>
+<span class="nc" id="L173">        Vector rs = new Vector();</span>
+<span class="nc" id="L174">        Row row = null;</span>
+<span class="nc" id="L175">        String tag = null;</span>
+<span class="nc" id="L176">        int tagcount = 0;</span>
+<span class="nc" id="L177">        int fontSize = 0;</span>
+<span class="nc" id="L178">        int maxfreq = 0;</span>
+<span class="nc" id="L179">        int minfreq = 0;</span>
+        
+<span class="nc" id="L181">	ArrayList tagArray = new ArrayList();                </span>
+        
+<span class="nc" id="L183">        SQLCommandBean sqlCommandBean = new SQLCommandBean();</span>
+<span class="nc" id="L184">        sqlCommandBean.setConnection(conn);</span>
+
+             
+        try{
+<span class="nc" id="L188">            sqlCommandBean.setSqlValue(GET_MIN_MAX_TAG_COUNT_SQL);</span>
+<span class="nc" id="L189">            rs = sqlCommandBean.executeQuery();</span>
+<span class="nc" id="L190">            Iterator rowIterator = rs.iterator();</span>
+
+<span class="nc bnc" id="L192" title="All 2 branches missed.">            while (rowIterator.hasNext()){</span>
+<span class="nc" id="L193">                row = (Row) rowIterator.next();</span>
+<span class="nc" id="L194">                maxfreq = Integer.parseInt(row.getString(&quot;maxc&quot;));</span>
+<span class="nc" id="L195">                minfreq = Integer.parseInt(row.getString(&quot;minc&quot;));</span>
+            }
+            
+<span class="nc" id="L198">            sqlCommandBean.setSqlValue(GET_TOP_TAGS_SQL);</span>
+<span class="nc" id="L199">            rs = sqlCommandBean.executeQuery();</span>
+<span class="nc" id="L200">            rowIterator = rs.iterator();</span>
+
+<span class="nc bnc" id="L202" title="All 2 branches missed.">            while (rowIterator.hasNext()){</span>
+<span class="nc" id="L203">                TagBean tagBean = new TagBean();</span>
+<span class="nc" id="L204">                row = (Row) rowIterator.next();</span>
+<span class="nc" id="L205">                tag = row.getString(&quot;tag&quot;);</span>
+<span class="nc" id="L206">                tagcount = Integer.parseInt(row.getString(&quot;tagcount&quot;));</span>
+<span class="nc" id="L207">                tagBean.setTag(tag);</span>
+<span class="nc" id="L208">                fontSize = CalcFontSize(tagcount, minfreq, maxfreq);</span>
+<span class="nc" id="L209">                tagBean.setFontSize(fontSize);</span>
+                
+                // add the bean to the array list.
+<span class="nc" id="L212">                tagArray.add(tagBean);</span>
+<span class="nc" id="L213">            }</span>
+        }
+<span class="nc" id="L215">        catch (NoSuchColumnException ex) {</span>
+<span class="nc" id="L216">            ex.printStackTrace();</span>
+        }        
+<span class="nc" id="L218">        catch (UnsupportedTypeException ute){</span>
+<span class="nc" id="L219">            System.err.println(&quot;UnsupportedTypeException: &quot; + ute.getMessage());</span>
+        }
+        finally {
+            try {
+<span class="nc" id="L223">                conn.close();</span>
+<span class="nc" id="L224">            } catch(SQLException ex) {</span>
+<span class="nc" id="L225">                ex.printStackTrace();</span>
+<span class="nc" id="L226">            } </span>
+        }
+
+<span class="nc" id="L229">        return tagArray;</span>
+    }
+
+    private int CalcFontSize (int kfreq, int minfreq, int maxfreq) throws SQLException{
+<span class="nc" id="L233">        int minfont = 12;</span>
+<span class="nc" id="L234">        int maxfont = 24;</span>
+<span class="nc" id="L235">        int fontSize = minfont;</span>
+<span class="nc" id="L236">        int fontrange = maxfont - minfont;</span>
+<span class="nc" id="L237">        float scalingfactor = 0;</span>
+<span class="nc" id="L238">        int freqrange = maxfreq - minfreq;</span>
+        try{
+<span class="nc" id="L240">            scalingfactor = (kfreq - minfreq)/ (float) freqrange;</span>
+<span class="nc" id="L241">            fontSize = (int)(minfont + Math.floor(fontrange * scalingfactor));</span>
+        }
+<span class="nc" id="L243">        catch (ArithmeticException ex){</span>
+<span class="nc" id="L244">            System.err.println(&quot;ArithmeticException: &quot; + ex.getMessage());</span>
+<span class="nc" id="L245">        }</span>
+        
+<span class="nc bnc" id="L247" title="All 2 branches missed.">        if (fontSize==0){</span>
+<span class="nc" id="L248">            fontSize = minfont;</span>
+        }
+        
+<span class="nc" id="L251">        return fontSize;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

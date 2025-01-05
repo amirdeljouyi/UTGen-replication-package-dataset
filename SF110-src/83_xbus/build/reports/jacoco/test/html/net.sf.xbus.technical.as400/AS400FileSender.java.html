@@ -1,0 +1,396 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AS400FileSender.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.technical.as400</a> &gt; <span class="el_source">AS400FileSender.java</span></div><h1>AS400FileSender.java</h1><pre class="source lang-java linenums">package net.sf.xbus.technical.as400;
+
+import java.util.List;
+import java.util.StringTokenizer;
+import java.util.Vector;
+
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.TAManager;
+import net.sf.xbus.base.core.TAResource;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.core.config.Configuration;
+import net.sf.xbus.base.xbussystem.XBUSSystem;
+import net.sf.xbus.technical.Sender;
+import net.sf.xbus.technical.TextSender;
+
+import com.ibm.as400.access.AS400;
+import com.ibm.as400.access.AS400File;
+import com.ibm.as400.access.AS400FileRecordDescription;
+import com.ibm.as400.access.CharConverter;
+import com.ibm.as400.access.IFSFile;
+import com.ibm.as400.access.QSYSObjectPathName;
+import com.ibm.as400.access.Record;
+import com.ibm.as400.access.RecordFormat;
+import com.ibm.as400.access.SequentialFile;
+
+/**
+ * &lt;code&gt;AS400AS400FileSender&lt;/code&gt; manages writing a file on the iSeries
+ * integrated file System.
+ * &lt;p&gt;
+ * &lt;b&gt;Configuration:&lt;/b&gt;
+ * &lt;p&gt;
+ * &lt;table border&gt;
+ * &lt;tr&gt;
+ * &lt;th&gt;Chapter&lt;/th&gt;
+ * &lt;th&gt;Section&lt;/th&gt;
+ * &lt;th&gt;Key&lt;/th&gt;
+ * &lt;th&gt;Content&lt;/th&gt;
+ * &lt;/tr&gt;
+ * &lt;tr&gt;
+ * &lt;td&gt;System&lt;/td&gt;
+ * &lt;td&gt;Interface&lt;/td&gt;
+ * &lt;td&gt;Filename&lt;/td&gt;
+ * &lt;td&gt;Path name that represents an object in the &lt;br&gt;
+ * QSYS library file system on the AS400 machine&lt;&lt;/td&gt;
+ * &lt;/tr&gt;
+ * &lt;tr&gt;
+ * &lt;td&gt;System&lt;/td&gt;
+ * &lt;td&gt;Interface&lt;/td&gt;
+ * &lt;td&gt;ConflictResolution&lt;/td&gt;
+ * &lt;td&gt;Three actions must be possible when a file already exists &lt;br&gt;
+ * &lt;b&gt;&lt;i&gt;apend, overwrite&lt;/i&gt;&lt;/b&gt; or&lt;b&gt;&lt;i&gt; error&lt;/i&gt;&lt;/b&gt;&lt;/td&gt;
+ * &lt;/tr&gt;
+ * &lt;tr&gt;
+ * &lt;td&gt;System&lt;/td&gt;
+ * &lt;td&gt;Interface&lt;/td&gt;
+ * &lt;td&gt;Encoding&lt;/td&gt;
+ * &lt;td&gt;Specified character encoding of the interface &lt;i&gt;(Optional)&lt;/i&gt;&lt;/td&gt;
+ * &lt;/tr&gt;
+ * &lt;/table border&gt;
+ */
+public class AS400FileSender extends AS400FileBase
+		implements
+			Sender,
+			TAResource,
+			TextSender
+{
+
+	/**
+	 * Current QSYSObjectPathName representes an object in the integrated file
+	 * system which must be write
+	 */
+<span class="nc" id="L72">	private QSYSObjectPathName mQSYSobjPathname = null;</span>
+
+	/**
+	 * Resolved action when the file already exists&lt;br&gt;
+	 * &lt;i&gt;append, overwrite&lt;/i&gt; or &lt;i&gt;error&lt;/i&gt;
+	 */
+<span class="nc" id="L78">	private String mResolution = null;</span>
+
+	/**
+	 * File encoding
+	 */
+<span class="nc" id="L83">	private String mEncoding = null;</span>
+
+	/**
+	 * AS400 object that represents the iSeries system
+	 */
+<span class="nc" id="L88">	private AS400 mAS400System = null;</span>
+
+	/**
+	 * Represents an AS/400 physical or logical file. Allows the user to use
+	 * commitment control when accessing an AS/400 file and access the records
+	 * in an AS/400 file sequentially or by record number.
+	 */
+<span class="nc" id="L95">	protected SequentialFile mOriginFile = null;</span>
+
+	/**
+	 * Constructs a AS400FileSender object giving all necessary data from the
+	 * standard configuration, connecting to the iSeries and registering current
+	 * resource by the {@link net.sf.xbus.base.core.TAManager}.
+	 * 
+	 * @see AS400Connection
+	 * @exception XException - If any error occurs
+	 */
+	public AS400FileSender(XBUSSystem system) throws XException
+<span class="nc" id="L106">	{</span>
+
+<span class="nc" id="L108">		Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L109">		String as400name = config.getValue(Constants.CHAPTER_SYSTEM, system</span>
+<span class="nc" id="L110">				.getName(), &quot;AS400&quot;);</span>
+
+		// create an AS400 object for the server that holds the files
+		// and connection to the iSeries
+<span class="nc" id="L114">		AS400Connection connection = AS400Connection.getInstance(as400name);</span>
+<span class="nc" id="L115">		mAS400System = connection.getSystem();</span>
+
+		// readConfiguration
+<span class="nc" id="L118">		readConfiguration(system);</span>
+
+		// register resource by TAManager
+<span class="nc" id="L121">		TAManager taManager = TAManager.getInstance();</span>
+<span class="nc" id="L122">		taManager.registerResource(this);</span>
+
+<span class="nc" id="L124">	}</span>
+
+	/**
+	 * Reads follow data for the given XBUSSystem object from the standard
+	 * configuration and stores it in the class variables.
+	 * &lt;p&gt;
+	 * &lt;dl&gt;
+	 * &lt;dd&gt;&lt;table&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;&lt;code&gt;Filename&lt;/code&gt;&lt;/td&gt;
+	 * &lt;td&gt;&lt;/td&gt;
+	 * &lt;td&gt;path name that represents the object to be write in the QSYS library&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;&lt;code&gt;ConflictResolution&lt;/code&gt;&lt;/td&gt;
+	 * &lt;td&gt;&lt;/td&gt;
+	 * &lt;td&gt;resolved action when the file already exists&lt;br&gt;
+	 * &lt;i&gt;append, overwrite, error&lt;/i&gt;&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;&lt;code&gt;Encoding&lt;/code&gt;&lt;/td&gt;
+	 * &lt;td&gt;&lt;/td&gt;
+	 * &lt;td&gt;specified character encoding of the interface&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;/table&gt;
+	 * &lt;/dl&gt;
+	 * 
+	 * @param xbusSystem XBUSSystem object which consists of two informations:&lt;br&gt;
+	 *            &amp;nbsp;&amp;nbsp;-the name of the system is used to identify the
+	 *            system&lt;br&gt;
+	 *            &amp;nbsp;&amp;nbsp;-additionally an adress might be available.
+	 * @exception XException if any error occurs
+	 */
+	private void readConfiguration(XBUSSystem system) throws XException
+	{
+		try
+		{
+<span class="nc" id="L161">			Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L162">			mResolution = getResolution(config, system.getName());</span>
+<span class="nc" id="L163">			mEncoding = getEncoding(mAS400System, system.getName());</span>
+<span class="nc" id="L164">			String filename = config.getValue(Constants.CHAPTER_SYSTEM, system</span>
+<span class="nc" id="L165">					.getName(), Constants.KEY_FILENAME);</span>
+<span class="nc" id="L166">			filename = system.replaceAllMarkers(filename)[0];</span>
+<span class="nc" id="L167">			mQSYSobjPathname = new QSYSObjectPathName(filename);</span>
+		}
+<span class="nc" id="L169">		catch (Exception ex)</span>
+		{
+<span class="nc" id="L171">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_AS400, &quot;0&quot;, ex);
+<span class="nc" id="L174">		}</span>
+<span class="nc" id="L175">	}</span>
+
+	/**
+	 * Implemented method &lt;code&gt;execute&lt;/code&gt; from TextSender sends the given
+	 * string &lt;i&gt;callData&lt;/i&gt; to the AS400-system. Three actions must be taking
+	 * into account when a file already exists:
+	 * &lt;p&gt;
+	 * &lt;dl&gt;
+	 * &lt;dd&gt;&lt;table&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;&lt;code&gt;Append&lt;/code&gt;&lt;/td&gt;
+	 * &lt;td&gt;&lt;/td&gt;
+	 * &lt;td&gt;append new data to the existing file&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;&lt;code&gt;Overwrite&lt;/code&gt;&lt;/td&gt;
+	 * &lt;td&gt;&lt;/td&gt;
+	 * &lt;td&gt;overwrite existing file with the new data&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;&lt;code&gt;Error&lt;/code&gt;&lt;/td&gt;
+	 * &lt;td&gt;&lt;/td&gt;
+	 * &lt;td&gt;throw XException&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;/table&gt;
+	 * &lt;/dl&gt;
+	 * 
+	 * @param function - name of the interface
+	 * @param callData - String to be written
+	 * @exception XException if any error occurs
+	 */
+	public String execute(String function, String callData) throws XException
+	{
+<span class="nc" id="L208">		RecordFormat format = prepareWriting();</span>
+
+<span class="nc bnc" id="L210" title="All 2 branches missed.">		if (callData == null)</span>
+<span class="nc" id="L211">			callData = &quot;&quot;;</span>
+
+<span class="nc" id="L213">		writeData(callData, mOriginFile, format);</span>
+
+<span class="nc" id="L215">		return null;</span>
+	}
+
+	/**
+	 * Writes data to the write to the integrated file system object represented
+	 * by this path name.&lt;br&gt;
+	 * Follow actions are implemented to do it:
+	 * &lt;ol&gt;
+	 * &lt;li&gt;break a callData into tokens
+	 * &lt;li&gt;convert each tokens in to byte[] according to a specified character
+	 * encoding.
+	 * &lt;li&gt;create from this array new record based on the record format
+	 * &lt;li&gt;write this record into temp file object in the iSeries integrated
+	 * fiel system.
+	 * &lt;/ol&gt;
+	 * &lt;i&gt;Note:&lt;/i&gt; The integrated file system object must be opened prior to
+	 * invoking this method
+	 * 
+	 * @param callData Data to be wrote to the file object in the iSeries
+	 *            integrated file system
+	 * @param file AS/400 physical file to be written
+	 * @param format Record format which was retreived from the original file
+	 * @exception XException if any errors occurs
+	 */
+	private void writeData(String callData, SequentialFile file,
+			RecordFormat format)
+	{
+<span class="nc" id="L242">		byte[] dataByte = null;</span>
+
+		try
+		{
+			// open original file for each resolution.
+<span class="nc" id="L247">			mOriginFile.open(AS400File.READ_WRITE, 0,</span>
+					AS400File.COMMIT_LOCK_LEVEL_DEFAULT);
+
+<span class="nc" id="L250">			CharConverter charConverter = new CharConverter(mEncoding);</span>
+<span class="nc" id="L251">			StringTokenizer tokenizer = new StringTokenizer(callData,</span>
+					Constants.LINE_SEPERATOR);
+
+<span class="nc bnc" id="L254" title="All 2 branches missed.">			while (tokenizer.hasMoreTokens())</span>
+			{
+<span class="nc" id="L256">				String token = tokenizer.nextToken();</span>
+				// Characters written to it are translated into bytes array
+				// according to a specified character encoding.
+<span class="nc" id="L259">				dataByte = charConverter.stringToByteArray(token);</span>
+				// Save byteArray into Record based on the file format
+<span class="nc" id="L261">				Record record = format.getNewRecord(dataByte);</span>
+				// write Record into file
+<span class="nc" id="L263">				file.write(record);</span>
+<span class="nc" id="L264">			}</span>
+<span class="nc" id="L265">			mOriginFile.close();</span>
+		}
+<span class="nc" id="L267">		catch (Exception ex)</span>
+<span class="nc" id="L268">		{}</span>
+
+<span class="nc" id="L270">	}</span>
+
+	public RecordFormat prepareWriting() throws XException
+	{
+		try
+		{
+			// Write file ONLY if file exist because the format of the file is
+			// needed!
+<span class="nc bnc" id="L278" title="All 2 branches missed.">			if (new IFSFile(mAS400System, mQSYSobjPathname.getPath()).exists())</span>
+			{
+				// initiate the SequentialFile object
+<span class="nc" id="L281">				mOriginFile = new SequentialFile(mAS400System, mQSYSobjPathname</span>
+<span class="nc" id="L282">						.getPath());</span>
+
+				// Retreive and set an record format of the file.
+<span class="nc" id="L285">				AS400FileRecordDescription recordDescription = new AS400FileRecordDescription(</span>
+<span class="nc" id="L286">						mAS400System, mQSYSobjPathname.getPath());</span>
+<span class="nc" id="L287">				RecordFormat[] formatArr = recordDescription</span>
+<span class="nc" id="L288">						.retrieveRecordFormat();</span>
+<span class="nc" id="L289">				RecordFormat format = formatArr[0];</span>
+
+<span class="nc" id="L291">				mOriginFile.setRecordFormat(format);</span>
+
+<span class="nc bnc" id="L293" title="All 2 branches missed.">				if (mResolution.equals(Constants.WRITE_OVERWRITE))</span>
+				{
+<span class="nc" id="L295">					deleteMember(mAS400System, mQSYSobjPathname.getPath());</span>
+<span class="nc" id="L296">					mOriginFile.addPhysicalFileMember(mQSYSobjPathname</span>
+<span class="nc" id="L297">							.getMemberName(), &quot;&quot;);</span>
+				}
+<span class="nc" id="L299">				return format;</span>
+
+			} // if (new IFSFile(mAS400System,
+				// mQSYSobjPathname.getPath()).exists())
+			else
+			{
+<span class="nc" id="L305">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_AS400, &quot;28&quot;);
+			}
+		}
+<span class="nc" id="L310">		catch (Exception e)</span>
+		{
+<span class="nc" id="L312">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_AS400, &quot;0&quot;, e);
+		}
+	}
+
+	/**
+	 * Reads conflict resolution (resolved action when the file already exists)
+	 * for the given system name from the configuration and checks its
+	 * conformity with the allowed ones:
+	 * &lt;dl&gt;
+	 * &lt;dd&gt;Append
+	 * &lt;dd&gt;Overwrite
+	 * &lt;dd&gt;Error
+	 * &lt;/dl&gt;
+	 * 
+	 * @param config Instanze of the configuration
+	 * @param system Sytem name which resoltion must be read.
+	 * @return conflict resolution as String (Append, Overwrite or Error)
+	 * @exception XException if resolution is falsh or any errors occurs
+	 */
+	public String getResolution(Configuration config, String system)
+			throws XException
+	{
+<span class="nc" id="L336">		String resolution = config.getValue(Constants.CHAPTER_SYSTEM, system,</span>
+				Constants.KEY_SEND_RESOL);
+<span class="nc bnc" id="L338" title="All 2 branches missed.">		if (!resolution.equals(Constants.WRITE_APPEND)</span>
+<span class="nc bnc" id="L339" title="All 2 branches missed.">				&amp;&amp; !resolution.equals(Constants.WRITE_ERROR)</span>
+<span class="nc bnc" id="L340" title="All 2 branches missed.">				&amp;&amp; !resolution.equals(Constants.WRITE_OVERWRITE))</span>
+		{
+<span class="nc" id="L342">			List params = new Vector();</span>
+<span class="nc" id="L343">			params.add(mResolution);</span>
+<span class="nc" id="L344">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_AS400, &quot;30&quot;, params);
+		}
+<span class="nc" id="L348">		return resolution;</span>
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see net.sf.xbus.base.core.TAResource#commit()
+	 */
+	public void commit()
+	{
+		// remove resource
+<span class="nc" id="L359">		TAManager.getInstance().removeResource(this);</span>
+
+		// disconnect
+<span class="nc" id="L362">		mAS400System.disconnectAllServices();</span>
+<span class="nc" id="L363">	}</span>
+
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see net.sf.xbus.base.core.TAResource#rollback()
+	 */
+	public void rollback()
+	{
+		// remove resource
+<span class="nc" id="L373">		TAManager.getInstance().removeResource(this);</span>
+
+		// disconnect
+<span class="nc" id="L376">		mAS400System.disconnectAllServices();</span>
+<span class="nc" id="L377">	}</span>
+
+	/**
+	 * Is not implemented for iSeries integrated file system
+	 */
+	public void open()
+<span class="nc" id="L383">	{}</span>
+
+	/**
+	 * Is not implemented for iSeries integrated file system
+	 */
+	public void close()
+<span class="nc" id="L389">	{}</span>
+
+	public String getType()
+	{
+<span class="nc" id="L393">		return Constants.TYPE_TEXT;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

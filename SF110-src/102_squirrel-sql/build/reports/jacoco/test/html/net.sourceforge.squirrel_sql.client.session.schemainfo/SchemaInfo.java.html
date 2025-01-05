@@ -1,0 +1,1659 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SchemaInfo.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.session.schemainfo</a> &gt; <span class="el_source">SchemaInfo.java</span></div><h1>SchemaInfo.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.session.schemainfo;
+/*
+ * Copyright (C) 2001-2003 Colin Bell
+ * colbell@users.sourceforge.net
+ *
+ * Copyright (C) 2001 Johan Compagner
+ * jcompagner@j-com.nl
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+import java.sql.DatabaseMetaData;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Hashtable;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Vector;
+
+import javax.swing.SwingUtilities;
+
+import net.sourceforge.squirrel_sql.client.IApplication;
+import net.sourceforge.squirrel_sql.client.gui.db.SQLAliasSchemaProperties;
+import net.sourceforge.squirrel_sql.client.gui.db.SchemaLoadInfo;
+import net.sourceforge.squirrel_sql.client.gui.db.SchemaNameLoadInfo;
+import net.sourceforge.squirrel_sql.client.session.ExtendedColumnInfo;
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.client.session.schemainfo.ObjFilterMatcher;
+import net.sourceforge.squirrel_sql.client.session.event.SessionAdapter;
+import net.sourceforge.squirrel_sql.client.session.event.SessionEvent;
+import net.sourceforge.squirrel_sql.fw.gui.GUIUtils;
+import net.sourceforge.squirrel_sql.fw.sql.DataTypeInfo;
+import net.sourceforge.squirrel_sql.fw.sql.DatabaseObjectType;
+import net.sourceforge.squirrel_sql.fw.sql.IDatabaseObjectInfo;
+import net.sourceforge.squirrel_sql.fw.sql.IProcedureInfo;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLConnection;
+import net.sourceforge.squirrel_sql.fw.sql.ITableInfo;
+import net.sourceforge.squirrel_sql.fw.sql.ProcedureInfo;
+import net.sourceforge.squirrel_sql.fw.sql.ProgressCallBack;
+import net.sourceforge.squirrel_sql.fw.sql.ProgressCallBackAdaptor;
+import net.sourceforge.squirrel_sql.fw.sql.SQLDatabaseMetaData;
+import net.sourceforge.squirrel_sql.fw.sql.TableColumnInfo;
+import net.sourceforge.squirrel_sql.fw.sql.TableInfo;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+public class SchemaInfo
+{
+   public static final int TABLE_EXT_NOT_A_TABLE = 0;
+   public static final int TABLE_EXT_COLS_LOADED_IN_THIS_CALL = 1;
+   public static final int TABLE_EXT_COLS_LOADED_BEFORE = 2;
+
+
+
+<span class="nc" id="L70">   private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L71">      StringManagerFactory.getStringManager(SchemaInfo.class);</span>
+
+<span class="nc" id="L73">   private boolean _loading = false;</span>
+<span class="nc" id="L74">   private boolean _loaded = false;</span>
+
+   private SQLDatabaseMetaData _dmd;
+<span class="nc" id="L77">   ISession _session = null;</span>
+
+
+<span class="nc" id="L80">   private static final ILogger s_log = LoggerController.createLogger(SchemaInfo.class);</span>
+   private SessionAdapter _sessionListener;
+
+   /**
+    * The number of load methods
+    */
+   private static final int LOAD_METHODS_COUNT = 7;
+
+   private static final int MAX_PROGRESS = 100;
+
+   static interface i18n {
+       // i18n[SchemaInfo.loadingCatalogs=Loading catalogs]
+       String LOADING_CATALOGS_MSG = 
+<span class="nc" id="L93">           s_stringMgr.getString(&quot;SchemaInfo.loadingCatalogs&quot;);</span>
+       
+       // i18n[SchemaInfo.loadingKeywords=Loading keywords]
+       String LOADING_KEYWORDS_MSG = 
+<span class="nc" id="L97">           s_stringMgr.getString(&quot;SchemaInfo.loadingKeywords&quot;);</span>
+       
+       // i18n[SchemaInfo.loadingDataTypes=Loading data types]
+       String LOADING_DATATYPES_MSG = 
+<span class="nc" id="L101">           s_stringMgr.getString(&quot;SchemaInfo.loadingDataTypes&quot;);</span>
+       
+       // i18n[SchemaInfo.loadingFunctions=Loading functions]
+       String LOADING_FUNCTIONS_MSG = 
+<span class="nc" id="L105">           s_stringMgr.getString(&quot;SchemaInfo.loadingFunctions&quot;);</span>
+
+       // i18n[SchemaInfo.loadingTables=Loading tables]
+       String LOADING_TABLES_MSG = 
+<span class="nc" id="L109">           s_stringMgr.getString(&quot;SchemaInfo.loadingTables&quot;);</span>
+       
+       // i18n[SchemaInfo.loadingStoredProcedures=Loading stored procedures]
+       String LOADING_PROCS_MSG = 
+<span class="nc" id="L113">           s_stringMgr.getString(&quot;SchemaInfo.loadingStoredProcedures&quot;);</span>
+       
+       // i18n[SchemaInfo.loadingSchemas=Loading schemas]
+<span class="nc" id="L116">       String LOADING_SCHEMAS_MSG = </span>
+<span class="nc" id="L117">           s_stringMgr.getString(&quot;SchemaInfo.loadingSchemas&quot;);</span>
+
+   }
+   
+   
+<span class="nc" id="L122">   final HashMap&lt;CaseInsensitiveString,CaseInsensitiveString&gt; _tablesLoadingColsInBackground = </span>
+       new HashMap&lt;CaseInsensitiveString,CaseInsensitiveString&gt;();
+
+
+   private SchemaInfoCache _schemaInfoCache;
+
+
+<span class="nc" id="L129">   private Vector&lt;SchemaInfoUpdateListener&gt; _listeners = </span>
+       new Vector&lt;SchemaInfoUpdateListener&gt;();
+   private boolean _inInitialLoad;
+   private long _initalLoadBeginTime;
+   private boolean _sessionStartupTimeHintShown;
+
+   private boolean _schemasAndCatalogsLoaded;
+   private boolean _tablesLoaded;
+   private boolean _storedProceduresLoaded;
+
+   public SchemaInfo(IApplication app)
+<span class="nc" id="L140">   {</span>
+<span class="nc" id="L141">      _sessionListener = new SessionAdapter()</span>
+<span class="nc" id="L142">      {</span>
+         public void connectionClosedForReconnect(SessionEvent evt)
+         {
+<span class="nc bnc" id="L145" title="All 4 branches missed.">            if (null != _session &amp;&amp; _session.getIdentifier().equals(evt.getSession().getIdentifier()))</span>
+            {
+<span class="nc" id="L147">               _dmd = null;</span>
+            }
+<span class="nc" id="L149">         }</span>
+
+         public void reconnected(SessionEvent evt)
+         {
+<span class="nc bnc" id="L153" title="All 4 branches missed.">            if (null != _session &amp;&amp; _session.getIdentifier().equals(evt.getSession().getIdentifier()))</span>
+            {
+<span class="nc" id="L155">               _dmd = _session.getSQLConnection().getSQLMetaData();</span>
+<span class="nc bnc" id="L156" title="All 2 branches missed.">               if (null != _dmd)</span>
+               {
+<span class="nc" id="L158">                  s_log.info(s_stringMgr.getString(&quot;SchemaInfo.SuccessfullyRestoredDatabaseMetaData&quot;));</span>
+               }
+            }
+<span class="nc" id="L161">         }</span>
+
+         public void sessionClosing(SessionEvent evt)
+         {
+<span class="nc" id="L165">            SchemaInfoCacheSerializer.store(_session, _schemaInfoCache);</span>
+<span class="nc" id="L166">         }</span>
+      };
+
+<span class="nc bnc" id="L169" title="All 2 branches missed.">      if (app != null)</span>
+      {
+<span class="nc" id="L171">         app.getSessionManager().addSessionListener(_sessionListener);</span>
+      }
+<span class="nc" id="L173">   }</span>
+
+
+   public void initialLoad(ISession session)
+   {
+<span class="nc" id="L178">      _session = session;</span>
+
+<span class="nc" id="L180">      breathing();</span>
+<span class="nc" id="L181">      _schemaInfoCache = SchemaInfoCacheSerializer.load(_session);</span>
+
+      try
+      {
+<span class="nc" id="L185">         _inInitialLoad = true;</span>
+<span class="nc" id="L186">         _initalLoadBeginTime = System.currentTimeMillis();</span>
+<span class="nc" id="L187">         privateLoadAll();</span>
+      }
+      finally
+      {
+<span class="nc" id="L191">         _inInitialLoad = false;</span>
+<span class="nc" id="L192">         _schemaInfoCache.initialLoadDone();</span>
+      }
+<span class="nc" id="L194">   }</span>
+
+   public void reloadAll()
+   {
+<span class="nc" id="L198">      reloadAll(true);</span>
+<span class="nc" id="L199">   }</span>
+
+   /**
+    * @param fireSchemaInfoUpdate Should only be false when the caller makes sure fireSchemaInfoUpdate() is called later.
+    */
+   void reloadAll(boolean fireSchemaInfoUpdate)
+   {
+<span class="nc" id="L206">      SchemaInfoCacheSerializer.deleteCacheFile(_session.getApplication(), _session.getAlias(), false);</span>
+<span class="nc" id="L207">      _schemaInfoCache = SchemaInfoCacheSerializer.load(_session);</span>
+<span class="nc" id="L208">      privateLoadAll();</span>
+
+<span class="nc bnc" id="L210" title="All 2 branches missed.">      if(fireSchemaInfoUpdate)</span>
+      {
+<span class="nc" id="L212">      	GUIUtils.processOnSwingEventThread(new Runnable() {</span>
+      		public void run() {
+<span class="nc" id="L214">      			fireSchemaInfoUpdate();</span>
+<span class="nc" id="L215">      		}</span>
+      	});
+      }
+<span class="nc" id="L218">   }</span>
+
+   /**
+    * Will re-read all table data into the cache.
+    */
+   public void reloadAllTables()
+   {
+<span class="nc" id="L225">   	GUIUtils.processOnSwingEventThread(new Runnable() {</span>
+   		public void run() {
+<span class="nc" id="L227">   			_session.getSessionSheet().setStatusBarProgress(i18n.LOADING_TABLES_MSG, 0, MAX_PROGRESS, 50);</span>
+<span class="nc" id="L228">   		}</span>
+   	});
+   	
+<span class="nc" id="L231">   	breathing();</span>
+   	
+<span class="nc" id="L233">      _schemaInfoCache.clearAllTableData();</span>
+<span class="nc" id="L234">   	loadTables(null, null, null, null, 0);</span>
+<span class="nc" id="L235">      notifyTablesLoaded();   	</span>
+
+<span class="nc" id="L237">   	GUIUtils.processOnSwingEventThread(new Runnable() {</span>
+   		public void run() {
+<span class="nc" id="L239">   			fireSchemaInfoUpdate();</span>
+<span class="nc" id="L240">   			_session.getSessionSheet().setStatusBarProgressFinished();   			</span>
+<span class="nc" id="L241">   		}</span>
+   	});
+<span class="nc" id="L243">   }</span>
+      
+   private void privateLoadAll()
+   {
+<span class="nc" id="L247">      synchronized (this)</span>
+      {
+<span class="nc bnc" id="L249" title="All 2 branches missed.">         if(_loading)</span>
+         {
+<span class="nc" id="L251">            return;</span>
+         }
+
+<span class="nc" id="L254">         _loading = true;</span>
+
+<span class="nc" id="L256">         _schemasAndCatalogsLoaded = false;</span>
+<span class="nc" id="L257">         _tablesLoaded = false;</span>
+<span class="nc" id="L258">         _storedProceduresLoaded = false;</span>
+<span class="nc" id="L259">      }</span>
+
+<span class="nc" id="L261">      breathing();</span>
+
+
+       
+<span class="nc" id="L265">      long mstart = System.currentTimeMillis();</span>
+<span class="nc" id="L266">      long mfinish = 0;</span>
+      
+      try
+      {
+<span class="nc" id="L270">         ISQLConnection conn = _session.getSQLConnection();</span>
+<span class="nc" id="L271">         _dmd = conn.getSQLMetaData();</span>
+
+<span class="nc" id="L273">         _dmd.clearCache();</span>
+
+
+<span class="nc" id="L276">         int progress = 0;</span>
+
+
+<span class="nc" id="L279">         progress = loadCatalogs(progress);</span>
+
+<span class="nc" id="L281">         progress = loadSchemas(progress);</span>
+
+<span class="nc" id="L283">         notifySchemasAndCatalogsLoad();</span>
+
+<span class="nc" id="L285">         long start = 0, finish = 0;</span>
+         try
+         {
+<span class="nc bnc" id="L288" title="All 2 branches missed.">            if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L289">                s_log.debug(i18n.LOADING_KEYWORDS_MSG);</span>
+<span class="nc" id="L290">                start = System.currentTimeMillis();</span>
+            }            
+
+<span class="nc" id="L293">            int beginProgress = getLoadMethodProgress(progress++);</span>
+<span class="nc" id="L294">            setProgress(i18n.LOADING_KEYWORDS_MSG, beginProgress);</span>
+<span class="nc" id="L295">            loadKeywords(i18n.LOADING_KEYWORDS_MSG, beginProgress);</span>
+
+<span class="nc bnc" id="L297" title="All 2 branches missed.">            if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L298">                finish = System.currentTimeMillis();</span>
+<span class="nc" id="L299">                s_log.debug(&quot;Keywords loaded in &quot; + (finish - start) + &quot; ms&quot;);</span>
+            }
+         }
+<span class="nc" id="L302">         catch (Exception ex)</span>
+         {
+<span class="nc" id="L304">            s_log.error(&quot;Error loading keywords&quot;, ex);</span>
+<span class="nc" id="L305">         }</span>
+
+         try
+         {
+<span class="nc bnc" id="L309" title="All 2 branches missed.">            if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L310">                s_log.debug(i18n.LOADING_DATATYPES_MSG);</span>
+<span class="nc" id="L311">                start = System.currentTimeMillis();</span>
+            }
+<span class="nc" id="L313">            int beginProgress = getLoadMethodProgress(progress++);</span>
+<span class="nc" id="L314">            setProgress(i18n.LOADING_DATATYPES_MSG, beginProgress);</span>
+<span class="nc" id="L315">            loadDataTypes(i18n.LOADING_DATATYPES_MSG, beginProgress);</span>
+
+<span class="nc bnc" id="L317" title="All 2 branches missed.">            if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L318">                finish = System.currentTimeMillis();</span>
+<span class="nc" id="L319">                s_log.debug(&quot;Data types loaded in &quot; + (finish - start) + &quot; ms&quot;);</span>
+            }
+         }
+<span class="nc" id="L322">         catch (Exception ex)</span>
+         {
+<span class="nc" id="L324">            s_log.error(&quot;Error loading data types&quot;, ex);</span>
+<span class="nc" id="L325">         }</span>
+
+         try
+         {
+<span class="nc bnc" id="L329" title="All 2 branches missed.">            if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L330">                s_log.debug(i18n.LOADING_FUNCTIONS_MSG);</span>
+<span class="nc" id="L331">                start = System.currentTimeMillis();</span>
+            }
+            
+<span class="nc" id="L334">            int beginProgress = getLoadMethodProgress(progress++);</span>
+<span class="nc" id="L335">            setProgress(i18n.LOADING_FUNCTIONS_MSG, beginProgress);</span>
+<span class="nc" id="L336">            loadGlobalFunctions(i18n.LOADING_FUNCTIONS_MSG, beginProgress);</span>
+
+<span class="nc bnc" id="L338" title="All 2 branches missed.">            if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L339">                finish = System.currentTimeMillis();</span>
+<span class="nc" id="L340">                s_log.debug(&quot;Functions loaded in &quot; + (finish - start) + &quot; ms&quot;);</span>
+            }
+         }
+<span class="nc" id="L343">         catch (Exception ex)</span>
+         {
+<span class="nc" id="L345">            s_log.error(&quot;Error loading functions&quot;, ex);</span>
+<span class="nc" id="L346">         }</span>
+
+<span class="nc" id="L348">         progress = loadTables(null, null, null, null, progress);</span>
+<span class="nc" id="L349">         notifyTablesLoaded();</span>
+
+
+<span class="nc" id="L352">         progress = loadStoredProcedures(null, null, null, progress);</span>
+<span class="nc" id="L353">         notifyStoredProceduresLoaded();</span>
+
+      }
+      finally
+      {
+<span class="nc bnc" id="L358" title="All 4 branches missed.">         if (_session != null &amp;&amp; _session.getSessionSheet() != null)</span>
+         {
+<span class="nc" id="L360">            _session.getSessionSheet().setStatusBarProgressFinished();</span>
+         }
+
+<span class="nc" id="L363">         _loading = false;</span>
+<span class="nc" id="L364">         _loaded = true;</span>
+      }
+<span class="nc bnc" id="L366" title="All 2 branches missed.">      if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L367">          mfinish = System.currentTimeMillis();</span>
+<span class="nc" id="L368">          s_log.debug(&quot;SchemaInfo.load took &quot; + (mfinish - mstart) + &quot; ms&quot;);</span>
+      }
+<span class="nc" id="L370">   }</span>
+
+   private void notifyStoredProceduresLoaded()
+   {
+<span class="nc" id="L374">      synchronized(this)</span>
+      {
+<span class="nc" id="L376">         _storedProceduresLoaded = true;</span>
+<span class="nc" id="L377">         this.notifyAll();</span>
+<span class="nc" id="L378">      }</span>
+<span class="nc" id="L379">   }</span>
+
+   private void notifyTablesLoaded()
+   {
+<span class="nc" id="L383">      synchronized(this)</span>
+      {
+<span class="nc" id="L385">         _tablesLoaded = true;</span>
+<span class="nc" id="L386">         this.notifyAll();</span>
+<span class="nc" id="L387">      }</span>
+<span class="nc" id="L388">   }</span>
+
+   private void notifySchemasAndCatalogsLoad()
+   {
+<span class="nc" id="L392">      synchronized(this)</span>
+      {
+<span class="nc" id="L394">         _schemasAndCatalogsLoaded = true;</span>
+<span class="nc" id="L395">         this.notifyAll();</span>
+<span class="nc" id="L396">      }</span>
+<span class="nc" id="L397">   }</span>
+
+
+   private int loadStoredProcedures(String catalog, String schema, String procNamePattern, int progress)
+   {
+      
+<span class="nc" id="L403">      long start = 0, finish = 0;</span>
+      try
+      {
+<span class="nc bnc" id="L406" title="All 2 branches missed.">         if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L407">             s_log.debug(i18n.LOADING_PROCS_MSG);</span>
+<span class="nc" id="L408">             start = System.currentTimeMillis();</span>
+         }
+
+<span class="nc" id="L411">         int beginProgress = getLoadMethodProgress(progress++);</span>
+<span class="nc" id="L412">         setProgress(i18n.LOADING_PROCS_MSG, beginProgress);</span>
+<span class="nc" id="L413">         privateLoadStoredProcedures(catalog, </span>
+                                     schema, 
+                                     procNamePattern, 
+                                     i18n.LOADING_PROCS_MSG, 
+                                     beginProgress);
+
+<span class="nc bnc" id="L419" title="All 2 branches missed.">         if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L420">             finish = System.currentTimeMillis();</span>
+<span class="nc" id="L421">             s_log.debug(&quot;stored procedures loaded in &quot; + (finish - start) + &quot; ms&quot;);</span>
+         }
+      }
+<span class="nc" id="L424">      catch (Exception ex)</span>
+      {
+<span class="nc" id="L426">         s_log.error(&quot;Error loading stored procedures&quot;, ex);</span>
+<span class="nc" id="L427">      }</span>
+<span class="nc" id="L428">      return progress;</span>
+   }
+
+   private int loadTables(String catalog, 
+                          String schema, 
+                          String tableNamePattern, 
+                          String[] types, 
+                          int progress)
+   {
+<span class="nc" id="L437">      long start = 0, finish = 0;</span>
+      try
+      {
+         
+<span class="nc bnc" id="L441" title="All 2 branches missed.">         if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L442">             s_log.debug(i18n.LOADING_TABLES_MSG);</span>
+<span class="nc" id="L443">             start = System.currentTimeMillis();</span>
+         }
+<span class="nc" id="L445">         int beginProgress = getLoadMethodProgress(progress++);</span>
+<span class="nc" id="L446">         setProgress(i18n.LOADING_TABLES_MSG, beginProgress);</span>
+<span class="nc" id="L447">         privateLoadTables(catalog, </span>
+                           schema, 
+                           tableNamePattern, 
+                           types, 
+                           i18n.LOADING_TABLES_MSG, 
+                           beginProgress);
+<span class="nc bnc" id="L453" title="All 2 branches missed.">         if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L454">             finish = System.currentTimeMillis();</span>
+<span class="nc" id="L455">             s_log.debug(&quot;Tables loaded in &quot; + (finish - start) + &quot; ms&quot;);</span>
+         }
+      }
+<span class="nc" id="L458">      catch (Exception ex)</span>
+      {
+<span class="nc" id="L460">         s_log.error(&quot;Error loading tables&quot;, ex);</span>
+<span class="nc" id="L461">      }</span>
+<span class="nc" id="L462">      return progress;</span>
+   }
+
+   private int loadSchemas(int progress)
+   {
+<span class="nc" id="L467">      long start = 0, finish = 0;</span>
+      try
+      {
+<span class="nc bnc" id="L470" title="All 2 branches missed.">         if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L471">             s_log.debug(i18n.LOADING_SCHEMAS_MSG);</span>
+<span class="nc" id="L472">             start = System.currentTimeMillis();</span>
+         }
+
+<span class="nc" id="L475">         int beginProgress = getLoadMethodProgress(progress++);</span>
+<span class="nc" id="L476">         setProgress(i18n.LOADING_SCHEMAS_MSG, beginProgress);</span>
+<span class="nc" id="L477">         privateLoadSchemas();</span>
+
+<span class="nc bnc" id="L479" title="All 2 branches missed.">         if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L480">             finish = System.currentTimeMillis();</span>
+<span class="nc" id="L481">             s_log.debug(&quot;Schemas loaded in &quot; + (finish - start) + &quot; ms&quot;);</span>
+         }
+      }
+<span class="nc" id="L484">      catch (Exception ex)</span>
+      {
+<span class="nc" id="L486">         s_log.error(&quot;Error loading schemas&quot;, ex);</span>
+<span class="nc" id="L487">      }</span>
+<span class="nc" id="L488">      return progress;</span>
+   }
+
+   private int loadCatalogs(int progress)
+   {
+<span class="nc" id="L493">      long start = 0, finish = 0;</span>
+      try
+      {
+<span class="nc bnc" id="L496" title="All 2 branches missed.">         if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L497">             s_log.debug(i18n.LOADING_CATALOGS_MSG);</span>
+<span class="nc" id="L498">             start = System.currentTimeMillis();</span>
+         }
+
+<span class="nc" id="L501">         int beginProgress = getLoadMethodProgress(progress++);</span>
+<span class="nc" id="L502">         setProgress(i18n.LOADING_CATALOGS_MSG, beginProgress);</span>
+<span class="nc" id="L503">         privateLoadCatalogs();</span>
+
+<span class="nc bnc" id="L505" title="All 2 branches missed.">         if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L506">             finish = System.currentTimeMillis();</span>
+<span class="nc" id="L507">             s_log.debug(&quot;Catalogs loaded in &quot; + (finish - start) + &quot; ms&quot;);</span>
+         }
+      }
+<span class="nc" id="L510">      catch (Exception ex)</span>
+      {
+<span class="nc" id="L512">         s_log.error(&quot;Error loading catalogs&quot;, ex);</span>
+<span class="nc" id="L513">      }</span>
+<span class="nc" id="L514">      return progress;</span>
+   }
+
+   private int getLoadMethodProgress(int progress)
+   {
+<span class="nc" id="L519">      return (int)(((double)progress) / ((double)LOAD_METHODS_COUNT) * (MAX_PROGRESS));</span>
+   }
+
+   private void setProgress(final String note, final int value)
+   {
+<span class="nc" id="L524">      breathing();</span>
+
+<span class="nc bnc" id="L526" title="All 4 branches missed.">      if (_session == null || _session.getSessionSheet() == null)</span>
+      {
+<span class="nc" id="L528">         return;</span>
+      }
+
+<span class="nc" id="L531">     _session.getSessionSheet().setStatusBarProgress(note, 0, MAX_PROGRESS, value);</span>
+     
+<span class="nc bnc" id="L533" title="All 4 branches missed.">      if(_inInitialLoad</span>
+         &amp;&amp; false == _sessionStartupTimeHintShown
+<span class="nc bnc" id="L535" title="All 2 branches missed.">         &amp;&amp; false == _session.getAlias().getSchemaProperties().isCacheSchemaIndependentMetaData()</span>
+<span class="nc bnc" id="L536" title="All 2 branches missed.">         &amp;&amp; SQLAliasSchemaProperties.GLOBAL_STATE_LOAD_ALL_CACHE_NONE == _session.getAlias().getSchemaProperties().getGlobalState()</span>
+<span class="nc bnc" id="L537" title="All 2 branches missed.">         &amp;&amp; _session.getApplication().getSquirrelPreferences().getShowSessionStartupTimeHint()</span>
+<span class="nc bnc" id="L538" title="All 2 branches missed.">         &amp;&amp; System.currentTimeMillis() - _initalLoadBeginTime &gt; 3000)</span>
+      {
+<span class="nc" id="L540">         _sessionStartupTimeHintShown = true;</span>
+<span class="nc" id="L541">         SwingUtilities.invokeLater(new Runnable()</span>
+<span class="nc" id="L542">         {</span>
+            public void run()
+            {
+<span class="nc" id="L545">               new SessionStartupTimeHintController(_session);</span>
+<span class="nc" id="L546">            }</span>
+         });
+      }
+<span class="nc" id="L549">   }</span>
+
+   /**
+    * We found that the UI behaves much nicer at startup if
+    * loading schema info interupted for little moments.
+    */
+   private void breathing()
+   {
+   	// In case this is called by the AWT thread, log a message - this is most likey a bug
+<span class="nc bnc" id="L558" title="All 2 branches missed.">   	if (SwingUtilities.isEventDispatchThread()) {</span>
+<span class="nc bnc" id="L559" title="All 2 branches missed.">   		if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L560">   			s_log.debug(&quot;breathing: ignoring request to sleep the event dispatch thread&quot;);</span>
+   		}
+<span class="nc" id="L562">   		return;</span>
+   	}
+<span class="nc" id="L564">   	synchronized(this) {</span>
+	      try
+	      {
+<span class="nc" id="L567">	         wait(50);</span>
+	      }
+<span class="nc" id="L569">	      catch (InterruptedException e)</span>
+	      {
+<span class="nc bnc" id="L571" title="All 2 branches missed.">	      	if (s_log.isInfoEnabled()) {</span>
+<span class="nc" id="L572">	      		s_log.info(&quot;breathing: Interrupted&quot;, e);</span>
+	      	}
+<span class="nc" id="L574">	      }</span>
+<span class="nc" id="L575">   	}</span>
+<span class="nc" id="L576">   }</span>
+
+   private void privateLoadStoredProcedures(String catalog, String schema, String procNamePattern, final String msg, final int beginProgress)
+   {
+      try
+      {
+
+<span class="nc" id="L583">         ProgressCallBack pcb = new ProgressCallBackAdaptor()</span>
+<span class="nc" id="L584">         {  @Override</span>
+            public void currentlyLoading(String simpleName)
+            {
+<span class="nc" id="L587">               setProgress(msg + &quot; (&quot; + simpleName + &quot;)&quot;, beginProgress);</span>
+<span class="nc" id="L588">            }</span>
+         };
+
+
+<span class="nc" id="L592">         SchemaLoadInfo[] schemaLoadInfos = _schemaInfoCache.getMatchingSchemaLoadInfos(schema);</span>
+
+<span class="nc bnc" id="L594" title="All 2 branches missed.">         for (int i = 0; i &lt; schemaLoadInfos.length; i++)</span>
+         {
+<span class="nc bnc" id="L596" title="All 2 branches missed.">            if(schemaLoadInfos[i].loadProcedures)</span>
+            {
+<span class="nc" id="L598">               IProcedureInfo[] procedures = _dmd.getProcedures(catalog, schemaLoadInfos[i].schemaName, procNamePattern, pcb);</span>
+
+<span class="nc bnc" id="L600" title="All 2 branches missed.">               for (int j = 0; j &lt; procedures.length; j++)</span>
+               {
+<span class="nc" id="L602">                  _schemaInfoCache.writeToProcedureCache(procedures[j]);</span>
+               }
+            }
+         }
+      }
+<span class="nc" id="L607">      catch (Throwable th)</span>
+      {
+<span class="nc" id="L609">         s_log.error(&quot;Failed to load stored procedures&quot;, th);</span>
+<span class="nc" id="L610">      }</span>
+
+<span class="nc" id="L612">   }</span>
+
+   private void privateLoadCatalogs()
+   {
+      try
+      {
+<span class="nc bnc" id="L618" title="All 2 branches missed.">         if(false == _schemaInfoCache.loadSchemaIndependentMetaData())</span>
+         {
+<span class="nc" id="L620">            return;</span>
+         }
+
+<span class="nc" id="L623">         _schemaInfoCache.writeCatalogs(_dmd.getCatalogs());</span>
+      }
+<span class="nc" id="L625">      catch (Throwable th)</span>
+      {
+<span class="nc" id="L627">         s_log.error(&quot;failed to load catalog names&quot;, th);</span>
+<span class="nc" id="L628">      }</span>
+<span class="nc" id="L629">   }</span>
+
+   private void privateLoadSchemas()
+   {
+      try
+      {
+
+<span class="nc" id="L636">         _session.getApplication().getSessionManager().clearAllowedSchemaCache(_session);</span>
+
+<span class="nc" id="L638">         SchemaNameLoadInfo schemaNameLoadInfo = _schemaInfoCache.getSchemaNameLoadInfo();</span>
+
+<span class="nc bnc" id="L640" title="All 2 branches missed.">         if(SchemaNameLoadInfo.STATE_DONT_REFERESH_SCHEMA_NAMES == schemaNameLoadInfo.state)</span>
+         {
+<span class="nc" id="L642">            return;</span>
+         }
+
+         String[] schemasToWrite;
+<span class="nc bnc" id="L646" title="All 2 branches missed.">         if(SchemaNameLoadInfo.STATE_REFERESH_SCHEMA_NAMES_FROM_DB == schemaNameLoadInfo.state)</span>
+         {
+<span class="nc" id="L648">            schemasToWrite = _session.getApplication().getSessionManager().getAllowedSchemas(_session);</span>
+         }
+<span class="nc bnc" id="L650" title="All 2 branches missed.">         else if(SchemaNameLoadInfo.STATE_USES_PROVIDED_SCHEMA_NAMES == schemaNameLoadInfo.state)</span>
+         {
+<span class="nc" id="L652">            schemasToWrite = schemaNameLoadInfo.schemaNames;</span>
+         }
+         else
+         {
+<span class="nc" id="L656">            throw new IllegalArgumentException(&quot;Unknown SchemaNameLoadInfo.state = &quot; + schemaNameLoadInfo.state);</span>
+         }
+
+<span class="nc" id="L659">         _schemaInfoCache.writeSchemas(schemasToWrite);</span>
+      }
+<span class="nc" id="L661">      catch (Throwable th)</span>
+      {
+<span class="nc" id="L663">         s_log.error(&quot;failed to load schema names&quot;, th);</span>
+<span class="nc" id="L664">      }</span>
+<span class="nc" id="L665">   }</span>
+
+
+   public boolean isKeyword(String data)
+   {
+<span class="nc" id="L670">      return isKeyword(new CaseInsensitiveString(data));</span>
+   }
+
+   /**
+    * Retrieve whether the passed string is a keyword.
+    *
+    * @param	keyword		String to check.
+    *
+    * @return	&lt;TT&gt;true&lt;/TT&gt; if a keyword.
+    */
+   public boolean isKeyword(CaseInsensitiveString data)
+   {
+<span class="nc bnc" id="L682" title="All 4 branches missed.">      if (!_loading &amp;&amp; data != null)</span>
+      {
+<span class="nc" id="L684">         return _schemaInfoCache.getKeywordsForReadOnly().containsKey(data);</span>
+      }
+<span class="nc" id="L686">      return false;</span>
+   }
+
+
+   public boolean isDataType(String data)
+   {
+<span class="nc" id="L692">      return isDataType(new CaseInsensitiveString(data));</span>
+   }
+
+
+   /**
+    * Retrieve whether the passed string is a data type.
+    *
+    * @param	keyword		String to check.
+    *
+    * @return	&lt;TT&gt;true&lt;/TT&gt; if a data type.
+    */
+   public boolean isDataType(CaseInsensitiveString data)
+   {
+<span class="nc bnc" id="L705" title="All 4 branches missed.">      if (!_loading &amp;&amp; data != null)</span>
+      {
+<span class="nc" id="L707">         return _schemaInfoCache.getDataTypesForReadOnly().containsKey(data);</span>
+      }
+<span class="nc" id="L709">      return false;</span>
+   }
+
+
+   public boolean isFunction(String data)
+   {
+<span class="nc" id="L715">      return isFunction(new CaseInsensitiveString(data));</span>
+   }
+
+   /**
+    * Retrieve whether the passed string is a function.
+    *
+    * @param	keyword		String to check.
+    *
+    * @return	&lt;TT&gt;true&lt;/TT&gt; if a function.
+    */
+   public boolean isFunction(CaseInsensitiveString data)
+   {
+<span class="nc bnc" id="L727" title="All 4 branches missed.">      if (!_loading &amp;&amp; data != null)</span>
+      {
+<span class="nc" id="L729">         return _schemaInfoCache.getFunctionsForReadOnly().containsKey(data);</span>
+      }
+<span class="nc" id="L731">      return false;</span>
+   }
+
+   public boolean isTable(String data)
+   {
+<span class="nc" id="L736">      return isTable(new CaseInsensitiveString(data));</span>
+   }
+
+
+   public boolean isTable(CaseInsensitiveString data)
+   {
+<span class="nc" id="L742">      int tableExtRes = isTableExt(data);</span>
+<span class="nc bnc" id="L743" title="All 4 branches missed.">      return TABLE_EXT_COLS_LOADED_IN_THIS_CALL == tableExtRes || TABLE_EXT_COLS_LOADED_BEFORE == tableExtRes;</span>
+
+   }
+
+   /**
+    * Retrieve whether the passed string is a table and wether this table's colums where loaded before this call.
+    *
+    * @param	keyword		String to check.
+    *
+    * @return	&lt;TT&gt;true&lt;/TT&gt; if a table.
+    */
+   public int isTableExt(CaseInsensitiveString data)
+   {
+<span class="nc bnc" id="L756" title="All 4 branches missed.">      if (!_loading &amp;&amp; data != null)</span>
+      {
+<span class="nc bnc" id="L758" title="All 2 branches missed.">         if(_schemaInfoCache.getTableNamesForReadOnly().containsKey(data))</span>
+         {
+<span class="nc bnc" id="L760" title="All 2 branches missed.">            if (loadColumns(data))</span>
+            {
+<span class="nc" id="L762">               return TABLE_EXT_COLS_LOADED_IN_THIS_CALL;</span>
+            }
+            else
+            {
+<span class="nc" id="L766">               return TABLE_EXT_COLS_LOADED_BEFORE;</span>
+            }
+         }
+      }
+<span class="nc" id="L770">      return TABLE_EXT_NOT_A_TABLE;</span>
+   }
+
+
+   public boolean isColumn(String data)
+   {
+<span class="nc" id="L776">      return isColumn(new CaseInsensitiveString(data));</span>
+   }
+
+
+   /**
+    * Retrieve whether the passed string is a column.
+    *
+    * @param	keyword		String to check.
+    *
+    * @return	&lt;TT&gt;true&lt;/TT&gt; if a column.
+    */
+   public boolean isColumn(CaseInsensitiveString data)
+   {
+<span class="nc bnc" id="L789" title="All 4 branches missed.">      if (!_loading &amp;&amp; data != null)</span>
+      {
+<span class="nc" id="L791">         return _schemaInfoCache.getExtColumnInfosByColumnNameForReadOnly().containsKey(data);</span>
+      }
+<span class="nc" id="L793">      return false;</span>
+   }
+
+   /**
+    * This method returns the case sensitive name of a table as it is stored
+    * in the database.
+    * The case sensitive name is needed for example if you want to retrieve
+    * a table's meta data. Quote from the API doc of DataBaseMetaData.getTables():
+    * Parameters:
+    * ...
+    * tableNamePattern - a table name pattern; must match the table name as it is stored in the database
+    *
+    *
+    * @param data The tables name in arbitrary case.
+    * @return the table name as it is stored in the database
+    */
+   public String getCaseSensitiveTableName(String data)
+   {
+<span class="nc bnc" id="L811" title="All 4 branches missed.">      if (!_loading &amp;&amp; data != null)</span>
+      {
+<span class="nc" id="L813">         return _schemaInfoCache.getTableNamesForReadOnly().get(new CaseInsensitiveString(data));</span>
+      }
+<span class="nc" id="L815">      return null;</span>
+   }
+
+   public String getCaseSensitiveProcedureName(String data)
+   {
+<span class="nc bnc" id="L820" title="All 4 branches missed.">      if (!_loading &amp;&amp; data != null)</span>
+      {
+<span class="nc" id="L822">         return _schemaInfoCache.getProcedureNamesForReadOnly().get(new CaseInsensitiveString(data));</span>
+      }
+<span class="nc" id="L824">      return null;</span>
+   }
+
+
+
+
+   private void loadKeywords(String msg, int beginProgress)
+   {
+      try
+      {
+<span class="nc bnc" id="L834" title="All 2 branches missed.">         if(false == _schemaInfoCache.loadSchemaIndependentMetaData())</span>
+         {
+<span class="nc" id="L836">            return;</span>
+         }
+
+<span class="nc" id="L839">         setProgress(msg + &quot; (default keywords)&quot;, beginProgress);</span>
+
+<span class="nc" id="L841">         Hashtable&lt;CaseInsensitiveString, String&gt; keywordsBuf = </span>
+             new Hashtable&lt;CaseInsensitiveString, String&gt;();
+
+<span class="nc bnc" id="L844" title="All 2 branches missed.">         for (int i = 0; i &lt; DefaultKeywords.KEY_WORDS.length; i++)</span>
+         {
+<span class="nc" id="L846">            String kw = DefaultKeywords.KEY_WORDS[i];</span>
+<span class="nc" id="L847">            keywordsBuf.put(new CaseInsensitiveString(kw), kw);</span>
+         }
+
+
+         // Extra keywords that this DBMS supports.
+<span class="nc bnc" id="L852" title="All 2 branches missed.">         if (_dmd != null)</span>
+         {
+
+<span class="nc" id="L855">            setProgress(msg + &quot; (DB specific keywords)&quot;, beginProgress);</span>
+
+<span class="nc" id="L857">            String[] sqlKeywords = _dmd.getSQLKeywords();</span>
+
+<span class="nc bnc" id="L859" title="All 2 branches missed.">            for (int i = 0; i &lt; sqlKeywords.length; i++)</span>
+            {
+<span class="nc" id="L861">            	keywordsBuf.put(new CaseInsensitiveString(sqlKeywords[i]), sqlKeywords[i]);</span>
+            }
+
+<span class="nc" id="L864">            String catalogTerm = _dmd.getCatalogTerm();</span>
+<span class="nc bnc" id="L865" title="All 2 branches missed.">            if (catalogTerm != null) {</span>
+<span class="nc" id="L866">            	keywordsBuf.put(new CaseInsensitiveString(catalogTerm), catalogTerm);</span>
+            }
+
+<span class="nc" id="L869">            String schemaTerm = _dmd.getSchemaTerm();</span>
+<span class="nc bnc" id="L870" title="All 2 branches missed.">            if (schemaTerm != null) {</span>
+<span class="nc" id="L871">            	keywordsBuf.put(new CaseInsensitiveString(schemaTerm), schemaTerm);</span>
+            }
+
+<span class="nc" id="L874">            String procedureTerm = _dmd.getProcedureTerm();</span>
+<span class="nc bnc" id="L875" title="All 2 branches missed.">            if (procedureTerm != null) {</span>
+<span class="nc" id="L876">            	keywordsBuf.put(new CaseInsensitiveString(procedureTerm), procedureTerm);</span>
+            }
+         }
+
+<span class="nc" id="L880">         _schemaInfoCache.writeKeywords(keywordsBuf);</span>
+      }
+<span class="nc" id="L882">      catch (Throwable ex)</span>
+      {
+<span class="nc" id="L884">         s_log.error(&quot;Error occured creating keyword collection&quot;, ex);</span>
+<span class="nc" id="L885">      }</span>
+<span class="nc" id="L886">   }</span>
+
+   private void loadDataTypes(String msg, int beginProgress)
+   {
+      try
+      {
+<span class="nc bnc" id="L892" title="All 2 branches missed.">         if(false == _schemaInfoCache.loadSchemaIndependentMetaData())</span>
+         {
+<span class="nc" id="L894">            return;</span>
+         }
+
+<span class="nc" id="L897">         Hashtable&lt;CaseInsensitiveString, String&gt; dataTypesBuf = </span>
+             new Hashtable&lt;CaseInsensitiveString, String&gt;();
+
+<span class="nc" id="L900">         DataTypeInfo[] infos = _dmd.getDataTypes();</span>
+<span class="nc bnc" id="L901" title="All 2 branches missed.">         for (int i = 0; i &lt; infos.length; i++)</span>
+         {
+<span class="nc" id="L903">            String typeName = infos[i].getSimpleName();</span>
+<span class="nc" id="L904">            dataTypesBuf.put(new CaseInsensitiveString(typeName), typeName);</span>
+
+<span class="nc bnc" id="L906" title="All 2 branches missed.">            if(0 == i % 100 )</span>
+            {
+<span class="nc" id="L908">               setProgress(msg + &quot; (&quot; + typeName + &quot;)&quot;, beginProgress);</span>
+            }
+
+         }
+
+<span class="nc" id="L913">         _schemaInfoCache.writeDataTypes(dataTypesBuf);</span>
+      }
+<span class="nc" id="L915">      catch (Throwable ex)</span>
+      {
+<span class="nc" id="L917">         s_log.error(&quot;Error occured creating data types collection&quot;, ex);</span>
+<span class="nc" id="L918">      }</span>
+<span class="nc" id="L919">   }</span>
+
+   private void loadGlobalFunctions(String msg, int beginProgress)
+   {
+<span class="nc bnc" id="L923" title="All 2 branches missed.">      if(false == _schemaInfoCache.loadSchemaIndependentMetaData())</span>
+      {
+<span class="nc" id="L925">         return;</span>
+      }
+
+<span class="nc" id="L928">      ArrayList&lt;String&gt; buf = new ArrayList&lt;String&gt;();</span>
+
+      try
+      {
+<span class="nc" id="L932">         setProgress(msg + &quot; (numeric functions)&quot;, beginProgress);</span>
+<span class="nc" id="L933">         buf.addAll(Arrays.asList(_dmd.getNumericFunctions()));</span>
+      }
+<span class="nc" id="L935">      catch (Throwable ex)</span>
+      {
+<span class="nc" id="L937">         s_log.error(&quot;Error&quot;, ex);</span>
+<span class="nc" id="L938">      }</span>
+
+      try
+      {
+<span class="nc" id="L942">         setProgress(msg + &quot; (string functions)&quot;, beginProgress);</span>
+<span class="nc" id="L943">         buf.addAll(Arrays.asList((_dmd.getStringFunctions())));</span>
+      }
+<span class="nc" id="L945">      catch (Throwable ex)</span>
+      {
+<span class="nc" id="L947">         s_log.error(&quot;Error&quot;, ex);</span>
+<span class="nc" id="L948">      }</span>
+
+      try
+      {
+<span class="nc" id="L952">         setProgress(msg + &quot; (time/date functions)&quot;, beginProgress);</span>
+<span class="nc" id="L953">         buf.addAll(Arrays.asList(_dmd.getTimeDateFunctions()));</span>
+      }
+<span class="nc" id="L955">      catch (Throwable ex)</span>
+      {
+<span class="nc" id="L957">         s_log.error(&quot;Error&quot;, ex);</span>
+<span class="nc" id="L958">      }</span>
+
+<span class="nc" id="L960">      Hashtable&lt;CaseInsensitiveString, String&gt; functionsBuf = </span>
+          new Hashtable&lt;CaseInsensitiveString, String&gt;();
+<span class="nc bnc" id="L962" title="All 2 branches missed.">      for (int i = 0; i &lt; buf.size(); i++)</span>
+      {
+<span class="nc" id="L964">         String func = buf.get(i);</span>
+<span class="nc bnc" id="L965" title="All 2 branches missed.">         if (func.length() &gt; 0)</span>
+         {
+<span class="nc" id="L967">            functionsBuf.put(new CaseInsensitiveString(func) ,func);</span>
+         }
+
+      }
+
+<span class="nc" id="L972">      _schemaInfoCache.writeFunctions(functionsBuf);</span>
+<span class="nc" id="L973">   }</span>
+
+
+
+   public String[] getKeywords()
+   {
+<span class="nc" id="L979">      return _schemaInfoCache.getKeywordsForReadOnly().values().toArray(new String[_schemaInfoCache.getKeywordsForReadOnly().size()]);</span>
+   }
+
+   public String[] getDataTypes()
+   {
+<span class="nc" id="L984">      return _schemaInfoCache.getDataTypesForReadOnly().values().toArray(new String[_schemaInfoCache.getDataTypesForReadOnly().size()]);</span>
+   }
+
+   public String[] getFunctions()
+   {
+<span class="nc" id="L989">      return _schemaInfoCache.getFunctionsForReadOnly().values().toArray(new String[_schemaInfoCache.getFunctionsForReadOnly().size()]);</span>
+   }
+
+   public String[] getTables()
+   {
+<span class="nc" id="L994">      return _schemaInfoCache.getTableNamesForReadOnly().values().toArray(new String[_schemaInfoCache.getTableNamesForReadOnly().size()]);</span>
+   }
+
+   public String[] getCatalogs()
+   {
+<span class="nc" id="L999">      return _schemaInfoCache.getCatalogsForReadOnly().toArray(new String[_schemaInfoCache.getCatalogsForReadOnly().size()]);</span>
+   }
+
+   public String[] getSchemas()
+   {
+<span class="nc" id="L1004">      return _schemaInfoCache.getSchemasForReadOnly().toArray(new String[_schemaInfoCache.getSchemasForReadOnly().size()]);</span>
+   }
+
+   public ITableInfo[] getITableInfos()
+   {
+<span class="nc" id="L1009">      return getITableInfos(null, null);</span>
+   }
+
+   public ITableInfo[] getITableInfos(String catalog, String schema)
+   {
+<span class="nc" id="L1014">      return getITableInfos(catalog, schema, null);</span>
+   }
+
+
+   public ITableInfo[] getITableInfos(String catalog, String schema, String simpleName)
+   {
+<span class="nc" id="L1020">      return getITableInfos(catalog, schema, new ObjFilterMatcher(simpleName), null);</span>
+   }
+
+   public ITableInfo[] getITableInfos(String catalog, String schema, ObjFilterMatcher filterMatcher, String[] types)
+   {
+<span class="nc" id="L1025">      ArrayList&lt;ITableInfo&gt; ret = new ArrayList&lt;ITableInfo&gt;();</span>
+<span class="nc bnc" id="L1026" title="All 2 branches missed.">      if (null != types)</span>
+      {
+         // By default null == types we return only cached types
+<span class="nc" id="L1029">         ITableInfo[] tableInfosForUncachedTypes = getTableInfosForUncachedTypes(catalog, schema, filterMatcher, types);</span>
+<span class="nc" id="L1030">         ret.addAll(Arrays.asList(tableInfosForUncachedTypes));</span>
+      }
+
+<span class="nc" id="L1033">      List&lt;ITableInfo&gt; tis = </span>
+<span class="nc" id="L1034">          _schemaInfoCache.getITableInfosForReadOnly();</span>
+<span class="nc bnc" id="L1035" title="All 2 branches missed.">      for(ITableInfo iTableInfo : tis) </span>
+      {
+<span class="nc bnc" id="L1037" title="All 2 branches missed.">         if(null != catalog &amp;&amp;</span>
+<span class="nc bnc" id="L1038" title="All 2 branches missed.">            false == catalog.equalsIgnoreCase(iTableInfo.getCatalogName()) &amp;&amp;</span>
+<span class="nc bnc" id="L1039" title="All 2 branches missed.">            false == fulfillsPlatformDependendMatches(iTableInfo, catalog)</span>
+            )
+         {
+<span class="nc" id="L1042">            continue;</span>
+         }
+
+<span class="nc bnc" id="L1045" title="All 4 branches missed.">         if(null != schema &amp;&amp; false == schema.equalsIgnoreCase(iTableInfo.getSchemaName()) )</span>
+         {
+<span class="nc" id="L1047">            continue;</span>
+         }
+
+<span class="nc bnc" id="L1050" title="All 2 branches missed.">         if(false == SchemaInfoCache.containsType(types, iTableInfo.getType()))</span>
+         {
+<span class="nc" id="L1052">            continue;</span>
+         }
+
+<span class="nc bnc" id="L1055" title="All 2 branches missed.">         if(filterMatcher.matches(iTableInfo.getSimpleName()))</span>
+         {
+<span class="nc" id="L1057">            ret.add(iTableInfo);</span>
+         }
+
+
+//         if(null != tableNamePattern &amp;&amp; false == tableNamePattern.endsWith(&quot;%&quot;) &amp;&amp; false == iTableInfo.getSimpleName().equals(tableNamePattern))
+//         {
+//            continue;
+//         }
+//
+//         if(null != tableNamePattern &amp;&amp; tableNamePattern.endsWith(&quot;%&quot;))
+//         {
+//            String tableNameBegin = tableNamePattern.substring(0, tableNamePattern.length() - 1);
+//            if(false == iTableInfo.getSimpleName().startsWith(tableNameBegin))
+//            {
+//               continue;
+//            }
+//         }
+//
+//         ret.add(iTableInfo);
+<span class="nc" id="L1076">      }</span>
+
+<span class="nc" id="L1078">      return ret.toArray(new ITableInfo[ret.size()]);</span>
+   }
+
+   private boolean fulfillsPlatformDependendMatches(ITableInfo iTableInfo, String catalog)
+   {
+<span class="nc bnc" id="L1083" title="All 2 branches missed.">      if(SQLDatabaseMetaData.DriverMatch.isComHttxDriver(_session.getSQLConnection()))</span>
+      {
+<span class="nc bnc" id="L1085" title="All 4 branches missed.">         return ( iTableInfo.getCatalogName()==null &amp;&amp; &quot;\&quot;.\&quot;&quot;.equals(catalog));</span>
+      }
+      else
+      {
+<span class="nc" id="L1089">         return false;</span>
+      }
+
+
+   }
+
+   private ITableInfo[] getTableInfosForUncachedTypes(String catalog, String schema, ObjFilterMatcher filterMatcher, String[] types)
+   {
+      try
+      {
+<span class="nc" id="L1099">         ArrayList&lt;String&gt; missingTypes = new ArrayList&lt;String&gt;();</span>
+<span class="nc bnc" id="L1100" title="All 2 branches missed.">         for (int i = 0; i &lt; types.length; i++)</span>
+         {
+<span class="nc bnc" id="L1102" title="All 2 branches missed.">            if(false == _schemaInfoCache.isCachedTableType(types[i]))</span>
+            {
+<span class="nc" id="L1104">               missingTypes.add(types[i]);</span>
+            }
+         }
+
+<span class="nc bnc" id="L1108" title="All 2 branches missed.">         if(0 &lt; missingTypes.size())</span>
+         {
+            try
+            {
+<span class="nc" id="L1112">               String[] buf = missingTypes.toArray(new String[missingTypes.size()]);</span>
+<span class="nc" id="L1113">               ProgressCallBack pcb = new ProgressCallBackAdaptor()</span>
+<span class="nc" id="L1114">               {</span>
+               	@Override
+                  public void currentlyLoading(String simpleName)
+                  {  
+<span class="nc" id="L1118">                     StringBuilder tmp = new StringBuilder(i18n.LOADING_TABLES_MSG);</span>
+<span class="nc" id="L1119">                     tmp.append(&quot; (&quot;);</span>
+<span class="nc" id="L1120">                     tmp.append(simpleName);</span>
+<span class="nc" id="L1121">                     tmp.append(&quot;)&quot;);</span>
+<span class="nc" id="L1122">                     setProgress(tmp.toString(), 1);</span>
+<span class="nc" id="L1123">                  }</span>
+               };
+<span class="nc" id="L1125">               return _dmd.getTables(catalog, schema, filterMatcher.getMetaDataMatchString(), buf, pcb);</span>
+            }
+            finally
+            {
+<span class="nc" id="L1129">               _session.getSessionSheet().setStatusBarProgressFinished();</span>
+            }
+         }
+
+      }
+<span class="nc" id="L1134">      catch (SQLException e)</span>
+      {
+<span class="nc" id="L1136">         s_log.error(&quot;Error loading uncached tables&quot;, e);</span>
+<span class="nc" id="L1137">      }</span>
+
+<span class="nc" id="L1139">      return new ITableInfo[0];</span>
+   }
+
+
+
+   public IProcedureInfo[] getStoredProceduresInfos(String catalog, String schema)
+   {
+<span class="nc" id="L1146">      return getStoredProceduresInfos(catalog, schema, new ObjFilterMatcher());</span>
+   }
+
+
+   public IProcedureInfo[] getStoredProceduresInfos(String catalog, String schema, ObjFilterMatcher filterMatcher)
+   {
+<span class="nc" id="L1152">      ArrayList&lt;IProcedureInfo&gt; ret = new ArrayList&lt;IProcedureInfo&gt;();</span>
+
+<span class="nc" id="L1154">      for (Iterator&lt;IProcedureInfo&gt; i = </span>
+<span class="nc bnc" id="L1155" title="All 2 branches missed.">          _schemaInfoCache.getIProcedureInfosForReadOnly().keySet().iterator(); i.hasNext();)</span>
+      {
+
+<span class="nc" id="L1158">         IProcedureInfo iProcInfo = i.next();</span>
+<span class="nc" id="L1159">         boolean toAdd = true;</span>
+<span class="nc bnc" id="L1160" title="All 4 branches missed.">         if (null != catalog &amp;&amp; false == catalog.equalsIgnoreCase(iProcInfo.getCatalogName()))</span>
+         {
+<span class="nc" id="L1162">            toAdd = false;</span>
+         }
+
+<span class="nc bnc" id="L1165" title="All 4 branches missed.">         if (null != schema &amp;&amp; false == schema.equalsIgnoreCase(iProcInfo.getSchemaName()))</span>
+         {
+<span class="nc" id="L1167">            toAdd = false;</span>
+         }
+         
+<span class="nc bnc" id="L1170" title="All 2 branches missed.">         if(false == filterMatcher.matches(iProcInfo.getSimpleName()))</span>
+         {
+<span class="nc" id="L1172">            toAdd = false;</span>
+         }
+
+
+<span class="nc bnc" id="L1176" title="All 2 branches missed.">         if (toAdd)</span>
+         {
+<span class="nc" id="L1178">            ret.add(iProcInfo);</span>
+         }
+<span class="nc" id="L1180">      }</span>
+
+<span class="nc" id="L1182">      return ret.toArray(new IProcedureInfo[ret.size()]);</span>
+   }
+
+
+   public boolean isLoaded()
+   {
+<span class="nc" id="L1188">      return _loaded;</span>
+   }
+
+   private void privateLoadTables(String catalog,
+                                  String schema,
+                                  String tableNamePattern,
+                                  String[] types,
+                                  final String msg,
+                                  final int beginProgress)
+   {
+      try
+      {
+<span class="nc" id="L1200">         ProgressCallBack pcb = new ProgressCallBackAdaptor()</span>
+<span class="nc" id="L1201">         {  @Override</span>
+            public void currentlyLoading(String simpleName)
+            {
+<span class="nc" id="L1204">               setProgress(msg + &quot; (&quot; + simpleName + &quot;)&quot;, beginProgress);</span>
+<span class="nc" id="L1205">            }</span>
+         };
+<span class="nc" id="L1207">         SchemaLoadInfo[] schemaLoadInfos = </span>
+<span class="nc" id="L1208">            _schemaInfoCache.getMatchingSchemaLoadInfos(schema, types);</span>
+         
+<span class="nc bnc" id="L1210" title="All 2 branches missed.">         for (int i = 0; i &lt; schemaLoadInfos.length; i++)</span>
+         {
+<span class="nc" id="L1212">            ITableInfo[] infos = _dmd.getTables(catalog,</span>
+                  schemaLoadInfos[i].schemaName, tableNamePattern,
+                  schemaLoadInfos[i].tableTypes, pcb);
+<span class="nc" id="L1215">            _schemaInfoCache.writeToTableCache(infos);</span>
+         }
+      }
+<span class="nc" id="L1218">      catch (Throwable th)</span>
+      {
+<span class="nc" id="L1220">         s_log.error(&quot;failed to load table names&quot;, th);</span>
+<span class="nc" id="L1221">      }</span>
+<span class="nc" id="L1222">   }</span>
+
+   /**
+    *
+    * @return true only when the table's columns are loaded within this call.
+    */
+   private boolean loadColumns(final CaseInsensitiveString tableName)
+   {
+      try
+      {
+<span class="nc bnc" id="L1232" title="All 2 branches missed.">         if(_schemaInfoCache.didTryLoadingColumns(tableName))</span>
+         {
+<span class="nc" id="L1234">            return false;</span>
+         }
+
+
+<span class="nc bnc" id="L1238" title="All 2 branches missed.">         if (_session.getProperties().getLoadColumnsInBackground())</span>
+         {
+<span class="nc bnc" id="L1240" title="All 2 branches missed.">            if(_tablesLoadingColsInBackground.containsKey(tableName))</span>
+            {
+<span class="nc" id="L1242">               return false;</span>
+            }
+
+            // Note: A CaseInsensitiveString can be a mutable string.
+            // In fact it is a mutable string here because this is usually called from
+            // within Syntax coloring which uses a mutable string.
+<span class="nc" id="L1248">            final CaseInsensitiveString imutableString = new CaseInsensitiveString(tableName.toString());</span>
+<span class="nc" id="L1249">            _tablesLoadingColsInBackground.put(imutableString, imutableString);</span>
+<span class="nc" id="L1250">            _session.getApplication().getThreadPool().addTask(new Runnable()</span>
+<span class="nc" id="L1251">            {</span>
+               public void run()
+               {
+                  try
+                  {
+<span class="nc" id="L1256">                     accessDbToLoadColumns(imutableString);</span>
+                  }
+<span class="nc" id="L1258">                  catch (Throwable th)</span>
+                  {
+<span class="nc" id="L1260">                     s_log.error(&quot;failed to load columns&quot;, th);</span>
+                  }
+                  finally
+                  {
+<span class="nc" id="L1264">                     _tablesLoadingColsInBackground.remove(imutableString);</span>
+                  }
+
+<span class="nc" id="L1267">               }</span>
+            });
+<span class="nc" id="L1269">         }</span>
+         else
+         {
+<span class="nc" id="L1272">            accessDbToLoadColumns(tableName);</span>
+         }
+      }
+<span class="nc" id="L1275">      catch (Throwable th)</span>
+      {
+<span class="nc" id="L1277">         s_log.error(&quot;failed to load table names&quot;, th);</span>
+<span class="nc" id="L1278">      }</span>
+
+<span class="nc" id="L1280">      return true;</span>
+   }
+
+   private void accessDbToLoadColumns(CaseInsensitiveString tableName)
+      throws SQLException
+   {
+<span class="nc bnc" id="L1286" title="All 2 branches missed.">      if (null == _dmd)</span>
+      {
+<span class="nc" id="L1288">         s_log.warn(s_stringMgr.getString(&quot;SchemaInfo.UnableToLoadColumns&quot;, tableName));</span>
+<span class="nc" id="L1289">         return;</span>
+      }
+
+<span class="nc" id="L1292">      String name = getCaseSensitiveTableName(tableName.toString());</span>
+<span class="nc" id="L1293">      TableInfo ti = new TableInfo(null, null, name, &quot;TABLE&quot;, null, _dmd);</span>
+
+      try
+      {
+<span class="nc" id="L1297">         TableColumnInfo[] infos = _dmd.getColumnInfo(ti);</span>
+<span class="nc" id="L1298">         _schemaInfoCache.writeColumsToCache(infos, tableName);</span>
+      }
+<span class="nc" id="L1300">      catch (Throwable th)</span>
+      {
+<span class="nc" id="L1302">         _schemaInfoCache.writeColumsNotAccessible(th, tableName);</span>
+<span class="nc" id="L1303">      }</span>
+<span class="nc" id="L1304">   }</span>
+
+
+   public ExtendedColumnInfo[] getExtendedColumnInfos(String tableName)
+   {
+<span class="nc" id="L1309">      return getExtendedColumnInfos(null, null, tableName);</span>
+   }
+
+   public ExtendedColumnInfo[] getExtendedColumnInfos(String catalog, String schema, String tableName)
+   {
+<span class="nc" id="L1314">      CaseInsensitiveString cissTableName = new CaseInsensitiveString(tableName);</span>
+<span class="nc" id="L1315">      loadColumns(cissTableName);</span>
+<span class="nc" id="L1316">      List&lt;ExtendedColumnInfo&gt; extColInfo = _schemaInfoCache.getExtendedColumnInfosForReadOnly(cissTableName);</span>
+
+<span class="nc bnc" id="L1318" title="All 2 branches missed.">      if (null == extColInfo)</span>
+      {
+<span class="nc" id="L1320">         return new ExtendedColumnInfo[0];</span>
+      }
+
+<span class="nc bnc" id="L1323" title="All 4 branches missed.">      if (null == catalog &amp;&amp; null == schema)</span>
+      {
+<span class="nc" id="L1325">         return extColInfo.toArray(new ExtendedColumnInfo[extColInfo.size()]);</span>
+      }
+      else
+      {
+<span class="nc" id="L1329">         ArrayList&lt;ExtendedColumnInfo&gt; ret = new ArrayList&lt;ExtendedColumnInfo&gt;();</span>
+
+<span class="nc bnc" id="L1331" title="All 2 branches missed.">         for (int i = 0; i &lt; extColInfo.size(); i++)</span>
+         {
+<span class="nc" id="L1333">            ExtendedColumnInfo extendedColumnInfo = extColInfo.get(i);</span>
+<span class="nc" id="L1334">            boolean toAdd = true;</span>
+<span class="nc bnc" id="L1335" title="All 6 branches missed.">            if (null != catalog &amp;&amp; null != extendedColumnInfo.getCatalog() &amp;&amp; false == catalog.equalsIgnoreCase(extendedColumnInfo.getCatalog()))</span>
+            {
+<span class="nc" id="L1337">               toAdd = false;</span>
+            }
+
+<span class="nc bnc" id="L1340" title="All 6 branches missed.">            if (null != schema &amp;&amp; null != extendedColumnInfo.getSchema() &amp;&amp; false == schema.equalsIgnoreCase(extendedColumnInfo.getSchema()))</span>
+            {
+<span class="nc" id="L1342">               toAdd = false;</span>
+            }
+
+<span class="nc bnc" id="L1345" title="All 2 branches missed.">            if (toAdd)</span>
+            {
+<span class="nc" id="L1347">               ret.add(extendedColumnInfo);</span>
+            }
+         }
+
+<span class="nc" id="L1351">         return ret.toArray(new ExtendedColumnInfo[ret.size()]);</span>
+      }
+   }
+
+   public void dispose()
+   {
+      // The SessionManager is global to SQuirreL.
+      // If we don't remove the listeners the
+      // Session won't get Garbeage Collected.
+<span class="nc" id="L1360">      _session.getApplication().getSessionManager().removeSessionListener(_sessionListener);</span>
+<span class="nc" id="L1361">   }</span>
+
+   public boolean isProcedure(CaseInsensitiveString data)
+   {
+<span class="nc" id="L1365">      return _schemaInfoCache.getProcedureNamesForReadOnly().containsKey(data);</span>
+   }
+
+   public void reload(IDatabaseObjectInfo doi)
+   {
+<span class="nc" id="L1370">      reload(doi, true);</span>
+<span class="nc" id="L1371">   }</span>
+
+   /**
+    * @param fireSchemaInfoUpdate Should only be false when the caller makes sure fireSchemaInfoUpdate() is called later.
+    */
+   void reload(IDatabaseObjectInfo doi, boolean fireSchemaInfoUpdate)
+   {
+<span class="nc" id="L1378">      boolean doReloadAll = false;</span>
+
+      try
+      {
+<span class="nc" id="L1382">         synchronized (this)</span>
+         {
+<span class="nc bnc" id="L1384" title="All 2 branches missed.">            if(_loading)</span>
+            {
+<span class="nc" id="L1386">               return;</span>
+            }
+<span class="nc" id="L1388">            _loading = true;</span>
+<span class="nc" id="L1389">            _schemasAndCatalogsLoaded = false;</span>
+<span class="nc" id="L1390">            _tablesLoaded = false;</span>
+<span class="nc" id="L1391">            _storedProceduresLoaded = false;</span>
+
+<span class="nc" id="L1393">         }</span>
+
+
+<span class="nc bnc" id="L1396" title="All 2 branches missed.">         if (doi instanceof ITableInfo)</span>
+         {
+<span class="nc" id="L1398">            ITableInfo ti = (ITableInfo) doi;</span>
+<span class="nc" id="L1399">            DatabaseObjectType dot = ti.getDatabaseObjectType();</span>
+
+<span class="nc" id="L1401">            String[] types = null;</span>
+<span class="nc bnc" id="L1402" title="All 2 branches missed.">            if (DatabaseObjectType.TABLE == dot)</span>
+            {
+<span class="nc" id="L1404">               types = new String[]{&quot;TABLE&quot;};</span>
+            }
+<span class="nc bnc" id="L1406" title="All 2 branches missed.">            else if (DatabaseObjectType.VIEW == dot)</span>
+            {
+<span class="nc" id="L1408">               types = new String[]{&quot;VIEW&quot;};</span>
+            }
+
+<span class="nc" id="L1411">            _schemaInfoCache.clearTables(ti.getCatalogName(), ti.getSchemaName(), ti.getSimpleName(), types);</span>
+<span class="nc" id="L1412">            loadTables(ti.getCatalogName(), ti.getSchemaName(), ti.getSimpleName(), types, 1);</span>
+<span class="nc" id="L1413">         }</span>
+<span class="nc bnc" id="L1414" title="All 2 branches missed.">         else if(doi instanceof IProcedureInfo)</span>
+         {
+<span class="nc" id="L1416">            IProcedureInfo pi = (IProcedureInfo) doi;</span>
+<span class="nc" id="L1417">            _schemaInfoCache.clearStoredProcedures(pi.getCatalogName(), pi.getSchemaName(), pi.getSimpleName());</span>
+<span class="nc" id="L1418">            loadStoredProcedures(pi.getCatalogName(), pi.getSchemaName(), pi.getSimpleName(), 1);</span>
+<span class="nc" id="L1419">         }</span>
+<span class="nc bnc" id="L1420" title="All 2 branches missed.">         else if(DatabaseObjectType.TABLE_TYPE_DBO == doi.getDatabaseObjectType())</span>
+         {
+            // load all table types with catalog = doi.getCatalog() and schema = doi.getSchema()
+<span class="nc" id="L1423">            _schemaInfoCache.clearTables(doi.getCatalogName(), doi.getSchemaName(), null, null);</span>
+<span class="nc" id="L1424">            loadTables(doi.getCatalogName(), doi.getSchemaName(), null, null, 0);</span>
+         }
+<span class="nc bnc" id="L1426" title="All 2 branches missed.">         else if(DatabaseObjectType.TABLE == doi.getDatabaseObjectType())</span>
+         {
+            // load tables with catalog = doi.getCatalog() and schema = doi.getSchema()
+<span class="nc" id="L1429">            _schemaInfoCache.clearTables(doi.getCatalogName(), doi.getSchemaName(), null, new String[]{&quot;TABLE&quot;});</span>
+<span class="nc" id="L1430">            loadTables(doi.getCatalogName(), doi.getSchemaName(), null, new String[]{&quot;TABLE&quot;}, 1);</span>
+         }
+<span class="nc bnc" id="L1432" title="All 2 branches missed.">         else if(DatabaseObjectType.VIEW == doi.getDatabaseObjectType())</span>
+         {
+            // load views with catalog = doi.getCatalog() and schema = doi.getSchema()
+<span class="nc" id="L1435">            _schemaInfoCache.clearTables(doi.getCatalogName(), doi.getSchemaName(), null, new String[]{&quot;VIEW&quot;});</span>
+<span class="nc" id="L1436">            loadTables(doi.getCatalogName(), doi.getSchemaName(), null, new String[]{&quot;VIEW&quot;}, 1);</span>
+         }
+<span class="nc bnc" id="L1438" title="All 4 branches missed.">         else if(DatabaseObjectType.PROCEDURE == doi.getDatabaseObjectType() || DatabaseObjectType.PROC_TYPE_DBO == doi.getDatabaseObjectType())</span>
+         {
+<span class="nc" id="L1440">            _schemaInfoCache.clearStoredProcedures(doi.getCatalogName(), doi.getSchemaName(), null);</span>
+<span class="nc" id="L1441">            loadStoredProcedures(doi.getCatalogName(), doi.getSchemaName(), null, 1);</span>
+         }
+<span class="nc bnc" id="L1443" title="All 2 branches missed.">         else if(DatabaseObjectType.SCHEMA == doi.getDatabaseObjectType())</span>
+         {
+            //int progress = loadSchemas(1);
+            // load tables with catalog = null
+<span class="nc" id="L1447">            _schemaInfoCache.clearTables(null, doi.getSchemaName(), null, null);</span>
+<span class="nc" id="L1448">            int progress = loadTables(null, doi.getSchemaName(), null, null, 1);</span>
+
+            // load procedures with catalog = null
+<span class="nc" id="L1451">            _schemaInfoCache.clearStoredProcedures(null, doi.getSchemaName(), null);</span>
+<span class="nc" id="L1452">            loadStoredProcedures(null, doi.getSchemaName(), null, progress);</span>
+<span class="nc" id="L1453">         }</span>
+<span class="nc bnc" id="L1454" title="All 2 branches missed.">         else if(DatabaseObjectType.CATALOG == doi.getDatabaseObjectType())</span>
+         {
+            //int progress = loadCatalogs(1);
+            // load tables with schema = null
+<span class="nc" id="L1458">            _schemaInfoCache.clearTables(doi.getCatalogName(), null, null, null);</span>
+<span class="nc" id="L1459">            int progress = loadTables(doi.getCatalogName(), null, null, null, 1);</span>
+
+            // load procedures with schema = null
+<span class="nc" id="L1462">            _schemaInfoCache.clearStoredProcedures(doi.getCatalogName(), null, null);</span>
+<span class="nc" id="L1463">            loadStoredProcedures(doi.getCatalogName(), null, null, progress);</span>
+<span class="nc" id="L1464">         }</span>
+<span class="nc bnc" id="L1465" title="All 2 branches missed.">         else if(DatabaseObjectType.SESSION == doi.getDatabaseObjectType())</span>
+         {
+<span class="nc" id="L1467">            doReloadAll = true;</span>
+         }
+
+         // If called here it is called far to often and restoring selection in the
+         // Object tree doesn't work.
+         //fireSchemaInfoUpdate();
+      }
+      finally
+      {
+<span class="nc" id="L1476">         _session.getSessionSheet().setStatusBarProgressFinished();</span>
+<span class="nc" id="L1477">         _loading = false;</span>
+<span class="nc" id="L1478">         _schemasAndCatalogsLoaded = true;</span>
+<span class="nc" id="L1479">         _tablesLoaded = true;</span>
+<span class="nc" id="L1480">         _storedProceduresLoaded = true;</span>
+<span class="nc" id="L1481">         notifySchemasAndCatalogsLoad();</span>
+<span class="nc" id="L1482">         notifyTablesLoaded();</span>
+<span class="nc" id="L1483">         notifyStoredProceduresLoaded();</span>
+
+<span class="nc bnc" id="L1485" title="All 2 branches missed.">         if(doReloadAll)</span>
+         {
+<span class="nc" id="L1487">            reloadAll(fireSchemaInfoUpdate);</span>
+         }
+         else
+         {
+<span class="nc bnc" id="L1491" title="All 2 branches missed.">            if(fireSchemaInfoUpdate)</span>
+            {
+<span class="nc" id="L1493">               fireSchemaInfoUpdate();</span>
+            }
+         }
+      }
+<span class="nc" id="L1497">   }</span>
+
+   public void fireSchemaInfoUpdate()
+   {
+<span class="nc" id="L1501">      SwingUtilities.invokeLater(new Runnable()</span>
+<span class="nc" id="L1502">      {</span>
+         public void run()
+         {
+<span class="nc" id="L1505">            SchemaInfoUpdateListener[] listeners = </span>
+<span class="nc" id="L1506">                _listeners.toArray(new SchemaInfoUpdateListener[0]);</span>
+
+<span class="nc bnc" id="L1508" title="All 2 branches missed.">            for (int i = 0; i &lt; listeners.length; i++)</span>
+            {
+<span class="nc" id="L1510">               listeners[i].schemaInfoUpdated();</span>
+            }
+<span class="nc" id="L1512">         }</span>
+      });
+
+
+<span class="nc" id="L1516">   }</span>
+
+   public void addSchemaInfoUpdateListener(SchemaInfoUpdateListener l)
+   {
+<span class="nc" id="L1520">      _listeners.remove(l);</span>
+<span class="nc" id="L1521">      _listeners.add(l);</span>
+<span class="nc" id="L1522">   }</span>
+
+   public void removeSchemaInfoUpdateListener(SchemaInfoUpdateListener l)
+   {
+<span class="nc" id="L1526">      _listeners.remove(l);</span>
+<span class="nc" id="L1527">   }</span>
+
+
+   public void refershCacheForSimpleTableName(String simpleTableName)
+   {
+<span class="nc" id="L1532">      refershCacheForSimpleTableName(simpleTableName, true);</span>
+<span class="nc" id="L1533">   }</span>
+
+   /**
+    * @param fireSchemaInfoUpdate Should only be false when the caller makes sure fireSchemaInfoUpdate() is called later.
+    */
+   void refershCacheForSimpleTableName(String simpleTableName, boolean fireSchemaInfoUpdate)
+   {
+<span class="nc" id="L1540">      HashMap&lt;String, String&gt; caseSensitiveTableNames = new HashMap&lt;String, String&gt;();</span>
+
+<span class="nc" id="L1542">      CaseInsensitiveString caseInsensitiveTableName = new CaseInsensitiveString(simpleTableName);</span>
+<span class="nc" id="L1543">      String caseSensitiveTableName = _schemaInfoCache.getTableNamesForReadOnly().get(caseInsensitiveTableName);</span>
+
+<span class="nc" id="L1545">      caseSensitiveTableNames.put(caseSensitiveTableName, caseSensitiveTableName);</span>
+
+      ////////////////////////////////////////////////////////////////////////
+      // Reload  all matching table types
+<span class="nc bnc" id="L1549" title="All 2 branches missed.">      for(Iterator&lt;String&gt; i=caseSensitiveTableNames.keySet().iterator(); i.hasNext();)</span>
+      {
+<span class="nc" id="L1551">         String buf = i.next();</span>
+<span class="nc" id="L1552">         TableInfo ti = new TableInfo(null, null, buf, null, null, _dmd);</span>
+<span class="nc" id="L1553">         reload(ti, fireSchemaInfoUpdate);</span>
+<span class="nc" id="L1554">      }</span>
+      //
+      ////////////////////////////////////////////////////////////////////////
+
+// is done in reload
+//      if(fireSchemaInfoUpdate)
+//      {
+//         fireSchemaInfoUpdate();
+//      }
+<span class="nc" id="L1563">   }</span>
+
+   public void refreshCacheForSimpleProcedureName(String simpleProcName)
+   {
+<span class="nc" id="L1567">      refreshCacheForSimpleProcedureName(simpleProcName, true);</span>
+<span class="nc" id="L1568">   }</span>
+
+   /**
+    * @param fireSchemaInfoUpdate Should only be false when the caller makes sure fireSchemaInfoUpdate() is called later.
+    */
+   void refreshCacheForSimpleProcedureName(String simpleProcName, boolean fireSchemaInfoUpdate)
+   {
+<span class="nc" id="L1575">      HashMap&lt;String, String&gt; caseSensitiveProcNames = new HashMap&lt;String, String&gt;();</span>
+
+<span class="nc" id="L1577">      CaseInsensitiveString caseInsensitiveProcName = new CaseInsensitiveString(simpleProcName);</span>
+<span class="nc" id="L1578">      String caseSensitiveProcName = _schemaInfoCache.getProcedureNamesForReadOnly().remove(caseInsensitiveProcName);</span>
+
+<span class="nc" id="L1580">      caseSensitiveProcNames.put(caseSensitiveProcName, caseSensitiveProcName);</span>
+
+      ////////////////////////////////////////////////////////////////////////
+      // Reload  all matching procedure types
+<span class="nc bnc" id="L1584" title="All 2 branches missed.">      for(Iterator&lt;String&gt; i=caseSensitiveProcNames.keySet().iterator(); i.hasNext();)</span>
+      {
+<span class="nc" id="L1586">         String buf = i.next();</span>
+<span class="nc" id="L1587">         ProcedureInfo pi = new ProcedureInfo(null, null, buf, null, DatabaseMetaData.procedureResultUnknown, _dmd);</span>
+<span class="nc" id="L1588">         reload(pi, fireSchemaInfoUpdate);</span>
+<span class="nc" id="L1589">      }</span>
+      //
+      ////////////////////////////////////////////////////////////////////////
+
+// is done in reload       
+//      if(fireSchemaInfoUpdate)
+//      {
+//         fireSchemaInfoUpdate();
+//      }
+<span class="nc" id="L1598">   }</span>
+
+   public void waitTillSchemasAndCatalogsLoaded()
+   {
+      try
+      {
+<span class="nc" id="L1604">         synchronized (this)</span>
+         {
+<span class="nc bnc" id="L1606" title="All 2 branches missed.">            while (false == _schemasAndCatalogsLoaded)</span>
+            {
+<span class="nc" id="L1608">               this.wait();</span>
+            }
+<span class="nc" id="L1610">         }</span>
+      }
+<span class="nc" id="L1612">      catch (InterruptedException e)</span>
+      {
+<span class="nc" id="L1614">         throw new RuntimeException(e);</span>
+<span class="nc" id="L1615">      }</span>
+<span class="nc" id="L1616">   }</span>
+
+   public void waitTillTablesLoaded()
+   {
+      try
+      {
+<span class="nc" id="L1622">         synchronized (this)</span>
+         {
+<span class="nc bnc" id="L1624" title="All 2 branches missed.">            while (false == _tablesLoaded)</span>
+            {
+<span class="nc" id="L1626">               this.wait();</span>
+            }
+<span class="nc" id="L1628">         }</span>
+      }
+<span class="nc" id="L1630">      catch (InterruptedException e)</span>
+      {
+<span class="nc" id="L1632">         throw new RuntimeException(e);</span>
+<span class="nc" id="L1633">      }</span>
+<span class="nc" id="L1634">   }</span>
+
+   public void waitTillStoredProceduresLoaded()
+   {
+      try
+      {
+<span class="nc" id="L1640">         synchronized (this)</span>
+         {
+<span class="nc bnc" id="L1642" title="All 2 branches missed.">            while (false == _storedProceduresLoaded)</span>
+            {
+<span class="nc" id="L1644">               this.wait();</span>
+            }
+<span class="nc" id="L1646">         }</span>
+      }
+<span class="nc" id="L1648">      catch (InterruptedException e)</span>
+      {
+<span class="nc" id="L1650">         throw new RuntimeException(e);</span>
+<span class="nc" id="L1651">      }</span>
+<span class="nc" id="L1652">   }</span>
+
+   public SQLDatabaseMetaData getSQLDatabaseMetaData()
+   {
+<span class="nc" id="L1656">      return _dmd;</span>
+   }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

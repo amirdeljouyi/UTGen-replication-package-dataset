@@ -1,0 +1,441 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RMIManagedConnection.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.net.rmi</a> &gt; <span class="el_source">RMIManagedConnection.java</span></div><h1>RMIManagedConnection.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2003-2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: RMIManagedConnection.java,v 1.8 2006/12/16 12:37:17 tanderson Exp $
+ */
+package org.exolab.jms.net.rmi;
+
+import java.io.IOException;
+import java.rmi.AccessException;
+import java.rmi.MarshalException;
+import java.rmi.MarshalledObject;
+import java.rmi.NotBoundException;
+import java.rmi.RemoteException;
+import java.rmi.registry.LocateRegistry;
+import java.rmi.registry.Registry;
+import java.rmi.server.UnicastRemoteObject;
+import java.security.Principal;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import org.exolab.jms.common.uuid.UUIDGenerator;
+import org.exolab.jms.net.connector.AbstractManagedConnection;
+import org.exolab.jms.net.connector.Caller;
+import org.exolab.jms.net.connector.CallerImpl;
+import org.exolab.jms.net.connector.ConnectException;
+import org.exolab.jms.net.connector.Connection;
+import org.exolab.jms.net.connector.IllegalStateException;
+import org.exolab.jms.net.connector.InvocationHandler;
+import org.exolab.jms.net.connector.Request;
+import org.exolab.jms.net.connector.ResourceException;
+import org.exolab.jms.net.connector.Response;
+import org.exolab.jms.net.connector.SecurityException;
+import org.exolab.jms.net.connector.MarshalledInvocation;
+import org.exolab.jms.net.connector.ManagedConnectionListener;
+import org.exolab.jms.net.uri.InvalidURIException;
+import org.exolab.jms.net.uri.URI;
+import org.exolab.jms.net.uri.URIHelper;
+
+
+/**
+ * &lt;code&gt;RMIManagedConnection&lt;/code&gt; manages multiple &lt;code&gt;RMIConnection&lt;/code&gt;
+ * instances.
+ *
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.8 $ $Date: 2006/12/16 12:37:17 $
+ */
+class RMIManagedConnection extends AbstractManagedConnection {
+
+    /**
+     * The invoker for serving invocations from the remote managed connection.
+     */
+    private RMIInvokerImpl _localInvoker;
+
+    /**
+     * The invoker for delegating invocations to the remote managed connection.
+     */
+    private RMIInvoker _remoteInvoker;
+
+    /**
+     * The invocation handler.
+     */
+    private InvocationHandler _invoker;
+
+    /**
+     * The remote address to which this is connected.
+     */
+    private URI _remoteURI;
+
+    /**
+     * The the local address that this connection is bound to.
+     */
+    private URI _localURI;
+
+    /**
+     * The security principal.
+     */
+    private Principal _principal;
+
+    /**
+     * Cached caller instance. Non-null if this is a server-side instance.
+     */
+    private Caller _caller;
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L127">    private static final Log _log =</span>
+<span class="nc" id="L128">            LogFactory.getLog(RMIManagedConnection.class);</span>
+
+
+    /**
+     * Construct a new client &lt;code&gt;RMIManagedConnection&lt;/code&gt;.
+     *
+     * @param principal the security principal
+     * @param info      the connection request info
+     * @throws ResourceException if a connection cannot be established
+     */
+    protected RMIManagedConnection(Principal principal, RMIRequestInfo info)
+<span class="nc" id="L139">            throws ResourceException {</span>
+
+        Registry registry;
+<span class="nc" id="L142">        _remoteURI = URIHelper.convertHostToAddress(info.getURI());</span>
+<span class="nc" id="L143">        _localURI = generateLocalURI();</span>
+
+        try {
+<span class="nc" id="L146">            registry = LocateRegistry.getRegistry(info.getHost(),</span>
+<span class="nc" id="L147">                                                  info.getPort());</span>
+<span class="nc" id="L148">        } catch (RemoteException exception) {</span>
+<span class="nc" id="L149">            throw new ConnectException(&quot;Failed to get registry&quot;</span>
+<span class="nc" id="L150">                                       + &quot;, host=&quot; + info.getHost()</span>
+<span class="nc" id="L151">                                       + &quot;, port=&quot; + info.getPort(),</span>
+                                       exception);
+<span class="nc" id="L153">        }</span>
+
+<span class="nc" id="L155">        String name = RegistryHelper.getName(_remoteURI);</span>
+        RMIInvokerFactory factory;
+        try {
+<span class="nc" id="L158">            factory = (RMIInvokerFactory) registry.lookup(name);</span>
+<span class="nc" id="L159">        } catch (RemoteException exception) {</span>
+<span class="nc" id="L160">            throw new ConnectException(&quot;Failed to lookup connection proxy&quot;</span>
+<span class="nc" id="L161">                                       + &quot;, host=&quot; + info.getHost()</span>
+<span class="nc" id="L162">                                       + &quot;, port=&quot; + info.getPort(),</span>
+                                       exception);
+<span class="nc" id="L164">        } catch (NotBoundException exception) {</span>
+<span class="nc" id="L165">            throw new ConnectException(&quot;Connection proxy=&quot; + name</span>
+                                       + &quot; not bound in &quot;
+<span class="nc" id="L167">                                       + &quot;registry, host=&quot; + info.getHost()</span>
+<span class="nc" id="L168">                                       + &quot;, port=&quot; + info.getPort(),</span>
+                                       exception);
+<span class="nc" id="L170">        }</span>
+
+<span class="nc" id="L172">        _localInvoker = new RMIInvokerImpl();</span>
+<span class="nc" id="L173">        _localInvoker.setConnection(this);</span>
+        try {
+<span class="nc" id="L175">            UnicastRemoteObject.exportObject(_localInvoker);</span>
+<span class="nc" id="L176">        } catch (RemoteException exception) {</span>
+<span class="nc" id="L177">            throw new ResourceException(&quot;Failed to export invocation handler&quot;,</span>
+                                        exception);
+<span class="nc" id="L179">        }</span>
+        try {
+<span class="nc" id="L181">            _remoteInvoker = factory.createInvoker(principal, _localInvoker,</span>
+<span class="nc" id="L182">                                                   _localURI.toString());</span>
+<span class="nc" id="L183">        } catch (AccessException exception) {</span>
+<span class="nc" id="L184">            throw new SecurityException(exception.getMessage(), exception);</span>
+<span class="nc" id="L185">        } catch (RemoteException exception) {</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">            if (exception.detail instanceof AccessException) {</span>
+<span class="nc" id="L187">                throw new SecurityException(exception.getMessage(),</span>
+                                            exception.detail);
+            }
+<span class="nc" id="L190">            throw new ResourceException(&quot;Failed to create invocation handler&quot;,</span>
+                                        exception);
+<span class="nc" id="L192">        }</span>
+<span class="nc" id="L193">        _principal = principal;</span>
+<span class="nc" id="L194">    }</span>
+
+    /**
+     * Construct a new server &lt;code&gt;RMIManagedConnection&lt;/code&gt;. This is
+     * responsible for exporting the supplied local invoker on the port
+     * specified by the URI.
+     *
+     * @param principal     the security principal
+     * @param localInvoker  the invoker which delegates invocations to this
+     * @param localURI      the URI to export the connection proxy on
+     * @param remoteInvoker the invoker which delegates invocations to the
+     *                      remote managed connection
+     * @param remoteURI     the URI representing the remote connection
+     * @throws RemoteException if the connection proxy can't be exported
+     */
+    protected RMIManagedConnection(Principal principal,
+                                   RMIInvokerImpl localInvoker,
+                                   URI localURI,
+                                   RMIInvoker remoteInvoker,
+                                   URI remoteURI)
+
+<span class="nc" id="L215">            throws RemoteException {</span>
+<span class="nc" id="L216">        localInvoker.setConnection(this);</span>
+<span class="nc" id="L217">        UnicastRemoteObject.exportObject(localInvoker, localURI.getPort());</span>
+<span class="nc" id="L218">        _localInvoker = localInvoker;</span>
+<span class="nc" id="L219">        _localURI = localURI;</span>
+<span class="nc" id="L220">        _remoteInvoker = remoteInvoker;</span>
+<span class="nc" id="L221">        _remoteURI = remoteURI;</span>
+<span class="nc" id="L222">        _principal = principal;</span>
+<span class="nc" id="L223">        _caller = new CallerImpl(_remoteURI, _localURI);</span>
+<span class="nc" id="L224">    }</span>
+
+    /**
+     * Creates a new connection handle for the underlying physical connection.
+     *
+     * @return a new connection handle
+     * @throws IllegalStateException if an invocation handler hasn't been
+     *                               registered
+     */
+    public synchronized Connection getConnection()
+            throws IllegalStateException {
+<span class="nc bnc" id="L235" title="All 2 branches missed.">        if (_invoker == null) {</span>
+<span class="nc" id="L236">            throw new IllegalStateException(&quot;No InvocationHandler registered&quot;);</span>
+        }
+<span class="nc" id="L238">        return new RMIConnection(this);</span>
+    }
+
+    /**
+     * Registers a handler for handling invocations.
+     *
+     * @param handler the invocation handler
+     * @throws IllegalStateException if a handler is already registered
+     */
+    public synchronized void setInvocationHandler(InvocationHandler handler)
+            throws IllegalStateException {
+<span class="nc bnc" id="L249" title="All 2 branches missed.">        if (_invoker != null) {</span>
+<span class="nc" id="L250">            throw new IllegalStateException(</span>
+                    &quot;An invocation handler is already registered&quot;);
+        }
+<span class="nc" id="L253">        _invoker = handler;</span>
+<span class="nc" id="L254">    }</span>
+
+    /**
+     * Ping the connection. The connection event listener will be notified
+     * if the ping succeeds.
+     * NOTE: the notification may occur prior to this call returning.
+     *
+     * @throws ResourceException for any error
+     */
+    public void ping() throws ResourceException {
+        RMIInvoker invoker;
+<span class="nc" id="L265">        synchronized (this) {</span>
+<span class="nc" id="L266">            invoker = _remoteInvoker;</span>
+<span class="nc" id="L267">        }</span>
+<span class="nc bnc" id="L268" title="All 2 branches missed.">        if (invoker != null) {</span>
+            try {
+<span class="nc" id="L270">                invoker.ping();</span>
+<span class="nc" id="L271">                ManagedConnectionListener listener</span>
+<span class="nc" id="L272">                        = getConnectionEventListener();</span>
+<span class="nc bnc" id="L273" title="All 2 branches missed.">                if (listener != null) {</span>
+<span class="nc" id="L274">                    listener.pinged(this);</span>
+                }
+<span class="nc" id="L276">            } catch (RemoteException exception) {</span>
+<span class="nc" id="L277">                throw new ResourceException(exception);</span>
+<span class="nc" id="L278">            }</span>
+        } else {
+<span class="nc" id="L280">            throw new IllegalStateException(&quot;Connection not established&quot;);</span>
+        }
+<span class="nc" id="L282">    }</span>
+
+    /**
+     * Destroys the physical connection.
+     *
+     * @throws ResourceException for any error
+     */
+    public void destroy() throws ResourceException {
+        RMIInvoker localInvoker;
+        RMIInvoker remoteInvoker;
+<span class="nc" id="L292">        synchronized (this) {</span>
+<span class="nc" id="L293">            localInvoker = _localInvoker;</span>
+<span class="nc" id="L294">            remoteInvoker = _remoteInvoker;</span>
+<span class="nc" id="L295">        }</span>
+<span class="nc bnc" id="L296" title="All 2 branches missed.">        if (remoteInvoker != null) {</span>
+            // notify peer of disconnection
+            try {
+<span class="nc" id="L299">                remoteInvoker.disconnect();</span>
+<span class="nc" id="L300">            } catch (RemoteException ignore) {</span>
+                // no-op
+<span class="nc" id="L302">            }</span>
+        }
+        try {
+<span class="nc bnc" id="L305" title="All 2 branches missed.">            if (localInvoker != null) {</span>
+<span class="nc bnc" id="L306" title="All 2 branches missed.">                if (!UnicastRemoteObject.unexportObject(localInvoker, true)) {</span>
+<span class="nc" id="L307">                    _log.warn(&quot;Failed to unexport invocation handler&quot;);</span>
+                }
+            }
+<span class="nc" id="L310">        } catch (RemoteException exception) {</span>
+<span class="nc" id="L311">            throw new ResourceException(</span>
+                    &quot;Failed to unexport invocation handler&quot;, exception);
+        } finally {
+<span class="nc" id="L314">            synchronized (this) {</span>
+<span class="nc" id="L315">                _localInvoker = null;</span>
+<span class="nc" id="L316">                _remoteInvoker = null;</span>
+<span class="nc" id="L317">            }</span>
+        }
+<span class="nc" id="L319">    }</span>
+
+    /**
+     * Returns the remote address to which this is connected.
+     *
+     * @return the remote address to which this is connected
+     */
+    public URI getRemoteURI() {
+<span class="nc" id="L327">        return _remoteURI;</span>
+    }
+
+    /**
+     * Returns the local address that this connection is bound to.
+     *
+     * @return the local address that this connection is bound to
+     */
+    public URI getLocalURI() {
+<span class="nc" id="L336">        return _localURI;</span>
+    }
+
+    /**
+     * Returns the principal associated with this connection.
+     *
+     * @return the principal associated with this connection,
+     *         or &lt;code&gt;null&lt;code&gt; if none is set
+     */
+    public Principal getPrincipal() {
+<span class="nc" id="L346">        return _principal;</span>
+    }
+
+    /**
+     * Determines if the security principal that owns this connection is the
+     * same as that supplied.
+     *
+     * @param principal the principal to compare. May be &lt;code&gt;null&lt;/code&gt;.
+     * @return &lt;code&gt;true&lt;/code&gt; if the principal that owns this connection is
+     *         the same as &lt;code&gt;principal&lt;/code&gt;
+     */
+    public boolean hasPrincipal(Principal principal) {
+<span class="nc" id="L358">        boolean result = false;</span>
+<span class="nc bnc" id="L359" title="All 8 branches missed.">        if ((_principal != null &amp;&amp; _principal.equals(principal))</span>
+                || (_principal == null &amp;&amp; principal == null)) {
+<span class="nc" id="L361">            result = true;</span>
+        }
+<span class="nc" id="L363">        return result;</span>
+    }
+
+    /**
+     * Invoke a method on a remote object.
+     *
+     * @param connection the connection performing the invocation
+     * @param request    the request
+     * @return the result of the invocation
+     * @throws RemoteException if the distributed call cannot be made
+     */
+    protected Response invoke(Connection connection, Request request)
+            throws RemoteException {
+        Response response;
+        try {
+<span class="nc" id="L378">            MarshalledObject wrappedRequest = new MarshalledObject(request);</span>
+<span class="nc" id="L379">            MarshalledObject wrappedResponse =</span>
+<span class="nc" id="L380">                    _remoteInvoker.invoke(wrappedRequest);</span>
+<span class="nc" id="L381">            response = (Response) wrappedResponse.get();</span>
+<span class="nc" id="L382">        } catch (ClassNotFoundException exception) {</span>
+<span class="nc" id="L383">            response = new Response(exception);</span>
+<span class="nc" id="L384">        } catch (IOException exception) {</span>
+<span class="nc" id="L385">            response = new Response(exception);</span>
+<span class="nc" id="L386">        }</span>
+<span class="nc" id="L387">        return response;</span>
+    }
+
+    /**
+     * Invoke a method on a local object.
+     *
+     * @param request the wrapped &lt;code&gt;Request&lt;/code&gt;
+     * @return the wrapped &lt;code&gt;Response&lt;/code&gt;
+     * @throws MarshalException if the response can't be marshalled
+     */
+    protected MarshalledObject invokeLocal(MarshalledObject request)
+            throws MarshalException {
+<span class="nc" id="L399">        MarshalledInvocation invocation</span>
+                = new MarshalledInvocation(request, _caller);
+<span class="nc" id="L401">        _invoker.invoke(invocation);</span>
+
+        MarshalledObject response;
+        try {
+<span class="nc" id="L405">            response = invocation.getMarshalledResponse();</span>
+<span class="nc" id="L406">        } catch (Exception exception) {</span>
+<span class="nc" id="L407">            throw new MarshalException(&quot;Failed to marshal response&quot;,</span>
+                                       exception);
+<span class="nc" id="L409">        }</span>
+<span class="nc" id="L410">        return response;</span>
+    }
+
+    /**
+     * Invoked when the remote peer disconnects.
+     */
+    protected void disconnect() {
+<span class="nc" id="L417">        synchronized (this) {</span>
+<span class="nc" id="L418">            _remoteInvoker = null;</span>
+<span class="nc" id="L419">        }</span>
+<span class="nc" id="L420">        notifyClosed();</span>
+<span class="nc" id="L421">    }</span>
+
+    /**
+     * Helper to generate a URI for a client RMIManagedConnection instance.
+     *
+     * @return a URI that uniquely identifies a client RMIManagedConnection
+     * @throws ResourceException if the URI cannot be generated
+     */
+    private URI generateLocalURI() throws ResourceException {
+        URI result;
+<span class="nc" id="L431">        String path = UUIDGenerator.create();</span>
+        try {
+<span class="nc" id="L433">            result = URIHelper.create(&quot;rmi&quot;, null, -1, path);</span>
+<span class="nc" id="L434">        } catch (InvalidURIException exception) {</span>
+<span class="nc" id="L435">            throw new ResourceException(&quot;Failed to generate local URI&quot;,</span>
+                                        exception);
+<span class="nc" id="L437">        }</span>
+<span class="nc" id="L438">        return result;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,506 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Completor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.fw.completion</a> &gt; <span class="el_source">Completor.java</span></div><h1>Completor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (C) 2003 Gerd Wagner
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ */
+package net.sourceforge.squirrel_sql.fw.completion;
+
+
+import javax.swing.*;
+import javax.swing.text.BadLocationException;
+import javax.swing.text.JTextComponent;
+import javax.swing.text.Keymap;
+import java.awt.*;
+import java.awt.event.*;
+
+public class Completor
+{
+<span class="nc" id="L30">   public static final Color DEFAULT_POP_UP_BACK_GROUND = new Color(255,255,204);</span>
+
+
+   private CompletorListener _completorListener;
+   private ICompletorModel _model;
+	private JPanel _completionPanel;
+	private JList _completionList;
+
+	private Rectangle _curCompletionPanelSize;
+	private PopupManager _popupMan;
+	private TextComponentProvider _txtComp;
+	private CompletionFocusHandler _completionFocusHandler;
+	private FocusListener _completionFocusListener;
+
+	private MouseAdapter _listMouseAdapter;
+	private KeyListener _filterKeyListener;
+	private static final int MAX_ITEMS_IN_COMPLETION_LIST = 10;
+	private JScrollPane _completionListScrollPane;
+
+   private CompletionCandidates _currCandidates;
+
+<span class="nc" id="L51">	private KeyStroke[] _keysToDisableWhenPopUpOpen = new KeyStroke[]</span>
+	{
+<span class="nc" id="L53">		KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0, false),</span>
+<span class="nc" id="L54">		KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0, false),</span>
+<span class="nc" id="L55">		KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, 0, false),</span>
+<span class="nc" id="L56">		KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, 0, false),</span>
+<span class="nc" id="L57">		KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0, false),</span>
+<span class="nc" id="L58">		KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0, false),</span>
+<span class="nc" id="L59">		KeyStroke.getKeyStroke(KeyEvent.VK_TAB, 0, false),</span>
+<span class="nc" id="L60">		KeyStroke.getKeyStroke(KeyEvent.VK_PAGE_UP, 0, false),</span>
+<span class="nc" id="L61">		KeyStroke.getKeyStroke(KeyEvent.VK_PAGE_DOWN, 0, false),</span>
+<span class="nc" id="L62">		KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, KeyEvent.CTRL_MASK, false)</span>
+	};
+
+<span class="nc" id="L65">   private Action[] _originalActions = null;</span>
+
+   public Completor(JTextComponent txtComp, ICompletorModel model, CompletorListener completorListener)
+	{
+<span class="nc" id="L69">		this(txtComp, model, completorListener, DEFAULT_POP_UP_BACK_GROUND, false, txtComp); // light yellow</span>
+<span class="nc" id="L70">	}</span>
+
+   public Completor(JTextComponent txtComp, ICompletorModel model, CompletorListener completorListener, Color popUpBackGround, boolean useOwnFilterTextField)
+	{
+<span class="nc" id="L74">      this(txtComp, model, completorListener, popUpBackGround, useOwnFilterTextField, txtComp);</span>
+<span class="nc" id="L75">   }</span>
+
+   public Completor(JTextComponent txtComp, ICompletorModel model, CompletorListener completorListener, Color popUpBackGround, boolean useOwnFilterTextField, JComponent popupParent)
+<span class="nc" id="L78">	{</span>
+<span class="nc" id="L79">      _txtComp = new TextComponentProvider(txtComp, useOwnFilterTextField);</span>
+
+<span class="nc" id="L81">		_model = model;</span>
+
+<span class="nc" id="L83">      _completorListener = completorListener;</span>
+
+
+<span class="nc" id="L86">		_completionPanel =</span>
+			new JPanel(new BorderLayout())
+<span class="nc" id="L88">			{</span>
+            public void setSize(int width, int height)
+            {
+               // without this the completion panel's size will be weird
+<span class="nc" id="L92">               super.setSize(_curCompletionPanelSize.width, _curCompletionPanelSize.height);</span>
+<span class="nc" id="L93">            }</span>
+         };
+
+<span class="nc" id="L96">		_completionList = new JList(new DefaultListModel());</span>
+<span class="nc" id="L97">		_completionList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);</span>
+<span class="nc" id="L98">		_completionList.setBackground(popUpBackGround);</span>
+
+<span class="nc" id="L100">		_completionFocusHandler = new CompletionFocusHandler(_txtComp, _completionList);</span>
+<span class="nc" id="L101">		_completionFocusListener = new FocusAdapter()</span>
+<span class="nc" id="L102">		{</span>
+<span class="nc" id="L103">			public void focusLost(FocusEvent e){closePopup();}</span>
+		};
+
+
+<span class="nc" id="L107">		_listMouseAdapter =</span>
+			new MouseAdapter()
+<span class="nc" id="L109">			{</span>
+<span class="nc" id="L110">				public void mouseClicked(MouseEvent e)	{onMousClicked(e);}</span>
+			};
+
+<span class="nc" id="L113">		_filterKeyListener =</span>
+			new KeyAdapter()
+<span class="nc" id="L115">			{</span>
+<span class="nc" id="L116">				public void keyPressed(KeyEvent e){onKeyPressedOnList(e);}</span>
+			};
+
+<span class="nc" id="L119">		_completionListScrollPane = new JScrollPane(_completionList);</span>
+
+<span class="nc bnc" id="L121" title="All 2 branches missed.">      if(_txtComp.editorEqualsFilter())</span>
+      {
+<span class="nc" id="L123">		   _completionPanel.add(_completionListScrollPane, BorderLayout.CENTER);</span>
+      }
+      else
+      {
+<span class="nc" id="L127">         _completionPanel.add(_txtComp.getFilter(), BorderLayout.NORTH);</span>
+<span class="nc" id="L128">         _completionPanel.add(_completionListScrollPane, BorderLayout.CENTER);</span>
+      }
+
+<span class="nc" id="L131">		_completionPanel.setVisible(false);</span>
+
+<span class="nc" id="L133">      _popupMan = new PopupManager(popupParent);</span>
+<span class="nc" id="L134">   }</span>
+
+   private void onKeyPressedOnList(KeyEvent e)
+	{
+<span class="nc bnc" id="L138" title="All 6 branches missed.">		if(e.getKeyCode() == KeyEvent.VK_ENTER || e.getKeyCode() == KeyEvent.VK_SPACE || e.getKeyCode() == KeyEvent.VK_TAB)</span>
+		{
+<span class="nc" id="L140">			completionSelected(e.getKeyCode(), e.getModifiers());</span>
+		}
+<span class="nc bnc" id="L142" title="All 2 branches missed.">      else if(e.getKeyCode() == KeyEvent.VK_ESCAPE)</span>
+		{
+<span class="nc" id="L144">			closePopup();</span>
+		}
+<span class="nc bnc" id="L146" title="All 2 branches missed.">		else if(e.getKeyCode() == KeyEvent.VK_BACK_SPACE)</span>
+		{
+<span class="nc bnc" id="L148" title="All 4 branches missed.">			if(_txtComp.editorEqualsFilter() &amp;&amp; 1 &gt;= _currCandidates.getStringToReplace().length())</span>
+			{
+<span class="nc" id="L150">				closePopup();</span>
+			}
+			else
+			{
+<span class="nc" id="L154">				reInitList();</span>
+			}
+		}
+<span class="nc bnc" id="L157" title="All 6 branches missed.">		else if(e.getKeyCode() == KeyEvent.VK_LEFT || e.getKeyCode() == KeyEvent.VK_RIGHT || e.getKeyCode() == KeyEvent.VK_TAB)</span>
+		{
+			// do nothing
+		}
+<span class="nc bnc" id="L161" title="All 2 branches missed.">		else if(e.getKeyCode() == KeyEvent.VK_UP)</span>
+		{
+<span class="nc bnc" id="L163" title="All 2 branches missed.">			if(0 &lt; _completionList.getSelectedIndex())</span>
+			{
+<span class="nc" id="L165">				int newSelIx = _completionList.getSelectedIndex() - 1;</span>
+<span class="nc" id="L166">				_completionList.setSelectionInterval(newSelIx, newSelIx);</span>
+<span class="nc" id="L167">				_completionList.ensureIndexIsVisible(newSelIx);</span>
+<span class="nc" id="L168">			}</span>
+         else
+         {
+<span class="nc" id="L171">            int lastIx = _completionList.getModel().getSize() - 1;</span>
+<span class="nc" id="L172">            _completionList.setSelectionInterval(lastIx, lastIx);</span>
+<span class="nc" id="L173">            _completionList.ensureIndexIsVisible(lastIx);</span>
+<span class="nc" id="L174">         }</span>
+		}
+<span class="nc bnc" id="L176" title="All 2 branches missed.">		else if(e.getKeyCode() == KeyEvent.VK_DOWN)</span>
+		{
+<span class="nc bnc" id="L178" title="All 2 branches missed.">			if(_completionList.getSelectedIndex() + 1 &lt; _completionList.getModel().getSize())</span>
+			{
+<span class="nc" id="L180">				int newSelIx = _completionList.getSelectedIndex() + 1;</span>
+<span class="nc" id="L181">				_completionList.setSelectionInterval(newSelIx, newSelIx);</span>
+<span class="nc" id="L182">				_completionList.ensureIndexIsVisible(newSelIx);</span>
+<span class="nc" id="L183">			}</span>
+         else
+         {
+<span class="nc" id="L186">            _completionList.setSelectionInterval(0, 0);</span>
+<span class="nc" id="L187">            _completionList.ensureIndexIsVisible(0);</span>
+         }
+      }
+<span class="nc bnc" id="L190" title="All 2 branches missed.">      else if(e.getKeyCode() == KeyEvent.VK_PAGE_UP)</span>
+      {
+<span class="nc bnc" id="L192" title="All 2 branches missed.">         if(0 &lt; _completionList.getSelectedIndex() - MAX_ITEMS_IN_COMPLETION_LIST)</span>
+         {
+<span class="nc" id="L194">            int newSelIx = _completionList.getSelectedIndex() - MAX_ITEMS_IN_COMPLETION_LIST;</span>
+<span class="nc" id="L195">            _completionList.setSelectionInterval(newSelIx, newSelIx);</span>
+<span class="nc" id="L196">            _completionList.ensureIndexIsVisible(newSelIx);</span>
+<span class="nc" id="L197">         }</span>
+         else
+         {
+<span class="nc" id="L200">            _completionList.setSelectionInterval(0, 0);</span>
+<span class="nc" id="L201">            _completionList.ensureIndexIsVisible(0);</span>
+         }
+      }
+<span class="nc bnc" id="L204" title="All 2 branches missed.">      else if(e.getKeyCode() == KeyEvent.VK_PAGE_DOWN)</span>
+      {
+<span class="nc bnc" id="L206" title="All 2 branches missed.">         if(_completionList.getSelectedIndex() + MAX_ITEMS_IN_COMPLETION_LIST &lt; _completionList.getModel().getSize())</span>
+         {
+<span class="nc" id="L208">            int newSelIx = _completionList.getSelectedIndex() + MAX_ITEMS_IN_COMPLETION_LIST;</span>
+<span class="nc" id="L209">            _completionList.setSelectionInterval(newSelIx, newSelIx);</span>
+<span class="nc" id="L210">            _completionList.ensureIndexIsVisible(newSelIx);</span>
+<span class="nc" id="L211">         }</span>
+         else
+         {
+<span class="nc" id="L214">            int lastIndex = _completionList.getModel().getSize() - 1;</span>
+<span class="nc" id="L215">            _completionList.setSelectionInterval(lastIndex, lastIndex);</span>
+<span class="nc" id="L216">            _completionList.ensureIndexIsVisible(lastIndex);</span>
+<span class="nc" id="L217">         }</span>
+
+      }
+		else
+		{
+<span class="nc" id="L222">			reInitList();</span>
+
+<span class="nc" id="L224">			DefaultListModel listModel = (DefaultListModel) _completionList.getModel();</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">			if(1 == listModel.size())</span>
+			{
+<span class="nc" id="L227">				CompletionInfo info = (CompletionInfo) listModel.getElementAt(0);</span>
+<span class="nc bnc" id="L228" title="All 4 branches missed.">				if(_txtComp.editorEqualsFilter() &amp;&amp; _currCandidates.getStringToReplace().toUpperCase().startsWith(info.getCompareString().toUpperCase()))</span>
+				{
+<span class="nc" id="L230">					closePopup();</span>
+				}
+			}
+		}
+<span class="nc" id="L234">	}</span>
+
+	private void reInitList()
+	{
+<span class="nc" id="L238">      SwingUtilities.invokeLater(new Runnable()</span>
+<span class="nc" id="L239">      {</span>
+         public void run()
+         {
+            // Needs to be done later because when reInitList is called,
+            // the text componetes model is not yet up to date.
+            // E.g. the last character is missing.
+<span class="nc" id="L245">            reInitListLater();</span>
+<span class="nc" id="L246">         }</span>
+      });
+<span class="nc" id="L248">	}</span>
+
+   private void reInitListLater()
+   {
+<span class="nc" id="L252">      _currCandidates = _model.getCompletionCandidates(getTextTillCarret());</span>
+
+<span class="nc bnc" id="L254" title="All 4 branches missed.">      if(0 == _currCandidates.getCandidates().length &amp;&amp; _txtComp.editorEqualsFilter())</span>
+      {
+<span class="nc" id="L256">         closePopup();</span>
+      }
+      else
+      {
+<span class="nc" id="L260">         fillAndShowCompletionList(_currCandidates.getCandidates());</span>
+      }
+<span class="nc" id="L262">   }</span>
+
+   /**
+    *
+    * @return If there is an extra filter text field the complete text in this text field is returned
+    * @throws BadLocationException
+    */
+   public String getTextTillCarret()
+   {
+      try
+      {
+<span class="nc bnc" id="L273" title="All 2 branches missed.">         if(_txtComp.editorEqualsFilter())</span>
+      {
+<span class="nc" id="L275">         return _txtComp.getEditor().getText(0, _txtComp.getFilter().getCaretPosition());</span>
+         }
+         else
+         {
+<span class="nc" id="L279">            return _txtComp.getFilter().getText();</span>
+         }
+      }
+<span class="nc" id="L282">      catch (BadLocationException e)</span>
+      {
+<span class="nc" id="L284">         throw new RuntimeException(e);</span>
+      }
+   }
+
+   private void onMousClicked(MouseEvent e)
+	{
+<span class="nc bnc" id="L290" title="All 2 branches missed.">		if(2 == e.getClickCount())</span>
+		{
+<span class="nc" id="L292">			completionSelected(KeyEvent.VK_ENTER, 0);</span>
+		}
+<span class="nc" id="L294">	}</span>
+
+	private void completionSelected(int keyCode, int modifiers)
+	{
+<span class="nc" id="L298">      Object selected = null;</span>
+<span class="nc bnc" id="L299" title="All 2 branches missed.">      if(0 &lt; _completionList.getModel().getSize())</span>
+      {
+<span class="nc" id="L301">         selected = _completionList.getSelectedValue();</span>
+      }
+<span class="nc" id="L303">      closePopup();</span>
+<span class="nc bnc" id="L304" title="All 4 branches missed.">		if(null != selected &amp;&amp; selected instanceof CompletionInfo)</span>
+		{
+<span class="nc" id="L306">			fireEvent((CompletionInfo)selected, keyCode, modifiers);</span>
+		}
+<span class="nc" id="L308">	}</span>
+
+	private void closePopup()
+	{
+<span class="nc" id="L312">		_completionList.removeMouseListener(_listMouseAdapter);</span>
+<span class="nc" id="L313">		_txtComp.getFilter().removeKeyListener(_filterKeyListener);</span>
+<span class="nc" id="L314">		_completionFocusHandler.setFocusListener(null);</span>
+
+<span class="nc" id="L316">		_completionPanel.setVisible(false);</span>
+
+<span class="nc bnc" id="L318" title="All 2 branches missed.">      if(_txtComp.editorEqualsFilter())</span>
+      {
+<span class="nc" id="L320">         SwingUtilities.invokeLater(new Runnable()</span>
+<span class="nc" id="L321">         {</span>
+            public void run()
+            {
+<span class="nc" id="L324">               Keymap km = _txtComp.getEditor().getKeymap();</span>
+<span class="nc bnc" id="L325" title="All 2 branches missed.">               for (int i = 0; i &lt; _keysToDisableWhenPopUpOpen.length; i++)</span>
+               {
+<span class="nc" id="L327">                  km.removeKeyStrokeBinding(_keysToDisableWhenPopUpOpen[i]);</span>
+
+<span class="nc bnc" id="L329" title="All 2 branches missed.">                  if(null != _originalActions[i])</span>
+                  {
+<span class="nc" id="L331">                     km.addActionForKeyStroke(_keysToDisableWhenPopUpOpen[i], _originalActions[i]);</span>
+                  }
+               }
+<span class="nc" id="L334">            }</span>
+         });
+      }
+      else
+      {
+<span class="nc" id="L339">         _txtComp.getFilter().setText(&quot;&quot;);</span>
+<span class="nc" id="L340">         _txtComp.getEditor().requestFocusInWindow();</span>
+      }
+<span class="nc" id="L342">	}</span>
+
+
+	public void show()
+	{
+		try
+		{
+<span class="nc" id="L349">			_currCandidates = _model.getCompletionCandidates(getTextTillCarret());</span>
+
+<span class="nc bnc" id="L351" title="All 2 branches missed.">			if(0 == _currCandidates.getCandidates().length)</span>
+			{
+<span class="nc" id="L353">				return;</span>
+			}
+<span class="nc bnc" id="L355" title="All 2 branches missed.">			if(1 == _currCandidates.getCandidates().length)</span>
+			{
+<span class="nc" id="L357">				fireEvent(_currCandidates.getCandidates()[0], KeyEvent.VK_ENTER, 0);</span>
+<span class="nc" id="L358">				return;</span>
+			}
+
+<span class="nc" id="L361">         _txtComp.getEditor().modelToView(_currCandidates.getReplacementStart());</span>
+
+<span class="nc" id="L363">			_completionList.setFont(_txtComp.getEditor().getFont());</span>
+<span class="nc" id="L364">			fillAndShowCompletionList(_currCandidates.getCandidates());</span>
+		}
+<span class="nc" id="L366">		catch (BadLocationException e)</span>
+		{
+<span class="nc" id="L368">			throw new RuntimeException(e);</span>
+<span class="nc" id="L369">		}</span>
+<span class="nc" id="L370">	}</span>
+
+   private void fillAndShowCompletionList(CompletionInfo[] candidates)
+	{
+      try
+      {
+         // needed to resize completion panle appropriately
+         // see initializationof _curCompletionPanelSize
+<span class="nc" id="L378">         _curCompletionPanelSize = getCurCompletionPanelSize(candidates);</span>
+
+<span class="nc" id="L380">         DefaultListModel model = (DefaultListModel) _completionList.getModel();</span>
+<span class="nc" id="L381">         model.removeAllElements();</span>
+
+<span class="nc bnc" id="L383" title="All 2 branches missed.">         for (int i = 0; i &lt; candidates.length; i++)</span>
+         {
+<span class="nc" id="L385">            model.addElement(candidates[i]);</span>
+         }
+
+         Rectangle caretBounds;
+<span class="nc bnc" id="L389" title="All 2 branches missed.">         if(_txtComp.editorEqualsFilter())</span>
+         {
+<span class="nc" id="L391">            caretBounds = _txtComp.getEditor().modelToView(_currCandidates.getReplacementStart());</span>
+         }
+         else
+         {
+<span class="nc" id="L395">            caretBounds = _txtComp.getEditor().modelToView(_txtComp.getEditor().getCaretPosition());</span>
+         }
+
+<span class="nc" id="L398">         _popupMan.install(_completionPanel, caretBounds, PopupManager.BelowPreferred);</span>
+
+<span class="nc" id="L400">         _completionList.setSelectedIndex(0);</span>
+<span class="nc" id="L401">         _completionList.ensureIndexIsVisible(0);</span>
+<span class="nc" id="L402">         _completionPanel.setVisible(true);</span>
+
+<span class="nc" id="L404">         _completionList.removeMouseListener(_listMouseAdapter);</span>
+<span class="nc" id="L405">         _completionList.addMouseListener(_listMouseAdapter);</span>
+<span class="nc" id="L406">         _txtComp.getFilter().removeKeyListener(_filterKeyListener);</span>
+<span class="nc" id="L407">         _txtComp.getFilter().addKeyListener(_filterKeyListener);</span>
+
+<span class="nc" id="L409">			_completionFocusHandler.setFocusListener(_completionFocusListener);</span>
+
+
+<span class="nc bnc" id="L412" title="All 2 branches missed.">			if(_txtComp.editorEqualsFilter())</span>
+			{
+<span class="nc" id="L414">			    Action doNothingAction = new AbstractAction(&quot;doNothingAction&quot;)</span>
+<span class="nc" id="L415">			    {</span>
+			        private static final long serialVersionUID = 1L;
+
+			        public void actionPerformed(ActionEvent e)
+			        {
+<span class="nc" id="L420">			        }</span>
+			    };
+
+<span class="nc" id="L423">            Keymap km = _txtComp.getEditor().getKeymap();</span>
+
+<span class="nc bnc" id="L425" title="All 2 branches missed.">            if(null == _originalActions)</span>
+            {
+<span class="nc" id="L427">               _originalActions = new Action[_keysToDisableWhenPopUpOpen.length];</span>
+
+<span class="nc bnc" id="L429" title="All 2 branches missed.">               for (int i = 0; i &lt; _keysToDisableWhenPopUpOpen.length; i++)</span>
+               {
+<span class="nc" id="L431">                  _originalActions[i] = km.getAction(_keysToDisableWhenPopUpOpen[i]);</span>
+               }
+            }
+
+<span class="nc bnc" id="L435" title="All 2 branches missed.">            for (int i = 0; i &lt; _keysToDisableWhenPopUpOpen.length; i++)</span>
+            {
+<span class="nc" id="L437">               km.addActionForKeyStroke(_keysToDisableWhenPopUpOpen[i], doNothingAction);</span>
+            }
+<span class="nc" id="L439">         }</span>
+         else
+         {
+<span class="nc" id="L442">            _txtComp.getFilter().requestFocusInWindow();</span>
+         }
+      }
+<span class="nc" id="L445">      catch (BadLocationException e)</span>
+      {
+<span class="nc" id="L447">         throw new RuntimeException(e);</span>
+<span class="nc" id="L448">      }</span>
+<span class="nc" id="L449">   }</span>
+
+
+	private Rectangle getCurCompletionPanelSize(CompletionInfo[] candidates)
+	{
+<span class="nc" id="L454">		FontMetrics fm = _txtComp.getEditor().getGraphics().getFontMetrics(_txtComp.getEditor().getFont());</span>
+<span class="nc" id="L455">		int width = getCurCompletionPanelWidth(candidates, fm) + 32;</span>
+<span class="nc" id="L456">		int height = (int)(Math.min(candidates.length,  MAX_ITEMS_IN_COMPLETION_LIST) * (fm.getHeight() + 2.3) + 3);</span>
+
+
+<span class="nc bnc" id="L459" title="All 2 branches missed.">      if(false == _txtComp.editorEqualsFilter())</span>
+      {
+<span class="nc" id="L461">         height += _txtComp.getFilter().getPreferredSize().getHeight();</span>
+      }
+
+<span class="nc" id="L464">		return new Rectangle(width, height);</span>
+	}
+
+	private int getCurCompletionPanelWidth(CompletionInfo[] infos, FontMetrics fontMetrics)
+	{
+<span class="nc" id="L469">      int maxSize = 0;</span>
+<span class="nc bnc" id="L470" title="All 4 branches missed.">      if(false == _txtComp.editorEqualsFilter() &amp;&amp; null != _txtComp.getFilter().getText())</span>
+      {
+<span class="nc" id="L472">         maxSize = Math.max(fontMetrics.stringWidth(_txtComp.getFilter().getText() + &quot;   &quot;), maxSize);</span>
+      }
+
+<span class="nc bnc" id="L475" title="All 2 branches missed.">		for (int i = 0; i &lt; infos.length; i++)</span>
+		{
+<span class="nc" id="L477">         maxSize = Math.max(fontMetrics.stringWidth(infos[i].toString()), maxSize);</span>
+		}
+<span class="nc" id="L479">		return maxSize;</span>
+
+	}
+
+
+	private void fireEvent(CompletionInfo completion, int keyCode, int modifiers)
+	{
+<span class="nc bnc" id="L486" title="All 2 branches missed.">      if(_txtComp.editorEqualsFilter())</span>
+      {
+<span class="nc" id="L488">         _completorListener.completionSelected(completion, _currCandidates.getReplacementStart(), keyCode, modifiers);</span>
+      }
+      else
+      {
+<span class="nc" id="L492">         _completorListener.completionSelected(completion, -1, keyCode, modifiers);</span>
+      }
+<span class="nc" id="L494">	}</span>
+
+   public void disposePopup()
+   {
+      //////////////////////////////////////////////////
+      // Both are needed to prevent memory leaks.
+<span class="nc" id="L500">      _popupMan.removeFromRootPane(_completionPanel);</span>
+<span class="nc" id="L501">      _completionPanel.removeAll();</span>
+      //
+      /////////////////////////////////////////////////
+<span class="nc" id="L504">   }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

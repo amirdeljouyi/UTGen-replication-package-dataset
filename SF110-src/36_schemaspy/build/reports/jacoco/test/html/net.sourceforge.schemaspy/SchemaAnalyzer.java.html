@@ -1,0 +1,792 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SchemaAnalyzer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">36_schemaspy</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.schemaspy</a> &gt; <span class="el_source">SchemaAnalyzer.java</span></div><h1>SchemaAnalyzer.java</h1><pre class="source lang-java linenums">/*
+ * This file is a part of the SchemaSpy project (http://schemaspy.sourceforge.net).
+ * Copyright (C) 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011 John Currier
+ *
+ * SchemaSpy is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * SchemaSpy is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ */
+package net.sourceforge.schemaspy;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.Driver;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Properties;
+import java.util.Set;
+import java.util.logging.ConsoleHandler;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import net.sourceforge.schemaspy.model.ConnectionFailure;
+import net.sourceforge.schemaspy.model.Database;
+import net.sourceforge.schemaspy.model.EmptySchemaException;
+import net.sourceforge.schemaspy.model.ForeignKeyConstraint;
+import net.sourceforge.schemaspy.model.ImpliedForeignKeyConstraint;
+import net.sourceforge.schemaspy.model.InvalidConfigurationException;
+import net.sourceforge.schemaspy.model.Table;
+import net.sourceforge.schemaspy.model.TableColumn;
+import net.sourceforge.schemaspy.model.xml.SchemaMeta;
+import net.sourceforge.schemaspy.util.ConnectionURLBuilder;
+import net.sourceforge.schemaspy.util.DOMUtil;
+import net.sourceforge.schemaspy.util.DbSpecificOption;
+import net.sourceforge.schemaspy.util.Dot;
+import net.sourceforge.schemaspy.util.LineWriter;
+import net.sourceforge.schemaspy.util.LogFormatter;
+import net.sourceforge.schemaspy.util.ResourceWriter;
+import net.sourceforge.schemaspy.view.DotFormatter;
+import net.sourceforge.schemaspy.view.HtmlAnomaliesPage;
+import net.sourceforge.schemaspy.view.HtmlColumnsPage;
+import net.sourceforge.schemaspy.view.HtmlConstraintsPage;
+import net.sourceforge.schemaspy.view.HtmlMainIndexPage;
+import net.sourceforge.schemaspy.view.HtmlOrphansPage;
+import net.sourceforge.schemaspy.view.HtmlRelationshipsPage;
+import net.sourceforge.schemaspy.view.HtmlRoutinesPage;
+import net.sourceforge.schemaspy.view.HtmlTablePage;
+import net.sourceforge.schemaspy.view.ImageWriter;
+import net.sourceforge.schemaspy.view.StyleSheet;
+import net.sourceforge.schemaspy.view.TextFormatter;
+import net.sourceforge.schemaspy.view.WriteStats;
+import net.sourceforge.schemaspy.view.XmlTableFormatter;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+
+/**
+ * @author John Currier
+ */
+<span class="nc" id="L79">public class SchemaAnalyzer {</span>
+<span class="nc" id="L80">    private final Logger logger = Logger.getLogger(getClass().getName());</span>
+    private boolean fineEnabled;
+
+    public Database analyze(Config config) throws Exception {
+        try {
+<span class="nc bnc" id="L85" title="All 2 branches missed.">            if (config.isHelpRequired()) {</span>
+<span class="nc" id="L86">                config.dumpUsage(null, false);</span>
+<span class="nc" id="L87">                return null;</span>
+            }
+
+<span class="nc bnc" id="L90" title="All 2 branches missed.">            if (config.isDbHelpRequired()) {</span>
+<span class="nc" id="L91">                config.dumpUsage(null, true);</span>
+<span class="nc" id="L92">                return null;</span>
+            }
+
+            // set the log level for the root logger
+<span class="nc" id="L96">            Logger.getLogger(&quot;&quot;).setLevel(config.getLogLevel());</span>
+
+            // clean-up console output a bit
+<span class="nc bnc" id="L99" title="All 2 branches missed.">            for (Handler handler : Logger.getLogger(&quot;&quot;).getHandlers()) {</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">                if (handler instanceof ConsoleHandler) {</span>
+<span class="nc" id="L101">                    ((ConsoleHandler)handler).setFormatter(new LogFormatter());</span>
+<span class="nc" id="L102">                    handler.setLevel(config.getLogLevel());</span>
+                }
+            }
+
+<span class="nc" id="L106">            fineEnabled = logger.isLoggable(Level.FINE);</span>
+<span class="nc" id="L107">            logger.info(&quot;Starting schema analysis&quot;);</span>
+
+<span class="nc" id="L109">            long start = System.currentTimeMillis();</span>
+<span class="nc" id="L110">            long startDiagrammingDetails = start;</span>
+<span class="nc" id="L111">            long startSummarizing = start;</span>
+
+<span class="nc" id="L113">            File outputDir = config.getOutputDir();</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">            if (!outputDir.isDirectory()) {</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">                if (!outputDir.mkdirs()) {</span>
+<span class="nc" id="L116">                    throw new IOException(&quot;Failed to create directory '&quot; + outputDir + &quot;'&quot;);</span>
+                }
+            }
+
+<span class="nc" id="L120">            List&lt;String&gt; schemas = config.getSchemas();</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">            if (schemas != null) {</span>
+<span class="nc" id="L122">                List&lt;String&gt; args = config.asList();</span>
+
+                // following params will be replaced by something appropriate
+<span class="nc" id="L125">                args.remove(&quot;-schemas&quot;);</span>
+<span class="nc" id="L126">                args.remove(&quot;-schemata&quot;);</span>
+
+<span class="nc" id="L128">                String dbName = config.getDb();</span>
+
+<span class="nc" id="L130">                MultipleSchemaAnalyzer.getInstance().analyze(dbName, schemas, args, config);</span>
+<span class="nc" id="L131">                return null;</span>
+            }
+
+<span class="nc" id="L134">            Properties properties = config.determineDbProperties(config.getDbType());</span>
+
+<span class="nc" id="L136">            ConnectionURLBuilder urlBuilder = new ConnectionURLBuilder(config, properties);</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">            if (config.getDb() == null)</span>
+<span class="nc" id="L138">                config.setDb(urlBuilder.getConnectionURL());</span>
+
+<span class="nc bnc" id="L140" title="All 2 branches missed.">            if (config.getRemainingParameters().size() != 0) {</span>
+<span class="nc" id="L141">                StringBuilder msg = new StringBuilder(&quot;Unrecognized option(s):&quot;);</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">                for (String remnant : config.getRemainingParameters())</span>
+<span class="nc" id="L143">                    msg.append(&quot; &quot; + remnant);</span>
+<span class="nc" id="L144">                logger.warning(msg.toString());</span>
+            }
+
+<span class="nc" id="L147">            String driverClass = properties.getProperty(&quot;driver&quot;);</span>
+<span class="nc" id="L148">            String driverPath = properties.getProperty(&quot;driverPath&quot;);</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">            if (driverPath == null)</span>
+<span class="nc" id="L150">                driverPath = &quot;&quot;;</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">            if (config.getDriverPath() != null)</span>
+<span class="nc" id="L152">                driverPath = config.getDriverPath() + File.pathSeparator + driverPath;</span>
+
+<span class="nc" id="L154">            Connection connection = getConnection(config, urlBuilder.getConnectionURL(), driverClass, driverPath);</span>
+
+<span class="nc" id="L156">            DatabaseMetaData meta = connection.getMetaData();</span>
+<span class="nc" id="L157">            String dbName = config.getDb();</span>
+<span class="nc" id="L158">            String schema = config.getSchema();</span>
+
+<span class="nc bnc" id="L160" title="All 2 branches missed.">            if (config.isEvaluateAllEnabled()) {</span>
+<span class="nc" id="L161">                List&lt;String&gt; args = config.asList();</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">                for (DbSpecificOption option : urlBuilder.getOptions()) {</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">                    if (!args.contains(&quot;-&quot; + option.getName())) {</span>
+<span class="nc" id="L164">                        args.add(&quot;-&quot; + option.getName());</span>
+<span class="nc" id="L165">                        args.add(option.getValue().toString());</span>
+                    }
+<span class="nc" id="L167">                }</span>
+
+<span class="nc" id="L169">                String schemaSpec = config.getSchemaSpec();</span>
+<span class="nc bnc" id="L170" title="All 2 branches missed.">                if (schemaSpec == null)</span>
+<span class="nc" id="L171">                    schemaSpec = properties.getProperty(&quot;schemaSpec&quot;, &quot;.*&quot;);</span>
+<span class="nc" id="L172">                MultipleSchemaAnalyzer.getInstance().analyze(dbName, meta, schemaSpec, null, args, config);</span>
+<span class="nc" id="L173">                return null;    // no database to return</span>
+            }
+
+<span class="nc" id="L176">            String catalog = config.getCatalog();</span>
+
+<span class="nc" id="L178">            logger.fine(&quot;supportsSchemasInTableDefinitions: &quot; + meta.supportsSchemasInTableDefinitions());</span>
+<span class="nc" id="L179">            logger.fine(&quot;supportsCatalogsInTableDefinitions: &quot; + meta.supportsCatalogsInTableDefinitions());</span>
+
+<span class="nc bnc" id="L181" title="All 4 branches missed.">            if (schema == null &amp;&amp; meta.supportsSchemasInTableDefinitions() &amp;&amp;</span>
+<span class="nc bnc" id="L182" title="All 2 branches missed.">                    !config.isSchemaDisabled()) {</span>
+<span class="nc" id="L183">                schema = config.getUser();</span>
+<span class="nc" id="L184">                logger.fine(&quot;schema not specified for a database that requires one.  using user: '&quot; + schema + &quot;'&quot;);</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">                if (schema == null)</span>
+<span class="nc" id="L186">                    throw new InvalidConfigurationException(&quot;Either a schema ('-s') or a user ('-u') must be specified&quot;);</span>
+<span class="nc" id="L187">                config.setSchema(schema);</span>
+            }
+
+<span class="nc bnc" id="L190" title="All 4 branches missed.">            if (catalog == null &amp;&amp; schema == null &amp;&amp;</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">                    meta.supportsCatalogsInTableDefinitions()) {</span>
+<span class="nc" id="L192">                catalog = dbName;</span>
+<span class="nc" id="L193">                logger.fine(&quot;catalog not specified for a database that requires one.  using dbName: '&quot; + catalog + &quot;'&quot;);</span>
+<span class="nc" id="L194">                config.setCatalog(catalog);</span>
+            }
+
+<span class="nc bnc" id="L197" title="All 2 branches missed.">            SchemaMeta schemaMeta = config.getMeta() == null ? null : new SchemaMeta(config.getMeta(), dbName, schema);</span>
+<span class="nc bnc" id="L198" title="All 2 branches missed.">            if (config.isHtmlGenerationEnabled()) {</span>
+<span class="nc" id="L199">                new File(outputDir, &quot;tables&quot;).mkdirs();</span>
+<span class="nc" id="L200">                new File(outputDir, &quot;diagrams/summary&quot;).mkdirs();</span>
+
+<span class="nc" id="L202">                logger.info(&quot;Connected to &quot; + meta.getDatabaseProductName() + &quot; - &quot; + meta.getDatabaseProductVersion());</span>
+
+<span class="nc bnc" id="L204" title="All 4 branches missed.">                if (schemaMeta != null &amp;&amp; schemaMeta.getFile() != null) {</span>
+<span class="nc" id="L205">                    logger.info(&quot;Using additional metadata from &quot; + schemaMeta.getFile());</span>
+                }
+
+<span class="nc" id="L208">                logger.info(&quot;Gathering schema details&quot;);</span>
+
+<span class="nc bnc" id="L210" title="All 2 branches missed.">                if (!fineEnabled)</span>
+<span class="nc" id="L211">                    System.out.print(&quot;Gathering schema details...&quot;);</span>
+            }
+
+            //
+            // create our representation of the database
+            //
+<span class="nc" id="L217">            Database db = new Database(config, connection, meta, dbName, catalog, schema, schemaMeta);</span>
+
+<span class="nc" id="L219">            schemaMeta = null; // done with it so let GC reclaim it</span>
+
+            LineWriter out;
+<span class="nc" id="L222">            Collection&lt;Table&gt; tables = new ArrayList&lt;Table&gt;(db.getTables());</span>
+<span class="nc" id="L223">            tables.addAll(db.getViews());</span>
+
+<span class="nc bnc" id="L225" title="All 2 branches missed.">            if (tables.isEmpty()) {</span>
+<span class="nc bnc" id="L226" title="All 2 branches missed.">                dumpNoTablesMessage(schema, config.getUser(), meta, config.getTableInclusions() != null);</span>
+<span class="nc bnc" id="L227" title="All 2 branches missed.">                if (!config.isOneOfMultipleSchemas()) // don't bail if we're doing the whole enchilada</span>
+<span class="nc" id="L228">                    throw new EmptySchemaException();</span>
+            }
+
+<span class="nc" id="L231">            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();</span>
+<span class="nc" id="L232">            DocumentBuilder builder = factory.newDocumentBuilder();</span>
+<span class="nc" id="L233">            Document document = builder.newDocument();</span>
+<span class="nc" id="L234">            Element rootNode = document.createElement(&quot;database&quot;);</span>
+<span class="nc" id="L235">            document.appendChild(rootNode);</span>
+<span class="nc" id="L236">            DOMUtil.appendAttribute(rootNode, &quot;name&quot;, dbName);</span>
+<span class="nc bnc" id="L237" title="All 2 branches missed.">            if (schema != null)</span>
+<span class="nc" id="L238">                DOMUtil.appendAttribute(rootNode, &quot;schema&quot;, schema);</span>
+<span class="nc" id="L239">            DOMUtil.appendAttribute(rootNode, &quot;type&quot;, db.getDatabaseProduct());</span>
+
+<span class="nc bnc" id="L241" title="All 2 branches missed.">            if (config.isHtmlGenerationEnabled()) {</span>
+<span class="nc" id="L242">                startSummarizing = System.currentTimeMillis();</span>
+<span class="nc bnc" id="L243" title="All 2 branches missed.">                if (!fineEnabled) {</span>
+<span class="nc" id="L244">                    System.out.println(&quot;(&quot; + (startSummarizing - start) / 1000 + &quot;sec)&quot;);</span>
+                }
+
+<span class="nc" id="L247">                logger.info(&quot;Gathered schema details in &quot; + (startSummarizing - start) / 1000 + &quot; seconds&quot;);</span>
+<span class="nc" id="L248">                logger.info(&quot;Writing/graphing summary&quot;);</span>
+<span class="nc" id="L249">                System.err.flush();</span>
+<span class="nc" id="L250">                System.out.flush();</span>
+<span class="nc bnc" id="L251" title="All 2 branches missed.">                if (!fineEnabled) {</span>
+<span class="nc" id="L252">                    System.out.print(&quot;Writing/graphing summary&quot;);</span>
+<span class="nc" id="L253">                    System.out.print(&quot;.&quot;);</span>
+                }
+<span class="nc" id="L255">                ImageWriter.getInstance().writeImages(outputDir);</span>
+<span class="nc" id="L256">                ResourceWriter.getInstance().writeResource(&quot;/jquery.js&quot;, new File(outputDir, &quot;/jquery.js&quot;));</span>
+<span class="nc" id="L257">                ResourceWriter.getInstance().writeResource(&quot;/schemaSpy.js&quot;, new File(outputDir, &quot;/schemaSpy.js&quot;));</span>
+<span class="nc bnc" id="L258" title="All 2 branches missed.">                if (!fineEnabled)</span>
+<span class="nc" id="L259">                    System.out.print(&quot;.&quot;);</span>
+
+<span class="nc bnc" id="L261" title="All 2 branches missed.">                boolean showDetailedTables = tables.size() &lt;= config.getMaxDetailedTables();</span>
+<span class="nc" id="L262">                final boolean includeImpliedConstraints = config.isImpliedConstraintsEnabled();</span>
+
+                // if evaluating a 'ruby on rails-based' database then connect the columns
+                // based on RoR conventions
+                // note that this is done before 'hasRealRelationships' gets evaluated so
+                // we get a relationships ER diagram
+<span class="nc bnc" id="L268" title="All 2 branches missed.">                if (config.isRailsEnabled())</span>
+<span class="nc" id="L269">                    DbAnalyzer.getRailsConstraints(db.getTablesByName());</span>
+
+<span class="nc" id="L271">                File summaryDir = new File(outputDir, &quot;diagrams/summary&quot;);</span>
+
+                // generate the compact form of the relationships .dot file
+<span class="nc" id="L274">                String dotBaseFilespec = &quot;relationships&quot;;</span>
+<span class="nc" id="L275">                out = new LineWriter(new File(summaryDir, dotBaseFilespec + &quot;.real.compact.dot&quot;), Config.DOT_CHARSET);</span>
+<span class="nc" id="L276">                WriteStats stats = new WriteStats(tables);</span>
+<span class="nc" id="L277">                DotFormatter.getInstance().writeRealRelationships(db, tables, true, showDetailedTables, stats, out);</span>
+<span class="nc bnc" id="L278" title="All 4 branches missed.">                boolean hasRealRelationships = stats.getNumTablesWritten() &gt; 0 || stats.getNumViewsWritten() &gt; 0;</span>
+<span class="nc" id="L279">                out.close();</span>
+
+<span class="nc bnc" id="L281" title="All 2 branches missed.">                if (hasRealRelationships) {</span>
+                    // real relationships exist so generate the 'big' form of the relationships .dot file
+<span class="nc bnc" id="L283" title="All 2 branches missed.">                    if (!fineEnabled)</span>
+<span class="nc" id="L284">                        System.out.print(&quot;.&quot;);</span>
+<span class="nc" id="L285">                    out = new LineWriter(new File(summaryDir, dotBaseFilespec + &quot;.real.large.dot&quot;), Config.DOT_CHARSET);</span>
+<span class="nc" id="L286">                    DotFormatter.getInstance().writeRealRelationships(db, tables, false, showDetailedTables, stats, out);</span>
+<span class="nc" id="L287">                    out.close();</span>
+                }
+
+                // getting implied constraints has a side-effect of associating the parent/child tables, so don't do it
+                // here unless they want that behavior
+<span class="nc" id="L292">                List&lt;ImpliedForeignKeyConstraint&gt; impliedConstraints = null;</span>
+<span class="nc bnc" id="L293" title="All 2 branches missed.">                if (includeImpliedConstraints)</span>
+<span class="nc" id="L294">                    impliedConstraints = DbAnalyzer.getImpliedConstraints(tables);</span>
+                else
+<span class="nc" id="L296">                    impliedConstraints = new ArrayList&lt;ImpliedForeignKeyConstraint&gt;();</span>
+
+<span class="nc" id="L298">                List&lt;Table&gt; orphans = DbAnalyzer.getOrphans(tables);</span>
+<span class="nc bnc" id="L299" title="All 4 branches missed.">                config.setHasOrphans(!orphans.isEmpty() &amp;&amp; Dot.getInstance().isValid());</span>
+<span class="nc bnc" id="L300" title="All 2 branches missed.">                config.setHasRoutines(!db.getRoutines().isEmpty());</span>
+
+<span class="nc bnc" id="L302" title="All 2 branches missed.">                if (!fineEnabled)</span>
+<span class="nc" id="L303">                    System.out.print(&quot;.&quot;);</span>
+
+<span class="nc" id="L305">                File impliedDotFile = new File(summaryDir, dotBaseFilespec + &quot;.implied.compact.dot&quot;);</span>
+<span class="nc" id="L306">                out = new LineWriter(impliedDotFile, Config.DOT_CHARSET);</span>
+<span class="nc" id="L307">                boolean hasImplied = DotFormatter.getInstance().writeAllRelationships(db, tables, true, showDetailedTables, stats, out);</span>
+
+<span class="nc" id="L309">                Set&lt;TableColumn&gt; excludedColumns = stats.getExcludedColumns();</span>
+<span class="nc" id="L310">                out.close();</span>
+<span class="nc bnc" id="L311" title="All 2 branches missed.">                if (hasImplied) {</span>
+<span class="nc" id="L312">                    impliedDotFile = new File(summaryDir, dotBaseFilespec + &quot;.implied.large.dot&quot;);</span>
+<span class="nc" id="L313">                    out = new LineWriter(impliedDotFile, Config.DOT_CHARSET);</span>
+<span class="nc" id="L314">                    DotFormatter.getInstance().writeAllRelationships(db, tables, false, showDetailedTables, stats, out);</span>
+<span class="nc" id="L315">                    out.close();</span>
+                } else {
+<span class="nc" id="L317">                    impliedDotFile.delete();</span>
+                }
+
+<span class="nc" id="L320">                out = new LineWriter(new File(outputDir, dotBaseFilespec + &quot;.html&quot;), config.getCharset());</span>
+<span class="nc" id="L321">                HtmlRelationshipsPage.getInstance().write(db, summaryDir, dotBaseFilespec, hasRealRelationships, hasImplied, excludedColumns, out);</span>
+<span class="nc" id="L322">                out.close();</span>
+
+<span class="nc bnc" id="L324" title="All 2 branches missed.">                if (!fineEnabled)</span>
+<span class="nc" id="L325">                    System.out.print(&quot;.&quot;);</span>
+
+<span class="nc" id="L327">                dotBaseFilespec = &quot;utilities&quot;;</span>
+<span class="nc" id="L328">                File orphansDir = new File(outputDir, &quot;diagrams/orphans&quot;);</span>
+<span class="nc" id="L329">                orphansDir.mkdirs();</span>
+<span class="nc" id="L330">                out = new LineWriter(new File(outputDir, dotBaseFilespec + &quot;.html&quot;), config.getCharset());</span>
+<span class="nc" id="L331">                HtmlOrphansPage.getInstance().write(db, orphans, orphansDir, out);</span>
+<span class="nc" id="L332">                orphans = null;</span>
+<span class="nc" id="L333">                out.close();</span>
+
+<span class="nc bnc" id="L335" title="All 2 branches missed.">                if (!fineEnabled)</span>
+<span class="nc" id="L336">                    System.out.print(&quot;.&quot;);</span>
+
+<span class="nc" id="L338">                out = new LineWriter(new File(outputDir, &quot;index.html&quot;), 64 * 1024, config.getCharset());</span>
+<span class="nc" id="L339">                HtmlMainIndexPage.getInstance().write(db, tables, db.getRemoteTables(), out);</span>
+<span class="nc" id="L340">                out.close();</span>
+
+<span class="nc bnc" id="L342" title="All 2 branches missed.">                if (!fineEnabled)</span>
+<span class="nc" id="L343">                    System.out.print(&quot;.&quot;);</span>
+
+<span class="nc" id="L345">                List&lt;ForeignKeyConstraint&gt; constraints = DbAnalyzer.getForeignKeyConstraints(tables);</span>
+<span class="nc" id="L346">                out = new LineWriter(new File(outputDir, &quot;constraints.html&quot;), 256 * 1024, config.getCharset());</span>
+<span class="nc" id="L347">                HtmlConstraintsPage constraintIndexFormatter = HtmlConstraintsPage.getInstance();</span>
+<span class="nc" id="L348">                constraintIndexFormatter.write(db, constraints, tables, out);</span>
+<span class="nc" id="L349">                out.close();</span>
+
+<span class="nc bnc" id="L351" title="All 2 branches missed.">                if (!fineEnabled)</span>
+<span class="nc" id="L352">                    System.out.print(&quot;.&quot;);</span>
+
+<span class="nc" id="L354">                out = new LineWriter(new File(outputDir, &quot;anomalies.html&quot;), 16 * 1024, config.getCharset());</span>
+<span class="nc" id="L355">                HtmlAnomaliesPage.getInstance().write(db, tables, impliedConstraints, out);</span>
+<span class="nc" id="L356">                out.close();</span>
+
+<span class="nc bnc" id="L358" title="All 2 branches missed.">                if (!fineEnabled)</span>
+<span class="nc" id="L359">                    System.out.print(&quot;.&quot;);</span>
+
+<span class="nc bnc" id="L361" title="All 2 branches missed.">                for (HtmlColumnsPage.ColumnInfo columnInfo : HtmlColumnsPage.getInstance().getColumnInfos().values()) {</span>
+<span class="nc" id="L362">                    out = new LineWriter(new File(outputDir, columnInfo.getLocation()), 16 * 1024, config.getCharset());</span>
+<span class="nc" id="L363">                    HtmlColumnsPage.getInstance().write(db, tables, columnInfo, out);</span>
+<span class="nc" id="L364">                    out.close();</span>
+<span class="nc" id="L365">                }</span>
+
+<span class="nc bnc" id="L367" title="All 2 branches missed.">                if (!fineEnabled)</span>
+<span class="nc" id="L368">                    System.out.print(&quot;.&quot;);</span>
+
+<span class="nc" id="L370">                out = new LineWriter(new File(outputDir, &quot;routines.html&quot;), 16 * 1024, config.getCharset());</span>
+<span class="nc" id="L371">                HtmlRoutinesPage.getInstance().write(db, out);</span>
+<span class="nc" id="L372">                out.close();</span>
+
+                // create detailed diagrams
+
+<span class="nc" id="L376">                startDiagrammingDetails = System.currentTimeMillis();</span>
+<span class="nc bnc" id="L377" title="All 2 branches missed.">                if (!fineEnabled)</span>
+<span class="nc" id="L378">                    System.out.println(&quot;(&quot; + (startDiagrammingDetails - startSummarizing) / 1000 + &quot;sec)&quot;);</span>
+<span class="nc" id="L379">                logger.info(&quot;Completed summary in &quot; + (startDiagrammingDetails - startSummarizing) / 1000 + &quot; seconds&quot;);</span>
+<span class="nc" id="L380">                logger.info(&quot;Writing/diagramming details&quot;);</span>
+<span class="nc bnc" id="L381" title="All 2 branches missed.">                if (!fineEnabled) {</span>
+<span class="nc" id="L382">                    System.out.print(&quot;Writing/diagramming details&quot;);</span>
+                }
+
+<span class="nc" id="L385">                HtmlTablePage tableFormatter = HtmlTablePage.getInstance();</span>
+<span class="nc bnc" id="L386" title="All 2 branches missed.">                for (Table table : tables) {</span>
+<span class="nc bnc" id="L387" title="All 2 branches missed.">                    if (!fineEnabled)</span>
+<span class="nc" id="L388">                        System.out.print('.');</span>
+                    else
+<span class="nc" id="L390">                        logger.fine(&quot;Writing details of &quot; + table.getName());</span>
+
+<span class="nc" id="L392">                    out = new LineWriter(new File(outputDir, &quot;tables/&quot; + table.getName() + &quot;.html&quot;), 24 * 1024, config.getCharset());</span>
+<span class="nc" id="L393">                    tableFormatter.write(db, table, outputDir, stats, out);</span>
+<span class="nc" id="L394">                    out.close();</span>
+<span class="nc" id="L395">                }</span>
+
+<span class="nc" id="L397">                out = new LineWriter(new File(outputDir, &quot;schemaSpy.css&quot;), config.getCharset());</span>
+<span class="nc" id="L398">                StyleSheet.getInstance().write(out);</span>
+<span class="nc" id="L399">                out.close();</span>
+            }
+
+
+<span class="nc" id="L403">            XmlTableFormatter.getInstance().appendTables(rootNode, tables);</span>
+
+<span class="nc" id="L405">            String xmlName = dbName;</span>
+
+            // some dbNames have path info in the name...strip it
+<span class="nc" id="L408">            xmlName = new File(xmlName).getName();</span>
+
+            // some dbNames include jdbc driver details including :'s and @'s
+<span class="nc" id="L411">            String[] unusables = xmlName.split(&quot;[:@]&quot;);</span>
+<span class="nc" id="L412">            xmlName = unusables[unusables.length - 1];</span>
+
+<span class="nc bnc" id="L414" title="All 2 branches missed.">            if (schema != null)</span>
+<span class="nc" id="L415">                xmlName += '.' + schema;</span>
+
+<span class="nc" id="L417">            out = new LineWriter(new File(outputDir, xmlName + &quot;.xml&quot;), Config.DOT_CHARSET);</span>
+<span class="nc" id="L418">            document.getDocumentElement().normalize();</span>
+<span class="nc" id="L419">            DOMUtil.printDOM(document, out);</span>
+<span class="nc" id="L420">            out.close();</span>
+
+            // 'try' to make some memory available for the sorting process
+            // (some people have run out of memory while RI sorting tables)
+<span class="nc" id="L424">            builder = null;</span>
+<span class="nc" id="L425">            connection = null;</span>
+<span class="nc" id="L426">            document = null;</span>
+<span class="nc" id="L427">            factory = null;</span>
+<span class="nc" id="L428">            meta = null;</span>
+<span class="nc" id="L429">            properties = null;</span>
+<span class="nc" id="L430">            rootNode = null;</span>
+<span class="nc" id="L431">            urlBuilder = null;</span>
+
+<span class="nc" id="L433">            List&lt;ForeignKeyConstraint&gt; recursiveConstraints = new ArrayList&lt;ForeignKeyConstraint&gt;();</span>
+
+            // create an orderer to be able to determine insertion and deletion ordering of tables
+<span class="nc" id="L436">            TableOrderer orderer = new TableOrderer();</span>
+
+            // side effect is that the RI relationships get trashed
+            // also populates the recursiveConstraints collection
+<span class="nc" id="L440">            List&lt;Table&gt; orderedTables = orderer.getTablesOrderedByRI(db.getTables(), recursiveConstraints);</span>
+
+<span class="nc" id="L442">            out = new LineWriter(new File(outputDir, &quot;insertionOrder.txt&quot;), 16 * 1024, Config.DOT_CHARSET);</span>
+<span class="nc" id="L443">            TextFormatter.getInstance().write(orderedTables, false, out);</span>
+<span class="nc" id="L444">            out.close();</span>
+
+<span class="nc" id="L446">            out = new LineWriter(new File(outputDir, &quot;deletionOrder.txt&quot;), 16 * 1024, Config.DOT_CHARSET);</span>
+<span class="nc" id="L447">            Collections.reverse(orderedTables);</span>
+<span class="nc" id="L448">            TextFormatter.getInstance().write(orderedTables, false, out);</span>
+<span class="nc" id="L449">            out.close();</span>
+
+            /* we'll eventually want to put this functionality back in with a
+             * database independent implementation
+            File constraintsFile = new File(outputDir, &quot;removeRecursiveConstraints.sql&quot;);
+            constraintsFile.delete();
+            if (!recursiveConstraints.isEmpty()) {
+                out = new LineWriter(constraintsFile, 4 * 1024);
+                writeRemoveRecursiveConstraintsSql(recursiveConstraints, schema, out);
+                out.close();
+            }
+
+            constraintsFile = new File(outputDir, &quot;restoreRecursiveConstraints.sql&quot;);
+            constraintsFile.delete();
+
+            if (!recursiveConstraints.isEmpty()) {
+                out = new LineWriter(constraintsFile, 4 * 1024);
+                writeRestoreRecursiveConstraintsSql(recursiveConstraints, schema, out);
+                out.close();
+            }
+            */
+
+<span class="nc bnc" id="L471" title="All 2 branches missed.">            if (config.isHtmlGenerationEnabled()) {</span>
+<span class="nc" id="L472">                long end = System.currentTimeMillis();</span>
+<span class="nc bnc" id="L473" title="All 2 branches missed.">                if (!fineEnabled)</span>
+<span class="nc" id="L474">                    System.out.println(&quot;(&quot; + (end - startDiagrammingDetails) / 1000 + &quot;sec)&quot;);</span>
+<span class="nc" id="L475">                logger.info(&quot;Wrote table details in &quot; + (end - startDiagrammingDetails) / 1000 + &quot; seconds&quot;);</span>
+
+<span class="nc bnc" id="L477" title="All 2 branches missed.">                if (logger.isLoggable(Level.INFO)) {</span>
+<span class="nc" id="L478">                    logger.info(&quot;Wrote relationship details of &quot; + tables.size() + &quot; tables/views to directory '&quot; + config.getOutputDir() + &quot;' in &quot; + (end - start) / 1000 + &quot; seconds.&quot;);</span>
+<span class="nc" id="L479">                    logger.info(&quot;View the results by opening &quot; + new File(config.getOutputDir(), &quot;index.html&quot;));</span>
+                } else {
+<span class="nc" id="L481">                    System.out.println(&quot;Wrote relationship details of &quot; + tables.size() + &quot; tables/views to directory '&quot; + config.getOutputDir() + &quot;' in &quot; + (end - start) / 1000 + &quot; seconds.&quot;);</span>
+<span class="nc" id="L482">                    System.out.println(&quot;View the results by opening &quot; + new File(config.getOutputDir(), &quot;index.html&quot;));</span>
+                }
+            }
+
+<span class="nc" id="L486">            return db;</span>
+<span class="nc" id="L487">        } catch (Config.MissingRequiredParameterException missingParam) {</span>
+<span class="nc" id="L488">            config.dumpUsage(missingParam.getMessage(), missingParam.isDbTypeSpecific());</span>
+<span class="nc" id="L489">            return null;</span>
+        }
+    }
+
+    /**
+     * dumpNoDataMessage
+     *
+     * @param schema String
+     * @param user String
+     * @param meta DatabaseMetaData
+     */
+    private static void dumpNoTablesMessage(String schema, String user, DatabaseMetaData meta, boolean specifiedInclusions) throws SQLException {
+<span class="nc" id="L501">        System.out.println();</span>
+<span class="nc" id="L502">        System.out.println();</span>
+<span class="nc" id="L503">        System.out.println(&quot;No tables or views were found in schema '&quot; + schema + &quot;'.&quot;);</span>
+<span class="nc" id="L504">        List&lt;String&gt; schemas = null;</span>
+<span class="nc" id="L505">        Exception failure = null;</span>
+        try {
+<span class="nc" id="L507">            schemas = DbAnalyzer.getSchemas(meta);</span>
+<span class="nc" id="L508">        } catch (SQLException exc) {</span>
+<span class="nc" id="L509">            failure = exc;</span>
+<span class="nc" id="L510">        } catch (RuntimeException exc) {</span>
+<span class="nc" id="L511">            failure = exc;</span>
+<span class="nc" id="L512">        }</span>
+
+<span class="nc bnc" id="L514" title="All 2 branches missed.">        if (schemas == null) {</span>
+<span class="nc" id="L515">            System.out.println(&quot;The user you specified (&quot; + user + ')');</span>
+<span class="nc" id="L516">            System.out.println(&quot;  might not have rights to read the database metadata.&quot;);</span>
+<span class="nc" id="L517">            System.out.flush();</span>
+<span class="nc bnc" id="L518" title="All 2 branches missed.">            if (failure != null)    // to appease the compiler</span>
+<span class="nc" id="L519">                failure.printStackTrace();</span>
+<span class="nc" id="L520">            return;</span>
+<span class="nc bnc" id="L521" title="All 4 branches missed.">        } else if (schema == null || schemas.contains(schema)) {</span>
+<span class="nc" id="L522">            System.out.println(&quot;The schema exists in the database, but the user you specified (&quot; + user + ')');</span>
+<span class="nc" id="L523">            System.out.println(&quot;  might not have rights to read its contents.&quot;);</span>
+<span class="nc bnc" id="L524" title="All 2 branches missed.">            if (specifiedInclusions) {</span>
+<span class="nc" id="L525">                System.out.println(&quot;Another possibility is that the regular expression that you specified&quot;);</span>
+<span class="nc" id="L526">                System.out.println(&quot;  for what to include (via -i) didn't match any tables.&quot;);</span>
+            }
+        } else {
+<span class="nc" id="L529">            System.out.println(&quot;The schema does not exist in the database.&quot;);</span>
+<span class="nc" id="L530">            System.out.println(&quot;Make sure that you specify a valid schema with the -s option and that&quot;);</span>
+<span class="nc" id="L531">            System.out.println(&quot;  the user specified (&quot; + user + &quot;) can read from the schema.&quot;);</span>
+<span class="nc" id="L532">            System.out.println(&quot;Note that schema names are usually case sensitive.&quot;);</span>
+        }
+<span class="nc" id="L534">        System.out.println();</span>
+<span class="nc bnc" id="L535" title="All 2 branches missed.">        boolean plural = schemas.size() != 1;</span>
+<span class="nc bnc" id="L536" title="All 4 branches missed.">        System.out.println(schemas.size() + &quot; schema&quot; + (plural ? &quot;s&quot; : &quot;&quot;) + &quot; exist&quot; + (plural ? &quot;&quot; : &quot;s&quot;) + &quot; in this database.&quot;);</span>
+<span class="nc" id="L537">        System.out.println(&quot;Some of these \&quot;schemas\&quot; may be users or system schemas.&quot;);</span>
+<span class="nc" id="L538">        System.out.println();</span>
+<span class="nc bnc" id="L539" title="All 2 branches missed.">        for (String unknown : schemas) {</span>
+<span class="nc" id="L540">            System.out.print(unknown + &quot; &quot;);</span>
+<span class="nc" id="L541">        }</span>
+
+<span class="nc" id="L543">        System.out.println();</span>
+<span class="nc" id="L544">        List&lt;String&gt; populatedSchemas = DbAnalyzer.getPopulatedSchemas(meta);</span>
+<span class="nc bnc" id="L545" title="All 2 branches missed.">        if (populatedSchemas.isEmpty()) {</span>
+<span class="nc" id="L546">            System.out.println(&quot;Unable to determine if any of the schemas contain tables/views&quot;);</span>
+        } else {
+<span class="nc" id="L548">            System.out.println(&quot;These schemas contain tables/views that user '&quot; + user + &quot;' can see:&quot;);</span>
+<span class="nc" id="L549">            System.out.println();</span>
+<span class="nc bnc" id="L550" title="All 2 branches missed.">            for (String populated : populatedSchemas) {</span>
+<span class="nc" id="L551">                System.out.print(&quot; &quot; + populated);</span>
+<span class="nc" id="L552">            }</span>
+        }
+<span class="nc" id="L554">    }</span>
+
+    protected Connection getConnection(Config config, String connectionURL,
+                      String driverClass, String driverPath) throws FileNotFoundException, IOException {
+<span class="nc bnc" id="L558" title="All 2 branches missed.">        if (logger.isLoggable(Level.INFO)) {</span>
+<span class="nc" id="L559">            logger.info(&quot;Using database properties:&quot;);</span>
+<span class="nc" id="L560">            logger.info(&quot;  &quot; + config.getDbPropertiesLoadedFrom());</span>
+        } else {
+<span class="nc" id="L562">            System.out.println(&quot;Using database properties:&quot;);</span>
+<span class="nc" id="L563">            System.out.println(&quot;  &quot; + config.getDbPropertiesLoadedFrom());</span>
+        }
+
+<span class="nc" id="L566">        Driver driver = getDriver(driverClass, driverPath);</span>
+
+<span class="nc" id="L568">        Properties connectionProperties = config.getConnectionProperties();</span>
+<span class="nc bnc" id="L569" title="All 2 branches missed.">        if (config.getUser() != null) {</span>
+<span class="nc" id="L570">            connectionProperties.put(&quot;user&quot;, config.getUser());</span>
+        }
+<span class="nc bnc" id="L572" title="All 2 branches missed.">        if (config.getPassword() != null) {</span>
+<span class="nc" id="L573">            connectionProperties.put(&quot;password&quot;, config.getPassword());</span>
+        }
+
+<span class="nc" id="L576">        Connection connection = null;</span>
+        try {
+<span class="nc" id="L578">            connection = driver.connect(connectionURL, connectionProperties);</span>
+<span class="nc bnc" id="L579" title="All 2 branches missed.">            if (connection == null) {</span>
+<span class="nc" id="L580">                System.err.println();</span>
+<span class="nc" id="L581">                System.err.println(&quot;Cannot connect to this database URL:&quot;);</span>
+<span class="nc" id="L582">                System.err.println(&quot;  &quot; + connectionURL);</span>
+<span class="nc" id="L583">                System.err.println(&quot;with this driver:&quot;);</span>
+<span class="nc" id="L584">                System.err.println(&quot;  &quot; + driverClass);</span>
+<span class="nc" id="L585">                System.err.println();</span>
+<span class="nc" id="L586">                System.err.println(&quot;Additional connection information may be available in &quot;);</span>
+<span class="nc" id="L587">                System.err.println(&quot;  &quot; + config.getDbPropertiesLoadedFrom());</span>
+<span class="nc" id="L588">                throw new ConnectionFailure(&quot;Cannot connect to '&quot; + connectionURL +&quot;' with driver '&quot; + driverClass + &quot;'&quot;);</span>
+            }
+<span class="nc" id="L590">        } catch (UnsatisfiedLinkError badPath) {</span>
+<span class="nc" id="L591">            System.err.println();</span>
+<span class="nc" id="L592">            System.err.println(&quot;Failed to load driver [&quot; + driverClass + &quot;] from classpath &quot; + getExistingUrls(driverPath));</span>
+<span class="nc" id="L593">            System.err.println();</span>
+<span class="nc" id="L594">            System.err.println(&quot;Make sure the reported library (.dll/.lib/.so) from the following line can be&quot;);</span>
+<span class="nc" id="L595">            System.err.println(&quot;found by your PATH (or LIB*PATH) environment variable&quot;);</span>
+<span class="nc" id="L596">            System.err.println();</span>
+<span class="nc" id="L597">            badPath.printStackTrace();</span>
+<span class="nc" id="L598">            throw new ConnectionFailure(badPath);</span>
+<span class="nc" id="L599">        } catch (Exception exc) {</span>
+<span class="nc" id="L600">            System.err.println();</span>
+<span class="nc" id="L601">            System.err.println(&quot;Failed to connect to database URL [&quot; + connectionURL + &quot;]&quot;);</span>
+<span class="nc" id="L602">            System.err.println();</span>
+<span class="nc" id="L603">            exc.printStackTrace();</span>
+<span class="nc" id="L604">            throw new ConnectionFailure(exc);</span>
+<span class="nc" id="L605">        }</span>
+
+<span class="nc" id="L607">        return connection;</span>
+    }
+
+    /**
+     * Returns an instance of {@link Driver} specified by &lt;code&gt;driverClass&lt;/code&gt;
+     * loaded from &lt;code&gt;driverPath&lt;/code&gt;.
+     *
+     * @param driverClass
+     * @param driverPath
+     * @return
+     * @throws MalformedURLException
+     */
+    protected Driver getDriver(String driverClass, String driverPath) throws MalformedURLException {
+<span class="nc" id="L620">        List&lt;URL&gt; classpath = getExistingUrls(driverPath);</span>
+<span class="nc" id="L621">        ClassLoader loader = getDriverClassLoader(classpath);</span>
+<span class="nc" id="L622">        Driver driver = null;</span>
+
+        try {
+<span class="nc" id="L625">            driver = (Driver)Class.forName(driverClass, true, loader).newInstance();</span>
+
+            // have to use deprecated method or we won't see messages generated by older drivers
+            //java.sql.DriverManager.setLogStream(System.err);
+<span class="nc" id="L629">        } catch (Exception exc) {</span>
+<span class="nc" id="L630">            System.err.println(exc); // people don't want to see a stack trace...</span>
+<span class="nc" id="L631">            System.err.println();</span>
+<span class="nc" id="L632">            System.err.print(&quot;Failed to load driver '&quot; + driverClass + &quot;'&quot;);</span>
+<span class="nc bnc" id="L633" title="All 2 branches missed.">            if (classpath.isEmpty())</span>
+<span class="nc" id="L634">                System.err.println();</span>
+            else
+<span class="nc" id="L636">                System.err.println(&quot; from: &quot; + classpath);</span>
+
+<span class="nc" id="L638">            List&lt;File&gt; invalidClasspathEntries = getMissingFiles(driverPath);</span>
+<span class="nc bnc" id="L639" title="All 2 branches missed.">            if (!invalidClasspathEntries.isEmpty()) {</span>
+<span class="nc bnc" id="L640" title="All 2 branches missed.">                if (invalidClasspathEntries.size() == 1)</span>
+<span class="nc" id="L641">                    System.err.print(&quot;This entry doesn't point to a valid file/directory: &quot;);</span>
+                else
+<span class="nc" id="L643">                    System.err.print(&quot;These entries don't point to valid files/directories: &quot;);</span>
+<span class="nc" id="L644">                System.err.println(invalidClasspathEntries);</span>
+            }
+<span class="nc" id="L646">            System.err.println();</span>
+<span class="nc" id="L647">            System.err.println(&quot;Use the -dp option to specify the location of the database&quot;);</span>
+<span class="nc" id="L648">            System.err.println(&quot;drivers for your database (usually in a .jar or .zip/.Z).&quot;);</span>
+<span class="nc" id="L649">            System.err.println();</span>
+<span class="nc" id="L650">            throw new ConnectionFailure(exc);</span>
+<span class="nc" id="L651">        }</span>
+
+<span class="nc" id="L653">        return driver;</span>
+    }
+
+    /**
+     * Returns a {@link ClassLoader class loader} to use for resolving {@link Driver}s.
+     *
+     * @param classpath
+     * @return
+     */
+    protected ClassLoader getDriverClassLoader(List&lt;URL&gt; classpath) {
+<span class="nc" id="L663">        ClassLoader loader = null;</span>
+
+        // if a classpath has been specified then use it to find the driver,
+        // otherwise use whatever was used to load this class.
+        // thanks to Bruno Leonardo Gon�alves for this implementation that he
+        // used to resolve issues when running under Maven
+<span class="nc bnc" id="L669" title="All 2 branches missed.">        if (classpath.size() &gt; 0) {</span>
+<span class="nc" id="L670">            loader = new URLClassLoader(classpath.toArray(new URL[classpath.size()]));</span>
+        } else {
+<span class="nc" id="L672">            loader = getClass().getClassLoader();</span>
+        }
+
+<span class="nc" id="L675">        return loader;</span>
+    }
+
+    /**
+     * Returns a list of {@link URL}s in &lt;code&gt;path&lt;/code&gt; that point to files that
+     * exist.
+     *
+     * @param path
+     * @return
+     * @throws MalformedURLException
+     */
+    protected List&lt;URL&gt; getExistingUrls(String path) throws MalformedURLException {
+<span class="nc" id="L687">        List&lt;URL&gt; existingUrls = new ArrayList&lt;URL&gt;();</span>
+
+<span class="nc" id="L689">        String[] pieces = path.split(File.pathSeparator);</span>
+<span class="nc bnc" id="L690" title="All 2 branches missed.">        for (String piece : pieces) {</span>
+<span class="nc" id="L691">            File file = new File(piece);</span>
+<span class="nc bnc" id="L692" title="All 2 branches missed.">            if (file.exists())</span>
+<span class="nc" id="L693">                existingUrls.add(file.toURI().toURL());</span>
+        }
+
+<span class="nc" id="L696">        return existingUrls;</span>
+    }
+
+    /**
+     * Returns a list of {@link File}s in &lt;code&gt;path&lt;/code&gt; that do not exist.
+     * The intent is to aid in diagnosing invalid paths.
+     *
+     * @param path
+     * @return
+     */
+    protected List&lt;File&gt; getMissingFiles(String path) {
+<span class="nc" id="L707">        List&lt;File&gt; missingFiles = new ArrayList&lt;File&gt;();</span>
+
+<span class="nc" id="L709">        String[] pieces = path.split(File.pathSeparator);</span>
+<span class="nc bnc" id="L710" title="All 2 branches missed.">        for (String piece : pieces) {</span>
+<span class="nc" id="L711">            File file = new File(piece);</span>
+<span class="nc bnc" id="L712" title="All 2 branches missed.">            if (!file.exists())</span>
+<span class="nc" id="L713">                missingFiles.add(file);</span>
+        }
+
+<span class="nc" id="L716">        return missingFiles;</span>
+    }
+
+    /**
+     * Currently very DB2-specific
+     * @param recursiveConstraints List
+     * @param schema String
+     * @param out LineWriter
+     * @throws IOException
+     */
+    /* we'll eventually want to put this functionality back in with a
+     * database independent implementation
+    private static void writeRemoveRecursiveConstraintsSql(List recursiveConstraints, String schema, LineWriter out) throws IOException {
+        for (Iterator iter = recursiveConstraints.iterator(); iter.hasNext(); ) {
+            ForeignKeyConstraint constraint = (ForeignKeyConstraint)iter.next();
+            out.writeln(&quot;ALTER TABLE &quot; + schema + &quot;.&quot; + constraint.getChildTable() + &quot; DROP CONSTRAINT &quot; + constraint.getName() + &quot;;&quot;);
+        }
+    }
+    */
+
+    /**
+     * Currently very DB2-specific
+     * @param recursiveConstraints List
+     * @param schema String
+     * @param out LineWriter
+     * @throws IOException
+     */
+    /* we'll eventually want to put this functionality back in with a
+     * database independent implementation
+    private static void writeRestoreRecursiveConstraintsSql(List recursiveConstraints, String schema, LineWriter out) throws IOException {
+        Map ruleTextMapping = new HashMap();
+        ruleTextMapping.put(new Character('C'), &quot;CASCADE&quot;);
+        ruleTextMapping.put(new Character('A'), &quot;NO ACTION&quot;);
+        ruleTextMapping.put(new Character('N'), &quot;NO ACTION&quot;); // Oracle
+        ruleTextMapping.put(new Character('R'), &quot;RESTRICT&quot;);
+        ruleTextMapping.put(new Character('S'), &quot;SET NULL&quot;);  // Oracle
+
+        for (Iterator iter = recursiveConstraints.iterator(); iter.hasNext(); ) {
+            ForeignKeyConstraint constraint = (ForeignKeyConstraint)iter.next();
+            out.write(&quot;ALTER TABLE \&quot;&quot; + schema + &quot;\&quot;.\&quot;&quot; + constraint.getChildTable() + &quot;\&quot; ADD CONSTRAINT \&quot;&quot; + constraint.getName() + &quot;\&quot;&quot;);
+            StringBuffer buf = new StringBuffer();
+            for (Iterator columnIter = constraint.getChildColumns().iterator(); columnIter.hasNext(); ) {
+                buf.append(&quot;\&quot;&quot;);
+                buf.append(columnIter.next());
+                buf.append(&quot;\&quot;&quot;);
+                if (columnIter.hasNext())
+                    buf.append(&quot;,&quot;);
+            }
+            out.write(&quot; FOREIGN KEY (&quot; + buf.toString() + &quot;)&quot;);
+            out.write(&quot; REFERENCES \&quot;&quot; + schema + &quot;\&quot;.\&quot;&quot; + constraint.getParentTable() + &quot;\&quot;&quot;);
+            buf = new StringBuffer();
+            for (Iterator columnIter = constraint.getParentColumns().iterator(); columnIter.hasNext(); ) {
+                buf.append(&quot;\&quot;&quot;);
+                buf.append(columnIter.next());
+                buf.append(&quot;\&quot;&quot;);
+                if (columnIter.hasNext())
+                    buf.append(&quot;,&quot;);
+            }
+            out.write(&quot; (&quot; + buf.toString() + &quot;)&quot;);
+            out.write(&quot; ON DELETE &quot;);
+            out.write(ruleTextMapping.get(new Character(constraint.getDeleteRule())).toString());
+            out.write(&quot; ON UPDATE &quot;);
+            out.write(ruleTextMapping.get(new Character(constraint.getUpdateRule())).toString());
+            out.writeln(&quot;;&quot;);
+        }
+    }
+    */
+
+    static void yankParam(List&lt;String&gt; args, String paramId) {
+<span class="nc" id="L785">        int paramIndex = args.indexOf(paramId);</span>
+<span class="nc bnc" id="L786" title="All 2 branches missed.">        if (paramIndex &gt;= 0) {</span>
+<span class="nc" id="L787">            args.remove(paramIndex);</span>
+<span class="nc" id="L788">            args.remove(paramIndex);</span>
+        }
+<span class="nc" id="L790">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

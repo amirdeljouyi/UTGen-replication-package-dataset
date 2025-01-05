@@ -1,0 +1,973 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HandballModel.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">56_jhandballmoves</a> &gt; <a href="index.source.html" class="el_package">visu.handball.moves.model</a> &gt; <span class="el_source">HandballModel.java</span></div><h1>HandballModel.java</h1><pre class="source lang-java linenums">/*
+ * Created on 31.08.2006
+ * Created by Richard Doerfler, Thomas Halm
+ * Copyright (C) 2006  Richard Doerfler, Thomas Halm
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ */
+
+package visu.handball.moves.model;
+
+import java.awt.geom.Point2D;
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.SortedSet;
+import java.util.TreeSet;
+
+import javax.swing.JOptionPane;
+
+import visu.handball.moves.Main;
+import visu.handball.moves.model.animation.AnimationModel;
+import visu.handball.moves.model.animation.Animator;
+import visu.handball.moves.model.player.Ball;
+import visu.handball.moves.model.player.Defender;
+import visu.handball.moves.model.player.HighlightableItem;
+import visu.handball.moves.model.player.MovePoint;
+import visu.handball.moves.model.player.Offender;
+import visu.handball.moves.model.player.Player;
+
+public class HandballModel implements Serializable {
+
+	private static final long serialVersionUID = -5372891552466311536L;
+
+<span class="fc" id="L46">	public enum State {</span>
+<span class="fc" id="L47">		INITIAL, PLACE_OFFENDERS, PLACE_DEFENDERS, PLACE_BALL, EDIT, EDIT_EVENT, ANIMATION, ANIMATION_RUNNING, FULL_ANIMATION_ENDED</span>
+	}
+
+	private static final int MAX_OFFENDERS = 6;
+
+	private static final int MAX_DEFENDERS = 6;
+
+	private static final int MARK_RADIUS = 12;
+
+	private static final String APP_NAME = &quot;jHandballMoves&quot;;
+
+	private transient List&lt;HandballModelListener&gt; listeners;
+
+	private transient List&lt;PlayerRemovedListener&gt; playerRemoveListener;
+
+	private List&lt;Defender&gt; defenders;
+
+	private List&lt;Offender&gt; offenders;
+
+	private SortedSet&lt;MoveEvent&gt; events;
+
+	private State state;
+
+	private MoveEvent actualEvent;
+
+	private Player markedPlayer;
+
+	private HighlightableItem hightlightedItem;
+
+	private Offender ballOwner;
+
+	private Ball ball;
+
+	private Offender firstBallOwner;
+
+	private transient Animator runningAnimator;
+
+	private int animationSequenz;
+
+	private transient AnimationModel animationModel;
+
+	private transient HandballModel lastSavedModel;
+
+	private String comment;
+
+	private String moveName;
+
+<span class="fc" id="L94">	public HandballModel() {</span>
+<span class="fc" id="L95">		listeners = new ArrayList&lt;HandballModelListener&gt;();</span>
+<span class="fc" id="L96">		playerRemoveListener = new ArrayList&lt;PlayerRemovedListener&gt;();</span>
+<span class="fc" id="L97">		initModel();</span>
+<span class="fc" id="L98">	}</span>
+
+	public void initModel() {
+<span class="fc" id="L101">		defenders = new ArrayList&lt;Defender&gt;();</span>
+<span class="fc" id="L102">		Defender.setCounter(0);</span>
+<span class="fc" id="L103">		offenders = new ArrayList&lt;Offender&gt;();</span>
+<span class="fc" id="L104">		Offender.setCounter(0);</span>
+
+<span class="fc" id="L106">		events = new TreeSet&lt;MoveEvent&gt;();</span>
+		// Workaround wegen ToolBar
+<span class="fc" id="L108">		state = State.PLACE_OFFENDERS;</span>
+<span class="fc" id="L109">		actualEvent = null;</span>
+<span class="fc" id="L110">		markedPlayer = null;</span>
+<span class="fc" id="L111">		firstBallOwner = null;</span>
+<span class="fc" id="L112">		comment = &quot;&quot;;</span>
+<span class="fc" id="L113">		moveName = &quot;&quot;;</span>
+<span class="fc" id="L114">		resetBallPosition();</span>
+		try {
+<span class="fc" id="L116">			lastSavedModel = (HandballModel) Main.deepCopy(this);</span>
+<span class="nc" id="L117">		} catch (Exception e) {</span>
+<span class="nc" id="L118">			lastSavedModel = null;</span>
+<span class="fc" id="L119">		}</span>
+<span class="fc" id="L120">		fireModelChanged();</span>
+<span class="fc" id="L121">	}</span>
+
+	private void resetBallPosition() {
+<span class="fc" id="L124">		ball = new Ball(-500, -500);</span>
+<span class="fc" id="L125">	}</span>
+
+	public void addOffender(int x, int y) {
+<span class="nc bnc" id="L128" title="All 2 branches missed.">		if (offenders.size() == MAX_OFFENDERS) {</span>
+<span class="nc" id="L129">			JOptionPane.showMessageDialog(Main.getWindow(), &quot;Sie haben schon &quot;</span>
+					+ MAX_OFFENDERS + &quot; Angreifer angelegt.&quot;, &quot;Info:&quot;,
+					JOptionPane.INFORMATION_MESSAGE);
+		} else {
+<span class="nc" id="L133">			offenders.add(new Offender(x, y));</span>
+		}
+<span class="nc" id="L135">		fireModelChanged();</span>
+
+<span class="nc" id="L137">	}</span>
+
+	public void removePlayer(Player toRemove) {
+<span class="nc bnc" id="L140" title="All 2 branches missed.">		if (eventDefinedWithPlayer(toRemove)) {</span>
+<span class="nc" id="L141">			removeEventsOfPlayer(toRemove);</span>
+		}
+<span class="nc bnc" id="L143" title="All 2 branches missed.">		if (toRemove instanceof Offender) {</span>
+<span class="nc" id="L144">			removeOffender((Offender) toRemove);</span>
+		} else {
+<span class="nc" id="L146">			removeDefender((Defender) toRemove);</span>
+		}
+<span class="nc" id="L148">	}</span>
+
+	private void removeOffender(Offender toRemove) {
+<span class="nc bnc" id="L151" title="All 4 branches missed.">		if (getFirstBallOwner() != null &amp;&amp; getFirstBallOwner().equals(toRemove)) {</span>
+<span class="nc" id="L152">			setFirstBallOwner(null);</span>
+		}
+<span class="nc" id="L154">		offenders.remove(toRemove);</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">		if ((getDefenders().size() + getOffenders().size()) == 0) {</span>
+<span class="nc" id="L156">			markedPlayer = null;</span>
+		}
+		// Spielernummer aktualisieren
+<span class="nc" id="L159">		Offender.setCounter(determineMaxPlayerNumber(offenders));</span>
+<span class="nc" id="L160">		fireOffenderRemoved(toRemove);</span>
+<span class="nc" id="L161">		fireModelChanged();</span>
+<span class="nc" id="L162">	}</span>
+
+	public void addDefender(int x, int y) {
+<span class="nc bnc" id="L165" title="All 2 branches missed.">		if (defenders.size() == MAX_DEFENDERS) {</span>
+<span class="nc" id="L166">			JOptionPane.showMessageDialog(Main.getWindow(), &quot;Sie haben schon &quot;</span>
+					+ MAX_OFFENDERS + &quot; Verteidiger angelegt.&quot;, &quot;Info:&quot;,
+					JOptionPane.INFORMATION_MESSAGE);
+		} else {
+<span class="nc" id="L170">			defenders.add(new Defender(x, y));</span>
+		}
+
+<span class="nc" id="L173">		fireModelChanged();</span>
+<span class="nc" id="L174">	}</span>
+
+	private void removeDefender(Defender toRemove) {
+<span class="nc" id="L177">		defenders.remove(toRemove);</span>
+<span class="nc bnc" id="L178" title="All 2 branches missed.">		if ((getDefenders().size() + getOffenders().size()) == 0) {</span>
+<span class="nc" id="L179">			markedPlayer = null;</span>
+		}
+
+<span class="nc" id="L182">		Defender.setCounter(determineMaxPlayerNumber(defenders));</span>
+
+<span class="nc" id="L184">		fireDefenderRemoved(toRemove);</span>
+<span class="nc" id="L185">		fireModelChanged();</span>
+<span class="nc" id="L186">	}</span>
+
+	public boolean addListener(HandballModelListener o) {
+<span class="nc" id="L189">		return listeners.add(o);</span>
+	}
+
+	public boolean removeListener(HandballModelListener o) {
+<span class="nc" id="L193">		return listeners.remove(o);</span>
+	}
+
+	public boolean addPlayerRemovedListener(PlayerRemovedListener o) {
+<span class="nc" id="L197">		return playerRemoveListener.add(o);</span>
+	}
+
+	public boolean removePlayerRemovedListener(PlayerRemovedListener o) {
+<span class="nc" id="L201">		return playerRemoveListener.remove(o);</span>
+	}
+
+	private void fireModelChanged() {
+<span class="fc" id="L205">		setMoveName(getMoveName());</span>
+<span class="pc bpc" id="L206" title="1 of 2 branches missed.">		for (HandballModelListener listener : listeners) {</span>
+<span class="nc" id="L207">			listener.modelChanged();</span>
+<span class="nc" id="L208">		}</span>
+<span class="fc" id="L209">	}</span>
+
+	private void fireOffenderRemoved(Offender offender) {
+<span class="nc bnc" id="L212" title="All 2 branches missed.">		for (PlayerRemovedListener listener : playerRemoveListener) {</span>
+<span class="nc" id="L213">			listener.offenderRemoved(offender);</span>
+<span class="nc" id="L214">		}</span>
+<span class="nc" id="L215">	}</span>
+
+	private void fireDefenderRemoved(Defender defender) {
+<span class="nc bnc" id="L218" title="All 2 branches missed.">		for (PlayerRemovedListener listener : playerRemoveListener) {</span>
+<span class="nc" id="L219">			listener.defenderRemoved(defender);</span>
+<span class="nc" id="L220">		}</span>
+<span class="nc" id="L221">	}</span>
+
+	public List&lt;Defender&gt; getDefenders() {
+<span class="nc" id="L224">		return defenders;</span>
+	}
+
+	public List&lt;Offender&gt; getOffenders() {
+<span class="nc" id="L228">		return offenders;</span>
+	}
+
+	public State getState() {
+<span class="nc" id="L232">		return state;</span>
+	}
+
+	public void setState(State state) {
+
+<span class="nc bnc" id="L237" title="All 2 branches missed.">		if (state == State.EDIT) {</span>
+<span class="nc bnc" id="L238" title="All 2 branches missed.">			if (getActualMoveEvent() == null) {</span>
+				// Wenn leer, dann Null, sonst letztes Move Event setzen
+<span class="nc bnc" id="L240" title="All 2 branches missed.">				setActualMoveEvent(getEvents().isEmpty() ? null : (getEvents()</span>
+<span class="nc" id="L241">						.get(getEvents().size() - 1)));</span>
+			} else {
+<span class="nc" id="L243">				setActualMoveEvent(getActualMoveEvent());</span>
+			}
+		}
+<span class="nc bnc" id="L246" title="All 4 branches missed.">		if (state == State.PLACE_DEFENDERS || state == State.PLACE_OFFENDERS) {</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">			if (getFirstBallOwner() != null) {</span>
+<span class="nc" id="L248">				setBallOwner(getFirstBallOwner());</span>
+			}
+<span class="nc" id="L250">			setActualMoveEvent(null);</span>
+		}
+<span class="nc" id="L252">		this.state = state;</span>
+<span class="nc" id="L253">		fireModelChanged();</span>
+<span class="nc" id="L254">	}</span>
+
+	public void addMoveEvent(MoveEvent event) {
+<span class="nc" id="L257">		events.add(event);</span>
+<span class="nc bnc" id="L258" title="All 2 branches missed.">		if (state == State.EDIT) {</span>
+<span class="nc" id="L259">			setActualMoveEvent(event);</span>
+<span class="nc" id="L260">			state = State.EDIT_EVENT;</span>
+		}
+<span class="nc" id="L262">		fireModelChanged();</span>
+<span class="nc" id="L263">	}</span>
+
+	public void removeMoveEvent(MoveEvent event) {
+<span class="nc" id="L266">		events.remove(event);</span>
+<span class="nc" id="L267">		fireModelChanged();</span>
+<span class="nc" id="L268">	}</span>
+
+	public List&lt;MoveEvent&gt; getEvents() {
+<span class="nc" id="L271">		List&lt;MoveEvent&gt; list = new ArrayList&lt;MoveEvent&gt;(events);</span>
+<span class="nc" id="L272">		return list;</span>
+	}
+
+	public SortedSet&lt;MoveEvent&gt; getSortedEvents() {
+<span class="nc" id="L276">		return events;</span>
+	}
+
+	public int getAcutalSequenceNr() {
+<span class="nc bnc" id="L280" title="All 2 branches missed.">		if (actualEvent == null)</span>
+<span class="nc" id="L281">			return 0;</span>
+		else {
+<span class="nc" id="L283">			return actualEvent.getSequenceNr();</span>
+		}
+	}
+
+	public void setActualMoveEvent(MoveEvent event) {
+<span class="nc bnc" id="L288" title="All 2 branches missed.">		if (this.actualEvent != null) {</span>
+<span class="nc" id="L289">			this.actualEvent.setMarked(false);</span>
+		}
+<span class="nc" id="L291">		this.actualEvent = event;</span>
+<span class="nc" id="L292">		computePlayerPositions();</span>
+		// aktuellen Spieler setzen
+<span class="nc bnc" id="L294" title="All 2 branches missed.">		setMarkedPlayer((event == null) ? null : event.getPlayer());</span>
+<span class="nc bnc" id="L295" title="All 2 branches missed.">		if (actualEvent != null) {</span>
+<span class="nc bnc" id="L296" title="All 2 branches missed.">			if (!actualEvent.isDestinationPointSet()) {</span>
+<span class="nc" id="L297">				state = State.EDIT_EVENT;</span>
+			} else {
+<span class="nc bnc" id="L299" title="All 2 branches missed.">				if (state == State.FULL_ANIMATION_ENDED) {</span>
+<span class="nc" id="L300">					state = State.ANIMATION;</span>
+<span class="nc bnc" id="L301" title="All 4 branches missed.">				} else if (state != State.ANIMATION</span>
+						&amp;&amp; state != State.ANIMATION_RUNNING) {
+<span class="nc" id="L303">					state = State.EDIT;</span>
+				}
+			}
+<span class="nc" id="L306">			actualEvent.setMarked(true);</span>
+		}
+<span class="nc" id="L308">		fireModelChanged();</span>
+<span class="nc" id="L309">	}</span>
+
+	public void setDestinationPointForEvent(MoveEvent event, int x, int y,
+			boolean temp) {
+<span class="nc" id="L313">		event.setDestinationPoint(x, y, temp);</span>
+<span class="nc" id="L314">		fireModelChanged();</span>
+<span class="nc" id="L315">	}</span>
+
+	public void setControlPointForEvent(MoveEvent event, int x, int y,
+			boolean temp) {
+<span class="nc" id="L319">		event.setControlPoint(x, y, temp);</span>
+<span class="nc" id="L320">		fireModelChanged();</span>
+<span class="nc" id="L321">	}</span>
+
+	public void setMovePointTo(MovePoint point, int x, int y) {
+<span class="nc" id="L324">		actualEvent.setPoint(point, x, y);</span>
+<span class="nc" id="L325">		fireModelChanged();</span>
+<span class="nc" id="L326">	}</span>
+
+	private void computePlayerPositions() {
+<span class="nc" id="L329">		computePlayerPositions(getAcutalSequenceNr());</span>
+<span class="nc" id="L330">	}</span>
+
+	public void computePlayerPositions(int seqNr) {
+		// Spieler Positionen auf Ausgangsstellung
+<span class="nc bnc" id="L334" title="All 2 branches missed.">		for (Player offender : offenders) {</span>
+<span class="nc" id="L335">			offender.resetPosition();</span>
+<span class="nc" id="L336">		}</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">		for (Player defender : defenders) {</span>
+<span class="nc" id="L338">			defender.resetPosition();</span>
+<span class="nc" id="L339">		}</span>
+<span class="nc bnc" id="L340" title="All 2 branches missed.">		if (seqNr == 1) {</span>
+<span class="nc" id="L341">			setBallOwner(firstBallOwner);</span>
+		}
+		// alle Events mit kleinerer Sequenznummer verarbeiten
+<span class="nc bnc" id="L344" title="All 2 branches missed.">		for (MoveEvent event : events) {</span>
+<span class="nc bnc" id="L345" title="All 2 branches missed.">			if (event.getSequenceNr() &lt; seqNr) {</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">				if (event instanceof PassEvent) {</span>
+					// Ball an anderen Spieler �bertragen
+<span class="nc" id="L348">					setBallOwner(((PassEvent) event).getDestinationPlayer());</span>
+				} else {
+<span class="nc bnc" id="L350" title="All 2 branches missed.">					if (event.getDestinationX() &gt; -1</span>
+<span class="nc bnc" id="L351" title="All 2 branches missed.">							&amp;&amp; event.getDestinationY() &gt; -1) {</span>
+<span class="nc" id="L352">						event.getPlayer().setCurrentPosition(</span>
+<span class="nc" id="L353">								event.getDestinationX(),</span>
+<span class="nc" id="L354">								event.getDestinationY());</span>
+					}
+				}
+			} else {
+				break;
+			}
+<span class="nc" id="L360">		}</span>
+<span class="nc" id="L361">	}</span>
+
+	public MoveEvent getActualMoveEvent() {
+<span class="nc" id="L364">		return actualEvent;</span>
+	}
+
+	public Player getMarkedPlayer() {
+<span class="nc" id="L368">		return markedPlayer;</span>
+	}
+
+	public void setMarkedPlayer(Player markedPlayer) {
+		// alten markierten Spieler demarkieren
+<span class="nc bnc" id="L373" title="All 2 branches missed.">		if (this.markedPlayer != null) {</span>
+<span class="nc" id="L374">			this.markedPlayer.setMarked(false);</span>
+		}
+		// evtl. neuen Spieler markieren
+<span class="nc" id="L377">		this.markedPlayer = markedPlayer;</span>
+<span class="nc bnc" id="L378" title="All 2 branches missed.">		if (markedPlayer != null) {</span>
+<span class="nc" id="L379">			markedPlayer.setMarked(true);</span>
+		}
+<span class="nc" id="L381">		fireModelChanged();</span>
+<span class="nc" id="L382">	}</span>
+
+	public void setHighLightedItem(HighlightableItem item) {
+<span class="nc bnc" id="L385" title="All 2 branches missed.">		if (this.hightlightedItem != null) {</span>
+			// altes Item zur�cksetzen
+<span class="nc" id="L387">			this.hightlightedItem.setHighlight(false);</span>
+		}
+<span class="nc" id="L389">		this.hightlightedItem = item;</span>
+<span class="nc bnc" id="L390" title="All 2 branches missed.">		if (item != null) {</span>
+<span class="nc" id="L391">			hightlightedItem.setHighlight(true);</span>
+		}
+
+<span class="nc" id="L394">		fireModelChanged();</span>
+<span class="nc" id="L395">	}</span>
+
+	public HighlightableItem getHightligtedItem() {
+<span class="nc" id="L398">		return hightlightedItem;</span>
+	}
+
+	public Player getNearestPlayer(int x, int y) {
+<span class="nc" id="L402">		List&lt;Player&gt; all = new ArrayList&lt;Player&gt;(offenders);</span>
+<span class="nc" id="L403">		all.addAll(defenders);</span>
+
+<span class="nc" id="L405">		return findNearestPlayer(x, y, all);</span>
+	}
+
+	public Offender getNearestOffender(int x, int y) {
+<span class="nc" id="L409">		List&lt;Player&gt; all = new ArrayList&lt;Player&gt;(offenders);</span>
+
+<span class="nc" id="L411">		return (Offender) findNearestPlayer(x, y, all);</span>
+	}
+
+	private Player findNearestPlayer(int x, int y, List&lt;Player&gt; players) {
+<span class="nc" id="L415">		double entfernung = Double.MAX_VALUE;</span>
+<span class="nc" id="L416">		Player temp = null;</span>
+<span class="nc bnc" id="L417" title="All 2 branches missed.">		for (Player player : players) {</span>
+
+<span class="nc" id="L419">			int player_x = player.getCurrent_x();</span>
+<span class="nc" id="L420">			int player_y = player.getCurrent_y();</span>
+
+<span class="nc" id="L422">			double tempEntfernung = Point2D.distance(x, y, player_x, player_y);</span>
+
+			// Wenn naeher als der MARK_RADIUS
+<span class="nc bnc" id="L425" title="All 2 branches missed.">			if (!(tempEntfernung &gt; MARK_RADIUS)) {</span>
+
+<span class="nc bnc" id="L427" title="All 2 branches missed.">				if (tempEntfernung &lt; entfernung) {</span>
+<span class="nc" id="L428">					temp = player;</span>
+<span class="nc" id="L429">					entfernung = tempEntfernung;</span>
+				}
+			}
+
+<span class="nc" id="L433">		}</span>
+<span class="nc" id="L434">		return temp;</span>
+	}
+
+	public MovePoint getNearestMovePoint(int x, int y) {
+<span class="nc" id="L438">		MovePoint point = null;</span>
+<span class="nc bnc" id="L439" title="All 2 branches missed.">		if (actualEvent != null) {</span>
+<span class="nc" id="L440">			double entfernung = Double.MAX_VALUE;</span>
+
+<span class="nc bnc" id="L442" title="All 2 branches missed.">			if (actualEvent.isDestinationPointSet()) {</span>
+<span class="nc" id="L443">				int destination_x = actualEvent.getDestinationX();</span>
+<span class="nc" id="L444">				int destination_y = actualEvent.getDestinationY();</span>
+
+<span class="nc" id="L446">				double tempEntfernung = Point2D.distance(x, y, destination_x,</span>
+						destination_y);
+				// Wenn naeher als der MARK_RADIUS
+<span class="nc bnc" id="L449" title="All 2 branches missed.">				if (!(tempEntfernung &gt; MARK_RADIUS)) {</span>
+
+<span class="nc bnc" id="L451" title="All 2 branches missed.">					if (tempEntfernung &lt; entfernung) {</span>
+<span class="nc" id="L452">						point = actualEvent.getDestinationPoint();</span>
+<span class="nc" id="L453">						entfernung = tempEntfernung;</span>
+					}
+				}
+			}
+
+<span class="nc bnc" id="L458" title="All 2 branches missed.">			if (actualEvent.isControlPointSet()) {</span>
+<span class="nc" id="L459">				int controlPoint_x = actualEvent.getControlPointX();</span>
+<span class="nc" id="L460">				int controlPoint_y = actualEvent.getControlPointY();</span>
+
+<span class="nc" id="L462">				double tempEntfernung = Point2D.distance(x, y, controlPoint_x,</span>
+						controlPoint_y);
+
+				// Wenn naeher als der MARK_RADIUS
+<span class="nc bnc" id="L466" title="All 2 branches missed.">				if (!(tempEntfernung &gt; MARK_RADIUS)) {</span>
+
+<span class="nc bnc" id="L468" title="All 2 branches missed.">					if (tempEntfernung &lt; entfernung) {</span>
+<span class="nc" id="L469">						point = actualEvent.getControlPoint();</span>
+<span class="nc" id="L470">						entfernung = tempEntfernung;</span>
+					}
+				}
+			}
+		}
+<span class="nc" id="L475">		return point;</span>
+	}
+
+	public HighlightableItem getNearestHighlightableItem(int x, int y) {
+<span class="nc" id="L479">		HighlightableItem temp = null;</span>
+
+<span class="nc" id="L481">		temp = getNearestMovePoint(x, y);</span>
+
+<span class="nc bnc" id="L483" title="All 2 branches missed.">		if (temp == null) {</span>
+<span class="nc" id="L484">			temp = getNearestPlayer(x, y);</span>
+		}
+
+<span class="nc" id="L487">		return temp;</span>
+	}
+
+	public void movePlayerTo(Player actualPlayer, int x, int y) {
+<span class="nc bnc" id="L491" title="All 2 branches missed.">		if (getAcutalSequenceNr() == 0) {</span>
+<span class="nc" id="L492">			actualPlayer.setStart_x(x);</span>
+<span class="nc" id="L493">			actualPlayer.setStart_y(y);</span>
+		}
+		// Ansonsten muss die Position im entsprechenden Ereignis gesetzt
+		// werden
+		// Startposition darf nur im Angreifer/Verteidiger-Modus ge�ndert werden
+<span class="nc" id="L498">		fireModelChanged();</span>
+<span class="nc" id="L499">	}</span>
+
+	public boolean isSaved() {
+<span class="nc" id="L502">		boolean changed = false;</span>
+<span class="nc bnc" id="L503" title="All 2 branches missed.">		if (lastSavedModel != null) {</span>
+			//Spielzugnamen vergleichen
+<span class="nc bnc" id="L505" title="All 2 branches missed.">			if (lastSavedModel.getMoveName() != null) {</span>
+<span class="nc bnc" id="L506" title="All 4 branches missed.">				if (getMoveName() == null || !lastSavedModel.getMoveName().equals(getMoveName())) {</span>
+<span class="nc" id="L507">					return false;</span>
+				} 
+<span class="nc bnc" id="L509" title="All 2 branches missed.">			} else if (getMoveName() != null) {</span>
+				//alt: kein Name &lt;-&gt; neu: Name vorhanden
+<span class="nc" id="L511">				return false;</span>
+			}
+			
+			//Ueberprüfen ob Angreifer und Verteidiger unterschiedlich
+			
+			// zuerst Spielerlisten vergleichen
+<span class="nc bnc" id="L517" title="All 2 branches missed.">			if (changedPlayerList(getOffenders().toArray(</span>
+<span class="nc" id="L518">					new Player[getOffenders().size()]), lastSavedModel</span>
+<span class="nc" id="L519">					.getOffenders().toArray(</span>
+<span class="nc" id="L520">							new Player[lastSavedModel.getOffenders().size()]))</span>
+<span class="nc bnc" id="L521" title="All 2 branches missed.">					|| changedPlayerList(getDefenders().toArray(</span>
+<span class="nc" id="L522">							new Player[getDefenders().size()]), lastSavedModel</span>
+<span class="nc" id="L523">							.getDefenders().toArray(</span>
+<span class="nc" id="L524">									new Player[lastSavedModel.getDefenders()</span>
+<span class="nc" id="L525">											.size()]))) {</span>
+<span class="nc" id="L526">				changed = true;</span>
+			} else {
+<span class="nc" id="L528">				List&lt;MoveEvent&gt; newEvents = getEvents();</span>
+<span class="nc" id="L529">				List&lt;MoveEvent&gt; oldEvents = lastSavedModel.getEvents();</span>
+
+<span class="nc bnc" id="L531" title="All 2 branches missed.">				if (newEvents.size() == oldEvents.size()) {</span>
+<span class="nc bnc" id="L532" title="All 2 branches missed.">					for (int i = 0; i &lt; newEvents.size(); i++) {</span>
+<span class="nc bnc" id="L533" title="All 2 branches missed.">						if (!newEvents.get(i).equals(oldEvents.get(i))) {</span>
+<span class="nc" id="L534">							changed = true;</span>
+<span class="nc" id="L535">							break;</span>
+						}
+
+					}
+				} else {
+<span class="nc" id="L540">					changed = true;</span>
+				}
+			}
+<span class="nc bnc" id="L543" title="All 2 branches missed.">			if (!changed</span>
+<span class="nc bnc" id="L544" title="All 2 branches missed.">					&amp;&amp; (getFirstBallOwner() != null || lastSavedModel</span>
+<span class="nc bnc" id="L545" title="All 2 branches missed.">							.getFirstBallOwner() != null)) {</span>
+<span class="nc bnc" id="L546" title="All 2 branches missed.">				changed = (getFirstBallOwner() == null)</span>
+<span class="nc bnc" id="L547" title="All 2 branches missed.">						^ (lastSavedModel.getFirstBallOwner() == null);</span>
+<span class="nc bnc" id="L548" title="All 2 branches missed.">				if (!changed) {</span>
+<span class="nc bnc" id="L549" title="All 2 branches missed.">					changed = !getFirstBallOwner().equals(</span>
+<span class="nc" id="L550">							lastSavedModel.getFirstBallOwner());</span>
+				}
+			}
+
+			// wurde Kommentar geändert?
+<span class="nc bnc" id="L555" title="All 2 branches missed.">			if (!changed) {</span>
+<span class="nc bnc" id="L556" title="All 4 branches missed.">				if (comment == null || comment.equals(&quot;&quot;)) {</span>
+<span class="nc bnc" id="L557" title="All 2 branches missed.">					if (lastSavedModel.getComment() != null</span>
+<span class="nc bnc" id="L558" title="All 2 branches missed.">							&amp;&amp; !lastSavedModel.getComment().equals(&quot;&quot;)) {</span>
+<span class="nc" id="L559">						changed = true;</span>
+					}
+<span class="nc bnc" id="L561" title="All 2 branches missed.">				} else if (lastSavedModel.getComment() != null) {</span>
+<span class="nc bnc" id="L562" title="All 2 branches missed.">					if (!lastSavedModel.getComment().equals(comment)) {</span>
+<span class="nc" id="L563">						changed = true;</span>
+					}
+				}
+			}
+		}
+
+<span class="nc bnc" id="L569" title="All 2 branches missed.">		return !changed;</span>
+	}
+
+	private boolean changedPlayerList(Player[] newList, Player[] oldList) {
+<span class="nc" id="L573">		boolean changed = false;</span>
+<span class="nc" id="L574">		int size = newList.length;</span>
+<span class="nc" id="L575">		int sizeOld = oldList.length;</span>
+
+<span class="nc bnc" id="L577" title="All 2 branches missed.">		if (size == sizeOld) {</span>
+<span class="nc bnc" id="L578" title="All 2 branches missed.">			for (int i = 0; i &lt; size; i++) {</span>
+<span class="nc bnc" id="L579" title="All 2 branches missed.">				if (!newList[i].equals(oldList[i])) {</span>
+<span class="nc" id="L580">					changed = true;</span>
+<span class="nc" id="L581">					break;</span>
+				}
+			}
+		} else {
+<span class="nc" id="L585">			changed = true;</span>
+		}
+
+<span class="nc" id="L588">		return changed;</span>
+	}
+
+	public void initWithLoadedModel(HandballModel loadedModel) {
+<span class="nc" id="L592">		initModel();</span>
+<span class="nc" id="L593">		offenders = loadedModel.getOffenders();</span>
+<span class="nc" id="L594">		defenders = loadedModel.getDefenders();</span>
+<span class="nc" id="L595">		events = loadedModel.getSortedEvents();</span>
+<span class="nc" id="L596">		Offender.setCounter(determineMaxPlayerNumber(offenders));</span>
+<span class="nc" id="L597">		Defender.setCounter(determineMaxPlayerNumber(defenders));</span>
+<span class="nc" id="L598">		setFirstBallOwner(loadedModel.getFirstBallOwner());</span>
+<span class="nc" id="L599">		setState(loadedModel.getState());</span>
+<span class="nc" id="L600">		setActualMoveEvent(loadedModel.getActualMoveEvent());</span>
+
+<span class="nc" id="L602">		setComment(loadedModel.getComment());</span>
+		// zur Sicherheit
+<span class="nc bnc" id="L604" title="All 2 branches missed.">		if (getComment() == null) {</span>
+<span class="nc" id="L605">			setComment(&quot;&quot;);</span>
+		}
+<span class="nc" id="L607">		setMoveName(loadedModel.getMoveName());</span>
+
+<span class="nc" id="L609">		markAsSaved(loadedModel);</span>
+
+<span class="nc" id="L611">		fireModelChanged();</span>
+<span class="nc" id="L612">	}</span>
+
+	private int determineMaxPlayerNumber(List players) {
+<span class="nc" id="L615">		int max = 0;</span>
+<span class="nc bnc" id="L616" title="All 2 branches missed.">		for (Object o : players) {</span>
+<span class="nc bnc" id="L617" title="All 2 branches missed.">			if (o instanceof Player) {</span>
+<span class="nc" id="L618">				Player player = (Player) o;</span>
+<span class="nc bnc" id="L619" title="All 2 branches missed.">				if (player.getPlayerNumber() &gt; max) {</span>
+<span class="nc" id="L620">					max = player.getPlayerNumber();</span>
+				}
+			}
+<span class="nc" id="L623">		}</span>
+<span class="nc" id="L624">		return max;</span>
+	}
+
+	public void markAsSaved(HandballModel model) {
+		try {
+<span class="nc" id="L629">			lastSavedModel = (HandballModel) Main.deepCopy(model);</span>
+<span class="nc" id="L630">		} catch (Exception e) {</span>
+<span class="nc" id="L631">			e.printStackTrace();</span>
+<span class="nc" id="L632">			lastSavedModel = null;</span>
+<span class="nc" id="L633">		}</span>
+<span class="nc" id="L634">	}</span>
+
+	public void setDelay(int eventIndex, int delay) {
+<span class="nc" id="L637">		getEvents().get(eventIndex).setDelay(delay);</span>
+<span class="nc" id="L638">		fireModelChanged();</span>
+<span class="nc" id="L639">	}</span>
+
+	public void setBallOwner(Offender ballOwner) {
+<span class="nc bnc" id="L642" title="All 2 branches missed.">		if (this.ballOwner != null) {</span>
+<span class="nc" id="L643">			this.ballOwner.setHasBall(false);</span>
+		}
+<span class="nc" id="L645">		this.ballOwner = ballOwner;</span>
+<span class="nc bnc" id="L646" title="All 2 branches missed.">		if (ballOwner != null) {</span>
+<span class="nc" id="L647">			ballOwner.setHasBall(true);</span>
+		}
+<span class="nc" id="L649">		fireModelChanged();</span>
+<span class="nc" id="L650">	}</span>
+
+	public void setBallOwnerSilent(Offender ballOwner) {
+<span class="nc bnc" id="L653" title="All 2 branches missed.">		if (this.ballOwner != null) {</span>
+<span class="nc" id="L654">			this.ballOwner.setHasBall(false);</span>
+		}
+<span class="nc" id="L656">		this.ballOwner = ballOwner;</span>
+<span class="nc bnc" id="L657" title="All 2 branches missed.">		if (ballOwner != null) {</span>
+<span class="nc" id="L658">			ballOwner.setHasBall(true);</span>
+		}
+		// fireModelChanged();
+<span class="nc" id="L661">	}</span>
+
+	public void startAnimation(boolean onlyActualSequence) {
+<span class="nc" id="L664">		setState(State.ANIMATION_RUNNING);</span>
+<span class="nc" id="L665">		MoveEvent event = actualEvent;</span>
+<span class="nc bnc" id="L666" title="All 2 branches missed.">		if (event == null) {</span>
+<span class="nc" id="L667">			event = getEvents().get(0);</span>
+		}
+<span class="nc" id="L669">		setActualMoveEvent(event);</span>
+<span class="nc" id="L670">		animationSequenz = event.getSequenceNr();</span>
+<span class="nc" id="L671">		animationModel = new AnimationModel(event, this, onlyActualSequence);</span>
+<span class="nc" id="L672">		runningAnimator = new Animator(this);</span>
+<span class="nc" id="L673">		computePlayerPositions(animationSequenz);</span>
+<span class="nc" id="L674">		fireModelChanged();</span>
+
+<span class="nc" id="L676">	}</span>
+
+	public void pauseAnimation(boolean pause) {
+<span class="nc bnc" id="L679" title="All 2 branches missed.">		if (pause) {</span>
+<span class="nc" id="L680">			runningAnimator.setPause(true);</span>
+		} else {
+<span class="nc" id="L682">			runningAnimator.setPause(false);</span>
+		}
+<span class="nc" id="L684">	}</span>
+
+	public void initAnimation() {
+
+<span class="nc" id="L688">	}</span>
+
+	public boolean nextAnimationStep() {
+<span class="nc" id="L691">		boolean finished = animationModel.nextStep();</span>
+<span class="nc bnc" id="L692" title="All 2 branches missed.">		if (finished) {</span>
+<span class="nc bnc" id="L693" title="All 2 branches missed.">			if (animationModel.isOnlyOneSequence()) {</span>
+<span class="nc" id="L694">				setState(State.ANIMATION);</span>
+				// n�chste Sequzenz ausw�hlen (einfaches sequentielles Anschauen des Spielzugs)
+<span class="nc bnc" id="L696" title="All 2 branches missed.">				int nextSeq = (getAcutalSequenceNr() == getHighestSequenceNumber()) ? </span>
+<span class="nc" id="L697">						getAcutalSequenceNr(): getAcutalSequenceNr() + 1;</span>
+<span class="nc" id="L698">				List&lt;MoveEvent&gt; nextSeqEvents = getMoveEvents(nextSeq);</span>
+<span class="nc bnc" id="L699" title="All 2 branches missed.">				if (nextSeqEvents.get(0) != null) {</span>
+<span class="nc" id="L700">					setActualMoveEvent(nextSeqEvents.get(0));</span>
+				}
+<span class="nc" id="L702">			} else {</span>
+<span class="nc" id="L703">				setState(State.FULL_ANIMATION_ENDED);</span>
+			}
+		} else {
+<span class="nc" id="L706">			fireModelChanged();</span>
+		}
+<span class="nc" id="L708">		return finished;</span>
+	}
+
+	public void stopAnimation() {
+<span class="nc" id="L712">		setState(State.ANIMATION);</span>
+<span class="nc" id="L713">		runningAnimator = null;</span>
+<span class="nc" id="L714">		setActualMoveEvent(getActualMoveEvent());</span>
+
+<span class="nc" id="L716">	}</span>
+
+	public boolean isMarkedPlayerAddable() {
+<span class="nc" id="L719">		int seq = getAcutalSequenceNr();</span>
+<span class="nc bnc" id="L720" title="All 2 branches missed.">		return !events.contains(new MoveEvent(markedPlayer, seq));</span>
+	}
+
+	public boolean passEventDefined(int seq) {
+<span class="nc" id="L724">		boolean defined = false;</span>
+<span class="nc bnc" id="L725" title="All 2 branches missed.">		for (MoveEvent event : events) {</span>
+<span class="nc bnc" id="L726" title="All 4 branches missed.">			if (event.getSequenceNr() == seq &amp;&amp; event instanceof PassEvent) {</span>
+<span class="nc" id="L727">				defined = true;</span>
+<span class="nc" id="L728">				break;</span>
+			}
+<span class="nc bnc" id="L730" title="All 2 branches missed.">			if (event.getSequenceNr() &gt; seq) {</span>
+<span class="nc" id="L731">				break;</span>
+			}
+<span class="nc" id="L733">		}</span>
+<span class="nc" id="L734">		return defined;</span>
+	}
+
+	public boolean passEventDefined() {
+<span class="nc" id="L738">		return passEventDefined(getAcutalSequenceNr());</span>
+	}
+
+	public boolean passEventDefinedAfter(int seq) {
+<span class="nc" id="L742">		boolean defined = false;</span>
+<span class="nc bnc" id="L743" title="All 2 branches missed.">		for (MoveEvent event : events) {</span>
+<span class="nc bnc" id="L744" title="All 4 branches missed.">			if ((event instanceof PassEvent) &amp;&amp; (event.getSequenceNr() &gt; seq)) {</span>
+<span class="nc" id="L745">				defined = true;</span>
+<span class="nc" id="L746">				break;</span>
+			}
+<span class="nc" id="L748">		}</span>
+<span class="nc" id="L749">		return defined;</span>
+	}
+
+	public boolean eventDefinedAfter(int seq) {
+<span class="nc" id="L753">		boolean defined = false;</span>
+<span class="nc bnc" id="L754" title="All 2 branches missed.">		for (MoveEvent event : events) {</span>
+<span class="nc bnc" id="L755" title="All 2 branches missed.">			if (event.getSequenceNr() &gt; seq) {</span>
+<span class="nc" id="L756">				defined = true;</span>
+<span class="nc" id="L757">				break;</span>
+			}
+<span class="nc" id="L759">		}</span>
+<span class="nc" id="L760">		return defined;</span>
+	}
+
+	public Ball getBall() {
+<span class="nc" id="L764">		return ball;</span>
+	}
+
+	public void setFirstBallOwner(Offender offender) {
+<span class="nc" id="L768">		this.firstBallOwner = offender;</span>
+<span class="nc" id="L769">		setBallOwner(offender);</span>
+
+<span class="nc bnc" id="L771" title="All 2 branches missed.">		if (firstBallOwner == null) {</span>
+<span class="nc" id="L772">			resetBallPosition();</span>
+		}
+<span class="nc" id="L774">	}</span>
+
+	public Offender getFirstBallOwner() {
+<span class="nc" id="L777">		return firstBallOwner;</span>
+	}
+
+	public boolean hasPlayerBallInNextSequence(Player player) {
+<span class="nc" id="L781">		PassEvent pass = null;</span>
+<span class="nc" id="L782">		int seq = getAcutalSequenceNr();</span>
+<span class="nc bnc" id="L783" title="All 2 branches missed.">		for (MoveEvent event : events) {</span>
+<span class="nc bnc" id="L784" title="All 4 branches missed.">			if (event.getSequenceNr() == seq &amp;&amp; event instanceof PassEvent) {</span>
+<span class="nc" id="L785">				pass = (PassEvent) event;</span>
+<span class="nc" id="L786">				break;</span>
+			}
+<span class="nc bnc" id="L788" title="All 2 branches missed.">			if (event.getSequenceNr() &gt; seq) {</span>
+<span class="nc" id="L789">				break;</span>
+			}
+<span class="nc" id="L791">		}</span>
+<span class="nc bnc" id="L792" title="All 4 branches missed.">		if (pass != null &amp;&amp; pass.getDestinationPlayer() != null) {</span>
+<span class="nc bnc" id="L793" title="All 2 branches missed.">			return pass.getDestinationPlayer().equals(player)</span>
+<span class="nc bnc" id="L794" title="All 2 branches missed.">					&amp;&amp; !passEventDefined(seq + 1);</span>
+		} else {
+<span class="nc" id="L796">			return false;</span>
+		}
+	}
+
+	public boolean isBallSet() {
+<span class="nc bnc" id="L801" title="All 2 branches missed.">		return ballOwner != null;</span>
+	}
+
+	public boolean isGoalPassSet() {
+<span class="nc" id="L805">		boolean defined = false;</span>
+<span class="nc bnc" id="L806" title="All 2 branches missed.">		for (MoveEvent event : getEvents()) {</span>
+<span class="nc bnc" id="L807" title="All 2 branches missed.">			if (event instanceof PassEvent) {</span>
+<span class="nc" id="L808">				PassEvent pass = (PassEvent) event;</span>
+<span class="nc bnc" id="L809" title="All 2 branches missed.">				if (pass.isGoalPass()) {</span>
+<span class="nc" id="L810">					defined = true;</span>
+<span class="nc" id="L811">					break;</span>
+				}
+			}
+<span class="nc" id="L814">		}</span>
+<span class="nc" id="L815">		return defined;</span>
+	}
+
+	public void moveBallTo(int x, int y) {
+<span class="nc" id="L819">		ball.setCurrent_x(x);</span>
+<span class="nc" id="L820">		ball.setCurrent_y(y);</span>
+<span class="nc" id="L821">	}</span>
+
+	public List&lt;MoveEvent&gt; getActualMoveEvents() {
+<span class="nc" id="L824">		return getMoveEvents(getAcutalSequenceNr());</span>
+	}
+
+	public List&lt;MoveEvent&gt; getMoveEvents(int sequenceNr) {
+<span class="nc" id="L828">		List&lt;MoveEvent&gt; sequenceEvents = new ArrayList&lt;MoveEvent&gt;();</span>
+<span class="nc bnc" id="L829" title="All 2 branches missed.">		for (MoveEvent event : events) {</span>
+<span class="nc bnc" id="L830" title="All 2 branches missed.">			if (event.getSequenceNr() == sequenceNr) {</span>
+<span class="nc" id="L831">				sequenceEvents.add(event);</span>
+<span class="nc bnc" id="L832" title="All 2 branches missed.">			} else if (event.getSequenceNr() &gt; getAcutalSequenceNr()) {</span>
+<span class="nc" id="L833">				break;</span>
+			}
+<span class="nc" id="L835">		}</span>
+
+<span class="nc" id="L837">		return sequenceEvents;</span>
+	}
+
+	/**
+	 * Löscht das Aktuelle Ereignis und ALLE Folgenden
+	 */
+	public void removeEventsAfter() {
+<span class="nc" id="L844">		MoveEvent event = getActualMoveEvent();</span>
+<span class="nc" id="L845">		List&lt;MoveEvent&gt; toDeleteEvents = new ArrayList&lt;MoveEvent&gt;();</span>
+
+<span class="nc" id="L847">		int sequenceNr = event.getSequenceNr();</span>
+		// zu loeschende Events sammeln
+<span class="nc bnc" id="L849" title="All 2 branches missed.">		for (MoveEvent evt : getEvents()) {</span>
+<span class="nc bnc" id="L850" title="All 2 branches missed.">			if (evt.getSequenceNr() &gt; sequenceNr) {</span>
+				// Event ist hoeher, also loeschen
+<span class="nc" id="L852">				toDeleteEvents.add(evt);</span>
+			}
+<span class="nc" id="L854">		}</span>
+
+<span class="nc" id="L856">		toDeleteEvents.add(event);</span>
+		// gesammelte Events loeschen
+<span class="nc bnc" id="L858" title="All 2 branches missed.">		for (MoveEvent deleteEvent : toDeleteEvents) {</span>
+<span class="nc" id="L859">			removeMoveEvent(deleteEvent);</span>
+<span class="nc" id="L860">		}</span>
+
+<span class="nc bnc" id="L862" title="All 2 branches missed.">		setActualMoveEvent((getEvents().size() &gt; 0) ? getEvents().get(</span>
+<span class="nc" id="L863">				getEvents().size() - 1) : null);</span>
+<span class="nc" id="L864">		fireModelChanged();</span>
+<span class="nc" id="L865">	}</span>
+
+	/**
+	 * Löscht die Ereignisse (auch P�sse) des �bergebenen Spielers. Und die
+	 * evtl. davon abh�ngigen Folgep�sse
+	 * 
+	 * @param player
+	 */
+	private void removeEventsOfPlayer(Player player) {
+<span class="nc" id="L874">		List&lt;MoveEvent&gt; toDeleteEvents = new ArrayList&lt;MoveEvent&gt;();</span>
+<span class="nc" id="L875">		boolean playerInvolved = false;</span>
+
+		// zu loeschende Events sammeln
+<span class="nc bnc" id="L878" title="All 2 branches missed.">		for (MoveEvent evt : getEvents()) {</span>
+
+			// Pass?
+<span class="nc bnc" id="L881" title="All 2 branches missed.">			if (evt instanceof PassEvent) {</span>
+
+<span class="nc" id="L883">				PassEvent pass = (PassEvent) evt;</span>
+				// War ein Pass zu dem Spieler? oder Spieler passt selbst?
+<span class="nc bnc" id="L885" title="All 2 branches missed.">				if (pass.getDestinationPlayer().equals(player)</span>
+<span class="nc bnc" id="L886" title="All 2 branches missed.">						|| pass.getPlayer().equals(player)) {</span>
+<span class="nc" id="L887">					playerInvolved = true;</span>
+				}
+
+				// War Spieler an einem Pass beteiligt?
+<span class="nc bnc" id="L891" title="All 2 branches missed.">				if (playerInvolved) {</span>
+<span class="nc" id="L892">					toDeleteEvents.add(pass);</span>
+<span class="nc" id="L893">					continue;</span>
+				}
+			}
+<span class="nc bnc" id="L896" title="All 2 branches missed.">			if (evt.getPlayer().equals(player)) {</span>
+<span class="nc" id="L897">				toDeleteEvents.add(evt);</span>
+			}
+
+<span class="nc" id="L900">		}</span>
+		// gesammelte Events loeschen
+<span class="nc bnc" id="L902" title="All 2 branches missed.">		for (MoveEvent deleteEvent : toDeleteEvents) {</span>
+<span class="nc" id="L903">			removeMoveEvent(deleteEvent);</span>
+<span class="nc" id="L904">		}</span>
+
+<span class="nc bnc" id="L906" title="All 2 branches missed.">		setActualMoveEvent((getEvents().size() &gt; 0) ? getEvents().get(</span>
+<span class="nc" id="L907">				getEvents().size() - 1) : null);</span>
+
+<span class="nc" id="L909">	}</span>
+
+	public boolean eventDefinedWithPlayer(Player player) {
+<span class="nc" id="L912">		boolean defined = false;</span>
+<span class="nc bnc" id="L913" title="All 2 branches missed.">		for (MoveEvent event : events) {</span>
+
+<span class="nc bnc" id="L915" title="All 2 branches missed.">			if (event.getPlayer().equals(player)) {</span>
+<span class="nc" id="L916">				defined = true;</span>
+<span class="nc" id="L917">				break;</span>
+			}
+<span class="nc bnc" id="L919" title="All 2 branches missed.">			if (event instanceof PassEvent) {</span>
+<span class="nc" id="L920">				PassEvent pass = (PassEvent) event;</span>
+<span class="nc bnc" id="L921" title="All 2 branches missed.">				if (pass.getDestinationPlayer().equals(player)) {</span>
+<span class="nc" id="L922">					defined = true;</span>
+<span class="nc" id="L923">					break;</span>
+				}
+			}
+<span class="nc" id="L926">		}</span>
+<span class="nc" id="L927">		return defined;</span>
+	}
+
+	public int getHighestSequenceNumber() {
+<span class="nc bnc" id="L931" title="All 2 branches missed.">		if (events.size() == 0) {</span>
+<span class="nc" id="L932">			return 0;</span>
+		} else {
+<span class="nc" id="L934">			return events.last().getSequenceNr();</span>
+		}
+	}
+
+	public String getMoveName() {
+<span class="fc" id="L939">		return moveName;</span>
+	}
+
+	public void setMoveName(String moveName) {
+<span class="fc" id="L943">		this.moveName = moveName;</span>
+<span class="pc bpc" id="L944" title="1 of 2 branches missed.">		if (Main.getWindow() != null) {</span>
+<span class="nc" id="L945">			StringBuffer buffer = new StringBuffer(APP_NAME);</span>
+<span class="nc" id="L946">			buffer.append(&quot; - &quot;);</span>
+<span class="nc bnc" id="L947" title="All 4 branches missed.">			if (moveName == null || moveName.equals(&quot;&quot;)) {</span>
+<span class="nc" id="L948">				buffer.append(&quot;Unbenannt&quot;);</span>
+			// Titelleiste aktualisieren
+			} else {
+<span class="nc" id="L951">				buffer.append(moveName);</span>
+			}
+<span class="nc bnc" id="L953" title="All 2 branches missed.">			if (!isSaved()) {</span>
+<span class="nc" id="L954">				buffer.append(&quot;*&quot;);  </span>
+			}
+<span class="nc" id="L956">			Main.getWindow().setTitle(buffer.toString());</span>
+		}
+<span class="fc" id="L958">	}</span>
+
+	public String getComment() {
+<span class="nc bnc" id="L961" title="All 2 branches missed.">		if (comment == null) {</span>
+<span class="nc" id="L962">			comment = &quot;&quot;;</span>
+		}
+<span class="nc" id="L964">		return comment;</span>
+	}
+
+	public void setComment(String comment) {
+<span class="nc" id="L968">		this.comment = comment;</span>
+<span class="nc" id="L969">		fireModelChanged();</span>
+<span class="nc" id="L970">	}</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

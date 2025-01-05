@@ -1,0 +1,814 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Multiplexer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.net.multiplexer</a> &gt; <span class="el_source">Multiplexer.java</span></div><h1>Multiplexer.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2003-2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: Multiplexer.java,v 1.9 2006/12/16 12:37:17 tanderson Exp $
+ */
+package org.exolab.jms.net.multiplexer;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.exolab.jms.common.security.BasicPrincipal;
+import org.exolab.jms.net.connector.Authenticator;
+import org.exolab.jms.net.connector.ResourceException;
+import org.exolab.jms.net.connector.SecurityException;
+
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.net.ProtocolException;
+import java.security.Principal;
+import java.util.HashMap;
+import java.util.LinkedList;
+
+
+/**
+ * This class multiplexes data over a physical connection.
+ *
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.9 $ $Date: 2006/12/16 12:37:17 $
+ */
+public class Multiplexer implements Constants, Runnable {
+
+    /**
+     * The listener to notify.
+     */
+    private MultiplexerListener _listener;
+
+    /**
+     * If &lt;code&gt;true&lt;/code&gt;, indicates that the multiplexer has been closed.
+     */
+    private volatile boolean _closed;
+
+    /**
+     * The endpoint.
+     */
+    private Endpoint _endpoint;
+
+    /**
+     * The endpoint's output stream.
+     */
+    private DataOutputStream _out;
+
+    /**
+     * The endpoint's input stream.
+     */
+    private DataInputStream _in;
+
+    /**
+     * The set of channels managed by this, keyed on channel identifier.
+     */
+<span class="nc" id="L99">    private final HashMap _channels = new HashMap();</span>
+
+    /**
+     * The set of free channels, keyed on channel identifier.
+     */
+<span class="nc" id="L104">    private final LinkedList _free = new LinkedList();</span>
+
+    /**
+     * If &lt;code&gt;true&lt;/code&gt;, indicates that the physical connection was opened
+     * (client), rather than accepted (server). This is used in channel
+     * identifier generation
+     */
+<span class="nc" id="L111">    private boolean _client = false;</span>
+
+    /**
+     * The channel identifier seed.
+     */
+<span class="nc" id="L116">    private int _seed = 0;</span>
+
+    /**
+     * The principal that owns the connection, or &lt;code&gt;null&lt;/code&gt;,
+     * if this is an unauthenticated connection.
+     */
+    private Principal _principal;
+
+    /**
+     * The sending and receiving buffer size, in bytes.
+     */
+    private static final int BUFFER_SIZE = 2048;
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L132">    private static final Log _log = LogFactory.getLog(Multiplexer.class);</span>
+
+    /**
+     * Construct a new client-side &lt;code&gt;Multiplexer&lt;/code&gt;.
+     *
+     * @param listener  the multiplexer listener
+     * @param endpoint  the endpoint to multiplex messages over
+     * @param principal the security principal
+     * @throws IOException       if an I/O error occurs
+     * @throws SecurityException if connection is refused by the server
+     */
+    public Multiplexer(MultiplexerListener listener, Endpoint endpoint,
+                       Principal principal)
+<span class="nc" id="L145">            throws IOException, SecurityException {</span>
+<span class="nc" id="L146">        initialise(listener, endpoint, true);</span>
+<span class="nc" id="L147">        authenticate(principal);</span>
+<span class="nc" id="L148">    }</span>
+
+    /**
+     * Construct a new server-side &lt;code&gt;Multiplexer&lt;/code&gt;.
+     *
+     * @param listener      the multiplexer listener
+     * @param endpoint      the endpoint to multiplex messages over
+     * @param authenticator the connection authenticator
+     * @throws IOException       if an I/O error occurs
+     * @throws ResourceException if the authenticator cannot authenticate
+     */
+    public Multiplexer(MultiplexerListener listener, Endpoint endpoint,
+                       Authenticator authenticator)
+<span class="nc" id="L161">            throws IOException, ResourceException {</span>
+<span class="nc" id="L162">        initialise(listener, endpoint, false);</span>
+<span class="nc" id="L163">        authenticate(authenticator);</span>
+<span class="nc" id="L164">    }</span>
+
+    /**
+     * Construct a new &lt;code&gt;Multiplexer&lt;/code&gt;.
+     * &lt;p/&gt;
+     * This constructor is provided for subclasses that must perform setup
+     * work prior to invoking {@link #initialise}
+     */
+<span class="nc" id="L172">    protected Multiplexer() {</span>
+<span class="nc" id="L173">    }</span>
+
+    /**
+     * Start multiplexing.
+     */
+    public void run() {
+<span class="nc bnc" id="L179" title="All 2 branches missed.">        while (!_closed) {</span>
+<span class="nc" id="L180">            multiplex();</span>
+        }
+<span class="nc" id="L182">    }</span>
+
+    /**
+     * Returns a free channel from the pool, opening a new one if none are
+     * available.
+     *
+     * @return a free channel
+     * @throws IOException if an I/O error occurs
+     */
+    public Channel getChannel() throws IOException {
+<span class="nc" id="L192">        Channel channel = null;</span>
+
+<span class="nc" id="L194">        synchronized (_free) {</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">            if (!_free.isEmpty()) {</span>
+<span class="nc" id="L196">                channel = (Channel) _free.removeFirst();</span>
+            }
+<span class="nc" id="L198">        }</span>
+
+<span class="nc bnc" id="L200" title="All 2 branches missed.">        if (channel == null) {</span>
+<span class="nc" id="L201">            channel = open();</span>
+        }
+
+<span class="nc" id="L204">        return channel;</span>
+    }
+
+    /**
+     * Releases a channel back to the pool.
+     *
+     * @param channel the channel to release
+     */
+    public void release(Channel channel) {
+<span class="nc" id="L213">        synchronized (_free) {</span>
+<span class="nc" id="L214">            _free.add(channel);</span>
+<span class="nc" id="L215">        }</span>
+<span class="nc" id="L216">    }</span>
+
+    /**
+     * Close a channel.
+     *
+     * @param channel the channel to close
+     * @throws IOException if an I/O error occurs
+     */
+    public void close(Channel channel) throws IOException {
+<span class="nc" id="L225">        int channelId = channel.getId();</span>
+<span class="nc" id="L226">        synchronized (_channels) {</span>
+<span class="nc" id="L227">            _channels.remove(new Integer(channelId));</span>
+<span class="nc" id="L228">        }</span>
+
+<span class="nc" id="L230">        send(CLOSE, channelId);</span>
+<span class="nc" id="L231">    }</span>
+
+    /**
+     * Send a message.
+     *
+     * @param type the packet type
+     * @throws IOException if an I/O error occurs
+     */
+    public void send(byte type) throws IOException {
+<span class="nc" id="L240">        synchronized (_out) {</span>
+<span class="nc" id="L241">            _out.writeByte(type);</span>
+<span class="nc" id="L242">            _out.flush();</span>
+<span class="nc bnc" id="L243" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L244">                _log.debug(&quot;send(type=0x&quot; + Integer.toHexString(type) + &quot;)&quot;);</span>
+            }
+<span class="nc" id="L246">        }</span>
+<span class="nc" id="L247">    }</span>
+
+    /**
+     * Send a message.
+     *
+     * @param type      the packet type
+     * @param channelId the identifier of the channel sending the message
+     * @throws IOException if an I/O error occurs
+     */
+    public void send(byte type, int channelId) throws IOException {
+<span class="nc" id="L257">        synchronized (_out) {</span>
+<span class="nc" id="L258">            _out.writeByte(type);</span>
+<span class="nc" id="L259">            _out.writeShort(channelId);</span>
+<span class="nc" id="L260">            _out.flush();</span>
+<span class="nc bnc" id="L261" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L262">                _log.debug(&quot;send(type=0x&quot; + Integer.toHexString(type)</span>
+                        + &quot;, channel=&quot; + channelId + &quot;)&quot;);
+            }
+<span class="nc" id="L265">        }</span>
+<span class="nc" id="L266">    }</span>
+
+    /**
+     * Send a message.
+     *
+     * @param type      the packet type
+     * @param channelId the identifier of the channel sending the message
+     * @param data      the data to send
+     * @throws IOException if an I/O error occurs
+     */
+    public void send(byte type, int channelId, int data) throws IOException {
+<span class="nc" id="L277">        synchronized (_out) {</span>
+<span class="nc" id="L278">            _out.writeByte(type);</span>
+<span class="nc" id="L279">            _out.writeShort(channelId);</span>
+<span class="nc" id="L280">            _out.writeInt(data);</span>
+<span class="nc" id="L281">            _out.flush();</span>
+<span class="nc bnc" id="L282" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L283">                _log.debug(&quot;send(type=&quot; + type + &quot;, channel=&quot; + channelId</span>
+<span class="nc" id="L284">                        + &quot;, data=&quot; + Integer.toHexString(data) + &quot;)&quot;);</span>
+            }
+<span class="nc" id="L286">        }</span>
+<span class="nc" id="L287">    }</span>
+
+    /**
+     * Send a message.
+     *
+     * @param type      the packet type
+     * @param channelId the identifier of the channel sending the message
+     * @param data      the data to send
+     * @param offset    the offset into the data
+     * @param length    the length of data
+     * @throws IOException if an I/O error occurs
+     */
+    public void send(byte type, int channelId, byte[] data, int offset,
+                     int length) throws IOException {
+<span class="nc" id="L301">        synchronized (_out) {</span>
+<span class="nc" id="L302">            _out.writeByte(type);</span>
+<span class="nc" id="L303">            _out.writeShort(channelId);</span>
+<span class="nc" id="L304">            _out.writeInt(length);</span>
+<span class="nc" id="L305">            _out.write(data, offset, length);</span>
+<span class="nc" id="L306">            _out.flush();</span>
+<span class="nc" id="L307">        }</span>
+<span class="nc" id="L308">    }</span>
+
+    /**
+     * Ping the connection.
+     *
+     * @param token the token to be returned in the reply
+     * @throws IOException if an I/O error occurs
+     */
+    public void ping(int token) throws IOException {
+<span class="nc" id="L317">        synchronized (_out) {</span>
+<span class="nc" id="L318">            _out.writeByte(PING_REQUEST);</span>
+<span class="nc" id="L319">            _out.writeInt(token);</span>
+<span class="nc" id="L320">            _out.flush();</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L322">                _log.debug(&quot;ping(token=&quot; + token + &quot;)&quot;);</span>
+            }
+<span class="nc" id="L324">        }</span>
+<span class="nc" id="L325">    }</span>
+
+    /**
+     * Close the multiplexer, releasing any resources. This closes the socket
+     * and waits for the thread to terminate.
+     */
+    public void close() {
+<span class="nc bnc" id="L332" title="All 2 branches missed.">        if (!_closed) {</span>
+<span class="nc" id="L333">            _closed = true;</span>
+            try {
+<span class="nc" id="L335">                send(SHUTDOWN);</span>
+<span class="nc" id="L336">            } catch (IOException exception) {</span>
+<span class="nc" id="L337">                _log.debug(exception);</span>
+<span class="nc" id="L338">            }</span>
+            try {
+<span class="nc" id="L340">                _endpoint.close();</span>
+<span class="nc" id="L341">            } catch (IOException exception) {</span>
+<span class="nc" id="L342">                _log.debug(exception);</span>
+<span class="nc" id="L343">            }</span>
+            // _pool.shutdownAfterProcessingCurrentlyQueuedTasks();
+            // @todo - as the pool is shared, need to block for
+            // tasks queued by this
+        }
+<span class="nc" id="L348">    }</span>
+
+    /**
+     * Determines if the multiplexer is closed.
+     *
+     * @return &lt;code&gt;true&lt;/code&gt; if the multiplexer is closed
+     */
+    public boolean isClosed() {
+<span class="nc" id="L356">        return _closed;</span>
+    }
+
+    /**
+     * Determines if this is a client-side instance.
+     *
+     * @return &lt;code&gt;true&lt;/code&gt; if this is a client-side instance,
+     *         &lt;code&gt;false&lt;/code&gt; if it is a server=side instance
+     */
+    public boolean isClient() {
+<span class="nc" id="L366">        return _client;</span>
+    }
+
+    /**
+     * Returns the principal that owns the connection.
+     *
+     * @return the principal that owns the connection, or &lt;code&gt;null&lt;code&gt;
+     *         if this is an unauthenticated connection
+     */
+    public Principal getPrincipal() {
+<span class="nc" id="L376">        return _principal;</span>
+    }
+
+    /**
+     * Initialise the multiplexer.
+     *
+     * @param listener the multiplexer listener
+     * @param endpoint the endpoint to multiplex messages over
+     * @param client   determines if this is a client-side or server-side
+     *                 instance
+     * @throws IOException if an I/O error occurs
+     */
+    protected void initialise(MultiplexerListener listener, Endpoint endpoint,
+                              boolean client)
+            throws IOException {
+
+
+<span class="nc bnc" id="L393" title="All 2 branches missed.">        if (listener == null) {</span>
+<span class="nc" id="L394">            throw new IllegalArgumentException(&quot;Argument 'listener' is null&quot;);</span>
+        }
+<span class="nc bnc" id="L396" title="All 2 branches missed.">        if (endpoint == null) {</span>
+<span class="nc" id="L397">            throw new IllegalArgumentException(&quot;Argument 'endpoint' is null&quot;);</span>
+        }
+<span class="nc bnc" id="L399" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L400">            _log.debug(&quot;Multiplexer(uri=&quot; + endpoint.getURI()</span>
+                    + &quot;, client=&quot; + client);
+        }
+<span class="nc" id="L403">        _listener = listener;</span>
+<span class="nc" id="L404">        _endpoint = endpoint;</span>
+<span class="nc" id="L405">        _out = new DataOutputStream(endpoint.getOutputStream());</span>
+<span class="nc" id="L406">        _in = new DataInputStream(endpoint.getInputStream());</span>
+<span class="nc" id="L407">        _client = client;</span>
+<span class="nc" id="L408">        handshake(_out, _in);</span>
+<span class="nc" id="L409">    }</span>
+
+    /**
+     * Perform handshaking on initial connection, to verify protocol. Subclasses
+     * may extend this behaviour.
+     *
+     * @param out the endpoint's output stream
+     * @param in  the endpoint's input stream
+     * @throws IOException for any I/O error
+     */
+    protected void handshake(DataOutputStream out, DataInputStream in)
+            throws IOException {
+<span class="nc" id="L421">        out.writeInt(MAGIC);</span>
+<span class="nc" id="L422">        out.writeInt(VERSION);</span>
+<span class="nc" id="L423">        out.flush();</span>
+
+<span class="nc" id="L425">        int magic = in.readInt();</span>
+<span class="nc bnc" id="L426" title="All 2 branches missed.">        if (magic != MAGIC) {</span>
+<span class="nc" id="L427">            throw new ProtocolException(&quot;Expected protocol magic=&quot; + MAGIC</span>
+                    + &quot;, but received=&quot; + magic);
+        }
+<span class="nc" id="L430">        int version = in.readInt();</span>
+<span class="nc bnc" id="L431" title="All 2 branches missed.">        if (version != VERSION) {</span>
+<span class="nc" id="L432">            throw new ProtocolException(&quot;Expected protocol version=&quot; + VERSION</span>
+                    + &quot;, but received=&quot; + version);
+        }
+<span class="nc" id="L435">    }</span>
+
+    /**
+     * Perform authentication on initial connection.
+     *
+     * @param principal the security principal. May be &lt;code&gt;null&lt;/code&gt;
+     * @throws IOException       for any I/O error
+     * @throws java.lang.SecurityException if connection is refused by the server
+     */
+    protected void authenticate(Principal principal)
+            throws IOException, SecurityException {
+        try {
+<span class="nc bnc" id="L447" title="All 4 branches missed.">            if (principal != null &amp;&amp; !(principal instanceof BasicPrincipal)) {</span>
+<span class="nc" id="L448">                throw new IOException(</span>
+                        &quot;Cannot authenticate with principal of type &quot;
+<span class="nc" id="L450">                                + principal.getClass().getName());</span>
+            }
+<span class="nc bnc" id="L452" title="All 2 branches missed.">            if (principal != null) {</span>
+<span class="nc" id="L453">                BasicPrincipal basic = (BasicPrincipal) principal;</span>
+<span class="nc" id="L454">                _out.writeByte(AUTH_BASIC);</span>
+<span class="nc" id="L455">                _out.writeUTF(basic.getName());</span>
+<span class="nc" id="L456">                _out.writeUTF(basic.getPassword());</span>
+<span class="nc" id="L457">            } else {</span>
+<span class="nc" id="L458">                _out.writeByte(AUTH_NONE);</span>
+            }
+<span class="nc" id="L460">            _out.flush();</span>
+<span class="nc bnc" id="L461" title="All 2 branches missed.">            if (_in.readByte() != AUTH_OK) {</span>
+<span class="nc" id="L462">                throw new SecurityException(&quot;Connection refused&quot;);</span>
+            }
+<span class="nc" id="L464">        } catch (IOException exception) {</span>
+            // terminate the connection
+<span class="nc" id="L466">            _endpoint.close();</span>
+<span class="nc" id="L467">            throw exception;</span>
+<span class="nc" id="L468">        }</span>
+<span class="nc" id="L469">        _principal = principal;</span>
+<span class="nc" id="L470">    }</span>
+
+    /**
+     * Performs authentication on initial connection.
+     *
+     * @param authenticator the authenticator
+     * @throws IOException       for any I/O error
+     * @throws ResourceException if the authenticator cannot authenticate
+     */
+    protected void authenticate(Authenticator authenticator)
+            throws IOException, ResourceException {
+
+        try {
+<span class="nc" id="L483">            Principal principal = null;</span>
+<span class="nc" id="L484">            byte type = _in.readByte();</span>
+
+<span class="nc bnc" id="L486" title="All 3 branches missed.">            switch (type) {</span>
+                case AUTH_BASIC:
+<span class="nc" id="L488">                    String name = _in.readUTF();</span>
+<span class="nc" id="L489">                    String password = _in.readUTF();</span>
+<span class="nc" id="L490">                    principal = new BasicPrincipal(name, password);</span>
+<span class="nc" id="L491">                    break;</span>
+                case AUTH_NONE:
+<span class="nc" id="L493">                    break;</span>
+                default:
+<span class="nc" id="L495">                    throw new IOException(&quot;Invalid packet type: &quot; + type);</span>
+            }
+<span class="nc bnc" id="L497" title="All 2 branches missed.">            if (authenticator.authenticate(principal)) {</span>
+<span class="nc" id="L498">                _out.writeByte(AUTH_OK);</span>
+<span class="nc" id="L499">                _out.flush();</span>
+            } else {
+<span class="nc" id="L501">                _out.writeByte(AUTH_DENIED);</span>
+<span class="nc" id="L502">                _out.flush();</span>
+<span class="nc" id="L503">                throw new SecurityException(&quot;User &quot; + principal</span>
+                        + &quot; unauthorised&quot;);
+            }
+<span class="nc" id="L506">            _principal = principal;</span>
+<span class="nc" id="L507">        } catch (IOException exception) {</span>
+            // terminate the connection
+<span class="nc" id="L509">            _endpoint.close();</span>
+<span class="nc" id="L510">            throw exception;</span>
+<span class="nc" id="L511">        } catch (ResourceException exception) {</span>
+            // terminate the connection
+<span class="nc" id="L513">            _endpoint.close();</span>
+<span class="nc" id="L514">            throw exception;</span>
+<span class="nc" id="L515">        }</span>
+<span class="nc" id="L516">    }</span>
+
+    /**
+     * Opens a new channel.
+     *
+     * @return a new channel
+     * @throws IOException if a channel can't be opened
+     */
+    protected Channel open() throws IOException {
+        Channel channel;
+        int channelId;
+<span class="nc" id="L527">        synchronized (_channels) {</span>
+<span class="nc" id="L528">            channelId = getNextChannelId();</span>
+<span class="nc" id="L529">            channel = addChannel(channelId);</span>
+<span class="nc" id="L530">        }</span>
+
+<span class="nc" id="L532">        send(OPEN, channelId);</span>
+<span class="nc" id="L533">        return channel;</span>
+    }
+
+    /**
+     * Read a packet from the endpoint.
+     */
+    private void multiplex() {
+        try {
+<span class="nc" id="L541">            byte type = _in.readByte();</span>
+<span class="nc bnc" id="L542" title="All 10 branches missed.">            switch (type) {</span>
+                case OPEN:
+<span class="nc" id="L544">                    handleOpen();</span>
+<span class="nc" id="L545">                    break;</span>
+                case CLOSE:
+<span class="nc" id="L547">                    handleClose();</span>
+<span class="nc" id="L548">                    break;</span>
+                case REQUEST:
+<span class="nc" id="L550">                    handleRequest();</span>
+<span class="nc" id="L551">                    break;</span>
+                case RESPONSE:
+<span class="nc" id="L553">                    handleResponse();</span>
+<span class="nc" id="L554">                    break;</span>
+                case DATA:
+<span class="nc" id="L556">                    handleData();</span>
+<span class="nc" id="L557">                    break;</span>
+                case PING_REQUEST:
+<span class="nc" id="L559">                    handlePingRequest();</span>
+<span class="nc" id="L560">                    break;</span>
+                case PING_RESPONSE:
+<span class="nc" id="L562">                    handlePingResponse();</span>
+<span class="nc" id="L563">                    break;</span>
+                case FLOW_READ:
+<span class="nc" id="L565">                    handleFlowRead();</span>
+<span class="nc" id="L566">                    break;</span>
+                case SHUTDOWN:
+<span class="nc" id="L568">                    handleShutdown();</span>
+<span class="nc" id="L569">                    break;</span>
+                default:
+<span class="nc" id="L571">                    throw new IOException(&quot;Unrecognised message type: &quot;</span>
+                            + type);
+            }
+<span class="nc" id="L574">        } catch (Exception exception) {</span>
+<span class="nc" id="L575">            boolean closed = _closed;</span>
+<span class="nc" id="L576">            shutdown();</span>
+<span class="nc bnc" id="L577" title="All 2 branches missed.">            if (!closed) {</span>
+<span class="nc" id="L578">                _log.debug(&quot;Multiplexer shutting down on error&quot;, exception);</span>
+                // error notify the listener
+<span class="nc" id="L580">                _listener.error(exception);</span>
+            }
+<span class="nc" id="L582">        }</span>
+<span class="nc" id="L583">    }</span>
+
+    /**
+     * Shuts down the multiplexer.
+     */
+    private void shutdown() {
+        // mark this as closed
+<span class="nc" id="L590">        _closed = true;</span>
+
+        // notify the channels
+        Channel[] channels;
+<span class="nc" id="L594">        synchronized (_channels) {</span>
+<span class="nc" id="L595">            channels = (Channel[]) _channels.values().toArray(new Channel[0]);</span>
+<span class="nc" id="L596">        }</span>
+<span class="nc bnc" id="L597" title="All 2 branches missed.">        for (int i = 0; i &lt; channels.length; ++i) {</span>
+<span class="nc" id="L598">            channels[i].disconnected();</span>
+        }
+        try {
+<span class="nc" id="L601">            _endpoint.close();</span>
+<span class="nc" id="L602">        } catch (IOException exception) {</span>
+<span class="nc" id="L603">            _log.debug(exception);</span>
+<span class="nc" id="L604">        }</span>
+<span class="nc" id="L605">    }</span>
+
+    /**
+     * Open a new channel.
+     *
+     * @throws IOException for any error
+     */
+    private void handleOpen() throws IOException {
+<span class="nc" id="L613">        int channelId = _in.readUnsignedShort();</span>
+<span class="nc" id="L614">        Integer key = new Integer(channelId);</span>
+
+<span class="nc" id="L616">        synchronized (_channels) {</span>
+<span class="nc bnc" id="L617" title="All 2 branches missed.">            if (_channels.get(key) != null) {</span>
+<span class="nc" id="L618">                throw new IOException(</span>
+                        &quot;A channel already exists with identifier: &quot; + key);
+            }
+<span class="nc" id="L621">            addChannel(channelId);</span>
+<span class="nc" id="L622">        }</span>
+<span class="nc" id="L623">    }</span>
+
+    /**
+     * Close a channel.
+     *
+     * @throws IOException for any error
+     */
+    private void handleClose() throws IOException {
+<span class="nc" id="L631">        int channelId = _in.readUnsignedShort();</span>
+<span class="nc" id="L632">        Integer key = new Integer(channelId);</span>
+
+<span class="nc" id="L634">        synchronized (_channels) {</span>
+<span class="nc" id="L635">            Channel channel = (Channel) _channels.remove(key);</span>
+<span class="nc bnc" id="L636" title="All 2 branches missed.">            if (channel == null) {</span>
+<span class="nc" id="L637">                throw new IOException(</span>
+                        &quot;No channel exists with identifier: &quot; + key);
+            }
+<span class="nc" id="L640">            channel.close();</span>
+<span class="nc" id="L641">        }</span>
+<span class="nc" id="L642">    }</span>
+
+    /**
+     * Handle a &lt;code&gt;REQUEST&lt;/code&gt; packet.
+     *
+     * @throws IOException if an I/O error occurs, or no channel exists matching
+     *                     that read from the packet
+     */
+    private void handleRequest() throws IOException {
+<span class="nc" id="L651">        final Channel channel = handleData();</span>
+<span class="nc bnc" id="L652" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L653">            _log.debug(&quot;handleRequest() [channel=&quot; + channel.getId() + &quot;]&quot;);</span>
+        }
+        // todo - need to handle closed()
+<span class="nc" id="L656">        _listener.request(channel);</span>
+
+<span class="nc bnc" id="L658" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L659">            _log.debug(&quot;handleRequest() [channel=&quot; + channel.getId()</span>
+                    + &quot;] - end&quot;);
+        }
+<span class="nc" id="L662">    }</span>
+
+    /**
+     * Handle a &lt;code&gt;RESPONSE&lt;/code&gt; packet.
+     *
+     * @throws IOException if an I/O error occurs, or no channel exists matching
+     *                     that read from the packet
+     */
+    private void handleResponse() throws IOException {
+<span class="nc" id="L671">        handleData();</span>
+<span class="nc" id="L672">    }</span>
+
+    /**
+     * Handle a &lt;code&gt;PING_REQUEST&lt;/code&gt; packet.
+     *
+     * @throws IOException if an I/O error occurs
+     */
+    private void handlePingRequest() throws IOException {
+<span class="nc" id="L680">        int token = _in.readInt();</span>
+<span class="nc" id="L681">        synchronized (_out) {</span>
+<span class="nc" id="L682">            _out.writeByte(PING_RESPONSE);</span>
+<span class="nc" id="L683">            _out.writeInt(token);</span>
+<span class="nc" id="L684">            _out.flush();</span>
+<span class="nc bnc" id="L685" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L686">                _log.debug(&quot;pinged(token=&quot; + token + &quot;)&quot;);</span>
+            }
+<span class="nc" id="L688">        }</span>
+<span class="nc" id="L689">    }</span>
+
+    /**
+     * Handle a &lt;code&gt;PING_RESPONSE&lt;/code&gt; packet.
+     *
+     * @throws IOException if an I/O error occurs
+     */
+    private void handlePingResponse() throws IOException {
+<span class="nc" id="L697">        int token = _in.readInt();</span>
+<span class="nc" id="L698">        _listener.pinged(token);</span>
+<span class="nc" id="L699">    }</span>
+
+    /**
+     * Handle a &lt;code&gt;DATA&lt;/code&gt; packet.
+     *
+     * @return the channel to handle the packet
+     * @throws IOException if an I/O error occurs, or no channel exists matching
+     *                     that read from the packet
+     */
+    private Channel handleData() throws IOException {
+<span class="nc" id="L709">        Channel channel = readChannel();</span>
+<span class="nc" id="L710">        int length = _in.readInt();</span>
+<span class="nc" id="L711">        channel.getMultiplexInputStream().receive(_in, length);</span>
+<span class="nc" id="L712">        return channel;</span>
+    }
+
+    /**
+     * Handle a &lt;code&gt;FLOW_READ&lt;/code&gt; packet.
+     *
+     * @throws IOException if an I/O error occurs
+     */
+    private void handleFlowRead() throws IOException {
+<span class="nc" id="L721">        Channel channel = readChannel();</span>
+<span class="nc" id="L722">        int read = _in.readInt();</span>
+<span class="nc" id="L723">        channel.getMultiplexOutputStream().notifyRead(read);</span>
+<span class="nc" id="L724">    }</span>
+
+    /**
+     * Handle a &lt;code&gt;SHUTDOWN&lt;/code&gt; packet.
+     */
+    private void handleShutdown() {
+<span class="nc" id="L730">        shutdown();</span>
+<span class="nc" id="L731">        _listener.closed();</span>
+<span class="nc" id="L732">    }</span>
+
+    /**
+     * Adds a new channel.
+     * &lt;p/&gt;
+     * NOTE: Must be invoked with &lt;code&gt;_channels&lt;/code&gt; synchronized
+     *
+     * @param channelId the channel identifier
+     * @return the new channel
+     */
+    private Channel addChannel(int channelId) {
+<span class="nc" id="L743">        int size = BUFFER_SIZE;</span>
+<span class="nc" id="L744">        MultiplexOutputStream out =</span>
+                new MultiplexOutputStream(channelId, this, size, size);
+<span class="nc" id="L746">        MultiplexInputStream in =</span>
+                new MultiplexInputStream(channelId, this, size);
+<span class="nc" id="L748">        Channel channel = new Channel(channelId, this, in, out);</span>
+<span class="nc" id="L749">        _channels.put(new Integer(channelId), channel);</span>
+<span class="nc" id="L750">        return channel;</span>
+    }
+
+    /**
+     * Reads the channel identifier from the stream and returns the
+     * corresponding channel.
+     *
+     * @return the channel corresponding to the read channel identifier
+     * @throws IOException for any I/O error, or if there is no corresponding
+     *                     channel
+     */
+    private Channel readChannel() throws IOException {
+<span class="nc" id="L762">        int channelId = _in.readUnsignedShort();</span>
+<span class="nc" id="L763">        return getChannel(channelId);</span>
+    }
+
+    /**
+     * Returns a channel given its identifier.
+     *
+     * @param channelId the channel identifier
+     * @return the channel corresponding to &lt;code&gt;channelId&lt;/code&gt;
+     * @throws IOException if there is no corresponding channel
+     */
+    private Channel getChannel(int channelId) throws IOException {
+        Channel channel;
+<span class="nc" id="L775">        Integer key = new Integer(channelId);</span>
+<span class="nc" id="L776">        synchronized (_channels) {</span>
+<span class="nc" id="L777">            channel = (Channel) _channels.get(key);</span>
+<span class="nc bnc" id="L778" title="All 2 branches missed.">            if (channel == null) {</span>
+<span class="nc" id="L779">                throw new IOException(</span>
+                        &quot;No channel exists with identifier: &quot; + channelId);
+            }
+<span class="nc" id="L782">        }</span>
+<span class="nc" id="L783">        return channel;</span>
+    }
+
+    /**
+     * Returns the next available channel identifier. Channel identifiers
+     * generated on the client side are in the range 0x0..0x7FFF, on the server
+     * side, 0x8000-0xFFFF
+     * &lt;p/&gt;
+     * NOTE: Must be invoked with &lt;code&gt;_channels&lt;/code&gt; synchronized
+     *
+     * @return the next channel identifier
+     * @throws IOException if the connection is closed
+     */
+    private int getNextChannelId() throws IOException {
+<span class="nc" id="L797">        final int mask = 0x7fff;</span>
+<span class="nc" id="L798">        final int serverIdBase = 0x8000;</span>
+<span class="nc" id="L799">        int channelId = 0;</span>
+<span class="nc bnc" id="L800" title="All 2 branches missed.">        while (!_closed) {</span>
+<span class="nc" id="L801">            _seed = (_seed + 1) &amp; mask;</span>
+<span class="nc bnc" id="L802" title="All 2 branches missed.">            channelId = (_client) ? _seed : _seed + serverIdBase;</span>
+<span class="nc bnc" id="L803" title="All 2 branches missed.">            if (!_channels.containsKey(new Integer(channelId))) {</span>
+<span class="nc" id="L804">                break;</span>
+            }
+        }
+<span class="nc bnc" id="L807" title="All 2 branches missed.">        if (_closed) {</span>
+<span class="nc" id="L808">            throw new IOException(&quot;Connection has been closed&quot;);</span>
+        }
+<span class="nc" id="L810">        return channelId;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

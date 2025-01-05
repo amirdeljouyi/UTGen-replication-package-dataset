@@ -1,0 +1,760 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TemplateProcessor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">5_templateit</a> &gt; <a href="index.source.html" class="el_package">org.templateit</a> &gt; <span class="el_source">TemplateProcessor.java</span></div><h1>TemplateProcessor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright(C) 2008-2009 Dmitriy Kumshayev. &lt;dq@mail.com&gt;
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.templateit;
+
+import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.text.DateFormat;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Set;
+
+import org.apache.log4j.Logger;
+import org.apache.poi.hssf.usermodel.HSSFCell;
+import org.apache.poi.hssf.usermodel.HSSFConditionalFormatting;
+import org.apache.poi.hssf.usermodel.HSSFPrintSetup;
+import org.apache.poi.hssf.usermodel.HSSFRow;
+import org.apache.poi.hssf.usermodel.HSSFSheet;
+import org.apache.poi.hssf.usermodel.HSSFSheetConditionalFormatting;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.apache.poi.hssf.util.CellRangeAddress;
+import org.apache.poi.hssf.util.PaneInformation;
+import org.templateit.util.FormulaUtil;
+/**
+ * Template processor - the core class of the library.
+ * &lt;br&gt;
+ * Example:
+ * &lt;pre&gt;
+ *    TemplateProcessor tp = new TemplateProcessor(new File(&quot;MyTemplate.xls&quot;));
+ *    Iterator&lt;String[]&gt; data1 = new DelimitedFileReader(new File(&quot;MyData1.csv&quot;));
+ *    Iterator&lt;String[]&gt; data1 = new DelimitedFileReader(new File(&quot;MyData2.csv&quot;));
+ *    // Keep Sheet2. This way Sheet2 will remain untouched in the output document   
+ *    tp.keepSheet(&quot;Sheet2&quot;);
+ *    // You can call process multiple times on the same template
+ *    // with different data, to generate different files
+ *    tp.process(data1,new File(&quot;MyResult1.xls&quot;));
+ *    tp.process(data2,new File(&quot;MyResult2.xls&quot;));
+ * &lt;/pre&gt;
+ * 
+ * @author Dmitriy Kumshayev
+ *
+ */
+public class TemplateProcessor
+{
+
+<span class="nc" id="L73">	private static final Logger logger = Logger.getLogger(TemplateProcessor.class);</span>
+
+	private final ByteArrayOutputStream bos;
+	private final Set&lt;String&gt; protectedSheetNames;
+
+	private HSSFWorkbook workbook;
+	private List&lt;String&gt; sheetNames;
+	protected TemplateWorkbook tWorkbook;
+
+	public TemplateProcessor(File templateWorkbook) throws IOException
+	{
+<span class="nc" id="L84">		this(new BufferedInputStream(new FileInputStream(templateWorkbook)),true);</span>
+<span class="nc" id="L85">	}</span>
+
+	public TemplateProcessor(InputStream templateWorkbookStream) throws IOException
+	{
+<span class="nc" id="L89">		this(templateWorkbookStream,false);</span>
+<span class="nc" id="L90">	}</span>
+	
+	public TemplateProcessor(InputStream templateWorkbookStream, boolean close)
+	throws IOException
+<span class="nc" id="L94">	{</span>
+		try
+		{
+<span class="nc" id="L97">			bos = toByteArrayOutputStream(templateWorkbookStream);</span>
+<span class="nc" id="L98">			protectedSheetNames = new HashSet&lt;String&gt;();</span>
+		}
+		finally
+		{
+<span class="nc bnc" id="L102" title="All 2 branches missed.">			if( close )</span>
+			{
+<span class="nc" id="L104">				try{ templateWorkbookStream.close(); } catch (Exception ignore) {}</span>
+			}
+		}
+<span class="nc" id="L107">	}</span>
+	
+	public void process(Iterator&lt;String[]&gt; di, File outputWorkbook)
+			throws IOException
+	{
+<span class="nc" id="L112">		FileOutputStream out = new FileOutputStream(outputWorkbook);</span>
+		try
+		{
+<span class="nc" id="L115">			process(di, out);</span>
+		}
+		finally
+		{
+			try
+			{
+<span class="nc" id="L121">				out.close();</span>
+			}
+<span class="nc" id="L123">			catch (Exception ignore)</span>
+			{
+<span class="nc" id="L125">			}</span>
+		}
+<span class="nc" id="L127">	}</span>
+
+	public void process(Iterator&lt;String[]&gt; di, OutputStream out)
+			throws IOException
+	{
+		// Parse workbook
+<span class="nc" id="L133">		ByteArrayInputStream bis = new ByteArrayInputStream(bos.toByteArray());</span>
+<span class="nc" id="L134">		workbook = new HSSFWorkbook(bis);</span>
+		
+		// prepare processing
+<span class="nc" id="L137">		sheetNames = renameTemplateSheets();</span>
+<span class="nc" id="L138">		tWorkbook = new WorkbookParser(workbook).parse(protectedSheetNames);</span>
+		
+<span class="nc" id="L140">		processData(di);</span>
+		
+		// finalize processing
+<span class="nc" id="L143">		removeTemplateSheets();</span>
+<span class="nc" id="L144">		workbook.write(out);</span>
+<span class="nc" id="L145">	}</span>
+
+	/**
+	 * Excludes the specified sheet from being considered as a template sheet.
+	 * Keeps the sheet in the generated workbook after the processing.
+	 *  
+	 * @param sheetName
+	 */
+	public void keepSheet(String sheetName)
+	{
+<span class="nc" id="L155">		protectedSheetNames.add(sheetName);</span>
+<span class="nc" id="L156">	}</span>
+
+<span class="nc" id="L158">	private enum Operation</span>
+	{
+<span class="nc" id="L160">		invalid, empty, sheet, select, data, end, template</span>
+	}
+
+	private void processData(Iterator&lt;String[]&gt; di)
+	{
+<span class="nc bnc" id="L165" title="All 2 branches missed.">		while (di.hasNext())</span>
+		{
+<span class="nc" id="L167">			String[] data = di.next();</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">			while( data != null )</span>
+			{
+<span class="nc" id="L170">				Operation op = parseOperation(data);</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">				switch (op)</span>
+				{
+					case sheet:
+					{
+<span class="nc" id="L175">						String templateSheetName = data[1] + SUFFIX;</span>
+<span class="nc" id="L176">						String newSheetName = data[1];</span>
+<span class="nc bnc" id="L177" title="All 6 branches missed.">						if (data.length&gt;2 &amp;&amp; data[2] != null &amp;&amp; data[2].length() &gt; 0)</span>
+						{
+<span class="nc" id="L179">							newSheetName = data[2];</span>
+						}
+<span class="nc" id="L181">						data = generateNewSheet(templateSheetName, newSheetName, di);</span>
+					}
+<span class="nc" id="L183">					break;</span>
+					case empty:
+					{
+		
+					}
+					default:
+					{
+<span class="nc" id="L190">						throw new RuntimeException(&quot;unexpected operation (only #sheet is allowed here)&quot;);</span>
+					}
+				}
+<span class="nc" id="L193">			}</span>
+<span class="nc" id="L194">		}</span>
+<span class="nc" id="L195">	}</span>
+
+	public String [] generateNewSheet(String templateSheetName, String newSheetName,
+			Iterator&lt;String[]&gt; di)
+	{
+<span class="nc" id="L200">		TemplateSheet tSheet = tWorkbook.getTemplateSheet(templateSheetName);</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">		if (tSheet != null)</span>
+		{
+<span class="nc" id="L203">			return new SheetGenerator(tSheet, newSheetName).generateNewSheet(di);</span>
+		}
+		else
+		{
+<span class="nc" id="L207">			logger.warn(&quot;Sheet &quot; + templateSheetName + &quot; not found.&quot;);</span>
+<span class="nc" id="L208">			return null;</span>
+		}
+	}
+
+	private static String extractTemplateName(String[] data)
+	{
+<span class="nc" id="L214">		String op = data[0];</span>
+<span class="nc bnc" id="L215" title="All 6 branches missed.">		if (data != null &amp;&amp; data.length &gt; 0 &amp;&amp; OpMatcher.matchTemplateName(op))</span>
+		{
+<span class="nc" id="L217">			return op;</span>
+		}
+<span class="nc" id="L219">		return null;</span>
+	}
+	
+	private static Operation parseOperation(String[] data)
+	{
+<span class="nc" id="L224">		String op = data[0];</span>
+<span class="nc bnc" id="L225" title="All 4 branches missed.">		if (data == null || data.length == 0)</span>
+		{
+<span class="nc" id="L227">			return Operation.empty;</span>
+		}
+<span class="nc bnc" id="L229" title="All 6 branches missed.">		if (op != null &amp;&amp; op.equals(&quot;#sheet&quot;) &amp;&amp; data[1] != null</span>
+<span class="nc bnc" id="L230" title="All 2 branches missed.">				&amp;&amp; data[1].length() &gt; 0)</span>
+		{
+<span class="nc" id="L232">			return Operation.sheet;</span>
+		}
+<span class="nc bnc" id="L234" title="All 2 branches missed.">		if (OpMatcher.matchTemplateName(op) )</span>
+		{
+<span class="nc" id="L236">			return Operation.data;</span>
+		}
+<span class="nc bnc" id="L238" title="All 4 branches missed.">		if (op != null &amp;&amp; op.equals(&quot;#end&quot;))</span>
+		{
+<span class="nc" id="L240">			return Operation.end;</span>
+		}
+<span class="nc bnc" id="L242" title="All 4 branches missed.">		if (op != null &amp;&amp; op.equals(&quot;#select&quot;))</span>
+		{
+<span class="nc" id="L244">			return Operation.select;</span>
+		}
+<span class="nc bnc" id="L246" title="All 4 branches missed.">		if (op != null &amp;&amp; op.equals(&quot;#template&quot;))</span>
+		{
+<span class="nc" id="L248">			return Operation.template;</span>
+		}
+
+<span class="nc" id="L251">		return Operation.invalid;</span>
+	}
+
+<span class="nc" id="L254">	private final String SUFFIX = &quot;Template&quot;;</span>
+
+	/**
+	 * Rename all sheets in the template workbook. Add a SUFFIX to each name.
+	 * 
+	 * @return list of renamed sheet names
+	 */
+	private List&lt;String&gt; renameTemplateSheets()
+	{
+<span class="nc" id="L263">		List&lt;String&gt; names = new LinkedList&lt;String&gt;();</span>
+<span class="nc bnc" id="L264" title="All 2 branches missed.">		for (int i = 0; i != workbook.getNumberOfSheets(); i++)</span>
+		{
+<span class="nc" id="L266">			String name = workbook.getSheetName(i);</span>
+
+			// exclude protected sheets from processing
+<span class="nc bnc" id="L269" title="All 2 branches missed.">			if( !protectedSheetNames.contains(name) )</span>
+			{
+<span class="nc" id="L271">				name += SUFFIX;</span>
+<span class="nc" id="L272">				workbook.setSheetName(i, name);</span>
+<span class="nc" id="L273">				names.add(name);</span>
+			}
+			
+		}
+<span class="nc" id="L277">		return names;</span>
+	}
+
+	private void removeTemplateSheets()
+	{
+<span class="nc bnc" id="L282" title="All 2 branches missed.">		for (String sheetName : sheetNames)</span>
+		{
+<span class="nc" id="L284">			workbook.removeSheetAt(workbook.getSheetIndex(sheetName));</span>
+<span class="nc" id="L285">		}</span>
+<span class="nc" id="L286">		sheetNames.clear();</span>
+<span class="nc" id="L287">	}</span>
+
+	private class SheetGenerator
+	{
+		private final TemplateSheet tSheet;
+
+		private final HSSFSheet newSheet;
+		
+<span class="nc" id="L295">		private int outRow = 0; </span>
+
+		private SheetGenerator(TemplateSheet tSheet, String newSheetName)
+<span class="nc" id="L298">		{</span>
+<span class="nc" id="L299">			this.tSheet = tSheet;</span>
+<span class="nc" id="L300">			this.newSheet = workbook.createSheet(newSheetName);</span>
+<span class="nc" id="L301">		}</span>
+
+		private String [] generateNewSheet(Iterator&lt;String[]&gt; di)
+		{
+<span class="nc" id="L305">			copySheetSettings();</span>
+<span class="nc" id="L306">			copyPaneInformation();</span>
+<span class="nc" id="L307">			copyConditionalFormatting();</span>
+<span class="nc" id="L308">			copyPrintSetup();</span>
+			
+<span class="nc" id="L310">			String ret[] = null;</span>
+<span class="nc bnc" id="L311" title="All 4 branches missed.">			for( boolean end=false; !end &amp;&amp; di.hasNext(); )</span>
+			{
+<span class="nc" id="L313">				String data[] = di.next();</span>
+<span class="nc" id="L314">				Operation op = parseOperation(data);</span>
+<span class="nc bnc" id="L315" title="All 8 branches missed.">				switch (op)</span>
+				{
+<span class="nc" id="L317">					case select:	{ selectList(data);				}	break;</span>
+<span class="nc" id="L318">					case data:    { processTemplate(data);	}	break;</span>
+<span class="nc" id="L319">					case empty:		{ ;/* Skip */							}	break;</span>
+<span class="nc" id="L320">					case sheet:		{ ret = data; end = true;	}	break;</span>
+<span class="nc" id="L321">					case end:			{	end = true;							}	break;</span>
+<span class="nc" id="L322">					case template:	{	createDynamicTemplate(data);} 	break;</span>
+<span class="nc" id="L323">					case invalid:	{	logger.warn(&quot;invalid operation&quot;);	}</span>
+				}
+<span class="nc" id="L325">			}</span>
+<span class="nc" id="L326">			return ret;</span>
+		}
+
+		private void createDynamicTemplate(String[] data)
+		{
+<span class="nc" id="L331">			String name = data[1];</span>
+<span class="nc" id="L332">			int nr = Integer.parseInt(data[2]);</span>
+			
+<span class="nc" id="L334">			int nc = (data.length-3)/nr;</span>
+<span class="nc" id="L335">			List&lt;NamedStyle&gt; styles = new ArrayList&lt;NamedStyle&gt;(nc);</span>
+<span class="nc bnc" id="L336" title="All 2 branches missed.">			for( int i=3; i&lt;data.length; i++ )</span>
+			{
+<span class="nc" id="L338">				String styleName = data[i];</span>
+<span class="nc" id="L339">				NamedStyle style = tSheet.getStyle(styleName);</span>
+<span class="nc bnc" id="L340" title="All 2 branches missed.">				if( style == null )</span>
+				{
+<span class="nc" id="L342">					throw new RuntimeException(&quot;Style '&quot;+styleName+&quot;' not found&quot;);</span>
+				}
+<span class="nc" id="L344">				styles.add(style);</span>
+			}
+<span class="nc" id="L346">			tSheet.addDynamicTemplate(new DynamicTemplate(name,tSheet.sheet(),nr,styles));</span>
+<span class="nc" id="L347">		}</span>
+
+		private void processTemplate(String[] data)
+		{
+<span class="nc" id="L351">			String templateName = extractTemplateName(data);</span>
+<span class="nc" id="L352">			Template t = tSheet.getTemplate(templateName);</span>
+<span class="nc bnc" id="L353" title="All 2 branches missed.">			if( t != null)</span>
+			{
+<span class="nc" id="L355">				int startRow = outRow;</span>
+<span class="nc" id="L356">				int height = t.height();</span>
+<span class="nc bnc" id="L357" title="All 2 branches missed.">				for( int r = 0; r &lt; height; r++,outRow++)</span>
+				{
+<span class="nc" id="L359">					HSSFRow newRow = createNewRow(t,r,outRow);</span>
+<span class="nc bnc" id="L360" title="All 2 branches missed.">					if( newRow != null )</span>
+					{
+<span class="nc" id="L362">						copyTemplateRow(t,r,newRow,outRow, data);</span>
+					}
+				}
+<span class="nc bnc" id="L365" title="All 2 branches missed.">				if (t instanceof StaticTemplate)</span>
+				{
+<span class="nc" id="L367">					copyMergeRegions((StaticTemplate) t, startRow);</span>
+				}
+			}
+<span class="nc" id="L370">		}</span>
+
+		private void selectList(String[] data)
+		{
+<span class="nc bnc" id="L374" title="All 6 branches missed.">			if( data.length&gt;1 &amp;&amp; data[1]!= null &amp;&amp; data[1].trim().length()&gt;0 )</span>
+			{
+<span class="nc" id="L376">				String templateName = data[1];</span>
+<span class="nc" id="L377">				StaticTemplate t = tSheet.getStaticTemplate(templateName);</span>
+<span class="nc bnc" id="L378" title="All 2 branches missed.">				if( t!= null )</span>
+				{
+<span class="nc" id="L380">					List&lt;Integer&gt; selectList = new ArrayList&lt;Integer&gt;(data.length-2);</span>
+					try
+					{
+<span class="nc bnc" id="L383" title="All 2 branches missed.">						for( int i=2; i&lt;data.length; i++)</span>
+						{
+<span class="nc" id="L385">							selectList.add(Integer.valueOf(data[i])-1);</span>
+						}
+					}
+<span class="nc" id="L388">					catch (NumberFormatException e) </span>
+					{
+<span class="nc" id="L390">						logger.warn(&quot;Invalid #select list: &quot;+Arrays.asList(data));</span>
+<span class="nc" id="L391">						selectList.clear();</span>
+<span class="nc" id="L392">					}</span>
+					
+<span class="nc bnc" id="L394" title="All 2 branches missed.">					if( selectList.size()&gt;0)</span>
+					{
+<span class="nc" id="L396">						t.setSelectList(selectList);</span>
+					}
+					else
+					{
+<span class="nc" id="L400">						t.setSelectList(null);</span>
+					}
+				}
+<span class="nc" id="L403">			}</span>
+			else
+			{
+<span class="nc" id="L406">				logger.warn(&quot;No template name in #select&quot;);</span>
+			}
+<span class="nc" id="L408">		}</span>
+
+		
+		public HSSFRow createNewRow(Template t,int r, int rOut)
+		{
+<span class="nc" id="L413">			HSSFRow newRow = newSheet.createRow(rOut);</span>
+<span class="nc" id="L414">			newRow.setHeight((short)t.getRowHeight(r));</span>
+<span class="nc bnc" id="L415" title="All 2 branches missed.">			if (t.isRowBroken(r))</span>
+			{
+<span class="nc" id="L417">				newSheet.setRowBreak(rOut);</span>
+			}
+<span class="nc" id="L419">			return newRow;</span>
+		}
+		
+		private void copyTemplateRow(Template t, int r, HSSFRow newRow,
+				int currentRow, String[] data)
+		{
+<span class="nc" id="L425">			int currentCol = 0;</span>
+<span class="nc" id="L426">			int width = t.width();</span>
+<span class="nc bnc" id="L427" title="All 2 branches missed.">			for (int c = 0; c &lt; width; c++, currentCol++)</span>
+			{
+<span class="nc" id="L429">				copyTemplateCell(t, r, c, newRow, currentRow,currentCol, data);</span>
+			}
+<span class="nc" id="L431">		}</span>
+
+		private void copyTemplateCell(Template t, int r, int c, HSSFRow newRow,
+				int currentRow, int currentCol, String[] data)
+		{
+<span class="nc" id="L436">			HSSFCell tCell = t.getCell(r, c);</span>
+<span class="nc bnc" id="L437" title="All 2 branches missed.">			if( tCell != null )</span>
+			{
+<span class="nc" id="L439">				HSSFCell newCell = newRow.createCell(currentCol);</span>
+<span class="nc" id="L440">				int cellType = tCell.getCellType();</span>
+<span class="nc" id="L441">				newCell.setCellType(cellType);</span>
+<span class="nc" id="L442">				newCell.setCellStyle(tCell.getCellStyle());</span>
+				
+<span class="nc bnc" id="L444" title="All 5 branches missed.">				switch (cellType)</span>
+				{
+					case HSSFCell.CELL_TYPE_BOOLEAN:
+					{
+<span class="nc" id="L448">						newCell.setCellValue(tCell.getBooleanCellValue());</span>
+					}
+<span class="nc" id="L450">					break;</span>
+					case HSSFCell.CELL_TYPE_FORMULA:
+					{
+<span class="nc" id="L453">						String newFormula = recalculateRelativeRefs(t, r, c, currentRow,</span>
+								currentCol);
+<span class="nc" id="L455">						newCell.setCellFormula(newFormula);</span>
+					}
+<span class="nc" id="L457">					break;</span>
+					case HSSFCell.CELL_TYPE_NUMERIC:
+					{
+<span class="nc" id="L460">						newCell.setCellValue(tCell.getNumericCellValue());</span>
+					}
+<span class="nc" id="L462">					break;</span>
+					case HSSFCell.CELL_TYPE_STRING:
+					{
+<span class="nc" id="L465">						newCell.setCellValue(tCell.getRichStringCellValue());</span>
+					}
+					break;
+				}
+				
+<span class="nc" id="L470">				substituteParameters(t, r, c, currentRow, currentCol, newCell, data);</span>
+				
+			}
+<span class="nc" id="L473">		}</span>
+
+		/**
+		 * Offset all relative references to correspond the new location of the cell.
+		 * 
+		 * @param tCell
+		 * @param originalRow - relative row number within given template
+		 * @param originalCol - relative column number within given template
+		 * @param newRow - new/target absolute row number of the cell 
+		 * @param newCol - new/target absolute row number of the cell
+		 * 
+		 * @return recalculated formula
+		 */
+		private String recalculateRelativeRefs(Template t, int originalRow, int originalCol,
+				int newRow, int newCol)
+		{
+<span class="nc" id="L489">			HSSFCell tCell = t.getCell(originalRow, originalCol);</span>
+<span class="nc" id="L490">			String formula = tCell.getCellFormula();</span>
+<span class="nc" id="L491">			Reference absRef = t.absoluteReference(originalRow,originalCol);</span>
+<span class="nc" id="L492">			int roff = newRow - absRef.row();</span>
+<span class="nc" id="L493">			int coff = newCol - absRef.column();</span>
+<span class="nc" id="L494">			String newFormula = FormulaUtil.offsetRelativeReferences(workbook, formula, roff, coff);</span>
+			
+<span class="nc bnc" id="L496" title="All 2 branches missed.">			if (logger.isTraceEnabled())</span>
+			{
+<span class="nc" id="L498">				logger.trace(&quot;Formula @(&quot;+originalRow+&quot;,&quot;+originalCol+&quot;) recalculated:: &quot; + formula + &quot; ===(&quot;</span>
+						+ roff + &quot;,&quot; + coff + &quot;)===&gt; &quot; + newFormula+&quot; @(&quot;+newRow+&quot;,&quot;+newCol+&quot;)&quot;);
+			}
+<span class="nc" id="L501">			return newFormula;</span>
+		}
+
+		private void substituteParameters(Template t, int r, int c, int outRow,
+				int outCol, HSSFCell newCell, String[] data)
+		{
+<span class="nc" id="L507">			int idx = t.getParameterIndex(r,c);</span>
+<span class="nc bnc" id="L508" title="All 2 branches missed.">			if( idx &gt; 0)</span>
+			{
+<span class="nc bnc" id="L510" title="All 4 branches missed.">				String value = idx&lt;data.length&amp;&amp;data[idx] != null ? data[idx] : &quot;&quot;;</span>
+				try
+				{
+<span class="nc" id="L513">					setCellValue(newCell, value);</span>
+				}
+<span class="nc" id="L515">				catch (Exception e)</span>
+				{
+<span class="nc" id="L517">					logger.warn(&quot;Failed to set value '&quot; + value + &quot;' to cell(&quot;</span>
+							+ outRow + &quot;,&quot; + outRow + &quot;)&quot;, e);
+<span class="nc" id="L519">				}</span>
+			}
+<span class="nc" id="L521">		}</span>
+
+		@SuppressWarnings(&quot;deprecation&quot;)
+		private void setCellValue(HSSFCell newCell, String value)
+		{
+<span class="nc" id="L526">			Double dval = tryToParseAsDouble(value);</span>
+<span class="nc bnc" id="L527" title="All 2 branches missed.">			if( dval != null )</span>
+			{
+<span class="nc" id="L529">				newCell.setCellValue(dval);</span>
+			}
+			else
+			{
+<span class="nc" id="L533">				Date date = tryToParseAsDate(value);</span>
+<span class="nc bnc" id="L534" title="All 2 branches missed.">				if (date != null)</span>
+				{
+<span class="nc" id="L536">					newCell.setCellValue(date);</span>
+				}
+				else
+				{
+<span class="nc" id="L540">					newCell.setCellValue(value);</span>
+				}
+			}
+<span class="nc" id="L543">		}</span>
+
+		private void copyMergeRegions(StaticTemplate t, int absTemplateOutputStartRow)
+		{
+<span class="nc bnc" id="L547" title="All 2 branches missed.">			for (MergeRegion m : t.getMergeRegions())</span>
+			{
+<span class="nc bnc" id="L549" title="All 4 branches missed.">				if (t.contains(m.start()) &amp;&amp; (m.end().row() != Reference.INFINITY)</span>
+<span class="nc bnc" id="L550" title="All 2 branches missed.">						&amp;&amp; (m.end().column() != Reference.INFINITY))</span>
+				{
+<span class="nc" id="L552">					int vTopOffset = m.start().row() - t.start().row();</span>
+<span class="nc" id="L553">					int mh = m.end().row() - m.start().row();</span>
+
+<span class="nc" id="L555">					int firstRow = absTemplateOutputStartRow + vTopOffset;</span>
+<span class="nc" id="L556">					int lastRow = firstRow+mh;</span>
+					
+<span class="nc" id="L558">					int w = t.width();</span>
+<span class="nc" id="L559">					int firstCol=w;</span>
+<span class="nc" id="L560">					int lastCol=0;</span>
+<span class="nc bnc" id="L561" title="All 2 branches missed.">					for (int c=0; c &lt; w ; c++)</span>
+					{
+<span class="nc bnc" id="L563" title="All 2 branches missed.">						if(t.absoluteColumn(c) &gt;= m.start().column() &amp;&amp; </span>
+<span class="nc bnc" id="L564" title="All 2 branches missed.">								t.absoluteColumn(c) &lt;= m.end().column() )</span>
+						{
+<span class="nc" id="L566">							firstCol = Math.min(firstCol, c);</span>
+<span class="nc" id="L567">							lastCol = Math.max(lastCol, c);</span>
+						}
+					}
+<span class="nc" id="L570">					newSheet.addMergedRegion(new CellRangeAddress(firstRow,lastRow,firstCol,lastCol));</span>
+				}
+<span class="nc" id="L572">			}</span>
+<span class="nc" id="L573">		}</span>
+
+		private void copyConditionalFormatting()
+		{
+<span class="nc" id="L577">			HSSFSheet sheet = tSheet.sheet();</span>
+<span class="nc" id="L578">			HSSFSheetConditionalFormatting sheetCf = sheet</span>
+<span class="nc" id="L579">					.getSheetConditionalFormatting();</span>
+<span class="nc" id="L580">			HSSFSheetConditionalFormatting newSheetcf = newSheet</span>
+<span class="nc" id="L581">					.getSheetConditionalFormatting();</span>
+
+<span class="nc" id="L583">			int n = sheetCf.getNumConditionalFormattings();</span>
+<span class="nc bnc" id="L584" title="All 2 branches missed.">			for (int i = 0; i != n; i++)</span>
+			{
+<span class="nc" id="L586">				HSSFConditionalFormatting cf = sheetCf.getConditionalFormattingAt(i);</span>
+<span class="nc bnc" id="L587" title="All 2 branches missed.">				if (cf != null)</span>
+				{
+<span class="nc" id="L589">					newSheetcf.addConditionalFormatting(cf);</span>
+				}
+			}
+<span class="nc" id="L592">		}</span>
+
+		private void copySheetSettings()
+		{
+<span class="nc" id="L596">			HSSFSheet sheet = tSheet.sheet();</span>
+<span class="nc" id="L597">			newSheet.setDisplayFormulas(sheet.isDisplayFormulas());</span>
+<span class="nc" id="L598">			newSheet.setDisplayGridlines(sheet.isDisplayGridlines());</span>
+<span class="nc" id="L599">			newSheet.setDisplayRowColHeadings(sheet.isDisplayRowColHeadings());</span>
+<span class="nc" id="L600">			newSheet.setGridsPrinted(sheet.isGridsPrinted());</span>
+<span class="nc" id="L601">			newSheet.setPrintGridlines(sheet.isPrintGridlines());</span>
+			
+<span class="nc" id="L603">			int fc = tSheet.getFirstColumn();</span>
+<span class="nc" id="L604">			int lc = tSheet.getLastColumn();</span>
+			
+<span class="nc bnc" id="L606" title="All 2 branches missed.">			for (int c = fc; c &lt;= lc; c++)</span>
+			{
+<span class="nc" id="L608">				int nc = c - fc;</span>
+<span class="nc" id="L609">				newSheet.setColumnWidth(nc, sheet.getColumnWidth(c));</span>
+<span class="nc bnc" id="L610" title="All 2 branches missed.">				if (sheet.isColumnBroken((short) c))</span>
+				{
+<span class="nc" id="L612">					newSheet.setColumnBreak((short) nc);</span>
+				}
+<span class="nc bnc" id="L614" title="All 2 branches missed.">				if (sheet.isColumnHidden(c))</span>
+				{
+<span class="nc" id="L616">					newSheet.setColumnHidden(nc, true);</span>
+				}
+			}
+<span class="nc" id="L619">		}</span>
+
+		private void copyPaneInformation()
+		{
+<span class="nc" id="L623">			PaneInformation paneInfo = tSheet.sheet().getPaneInformation();</span>
+<span class="nc bnc" id="L624" title="All 2 branches missed.">			if (paneInfo != null)</span>
+			{
+<span class="nc" id="L626">				short vSplitPos = paneInfo.getVerticalSplitPosition();</span>
+<span class="nc" id="L627">				short hSplitPos = paneInfo.getHorizontalSplitPosition();</span>
+<span class="nc" id="L628">				short vSplitLeftColumn = paneInfo.getVerticalSplitLeftColumn();</span>
+<span class="nc" id="L629">				short hSplitTopRow = paneInfo.getHorizontalSplitTopRow();</span>
+<span class="nc" id="L630">				byte activePane = paneInfo.getActivePane();</span>
+<span class="nc bnc" id="L631" title="All 2 branches missed.">				if (paneInfo.isFreezePane())</span>
+				{
+<span class="nc" id="L633">					newSheet.createFreezePane(vSplitPos, hSplitPos, vSplitLeftColumn,</span>
+							hSplitTopRow);
+				}
+				else
+				{
+<span class="nc" id="L638">					newSheet.createSplitPane(vSplitPos, hSplitPos, vSplitLeftColumn,</span>
+							hSplitTopRow, activePane);
+				}
+			}
+<span class="nc" id="L642">		}</span>
+
+		private void copyPrintSetup()
+		{
+<span class="nc" id="L646">			HSSFPrintSetup ps = tSheet.sheet().getPrintSetup();</span>
+<span class="nc bnc" id="L647" title="All 2 branches missed.">			if( ps != null )</span>
+			{
+				// Have to surround the code below with try/catch block
+				// since POI throws NPE in cases when the sheet
+				// does not contain Print Setup Record.
+				// POI also does not provide any means to determine if
+				// PrintSetupRecord is present except throwing NPE.
+				// TODO: patch POI to fix NPE at HSSFPrintSetup.getXXX methods
+				
+				try
+				{
+<span class="nc" id="L658">					short nCopies = ps.getCopies();</span>
+<span class="nc" id="L659">					boolean draft = ps.getDraft();</span>
+<span class="nc" id="L660">					short fitHeight = ps.getFitHeight();</span>
+<span class="nc" id="L661">					short fitWidth = ps.getFitWidth();</span>
+<span class="nc" id="L662">					double footerMargin = ps.getFooterMargin();</span>
+<span class="nc" id="L663">					double headerMargin = ps.getHeaderMargin();</span>
+<span class="nc" id="L664">					short hResolution = ps.getHResolution();</span>
+<span class="nc" id="L665">					boolean landscape = ps.getLandscape();</span>
+<span class="nc" id="L666">					boolean leftToRight = ps.getLeftToRight();</span>
+<span class="nc" id="L667">					boolean noColor = ps.getNoColor();</span>
+<span class="nc" id="L668">					boolean noOrientation = ps.getNoOrientation();</span>
+<span class="nc" id="L669">					boolean notes = ps.getNotes();</span>
+<span class="nc" id="L670">					short options = ps.getOptions();</span>
+<span class="nc" id="L671">					short pageStart = ps.getPageStart();</span>
+<span class="nc" id="L672">					short paperSize = ps.getPaperSize();</span>
+<span class="nc" id="L673">					short scale = ps.getScale();</span>
+<span class="nc" id="L674">					boolean usePage = ps.getUsePage();</span>
+<span class="nc" id="L675">					boolean validSettings = ps.getValidSettings();</span>
+<span class="nc" id="L676">					short vResolution = ps.getVResolution();</span>
+					
+<span class="nc" id="L678">					HSSFPrintSetup newPs = newSheet.getPrintSetup();</span>
+<span class="nc" id="L679">					newPs.setCopies(nCopies);</span>
+<span class="nc" id="L680">					newPs.setDraft(draft);</span>
+<span class="nc" id="L681">					newPs.setFitHeight(fitHeight);</span>
+<span class="nc" id="L682">					newPs.setFitWidth(fitWidth);</span>
+<span class="nc" id="L683">					newPs.setFooterMargin(footerMargin);</span>
+<span class="nc" id="L684">					newPs.setHeaderMargin(headerMargin);</span>
+<span class="nc" id="L685">					newPs.setHResolution(hResolution);</span>
+<span class="nc" id="L686">					newPs.setLandscape(landscape);</span>
+<span class="nc" id="L687">					newPs.setLeftToRight(leftToRight);</span>
+<span class="nc" id="L688">					newPs.setNoColor(noColor);</span>
+<span class="nc" id="L689">					newPs.setNoOrientation(noOrientation);</span>
+<span class="nc" id="L690">					newPs.setNotes(notes);</span>
+<span class="nc" id="L691">					newPs.setOptions(options);</span>
+<span class="nc" id="L692">					newPs.setPageStart(pageStart);</span>
+<span class="nc" id="L693">					newPs.setPaperSize(paperSize);</span>
+<span class="nc" id="L694">					newPs.setScale(scale);</span>
+<span class="nc" id="L695">					newPs.setUsePage(usePage);</span>
+<span class="nc" id="L696">					newPs.setValidSettings(validSettings);</span>
+<span class="nc" id="L697">					newPs.setVResolution(vResolution);</span>
+				}
+<span class="nc" id="L699">				catch (NullPointerException e) </span>
+				{
+<span class="nc bnc" id="L701" title="All 2 branches missed.">					if( logger.isTraceEnabled())</span>
+					{
+<span class="nc" id="L703">						logger.warn(&quot;Print Setup information is missing&quot;);</span>
+					}
+<span class="nc" id="L705">				}</span>
+			}
+<span class="nc" id="L707">		}</span>
+	}
+	
+	private static Double tryToParseAsDouble(String value)
+	{
+		try
+		{
+<span class="nc" id="L714">			return Double.parseDouble(value);</span>
+		}
+<span class="nc" id="L716">		catch (NumberFormatException e)</span>
+		{
+<span class="nc" id="L718">			return null;</span>
+		}
+	}
+	
+	private static Date tryToParseAsDate(String value)
+	{
+<span class="nc bnc" id="L724" title="All 2 branches missed.">		for (DateFormat df : new DateFormat[]</span>
+		{
+				new SimpleDateFormat(&quot;MM/dd/yyyy HH:mm:ss&quot;),
+				new SimpleDateFormat(&quot;MM/dd/yyyy HH:mm&quot;),
+				new SimpleDateFormat(&quot;MM/dd/yyyy&quot;),
+				new SimpleDateFormat(&quot;dd-MMM-yyyy HH:mm:ss&quot;),
+				new SimpleDateFormat(&quot;dd-MMM-yyyy HH:mm&quot;),
+				new SimpleDateFormat(&quot;dd-MMM-yyyy&quot;)
+		})
+		{
+			try
+			{
+<span class="nc" id="L736">				return df.parse(value);</span>
+			}
+<span class="nc" id="L738">			catch (ParseException pe)</span>
+			{
+			}
+		}
+<span class="nc" id="L742">		return null;</span>
+	}
+	
+	private static ByteArrayOutputStream toByteArrayOutputStream(InputStream is) throws IOException
+	{
+<span class="nc" id="L747">		ByteArrayOutputStream bos = new ByteArrayOutputStream();</span>
+<span class="nc" id="L748">		byte[] b = new byte[4096];</span>
+<span class="nc" id="L749">		int off = 0;</span>
+<span class="nc" id="L750">		int len = 0;</span>
+<span class="nc bnc" id="L751" title="All 2 branches missed.">		while( (len = is.read(b, off, b.length)) != -1 )</span>
+		{
+<span class="nc" id="L753">			bos.write(b, off, len);</span>
+		}
+<span class="nc" id="L755">		bos.flush();</span>
+<span class="nc" id="L756">		return bos;</span>
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

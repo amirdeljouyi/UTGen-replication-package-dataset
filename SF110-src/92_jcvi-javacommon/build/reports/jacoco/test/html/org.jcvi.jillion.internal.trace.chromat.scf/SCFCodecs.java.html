@@ -1,0 +1,234 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SCFCodecs.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.internal.trace.chromat.scf</a> &gt; <span class="el_source">SCFCodecs.java</span></div><h1>SCFCodecs.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+package org.jcvi.jillion.internal.trace.chromat.scf;
+
+import static org.jcvi.jillion.internal.trace.chromat.scf.SCFUtils.HEADER_SIZE;
+import static org.jcvi.jillion.internal.trace.chromat.scf.SCFUtils.ORDER_OF_SECTIONS;
+
+import java.io.DataInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.util.EnumMap;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.SortedMap;
+import java.util.TreeMap;
+
+import org.jcvi.jillion.core.io.IOUtil;
+import org.jcvi.jillion.internal.trace.chromat.scf.header.DefaultSCFHeader;
+import org.jcvi.jillion.internal.trace.chromat.scf.header.DefaultSCFHeaderCodec;
+import org.jcvi.jillion.internal.trace.chromat.scf.header.SCFHeader;
+import org.jcvi.jillion.internal.trace.chromat.scf.header.SCFHeaderCodec;
+import org.jcvi.jillion.internal.trace.chromat.scf.section.DefaultSectionCodecFactory;
+import org.jcvi.jillion.internal.trace.chromat.scf.section.EncodedSection;
+import org.jcvi.jillion.internal.trace.chromat.scf.section.Section;
+import org.jcvi.jillion.internal.trace.chromat.scf.section.SectionCodecFactory;
+import org.jcvi.jillion.internal.trace.chromat.scf.section.SectionDecoder;
+import org.jcvi.jillion.internal.trace.chromat.scf.section.SectionDecoderException;
+import org.jcvi.jillion.internal.trace.chromat.scf.section.SectionEncoder;
+import org.jcvi.jillion.trace.TraceDecoderException;
+import org.jcvi.jillion.trace.chromat.Chromatogram;
+import org.jcvi.jillion.trace.chromat.ChromatogramFileVisitor;
+import org.jcvi.jillion.trace.chromat.scf.ScfChromatogram;
+import org.jcvi.jillion.trace.chromat.scf.ScfChromatogramBuilder;
+import org.jcvi.jillion.trace.chromat.scf.ScfDecoderException;
+/**
+ * {@code SCFCodecs} contains singleton implementations
+ * of various {@link SCFCodec}s to parse each 
+ * file format version of SCF encoded files.
+ * @author dkatzel
+ *
+ *
+ */
+<span class="nc" id="L66">public enum SCFCodecs implements SCFCodec{</span>
+    /**
+     * Handles SCF 3.00 (the current version) encoded SCF files.
+     */
+<span class="nc" id="L70">    VERSION_3{</span>
+        @Override
+        public void encode(Chromatogram c, OutputStream out) throws IOException {
+<span class="nc" id="L73">            this.encode(out, (ScfChromatogram)c, 3);</span>
+<span class="nc" id="L74">        }</span>
+    },
+    /**
+     * Handles the legacy SCF 2.00 encoded SCF files.
+     */
+<span class="nc" id="L79">    VERSION_2{</span>
+        @Override
+        public void encode(Chromatogram c, OutputStream out) throws IOException {
+<span class="nc" id="L82">            this.encode(out, (ScfChromatogram)c, 2);</span>
+<span class="nc" id="L83">        }</span>
+    };
+    private SectionCodecFactory sectionCodecFactory;
+    private SCFHeaderCodec headerCodec;
+    
+    /**
+     * 
+     */
+<span class="nc" id="L91">    SCFCodecs(){</span>
+<span class="nc" id="L92">    	  this.headerCodec = DefaultSCFHeaderCodec.INSTANCE;</span>
+<span class="nc" id="L93">          this.sectionCodecFactory = DefaultSectionCodecFactory.INSTANCE;</span>
+<span class="nc" id="L94">    }</span>
+    
+
+   
+    private ScfChromatogram decode(String id, InputStream in) throws ScfDecoderException{
+<span class="nc" id="L99">           DataInputStream dataIn = new DataInputStream(in);</span>
+<span class="nc" id="L100">           SCFHeader header= headerCodec.decode(dataIn);</span>
+<span class="nc" id="L101">           ScfChromatogramBuilder builder = new ScfChromatogramBuilder(id);</span>
+<span class="nc" id="L102">           SortedMap&lt;Integer, Section&gt; sectionsByOffset = createSectionsByOffsetMap(header);</span>
+<span class="nc" id="L103">           long currentOffset =HEADER_SIZE;</span>
+<span class="nc bnc" id="L104" title="All 2 branches missed.">           for(Entry&lt;Integer, Section&gt; entry: sectionsByOffset.entrySet()){</span>
+<span class="nc" id="L105">              SectionDecoder sp=sectionCodecFactory.getSectionParserFor(entry.getValue(), header);</span>
+<span class="nc" id="L106">              currentOffset = sp.decode(dataIn, currentOffset, header, builder);</span>
+<span class="nc" id="L107">           }</span>
+<span class="nc" id="L108">           return builder.build();</span>
+
+       
+    }
+    public void parse(DataInputStream dataIn,SCFHeader header, ChromatogramFileVisitor visitor) throws SectionDecoderException{
+<span class="nc" id="L113">        visitor.visitNewTrace();</span>
+<span class="nc" id="L114">        SortedMap&lt;Integer, Section&gt; sectionsByOffset = createSectionsByOffsetMap(header);</span>
+<span class="nc" id="L115">        long currentOffset =HEADER_SIZE;</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">        for(Entry&lt;Integer, Section&gt; entry: sectionsByOffset.entrySet()){</span>
+<span class="nc" id="L117">        	SectionDecoder sp=sectionCodecFactory.getSectionParserFor(entry.getValue(), header);</span>
+<span class="nc" id="L118">           currentOffset = sp.decode(dataIn, currentOffset, header, visitor);</span>
+<span class="nc" id="L119">        }</span>
+<span class="nc" id="L120">        visitor.visitEndOfTrace();</span>
+<span class="nc" id="L121">    }</span>
+    
+    @Override
+    public void parse(InputStream in, ChromatogramFileVisitor visitor)
+            throws ScfDecoderException {
+        
+<span class="nc" id="L127">        DataInputStream dataIn = new DataInputStream(in);</span>
+<span class="nc" id="L128">        SCFHeader header= headerCodec.decode(dataIn);</span>
+<span class="nc" id="L129">        parse(dataIn,header, visitor);</span>
+        
+<span class="nc" id="L131">    }</span>
+    @Override
+    public void parse(File scfFile, ChromatogramFileVisitor visitor)
+            throws ScfDecoderException, FileNotFoundException {
+<span class="nc" id="L135">        InputStream in = null;</span>
+        try{
+<span class="nc" id="L137">            in = new FileInputStream(scfFile);</span>
+<span class="nc" id="L138">            parse(in,visitor);</span>
+        }finally{
+<span class="nc" id="L140">            IOUtil.closeAndIgnoreErrors(in);</span>
+        }
+        
+<span class="nc" id="L143">    }</span>
+    
+    public ScfChromatogram decode(File sangerTrace) throws TraceDecoderException,
+            FileNotFoundException {
+<span class="nc" id="L147">        InputStream in = null;</span>
+        try{
+<span class="nc" id="L149">            in = new FileInputStream(sangerTrace);</span>
+<span class="nc" id="L150">            return decode(sangerTrace.getName(),in);</span>
+        }finally{
+<span class="nc" id="L152">            IOUtil.closeAndIgnoreErrors(in);</span>
+        }
+    }
+    /**
+     * Since each section does not depend on the other, parsing is made
+     * easier if the sections are parsed in offset order.
+     * This prevents the parser from having to go back into the stream
+     * which may not be possible depending on the source.  This method
+     * creates a Map of the sections which is ordered by the offset.
+     * @param header the {@link SCFHeader} which contains the offsets
+     * for each Section.
+     * @return a {@link Map} of {@link Section}s ordered by offset.
+     */
+    private static SortedMap&lt;Integer, Section&gt; createSectionsByOffsetMap(SCFHeader header) {
+<span class="nc" id="L166">        SortedMap&lt;Integer, Section&gt; sectionsByOffset = new TreeMap&lt;Integer, Section&gt;();</span>
+<span class="nc" id="L167">        sectionsByOffset.put(header.getBasesOffset(), Section.BASES);</span>
+<span class="nc" id="L168">        sectionsByOffset.put(header.getSampleOffset(), Section.SAMPLES);</span>
+<span class="nc" id="L169">        sectionsByOffset.put(header.getCommentOffset(), Section.COMMENTS);</span>
+<span class="nc" id="L170">        sectionsByOffset.put(header.getPrivateDataOffset(), Section.PRIVATE_DATA);</span>
+<span class="nc" id="L171">        return sectionsByOffset;</span>
+    }
+
+    @Override
+    public void write(Chromatogram chromatogram, OutputStream out)
+            throws IOException {
+<span class="nc" id="L177">        encode(chromatogram, out);</span>
+        
+<span class="nc" id="L179">    }</span>
+    protected abstract void encode(Chromatogram c, OutputStream out) throws IOException;
+    /**
+     * Encodes the given {@link ScfChromatogram} into SCF version specific
+     * format.
+     * @param out the OutputStream to write the encoded {@link ScfChromatogram}.
+     * @param c the {@link ScfChromatogram} to write.
+     * @param version which SCF format version spec to encode.
+     * @throws IOException f there are any problems encoding the chromatogram
+     * or any problems writing to the {@link OutputStream}.
+     */
+    protected final void encode(OutputStream out, ScfChromatogram c, int version) throws IOException{
+<span class="nc" id="L191">        SCFHeader header = new DefaultSCFHeader();</span>
+<span class="nc" id="L192">        header.setVersion(version);</span>
+<span class="nc" id="L193">        int currentOffset = HEADER_SIZE;</span>
+<span class="nc" id="L194">        Map&lt;Section, EncodedSection&gt; encodedSectionMap = new EnumMap&lt;Section, EncodedSection&gt;(Section.class);</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">        for(Section s : ORDER_OF_SECTIONS){</span>
+<span class="nc" id="L196">            setOffsetFor(s, currentOffset,header);</span>
+<span class="nc" id="L197">            SectionEncoder encoder =sectionCodecFactory.getSectionEncoderFor(s, version);</span>
+<span class="nc" id="L198">            final EncodedSection encodedSection = encoder.encode(c, header);</span>
+<span class="nc" id="L199">            encodedSectionMap.put(s, encodedSection);</span>
+<span class="nc" id="L200">            ByteBuffer data = encodedSection.getData();</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">            if(data !=null){</span>
+<span class="nc" id="L202">            	currentOffset+=data.limit();</span>
+            }
+<span class="nc" id="L204">        }</span>
+<span class="nc" id="L205">        ByteBuffer result = ByteBuffer.allocate(currentOffset);</span>
+<span class="nc" id="L206">        result.put(headerCodec.encode(header));</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">        for(Section s : ORDER_OF_SECTIONS){</span>
+<span class="nc" id="L208">            ByteBuffer data = encodedSectionMap.get(s).getData();</span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">            if(data !=null){</span>
+<span class="nc" id="L210">            	result.put(data);</span>
+            }
+<span class="nc" id="L212">        }</span>
+<span class="nc" id="L213">        result.rewind();</span>
+<span class="nc" id="L214">        out.write(result.array());</span>
+
+<span class="nc" id="L216">    }</span>
+
+    private static void setOffsetFor(Section s, int currentOffset,SCFHeader header) {
+<span class="nc bnc" id="L219" title="All 2 branches missed.">        if(s==Section.SAMPLES){</span>
+<span class="nc" id="L220">            header.setSampleOffset(currentOffset);</span>
+        }
+<span class="nc bnc" id="L222" title="All 2 branches missed.">        else if(s == Section.BASES){</span>
+<span class="nc" id="L223">            header.setBasesOffset(currentOffset);</span>
+        }
+<span class="nc bnc" id="L225" title="All 2 branches missed.">        else if(s== Section.COMMENTS){</span>
+<span class="nc" id="L226">            header.setCommentOffset(currentOffset);</span>
+        }
+<span class="nc bnc" id="L228" title="All 2 branches missed.">        else if(s== Section.PRIVATE_DATA){</span>
+<span class="nc" id="L229">            header.setPrivateDataOffset(currentOffset);</span>
+        }
+
+<span class="nc" id="L232">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

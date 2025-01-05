@@ -1,0 +1,379 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LoggingEventReader.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">43_lilith</a> &gt; <a href="index.source.html" class="el_package">de.huxhorn.lilith.log4j.xml</a> &gt; <span class="el_source">LoggingEventReader.java</span></div><h1>LoggingEventReader.java</h1><pre class="source lang-java linenums">/*
+ * Lilith - a log event viewer.
+ * Copyright (C) 2007-2009 Joern Huxhorn
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ * 
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see &lt;http://www.gnu.org/licenses/&gt;.
+ */
+package de.huxhorn.lilith.log4j.xml;
+
+import de.huxhorn.lilith.data.logging.ExtendedStackTraceElement;
+import de.huxhorn.lilith.data.logging.LoggingEvent;
+import de.huxhorn.lilith.data.logging.Message;
+import de.huxhorn.lilith.data.logging.ThreadInfo;
+import de.huxhorn.lilith.data.logging.ThrowableInfo;
+import de.huxhorn.sulky.stax.GenericStreamReader;
+import de.huxhorn.sulky.stax.StaxUtilities;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.StringTokenizer;
+
+import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamReader;
+
+public class LoggingEventReader
+	implements GenericStreamReader&lt;LoggingEvent&gt;, LoggingEventSchemaConstants
+{
+	private static final String CAUSED_BY_PREFIX = &quot;Caused by: &quot;;
+	private static final String AT_PREFIX = &quot;at &quot;;
+	private static final String OMITTED_PREFIX = &quot;... &quot;;
+	private static final String OMITTED_POSTFIX = &quot; more&quot;;
+	private static final String CLASS_MESSAGE_SEPARATOR = &quot;: &quot;;
+
+	public LoggingEventReader()
+<span class="nc" id="L48">	{</span>
+<span class="nc" id="L49">	}</span>
+
+	public LoggingEvent read(XMLStreamReader reader)
+		throws XMLStreamException
+	{
+<span class="nc" id="L54">		LoggingEvent result = null;</span>
+<span class="nc" id="L55">		String rootNamespace = NAMESPACE_URI;</span>
+<span class="nc" id="L56">		int type = reader.getEventType();</span>
+<span class="nc bnc" id="L57" title="All 2 branches missed.">		if(XMLStreamConstants.START_DOCUMENT == type)</span>
+		{
+			do
+			{
+<span class="nc" id="L61">				reader.next();</span>
+<span class="nc" id="L62">				type = reader.getEventType();</span>
+			}
+<span class="nc bnc" id="L64" title="All 2 branches missed.">			while(type != XMLStreamConstants.START_ELEMENT);</span>
+<span class="nc" id="L65">			rootNamespace = null;</span>
+		}
+<span class="nc bnc" id="L67" title="All 4 branches missed.">		if(XMLStreamConstants.START_ELEMENT == type &amp;&amp; LOGGING_EVENT_NODE.equals(reader.getLocalName()))</span>
+		{
+<span class="nc" id="L69">			result = new LoggingEvent();</span>
+<span class="nc" id="L70">			result.setLogger(StaxUtilities.readAttributeValue(reader, NAMESPACE_URI, LOGGER_ATTRIBUTE));</span>
+
+<span class="nc" id="L72">			String levelStr = StaxUtilities.readAttributeValue(reader, NAMESPACE_URI, LEVEL_ATTRIBUTE);</span>
+<span class="nc bnc" id="L73" title="All 2 branches missed.">			if(&quot;FATAL&quot;.equals(levelStr))</span>
+			{
+<span class="nc" id="L75">				levelStr = &quot;ERROR&quot;;</span>
+			}
+			try
+			{
+<span class="nc" id="L79">				result.setLevel(LoggingEvent.Level.valueOf(levelStr));</span>
+			}
+<span class="nc" id="L81">			catch(IllegalArgumentException ex)</span>
+			{
+				// ignore
+<span class="nc" id="L84">			}</span>
+<span class="nc" id="L85">			String threadName = StaxUtilities.readAttributeValue(reader, NAMESPACE_URI, THREAD_NAME_ATTRIBUTE);</span>
+<span class="nc" id="L86">			Long threadId = null;</span>
+			try
+			{
+<span class="nc" id="L89">				String threadIdStr = StaxUtilities.readAttributeValue(reader, NAMESPACE_URI, THREAD_ID_ATTRIBUTE);</span>
+<span class="nc bnc" id="L90" title="All 2 branches missed.">				if(threadIdStr != null)</span>
+				{
+<span class="nc" id="L92">					threadId = Long.valueOf(threadIdStr);</span>
+				}
+			}
+<span class="nc" id="L95">			catch(NumberFormatException ex)</span>
+			{
+				// ignore
+<span class="nc" id="L98">			}</span>
+
+<span class="nc" id="L100">			String threadGroupName = StaxUtilities</span>
+<span class="nc" id="L101">				.readAttributeValue(reader, NAMESPACE_URI, THREAD_GROUP_NAME_ATTRIBUTE);</span>
+<span class="nc" id="L102">			Long threadGroupId = null;</span>
+			try
+			{
+<span class="nc" id="L105">				String idStr = StaxUtilities.readAttributeValue(reader, NAMESPACE_URI, THREAD_GROUP_ID_ATTRIBUTE);</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">				if(idStr != null)</span>
+				{
+<span class="nc" id="L108">					threadGroupId = Long.valueOf(idStr);</span>
+				}
+			}
+<span class="nc" id="L111">			catch(NumberFormatException ex)</span>
+			{
+				// ignore
+<span class="nc" id="L114">			}</span>
+
+
+<span class="nc bnc" id="L117" title="All 8 branches missed.">			if(threadName != null || threadId != null || threadGroupId != null || threadGroupName != null)</span>
+			{
+<span class="nc" id="L119">				result.setThreadInfo(new ThreadInfo(threadId, threadName, threadGroupId, threadGroupName));</span>
+			}
+<span class="nc" id="L121">			String timeStamp = StaxUtilities.readAttributeValue(reader, NAMESPACE_URI, TIMESTAMP_ATTRIBUTE);</span>
+			try
+			{
+<span class="nc" id="L124">				result.setTimeStamp(Long.parseLong(timeStamp));</span>
+			}
+<span class="nc" id="L126">			catch(NumberFormatException e)</span>
+			{
+				// ignore
+<span class="nc" id="L129">			}</span>
+<span class="nc" id="L130">			reader.nextTag();</span>
+<span class="nc" id="L131">			String messagePattern = StaxUtilities.readSimpleTextNodeIfAvailable(reader, NAMESPACE_URI, MESSAGE_NODE);</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">			if(messagePattern != null)</span>
+			{
+<span class="nc" id="L134">				result.setMessage(new Message(messagePattern));</span>
+			}
+
+<span class="nc" id="L137">			result.setNdc(readNdc(reader));</span>
+<span class="nc" id="L138">			result.setThrowable(readThrowable(reader));</span>
+<span class="nc" id="L139">			result.setCallStack(readLocationInfo(reader));</span>
+<span class="nc" id="L140">			result.setMdc(readMdc(reader));</span>
+<span class="nc" id="L141">			return result;</span>
+		}
+<span class="nc" id="L143">		return result;</span>
+	}
+
+	private Map&lt;String, String&gt; readMdc(XMLStreamReader reader)
+		throws XMLStreamException
+	{
+<span class="nc" id="L149">		int type = reader.getEventType();</span>
+<span class="nc bnc" id="L150" title="All 4 branches missed.">		if(XMLStreamConstants.START_ELEMENT == type &amp;&amp; PROPERTIES_NODE.equals(reader.getLocalName()) &amp;&amp; NAMESPACE_URI</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">			.equals(reader.getNamespaceURI()))</span>
+		{
+<span class="nc" id="L153">			Map&lt;String, String&gt; mdc = new HashMap&lt;String, String&gt;();</span>
+<span class="nc" id="L154">			reader.nextTag();</span>
+			for(; ;)
+			{
+<span class="nc" id="L157">				MdcEntry entry = readMdcEntry(reader);</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">				if(entry == null)</span>
+				{
+<span class="nc" id="L160">					break;</span>
+				}
+<span class="nc" id="L162">				mdc.put(entry.key, entry.value);</span>
+<span class="nc" id="L163">			}</span>
+<span class="nc" id="L164">			reader.require(XMLStreamConstants.END_ELEMENT, NAMESPACE_URI, PROPERTIES_NODE);</span>
+<span class="nc" id="L165">			reader.nextTag();</span>
+<span class="nc" id="L166">			return mdc;</span>
+		}
+<span class="nc" id="L168">		return null;</span>
+	}
+
+	private MdcEntry readMdcEntry(XMLStreamReader reader)
+		throws XMLStreamException
+	{
+<span class="nc" id="L174">		int type = reader.getEventType();</span>
+<span class="nc bnc" id="L175" title="All 4 branches missed.">		if(XMLStreamConstants.START_ELEMENT == type &amp;&amp; DATA_NODE.equals(reader.getLocalName()) &amp;&amp; NAMESPACE_URI</span>
+<span class="nc bnc" id="L176" title="All 2 branches missed.">			.equals(reader.getNamespaceURI()))</span>
+		{
+<span class="nc" id="L178">			MdcEntry entry = new MdcEntry();</span>
+<span class="nc" id="L179">			entry.key = StaxUtilities.readAttributeValue(reader, NAMESPACE_URI, NAME_ATTRIBUTE);</span>
+<span class="nc" id="L180">			entry.value = StaxUtilities.readAttributeValue(reader, NAMESPACE_URI, VALUE_ATTRIBUTE);</span>
+<span class="nc" id="L181">			reader.nextTag();</span>
+<span class="nc" id="L182">			reader.require(XMLStreamConstants.END_ELEMENT, NAMESPACE_URI, DATA_NODE);</span>
+<span class="nc" id="L183">			reader.nextTag();</span>
+<span class="nc" id="L184">			return entry;</span>
+		}
+<span class="nc" id="L186">		return null;</span>
+	}
+
+	private ExtendedStackTraceElement[] readLocationInfo(XMLStreamReader reader)
+		throws XMLStreamException
+	{
+		// &lt;log4j:locationInfo class=&quot;de.huxhorn.lilith.sandbox.Log4jSandbox$InnerClass&quot; method=&quot;execute&quot; file=&quot;Log4jSandbox.java&quot; line=&quot;18&quot;/&gt;
+<span class="nc" id="L193">		int type = reader.getEventType();</span>
+<span class="nc bnc" id="L194" title="All 4 branches missed.">		if(XMLStreamConstants.START_ELEMENT == type &amp;&amp; LOCATION_INFO_NODE.equals(reader.getLocalName()) &amp;&amp; NAMESPACE_URI</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">			.equals(reader.getNamespaceURI()))</span>
+		{
+<span class="nc" id="L197">			String className = StaxUtilities.readAttributeValue(reader, NAMESPACE_URI, CLASS_ATTRIBUTE);</span>
+<span class="nc" id="L198">			String methodName = StaxUtilities.readAttributeValue(reader, NAMESPACE_URI, METHOD_ATTRIBUTE);</span>
+<span class="nc" id="L199">			String fileName = StaxUtilities.readAttributeValue(reader, NAMESPACE_URI, FILE_ATTRIBUTE);</span>
+<span class="nc" id="L200">			String lineStr = StaxUtilities.readAttributeValue(reader, NAMESPACE_URI, LINE_ATTRIBUTE);</span>
+<span class="nc" id="L201">			int line = -1;</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">			if(lineStr != null)</span>
+			{
+				try
+				{
+<span class="nc" id="L206">					line = Integer.parseInt(lineStr);</span>
+				}
+<span class="nc" id="L208">				catch(NumberFormatException ex)</span>
+				{
+					// ignore
+<span class="nc" id="L211">				}</span>
+			}
+<span class="nc" id="L213">			ExtendedStackTraceElement ste = new ExtendedStackTraceElement(className, methodName, fileName, line);</span>
+<span class="nc" id="L214">			reader.nextTag();</span>
+<span class="nc" id="L215">			reader.require(XMLStreamConstants.END_ELEMENT, NAMESPACE_URI, LOCATION_INFO_NODE);</span>
+<span class="nc" id="L216">			reader.nextTag();</span>
+<span class="nc" id="L217">			return new ExtendedStackTraceElement[]{ste};</span>
+		}
+<span class="nc" id="L219">		return null;</span>
+	}
+
+	private ThrowableInfo readThrowable(XMLStreamReader reader)
+		throws XMLStreamException
+	{
+<span class="nc" id="L225">		String throwableString = StaxUtilities.readSimpleTextNodeIfAvailable(reader, NAMESPACE_URI, THROWABLE_NODE);</span>
+<span class="nc bnc" id="L226" title="All 2 branches missed.">		if(throwableString != null)</span>
+		{
+<span class="nc" id="L228">			StringTokenizer tok = new StringTokenizer(throwableString, &quot;\n&quot;, false);</span>
+<span class="nc" id="L229">			List&lt;String&gt; lines = new ArrayList&lt;String&gt;();</span>
+<span class="nc bnc" id="L230" title="All 2 branches missed.">			while(tok.hasMoreTokens())</span>
+			{
+<span class="nc" id="L232">				String current = tok.nextToken();</span>
+<span class="nc" id="L233">				current = current.trim();</span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">				if(current.length() &gt; 0)</span>
+				{
+<span class="nc" id="L236">					lines.add(current);</span>
+				}
+<span class="nc" id="L238">			}</span>
+<span class="nc" id="L239">			return parseThrowableInfo(lines);</span>
+		}
+<span class="nc" id="L241">		return null;</span>
+	}
+
+	private ThrowableInfo parseThrowableInfo(List&lt;String&gt; lines)
+	{
+<span class="nc" id="L246">		System.out.println(&quot;Lines: &quot; + lines);</span>
+<span class="nc" id="L247">		ThrowableInfo result = null;</span>
+<span class="nc" id="L248">		ThrowableInfo currentTI = null;</span>
+<span class="nc" id="L249">		List&lt;ExtendedStackTraceElement&gt; stackTraceElements = new ArrayList&lt;ExtendedStackTraceElement&gt;();</span>
+<span class="nc" id="L250">		boolean insideMessage = false;</span>
+<span class="nc bnc" id="L251" title="All 2 branches missed.">		for(String current : lines)</span>
+		{
+<span class="nc bnc" id="L253" title="All 2 branches missed.">			if(current.startsWith(AT_PREFIX))</span>
+			{
+<span class="nc" id="L255">				current = current.substring(AT_PREFIX.length());</span>
+<span class="nc" id="L256">				ExtendedStackTraceElement este = ExtendedStackTraceElement.parseStackTraceElement(current);</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">				if(este != null)</span>
+				{
+<span class="nc" id="L259">					stackTraceElements.add(este);</span>
+				}
+<span class="nc" id="L261">				insideMessage = false;</span>
+<span class="nc" id="L262">			}</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">			else if(current.startsWith(OMITTED_PREFIX))</span>
+			{
+<span class="nc bnc" id="L265" title="All 2 branches missed.">				if(currentTI != null)</span>
+				{
+<span class="nc bnc" id="L267" title="All 2 branches missed.">					if(current.endsWith(OMITTED_POSTFIX))</span>
+					{
+<span class="nc" id="L269">						String countStr = current</span>
+<span class="nc" id="L270">							.substring(OMITTED_PREFIX.length(), current.length() - OMITTED_POSTFIX.length());</span>
+<span class="nc" id="L271">						currentTI.setOmittedElements(Integer.parseInt(countStr));</span>
+<span class="nc" id="L272">						insideMessage = false;</span>
+<span class="nc" id="L273">					}</span>
+<span class="nc bnc" id="L274" title="All 2 branches missed.">					else if(insideMessage)</span>
+					{
+<span class="nc" id="L276">						String prevMessage = currentTI.getMessage();</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">						if(prevMessage == null)</span>
+						{
+<span class="nc" id="L279">							currentTI.setMessage(current);</span>
+						}
+						else
+						{
+<span class="nc" id="L283">							currentTI.setMessage(prevMessage + &quot;\n&quot; + current);</span>
+						}
+<span class="nc" id="L285">					}</span>
+				}
+			}
+			else
+			{
+<span class="nc bnc" id="L290" title="All 2 branches missed.">				if(current.startsWith(CAUSED_BY_PREFIX))</span>
+				{
+<span class="nc" id="L292">					current = current.substring(CAUSED_BY_PREFIX.length());</span>
+				}
+<span class="nc bnc" id="L294" title="All 2 branches missed.">				if(currentTI != null)</span>
+				{
+<span class="nc bnc" id="L296" title="All 2 branches missed.">					if(!insideMessage)</span>
+					{
+<span class="nc" id="L298">						ThrowableInfo newTI = new ThrowableInfo();</span>
+<span class="nc" id="L299">						currentTI.setCause(newTI);</span>
+<span class="nc bnc" id="L300" title="All 2 branches missed.">						if(stackTraceElements.size() &gt; 0)</span>
+						{
+<span class="nc" id="L302">							currentTI</span>
+<span class="nc" id="L303">								.setStackTrace(stackTraceElements.toArray(new ExtendedStackTraceElement[stackTraceElements</span>
+<span class="nc" id="L304">									.size()]));</span>
+<span class="nc" id="L305">							stackTraceElements.clear();</span>
+						}
+<span class="nc" id="L307">						currentTI = newTI;</span>
+<span class="nc" id="L308">					}</span>
+				}
+				else
+				{
+<span class="nc" id="L312">					currentTI = new ThrowableInfo();</span>
+				}
+<span class="nc bnc" id="L314" title="All 2 branches missed.">				if(result == null)</span>
+				{
+<span class="nc" id="L316">					result = currentTI;</span>
+				}
+<span class="nc bnc" id="L318" title="All 2 branches missed.">				if(insideMessage)</span>
+				{
+<span class="nc" id="L320">					String prevMessage = currentTI.getMessage();</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">					if(prevMessage == null)</span>
+					{
+<span class="nc" id="L323">						currentTI.setMessage(current);</span>
+					}
+					else
+					{
+<span class="nc" id="L327">						currentTI.setMessage(prevMessage + &quot;\n&quot; + current);</span>
+					}
+<span class="nc" id="L329">				}</span>
+				else
+				{
+<span class="nc" id="L332">					int colonIndex = current.indexOf(CLASS_MESSAGE_SEPARATOR);</span>
+<span class="nc bnc" id="L333" title="All 2 branches missed.">					if(colonIndex &gt; -1)</span>
+					{
+<span class="nc" id="L335">						currentTI.setName(current.substring(0, colonIndex));</span>
+<span class="nc" id="L336">						currentTI.setMessage(current.substring(colonIndex + CLASS_MESSAGE_SEPARATOR.length()));</span>
+					}
+					else
+					{
+<span class="nc" id="L340">						currentTI.setName(current);</span>
+					}
+<span class="nc" id="L342">					insideMessage = true;</span>
+				}
+			}
+<span class="nc" id="L345">		}</span>
+<span class="nc bnc" id="L346" title="All 4 branches missed.">		if(currentTI != null &amp;&amp; stackTraceElements.size() &gt; 0)</span>
+		{
+<span class="nc" id="L348">			currentTI</span>
+<span class="nc" id="L349">				.setStackTrace(stackTraceElements.toArray(new ExtendedStackTraceElement[stackTraceElements.size()]));</span>
+<span class="nc" id="L350">			stackTraceElements.clear();</span>
+		}
+
+<span class="nc" id="L353">		return result;</span>
+	}
+
+	private Message[] readNdc(XMLStreamReader reader)
+		throws XMLStreamException
+	{
+<span class="nc" id="L359">		String ndcString = StaxUtilities.readSimpleTextNodeIfAvailable(reader, NAMESPACE_URI, NDC_NODE);</span>
+<span class="nc bnc" id="L360" title="All 2 branches missed.">		if(ndcString == null)</span>
+		{
+<span class="nc" id="L362">			return null;</span>
+		}
+<span class="nc" id="L364">		ArrayList&lt;Message&gt; ndcs = new ArrayList&lt;Message&gt;();</span>
+<span class="nc" id="L365">		StringTokenizer tok = new StringTokenizer(ndcString, &quot; &quot;, false); // *sigh*</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">		while(tok.hasMoreTokens())</span>
+		{
+<span class="nc" id="L368">			ndcs.add(new Message(tok.nextToken()));</span>
+		}
+<span class="nc" id="L370">		return ndcs.toArray(new Message[ndcs.size()]);</span>
+	}
+
+	private static class MdcEntry
+	{
+		public String key;
+		public String value;
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

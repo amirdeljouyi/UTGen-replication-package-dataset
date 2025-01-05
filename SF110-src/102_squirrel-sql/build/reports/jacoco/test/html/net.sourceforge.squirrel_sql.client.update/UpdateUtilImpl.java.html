@@ -1,0 +1,1099 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UpdateUtilImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.update</a> &gt; <span class="el_source">UpdateUtilImpl.java</span></div><h1>UpdateUtilImpl.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (C) 2007 Rob Manning
+ * manningr@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+package net.sourceforge.squirrel_sql.client.update;
+
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
+
+import net.sourceforge.squirrel_sql.client.ApplicationArguments;
+import net.sourceforge.squirrel_sql.client.plugin.IPluginManager;
+import net.sourceforge.squirrel_sql.client.plugin.PluginInfo;
+import net.sourceforge.squirrel_sql.client.preferences.IUpdateSettings;
+import net.sourceforge.squirrel_sql.client.update.gui.ArtifactStatus;
+import net.sourceforge.squirrel_sql.client.update.util.PathUtils;
+import net.sourceforge.squirrel_sql.client.update.util.PathUtilsImpl;
+import net.sourceforge.squirrel_sql.client.update.xmlbeans.ArtifactXmlBean;
+import net.sourceforge.squirrel_sql.client.update.xmlbeans.ChangeListXmlBean;
+import net.sourceforge.squirrel_sql.client.update.xmlbeans.ChannelXmlBean;
+import net.sourceforge.squirrel_sql.client.update.xmlbeans.ModuleXmlBean;
+import net.sourceforge.squirrel_sql.client.update.xmlbeans.ReleaseXmlBean;
+import net.sourceforge.squirrel_sql.client.update.xmlbeans.UpdateXmlSerializer;
+import net.sourceforge.squirrel_sql.client.update.xmlbeans.UpdateXmlSerializerImpl;
+import net.sourceforge.squirrel_sql.client.util.ApplicationFileWrappers;
+import net.sourceforge.squirrel_sql.client.util.ApplicationFileWrappersImpl;
+import net.sourceforge.squirrel_sql.fw.util.FileWrapper;
+import net.sourceforge.squirrel_sql.fw.util.FileWrapperFactory;
+import net.sourceforge.squirrel_sql.fw.util.FileWrapperFactoryImpl;
+import net.sourceforge.squirrel_sql.fw.util.IOUtilities;
+import net.sourceforge.squirrel_sql.fw.util.IOUtilitiesImpl;
+import net.sourceforge.squirrel_sql.fw.util.IProxySettings;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+import org.apache.commons.lang.StringUtils;
+
+/**
+ * Low-level utility methods for the UpdateController.  Among other things this class provides file locations
+ * for important directories that are needed for backup/restore, installation/removal of updates and existing
+ * software. The following is a pictorial anatomy of the update directory.
+ * 
+ * SQUIRREL_SQL_HOME/
+ *   |
+ *   + update/ (root of the update hierarchy)
+ *       |
+ *       + backup/ (original files that are to be updated are copied here for recovery purposes)
+ *       |   |
+ *       |   + core/
+ *       |   |
+ *       |   + i18n/
+ *       |   |
+ *       |   + plugin/
+ *       |   
+ *       + downloads/
+ *       |   |
+ *       |   + core/
+ *       |   |
+ *       |   + i18n/
+ *       |   |
+ *       |   + plugin/
+ *       |
+ *       + changeList.xml (describes what is in downloads to be installed - deleted after update)
+ *       |
+ *       + release.xml (describes the release that is currently installed)
+ * 
+ * @author manningr
+ */
+<span class="nc" id="L95">public class UpdateUtilImpl implements UpdateUtil</span>
+{
+	// This class is used both inside and outside of SQuirreL (updater application).  When this class is used 
+	// by the updater application, the SQuirreL Main class is not used, and so ApplicationArguments must be 
+	// initialized here or else the logger initialization will fail.
+	static {
+<span class="nc" id="L101">		ApplicationArguments.getInstance();</span>
+	}
+	/** Logger for this class. */
+<span class="nc" id="L104">	private final static ILogger s_log = LoggerController.createLogger(UpdateUtilImpl.class);</span>
+
+	/** the PluginManager that tells us what plugins are installed */
+<span class="nc" id="L107">	private IPluginManager _pluginManager = null;</span>
+
+	/** The size of the buffer to use when extracting files from a ZIP archive */
+	public final static int ZIP_EXTRACTION_BUFFER_SIZE = 8192;
+
+	/**
+	 * Since it can take a while to compute a checksum for large jars, here we cache them for later use. The
+	 * key is the absolute path to the file. The value is it's checksum
+	 */
+<span class="nc" id="L116">	private HashMap&lt;String, Long&gt; fileChecksumMap = new HashMap&lt;String, Long&gt;();</span>
+
+	/** TODO: Spring-inject when this class is a Spring bean */
+<span class="nc" id="L119">	private PathUtils _pathUtils = new PathUtilsImpl();</span>
+
+	public void setPathUtils(PathUtils pathUtils)
+	{
+<span class="nc" id="L123">		this._pathUtils = pathUtils;</span>
+<span class="nc" id="L124">	}</span>
+
+	/** TODO: Spring-inject when this class is a Spring bean */
+<span class="nc" id="L127">	private FileWrapperFactory _fileWrapperFactory = new FileWrapperFactoryImpl();</span>
+
+	public void setFileWrapperFactory(FileWrapperFactory factory)
+	{
+<span class="nc" id="L131">		_fileWrapperFactory = factory;</span>
+<span class="nc" id="L132">	}</span>
+
+	/** TODO: Spring-inject when this class is a Spring bean */
+<span class="nc" id="L135">	private ApplicationFileWrappers _appFileWrappers = new ApplicationFileWrappersImpl();</span>
+
+	public void setApplicationFileWrappers(ApplicationFileWrappers appFileWrappers)
+	{
+<span class="nc" id="L139">		_appFileWrappers = appFileWrappers;</span>
+<span class="nc" id="L140">	}</span>
+
+	/** TODO: Spring-inject when this class is a Spring bean */
+<span class="nc" id="L143">	private IOUtilities _iou = new IOUtilitiesImpl();</span>
+
+	public void setIOUtilities(IOUtilities iou)
+	{
+<span class="nc" id="L147">		_iou = iou;</span>
+<span class="nc" id="L148">	}</span>
+
+	/**
+	 * the utility class that reads and writes release info from/to the release.xml file TODO: Spring-inject
+	 * when this class is a Spring bean
+	 */
+<span class="nc" id="L154">	private UpdateXmlSerializer _serializer = new UpdateXmlSerializerImpl();</span>
+
+	public void setUpdateXmlSerializer(UpdateXmlSerializer serializer)
+	{
+<span class="nc" id="L158">		_serializer = serializer;</span>
+<span class="nc" id="L159">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getCheckSum(java.io.File)
+	 */
+	public long getCheckSum(FileWrapper f)
+	{
+<span class="nc" id="L166">		String absPath = f.getAbsolutePath();</span>
+
+<span class="nc" id="L168">		Long result = -1L;</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">		if (fileChecksumMap.containsKey(absPath))</span>
+		{
+<span class="nc" id="L171">			result = fileChecksumMap.get(absPath);</span>
+		}
+		else
+		{
+			try
+			{
+<span class="nc" id="L177">				result = _iou.getCheckSum(f);</span>
+			}
+<span class="nc" id="L179">			catch (IOException e)</span>
+			{
+<span class="nc" id="L181">				s_log.error(&quot;getCheckSum: failed to compute the checksum for file (&quot; + f.getAbsolutePath()</span>
+<span class="nc" id="L182">					+ &quot;): &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L183">			}</span>
+			// -1 is stored if the checksum operation failed. This will ensure that comparison with any other
+			// file's checksum will be different - even if they happen to be the same file.
+<span class="nc" id="L186">			fileChecksumMap.put(absPath, result);</span>
+		}
+<span class="nc" id="L188">		return result;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#downloadCurrentRelease(java.lang.String, int,
+	 *      java.lang.String, java.lang.String)
+	 */
+	public ChannelXmlBean downloadCurrentRelease(final String host, final int port, final String path,
+		final String fileToGet, final IProxySettings proxySettings) throws Exception
+	{
+<span class="nc" id="L198">		ChannelXmlBean result = null;</span>
+<span class="nc bnc" id="L199" title="All 2 branches missed.">		if (s_log.isDebugEnabled())</span>
+		{
+<span class="nc" id="L201">			s_log.debug(&quot;downloadCurrentRelease: host=&quot; + host + &quot; port=&quot; + port + &quot; path=&quot; + path</span>
+				+ &quot; fileToGet=&quot; + fileToGet);
+		}
+<span class="nc" id="L204">		result = downloadCurrentReleaseHttp(host, port, path, fileToGet, proxySettings);</span>
+<span class="nc" id="L205">		return result;</span>
+	}
+
+	/**
+	 * Loads the channel xml bean from the file system.throw new IOException();
+	 * 
+	 * @param path
+	 *           the directory to find release.xml in
+	 * @return the ChannelXmlBean that represents the specified path.
+	 */
+	public ChannelXmlBean loadUpdateFromFileSystem(final String path)
+	{
+<span class="nc" id="L217">		ChannelXmlBean result = null;</span>
+		try
+		{
+<span class="nc" id="L220">			FileWrapper f = _fileWrapperFactory.create(path);</span>
+<span class="nc bnc" id="L221" title="All 2 branches missed.">			if (!f.isDirectory())</span>
+			{
+<span class="nc" id="L223">				s_log.error(&quot;FileSystem path (&quot; + path + &quot;) is not a directory.&quot;);</span>
+			}
+			else
+			{
+<span class="nc" id="L227">				f = _fileWrapperFactory.create(f, RELEASE_XML_FILENAME);</span>
+<span class="nc" id="L228">				result = _serializer.readChannelBean(f);</span>
+			}
+		}
+<span class="nc" id="L231">		catch (IOException e)</span>
+		{
+<span class="nc" id="L233">			s_log.error(&quot;Unexpected exception while attempting &quot; + &quot;load updates from filesystem path (&quot; + path</span>
+<span class="nc" id="L234">				+ &quot;): &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L235">		}</span>
+
+<span class="nc" id="L237">		return result;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#downloadLocalUpdateFile(java.lang.String,
+	 *      java.lang.String)
+	 */
+	public boolean downloadLocalUpdateFile(String fileToGet, String destDir) throws FileNotFoundException,
+		IOException
+	{
+<span class="nc" id="L247">		boolean result = false;</span>
+<span class="nc" id="L248">		FileWrapper fromFile = _fileWrapperFactory.create(fileToGet);</span>
+<span class="nc bnc" id="L249" title="All 4 branches missed.">		if (fromFile.isFile() &amp;&amp; fromFile.canRead())</span>
+		{
+<span class="nc" id="L251">			String filename = fromFile.getName();</span>
+<span class="nc" id="L252">			FileWrapper toFile = _fileWrapperFactory.create(destDir, filename);</span>
+<span class="nc" id="L253">			copyFile(fromFile, toFile);</span>
+<span class="nc" id="L254">			result = true;</span>
+<span class="nc" id="L255">		}</span>
+		else
+		{
+<span class="nc" id="L258">			s_log.error(&quot;File &quot; + fileToGet + &quot; doesn't appear to be readable&quot;);</span>
+		}
+<span class="nc" id="L260">		return result;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#copyFile(FileWrapper, FileWrapper)
+	 */
+	public void copyFile(final FileWrapper from, final FileWrapper to) throws FileNotFoundException,
+		IOException
+	{
+<span class="nc bnc" id="L269" title="All 2 branches missed.">		if (!from.exists())</span>
+		{
+<span class="nc" id="L271">			s_log.error(&quot;Cannot copy from file (&quot; + from.getAbsolutePath() + &quot;) which doesn't appear to exist.&quot;);</span>
+<span class="nc" id="L272">			return;</span>
+		}
+<span class="nc" id="L274">		FileWrapper toFile = to;</span>
+		// Check to see if to is a directory and convert toFile to be the name of the file in that directory.
+<span class="nc bnc" id="L276" title="All 2 branches missed.">		if (to.isDirectory())</span>
+		{
+<span class="nc" id="L278">			toFile = getFile(to, from.getName());</span>
+		}
+<span class="nc bnc" id="L280" title="All 2 branches missed.">		if (s_log.isDebugEnabled())</span>
+		{
+<span class="nc" id="L282">			s_log.debug(&quot;Copying from file (&quot; + from.getAbsolutePath() + &quot;) to file (&quot;</span>
+<span class="nc" id="L283">				+ toFile.getAbsolutePath() + &quot;)&quot;);</span>
+		}
+<span class="nc bnc" id="L285" title="All 2 branches missed.">		if (toFile.exists())</span>
+		{
+<span class="nc" id="L287">			long fromCheckSum = getCheckSum(from);</span>
+<span class="nc" id="L288">			long toCheckSum = getCheckSum(toFile);</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">			if (fromCheckSum == toCheckSum)</span>
+			{
+<span class="nc bnc" id="L291" title="All 2 branches missed.">				if (s_log.isInfoEnabled())</span>
+				{
+<span class="nc" id="L293">					s_log.info(&quot;File to be copied(&quot; + from.getAbsolutePath() + &quot;) has the same checksum(&quot;</span>
+<span class="nc" id="L294">						+ fromCheckSum + &quot;) as the file to copy to (&quot; + toFile.getAbsolutePath()</span>
+						+ &quot;). Skipping copy.&quot;);
+				}
+<span class="nc" id="L297">				return;</span>
+			}
+		}
+<span class="nc" id="L300">		_iou.copyFile(from, toFile);</span>
+<span class="nc" id="L301">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#copyDir(
+	 * net.sourceforge.squirrel_sql.fw.util.FileWrapper,
+	 *      java.lang.String, boolean, net.sourceforge.squirrel_sql.fw.util.FileWrapper)
+	 */
+	@Override
+	public void moveFiles(FileWrapper fromDir, String filePattern, boolean matchPattern, FileWrapper toDir)
+		throws FileNotFoundException, IOException
+	{
+<span class="nc bnc" id="L312" title="All 2 branches missed.">		if (StringUtils.isEmpty(filePattern)) {</span>
+<span class="nc" id="L313">			throw new IllegalArgumentException(&quot;filePattern arg cannot be empty or null&quot;);</span>
+		}
+<span class="nc bnc" id="L315" title="All 2 branches missed.">		if (!fromDir.isDirectory()) { throw new IllegalArgumentException(&quot;Expected fromDir(&quot;</span>
+<span class="nc" id="L316">			+ fromDir.getAbsolutePath() + &quot;) to be a directory.&quot;); }</span>
+<span class="nc bnc" id="L317" title="All 2 branches missed.">		if (!toDir.isDirectory()) { throw new IllegalArgumentException(&quot;Expected toDir(&quot;</span>
+<span class="nc" id="L318">			+ toDir.getAbsolutePath() + &quot;) to be a directory.&quot;); }</span>
+
+<span class="nc" id="L320">		List&lt;FileWrapper&gt; filesToMove = getFilterFileList(fromDir, filePattern, matchPattern);</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">		for (FileWrapper file : filesToMove) {</span>
+<span class="nc" id="L322">			copyFile(file, toDir);</span>
+<span class="nc bnc" id="L323" title="All 2 branches missed.">			if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L324">				s_log.debug(&quot;moveFiles: Attempting to delete file &quot;+file.getAbsolutePath());</span>
+			}
+<span class="nc bnc" id="L326" title="All 2 branches missed.">			if (file.delete()) {</span>
+<span class="nc" id="L327">				s_log.error(&quot;moveFiles: Unable to delete file &quot;+file.getAbsolutePath());</span>
+			}
+			
+<span class="nc" id="L330">		}</span>
+<span class="nc" id="L331">	}</span>
+	
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#copyDir(FileWrapper, FileWrapper)
+	 */
+	public void copyDir(FileWrapper fromDir, FileWrapper toDir) throws FileNotFoundException, IOException
+	{
+<span class="nc" id="L338">		verifyDirectory(fromDir, toDir);</span>
+<span class="nc" id="L339">		FileWrapper[] files = fromDir.listFiles();</span>
+<span class="nc" id="L340">		copyFiles(Arrays.asList(files), toDir);</span>
+<span class="nc" id="L341">	}</span>
+
+	private void verifyDirectory(FileWrapper fromDir, FileWrapper toDir) {
+<span class="nc bnc" id="L344" title="All 2 branches missed.">		if (!fromDir.isDirectory()) { throw new IllegalArgumentException(&quot;Expected fromDir(&quot;</span>
+<span class="nc" id="L345">			+ fromDir.getAbsolutePath() + &quot;) to be a directory.&quot;); }</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">		if (!toDir.isDirectory()) { throw new IllegalArgumentException(&quot;Expected toDir(&quot;</span>
+<span class="nc" id="L347">			+ toDir.getAbsolutePath() + &quot;) to be a directory.&quot;); }		</span>
+<span class="nc" id="L348">	}</span>
+	
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#copyDir(
+	 * net.sourceforge.squirrel_sql.fw.util.FileWrapper,
+	 *      java.lang.String, boolean, net.sourceforge.squirrel_sql.fw.util.FileWrapper)
+	 */
+	@Override
+	public void copyDir(FileWrapper fromDir, String filePattern, boolean matchPattern, FileWrapper toDir)
+		throws FileNotFoundException, IOException
+	{
+<span class="nc bnc" id="L359" title="All 2 branches missed.">		if (StringUtils.isEmpty(filePattern)) {</span>
+<span class="nc" id="L360">			throw new IllegalArgumentException(&quot;filePattern arg cannot be empty or null&quot;);</span>
+		}
+<span class="nc" id="L362">		verifyDirectory(fromDir, toDir);</span>
+<span class="nc" id="L363">		List&lt;FileWrapper&gt; filesToCopy = getFilterFileList(fromDir, filePattern, matchPattern);		</span>
+<span class="nc" id="L364">		copyFiles(filesToCopy, toDir);</span>
+<span class="nc" id="L365">	}</span>
+
+	/**
+	 * Builds a list of FileWrappers that represent each of the files in the specified fromDir whose name 
+	 * matches or doesn't match the specified filePattern.  A true value for the matchPattern flag indicates
+	 * that files which match the pattern should be included.  False indicates that only files that do not 
+	 * match the pattern should be included. 
+	 * 
+	 * @param fromDir
+	 * @param filePattern
+	 * @param matchPattern
+	 * @return
+	 * @throws FileNotFoundException
+	 * @throws IOException
+	 */
+	private List&lt;FileWrapper&gt; getFilterFileList(FileWrapper fromDir, String filePattern, boolean matchPattern) 
+		throws FileNotFoundException, IOException
+	{
+<span class="nc" id="L383">		FileWrapper[] files = fromDir.listFiles();</span>
+<span class="nc" id="L384">		List&lt;FileWrapper&gt; filesToCopy = new ArrayList&lt;FileWrapper&gt;();</span>
+		
+		
+<span class="nc bnc" id="L387" title="All 2 branches missed.">		for (FileWrapper sourceFile : files) {</span>
+			
+<span class="nc" id="L389">			boolean fileNameMatchesPattern = sourceFile.getName().matches(filePattern);</span>
+<span class="nc bnc" id="L390" title="All 4 branches missed.">			if (matchPattern &amp;&amp; fileNameMatchesPattern) {</span>
+<span class="nc" id="L391">				filesToCopy.add(sourceFile);</span>
+			}
+<span class="nc bnc" id="L393" title="All 4 branches missed.">			if (!matchPattern &amp;&amp; !fileNameMatchesPattern) {</span>
+<span class="nc" id="L394">				filesToCopy.add(sourceFile);</span>
+			}
+		}		
+<span class="nc" id="L397">		return filesToCopy;</span>
+	}
+	
+	/**
+	 * Expects the toDir to be a directory.  This check should be made in the public method.
+	 * @param files
+	 * @param toDir
+	 * @throws FileNotFoundException
+	 * @throws IOException
+	 */
+	private void copyFiles(List&lt;FileWrapper&gt; files, FileWrapper toDir) 
+		throws FileNotFoundException, IOException 
+	{		
+<span class="nc bnc" id="L410" title="All 2 branches missed.">		for (FileWrapper sourceFile : files)</span>
+		{
+<span class="nc" id="L412">			copyFile(sourceFile, toDir);</span>
+<span class="nc" id="L413">		}		</span>
+<span class="nc" id="L414">	}</span>
+	
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getLocalReleaseInfo(java.lang.String)
+	 */
+	public ChannelXmlBean getLocalReleaseInfo(String localReleaseFile)
+	{
+<span class="nc" id="L421">		ChannelXmlBean result = null;</span>
+<span class="nc bnc" id="L422" title="All 2 branches missed.">		if (s_log.isDebugEnabled())</span>
+		{
+<span class="nc" id="L424">			s_log.debug(&quot;Attempting to read local release file: &quot; + localReleaseFile);</span>
+		}
+		try
+		{
+<span class="nc" id="L428">			result = _serializer.readChannelBean(localReleaseFile);</span>
+		}
+<span class="nc" id="L430">		catch (IOException e)</span>
+		{
+<span class="nc" id="L432">			s_log.error(&quot;Unable to read local release file: &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L433">		}</span>
+<span class="nc" id="L434">		return result;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getSquirrelHomeDir()
+	 */
+	public FileWrapper getSquirrelHomeDir()
+	{
+<span class="nc" id="L442">		FileWrapper squirrelHomeDir = _appFileWrappers.getSquirrelHomeDir();</span>
+<span class="nc bnc" id="L443" title="All 2 branches missed.">		if (!squirrelHomeDir.isDirectory())</span>
+		{
+<span class="nc" id="L445">			s_log.error(&quot;SQuirreL Home Directory (&quot; + squirrelHomeDir.getAbsolutePath()</span>
+				+ &quot; doesn't appear to be a directory&quot;);
+		}
+<span class="nc" id="L448">		return squirrelHomeDir;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getInstalledSquirrelMainJarLocation()
+	 */
+	public FileWrapper getInstalledSquirrelMainJarLocation()
+	{
+<span class="nc" id="L456">		return _fileWrapperFactory.create(getSquirrelHomeDir(), SQUIRREL_SQL_JAR_FILENAME);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getSquirrelPluginsDir()
+	 */
+	public FileWrapper getSquirrelPluginsDir()
+	{
+<span class="nc" id="L464">		FileWrapper squirrelHomeDir = _appFileWrappers.getPluginsDirectory();</span>
+<span class="nc bnc" id="L465" title="All 2 branches missed.">		if (!squirrelHomeDir.isDirectory())</span>
+		{
+<span class="nc" id="L467">			s_log.error(&quot;SQuirreL Plugins Directory (&quot; + squirrelHomeDir.getAbsolutePath()</span>
+				+ &quot; doesn't appear to be a directory&quot;);
+		}
+<span class="nc" id="L470">		return squirrelHomeDir;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getSquirrelLibraryDir()
+	 */
+	public FileWrapper getSquirrelLibraryDir()
+	{
+<span class="nc" id="L478">		FileWrapper squirrelLibDir = _appFileWrappers.getLibraryDirectory();</span>
+<span class="nc bnc" id="L479" title="All 2 branches missed.">		if (!squirrelLibDir.isDirectory())</span>
+		{
+<span class="nc" id="L481">			s_log.error(&quot;SQuirreL Library Directory (&quot; + squirrelLibDir.getAbsolutePath()</span>
+				+ &quot; doesn't appear to be a directory&quot;);
+		}
+<span class="nc" id="L484">		return squirrelLibDir;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getSquirrelUpdateDir()
+	 */
+	public FileWrapper getSquirrelUpdateDir()
+	{
+<span class="nc" id="L492">		return getDir(_appFileWrappers.getUpdateDirectory(), null, true);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getDownloadsDir()
+	 */
+	public FileWrapper getDownloadsDir()
+	{
+<span class="nc" id="L500">		return getDir(getSquirrelUpdateDir(), DOWNLOADS_DIR_NAME, true);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getCoreDownloadsDir()
+	 */
+	public FileWrapper getCoreDownloadsDir()
+	{
+<span class="nc" id="L508">		return getDir(getDownloadsDir(), CORE_ARTIFACT_ID, true);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getPluginDownloadsDir()
+	 */
+	public FileWrapper getPluginDownloadsDir()
+	{
+<span class="nc" id="L516">		return getDir(getDownloadsDir(), PLUGIN_ARTIFACT_ID, true);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getI18nDownloadsDir()
+	 */
+	public FileWrapper getI18nDownloadsDir()
+	{
+<span class="nc" id="L524">		return getDir(getDownloadsDir(), TRANSLATION_ARTIFACT_ID, true);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getBackupDir()
+	 */
+	public FileWrapper getBackupDir()
+	{
+<span class="nc" id="L532">		return getDir(getSquirrelUpdateDir(), BACKUP_ROOT_DIR_NAME, false);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getCoreBackupDir()
+	 */
+	public FileWrapper getCoreBackupDir()
+	{
+<span class="nc" id="L540">		return getDir(getBackupDir(), CORE_ARTIFACT_ID, false);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getI18nBackupDir()
+	 */
+	public FileWrapper getI18nBackupDir()
+	{
+<span class="nc" id="L548">		return getDir(getBackupDir(), TRANSLATION_ARTIFACT_ID, false);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getPluginBackupDir()
+	 */
+	public FileWrapper getPluginBackupDir()
+	{
+<span class="nc" id="L556">		return getDir(getBackupDir(), PLUGIN_ARTIFACT_ID, false);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getChangeListFile()
+	 */
+	public FileWrapper getChangeListFile()
+	{
+<span class="nc" id="L564">		FileWrapper updateDir = getSquirrelUpdateDir();</span>
+<span class="nc" id="L565">		FileWrapper changeListFile = _fileWrapperFactory.create(updateDir, CHANGE_LIST_FILENAME);</span>
+<span class="nc" id="L566">		return changeListFile;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#saveChangeList(java.util.List)
+	 */
+	public void saveChangeList(List&lt;ArtifactStatus&gt; changes) throws FileNotFoundException
+	{
+<span class="nc" id="L574">		ChangeListXmlBean changeBean = new ChangeListXmlBean();</span>
+<span class="nc" id="L575">		changeBean.setChanges(changes);</span>
+<span class="nc" id="L576">		_serializer.write(changeBean, getChangeListFile());</span>
+<span class="nc" id="L577">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getChangeList()
+	 */
+	public ChangeListXmlBean getChangeList() throws FileNotFoundException
+	{
+<span class="nc" id="L584">		return _serializer.readChangeListBean(getChangeListFile());</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getLocalReleaseFile()
+	 */
+	public FileWrapper getLocalReleaseFile() throws FileNotFoundException
+	{
+<span class="nc" id="L592">		FileWrapper result = null;</span>
+		try
+		{
+<span class="nc" id="L595">			FileWrapper[] files = getSquirrelHomeDir().listFiles();</span>
+<span class="nc bnc" id="L596" title="All 2 branches missed.">			for (FileWrapper file : files)</span>
+			{
+<span class="nc bnc" id="L598" title="All 2 branches missed.">				if (LOCAL_UPDATE_DIR_NAME.equals(file.getName()))</span>
+				{
+<span class="nc" id="L600">					FileWrapper[] updateFiles = file.listFiles();</span>
+<span class="nc bnc" id="L601" title="All 2 branches missed.">					for (FileWrapper updateFile : updateFiles)</span>
+					{
+<span class="nc bnc" id="L603" title="All 2 branches missed.">						if (RELEASE_XML_FILENAME.equals(updateFile.getName()))</span>
+						{
+<span class="nc" id="L605">							result = updateFile;</span>
+						}
+					}
+				}
+			}
+		}
+<span class="nc" id="L611">		catch (Exception e)</span>
+		{
+<span class="nc" id="L613">			s_log.error(&quot;getLocalReleaseFile: Exception encountered while &quot; + &quot;attempting to find &quot;</span>
+				+ RELEASE_XML_FILENAME + &quot; file&quot;);
+<span class="nc" id="L615">		}</span>
+<span class="nc bnc" id="L616" title="All 2 branches missed.">		if (result == null) { throw new FileNotFoundException(&quot;File &quot; + RELEASE_XML_FILENAME</span>
+			+ &quot; could not be found&quot;); }
+<span class="nc" id="L618">		return result;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getArtifactStatus(net.sourceforge.squirrel_sql.client.update.xmlbeans.ChannelXmlBean)
+	 */
+	public List&lt;ArtifactStatus&gt; getArtifactStatus(ChannelXmlBean channelXmlBean)
+	{
+
+<span class="nc" id="L627">		ReleaseXmlBean releaseXmlBean = channelXmlBean.getCurrentRelease();</span>
+<span class="nc" id="L628">		return getArtifactStatus(releaseXmlBean);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#
+	 *      getArtifactStatus(net.sourceforge.squirrel_sql.client.update.xmlbeans.ReleaseXmlBean)
+	 */
+	public List&lt;ArtifactStatus&gt; getArtifactStatus(ReleaseXmlBean releaseXmlBean)
+	{
+<span class="nc" id="L637">		Set&lt;String&gt; installedPlugins = getInstalledPlugins();</span>
+<span class="nc" id="L638">		Set&lt;String&gt; installedTranslations = getInstalledTranslations();</span>
+<span class="nc" id="L639">		ArrayList&lt;ArtifactStatus&gt; result = new ArrayList&lt;ArtifactStatus&gt;();</span>
+<span class="nc" id="L640">		Set&lt;ModuleXmlBean&gt; currentModuleBeans = releaseXmlBean.getModules();</span>
+<span class="nc bnc" id="L641" title="All 2 branches missed.">		for (ModuleXmlBean module : currentModuleBeans)</span>
+		{
+<span class="nc" id="L643">			Set&lt;ArtifactXmlBean&gt; artifactBeans = module.getArtifacts();</span>
+<span class="nc" id="L644">			String moduleName = module.getName();</span>
+<span class="nc bnc" id="L645" title="All 2 branches missed.">			for (ArtifactXmlBean artifact : artifactBeans)</span>
+			{
+<span class="nc" id="L647">				ArtifactStatus status = new ArtifactStatus(artifact);</span>
+<span class="nc" id="L648">				status.setType(moduleName);</span>
+<span class="nc bnc" id="L649" title="All 2 branches missed.">				if (status.isCoreArtifact())</span>
+				{
+<span class="nc" id="L651">					status.setInstalled(true);</span>
+				}
+<span class="nc bnc" id="L653" title="All 4 branches missed.">				if (status.isPluginArtifact() &amp;&amp; installedPlugins.contains(artifact.getName()))</span>
+				{
+<span class="nc" id="L655">					status.setInstalled(true);</span>
+				}
+<span class="nc bnc" id="L657" title="All 4 branches missed.">				if (status.isTranslationArtifact() &amp;&amp; installedTranslations.contains(artifact.getName()))</span>
+				{
+<span class="nc" id="L659">					status.setInstalled(true);</span>
+				}
+<span class="nc" id="L661">				result.add(status);</span>
+<span class="nc" id="L662">			}</span>
+<span class="nc" id="L663">		}</span>
+<span class="nc" id="L664">		return result;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getInstalledPlugins()
+	 */
+	public Set&lt;String&gt; getInstalledPlugins()
+	{
+<span class="nc" id="L672">		HashSet&lt;String&gt; result = new HashSet&lt;String&gt;();</span>
+
+<span class="nc bnc" id="L674" title="All 2 branches missed.">		for (PluginInfo info : _pluginManager.getPluginInformation())</span>
+		{
+<span class="nc" id="L676">			result.add(info.getInternalName() + &quot;-assembly.zip&quot;);</span>
+		}
+<span class="nc" id="L678">		return result;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getInstalledTranslations()
+	 */
+	public Set&lt;String&gt; getInstalledTranslations()
+	{
+<span class="nc" id="L686">		HashSet&lt;String&gt; result = new HashSet&lt;String&gt;();</span>
+<span class="nc" id="L687">		FileWrapper libDir = getSquirrelLibraryDir();</span>
+<span class="nc bnc" id="L688" title="All 2 branches missed.">		for (String filename : libDir.list())</span>
+		{
+<span class="nc bnc" id="L690" title="All 2 branches missed.">			if (filename.startsWith(&quot;squirrel-sql_&quot;))</span>
+			{
+<span class="nc" id="L692">				result.add(filename);</span>
+			}
+		}
+<span class="nc" id="L695">		return result;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getPluginManager()
+	 */
+	public IPluginManager getPluginManager()
+	{
+<span class="nc" id="L703">		return _pluginManager;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#setPluginManager(net.sourceforge.squirrel_sql.client.plugin.PluginManager)
+	 */
+	public void setPluginManager(IPluginManager manager)
+	{
+<span class="nc" id="L711">		_pluginManager = manager;</span>
+<span class="nc" id="L712">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#checkDir(FileWrapper, java.lang.String)
+	 */
+	public FileWrapper checkDir(FileWrapper parent, String child)
+	{
+<span class="nc" id="L719">		FileWrapper dir = _fileWrapperFactory.create(parent, child);</span>
+<span class="nc bnc" id="L720" title="All 4 branches missed.">		if (!dir.exists() &amp;&amp; !dir.mkdir())</span>
+		{
+<span class="nc" id="L722">			s_log.error(&quot;checkDir: Failed to mkdir - &quot; + dir.getAbsolutePath());</span>
+		}
+<span class="nc" id="L724">		return dir;</span>
+	}
+
+	/**
+	 * TODO: move to IOUtilities
+	 * 
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#createZipFile(FileWrapper, FileWrapper[])
+	 */
+	public void createZipFile(FileWrapper zipFile, FileWrapper... sourceFiles) throws FileNotFoundException,
+		IOException
+	{
+<span class="nc" id="L735">		ZipOutputStream os = new ZipOutputStream(new FileOutputStream(zipFile.getAbsolutePath()));</span>
+<span class="nc" id="L736">		zipFileOs(os, sourceFiles);</span>
+<span class="nc" id="L737">		os.close();</span>
+<span class="nc" id="L738">	}</span>
+
+	/**
+	 * This function will recursively delete directories and files.
+	 * 
+	 * @param path
+	 *           File or Directory to be deleted
+	 * @return true indicates successfully deleted the file or directory.
+	 */
+	public boolean deleteFile(FileWrapper path)
+	{
+<span class="nc" id="L749">		boolean result = true;</span>
+<span class="nc bnc" id="L750" title="All 2 branches missed.">		if (path.exists())</span>
+		{
+<span class="nc bnc" id="L752" title="All 2 branches missed.">			if (path.isFile())</span>
+			{
+<span class="nc" id="L754">				result = path.delete();</span>
+<span class="nc bnc" id="L755" title="All 2 branches missed.">				if (s_log.isInfoEnabled())</span>
+				{
+<span class="nc bnc" id="L757" title="All 2 branches missed.">					if (result)</span>
+					{
+<span class="nc" id="L759">						s_log.info(&quot;deleteFile: successfully deleted file = &quot; + path.getAbsolutePath());</span>
+					}
+					else
+					{
+<span class="nc" id="L763">						s_log.info(&quot;deleteFile: failed to delete file = &quot; + path.getAbsolutePath());</span>
+					}
+				}
+			}
+			else
+			{
+<span class="nc" id="L769">				FileWrapper[] files = path.listFiles();</span>
+<span class="nc bnc" id="L770" title="All 2 branches missed.">				for (int i = 0; i &lt; files.length; i++)</span>
+				{
+<span class="nc bnc" id="L772" title="All 4 branches missed.">					result = result &amp;&amp; deleteFile(files[i]);</span>
+				}
+<span class="nc bnc" id="L774" title="All 4 branches missed.">				result = result &amp;&amp; path.delete();</span>
+			}
+		}
+<span class="nc" id="L777">		return result;</span>
+	}
+
+	/**
+	 * TODO: Move this to IOUtilities Extracts the specified zip file to the specified output directory.
+	 * 
+	 * @param zipFile
+	 * @param outputDirectory
+	 * @throws IOException
+	 */
+	public void extractZipFile(FileWrapper zipFile, FileWrapper outputDirectory) throws IOException
+	{
+<span class="nc bnc" id="L789" title="All 2 branches missed.">		if (!outputDirectory.isDirectory())</span>
+		{
+<span class="nc" id="L791">			s_log.error(&quot;Output directory specified (&quot; + outputDirectory.getAbsolutePath()</span>
+				+ &quot;) doesn't appear to be a directory&quot;);
+<span class="nc" id="L793">			return;</span>
+		}
+<span class="nc" id="L795">		FileInputStream fis = null;</span>
+<span class="nc" id="L796">		ZipInputStream zis = null;</span>
+<span class="nc" id="L797">		FileOutputStream fos = null;</span>
+		try
+		{
+<span class="nc" id="L800">			fis = new FileInputStream(zipFile.getAbsolutePath());</span>
+<span class="nc" id="L801">			zis = new ZipInputStream(fis);</span>
+<span class="nc" id="L802">			ZipEntry zipEntry = zis.getNextEntry();</span>
+<span class="nc bnc" id="L803" title="All 2 branches missed.">			while (zipEntry != null)</span>
+			{
+<span class="nc" id="L805">				String name = zipEntry.getName();</span>
+<span class="nc bnc" id="L806" title="All 2 branches missed.">				if (zipEntry.isDirectory())</span>
+				{
+<span class="nc" id="L808">					checkDir(outputDirectory, name);</span>
+				}
+				else
+				{
+<span class="nc" id="L812">					FileWrapper newFile = _fileWrapperFactory.create(outputDirectory, name);</span>
+<span class="nc bnc" id="L813" title="All 2 branches missed.">					if (newFile.exists())</span>
+					{
+<span class="nc bnc" id="L815" title="All 2 branches missed.">						if (s_log.isInfoEnabled())</span>
+						{
+<span class="nc" id="L817">							s_log.info(&quot;Deleting extraction file that already exists:&quot; + newFile.getAbsolutePath());</span>
+						}
+<span class="nc" id="L819">						newFile.delete();</span>
+					}
+<span class="nc" id="L821">					fos = new FileOutputStream(newFile.getAbsolutePath());</span>
+<span class="nc" id="L822">					byte[] buffer = new byte[ZIP_EXTRACTION_BUFFER_SIZE];</span>
+<span class="nc" id="L823">					int n = 0;</span>
+<span class="nc bnc" id="L824" title="All 2 branches missed.">					while ((n = zis.read(buffer, 0, ZIP_EXTRACTION_BUFFER_SIZE)) &gt; -1)</span>
+					{
+<span class="nc" id="L826">						fos.write(buffer, 0, n);</span>
+					}
+<span class="nc" id="L828">					fos.close();</span>
+				}
+<span class="nc" id="L830">				zipEntry = zis.getNextEntry();</span>
+<span class="nc" id="L831">			}</span>
+		}
+		finally
+		{
+<span class="nc" id="L835">			_iou.closeOutputStream(fos);</span>
+<span class="nc" id="L836">			_iou.closeInputStream(fis);</span>
+<span class="nc" id="L837">			_iou.closeInputStream(zis);</span>
+		}
+<span class="nc" id="L839">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getChangeList(FileWrapper)
+	 */
+	public ChangeListXmlBean getChangeList(FileWrapper changeListFile) throws FileNotFoundException
+	{
+<span class="nc" id="L846">		return _serializer.readChangeListBean(changeListFile);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#getFile(FileWrapper, java.lang.String)
+	 */
+	public FileWrapper getFile(FileWrapper installDir, String artifactName)
+	{
+<span class="nc" id="L854">		return _fileWrapperFactory.create(installDir, artifactName);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#downloadHttpUpdateFile(java.lang.String, int,
+	 *      java.lang.String, java.lang.String, long, long)
+	 */
+	public String downloadHttpUpdateFile(final String host, final int port, final String fileToGet,
+		final String destDir, final long fileSize, final long checksum, final IProxySettings proxySettings)
+		throws Exception
+	{
+<span class="nc" id="L865">		URL url = _iou.constructHttpUrl(host, port, fileToGet);</span>
+<span class="nc" id="L866">		String result = null;</span>
+<span class="nc" id="L867">		FileWrapper resultFile = _fileWrapperFactory.create(destDir, _pathUtils.getFileFromPath(fileToGet));</span>
+<span class="nc" id="L868">		result = resultFile.getAbsolutePath();</span>
+
+<span class="nc bnc" id="L870" title="All 2 branches missed.">		if (s_log.isDebugEnabled())</span>
+		{
+<span class="nc" id="L872">			s_log.debug(&quot;downloadHttpFile: writing http response body to file: &quot; + resultFile);</span>
+		}
+
+<span class="nc" id="L875">		int totalLength = _iou.downloadHttpFile(url, resultFile, proxySettings);</span>
+
+<span class="nc" id="L877">		verifySize(url, fileSize, totalLength);</span>
+<span class="nc" id="L878">		return result;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#
+	 *      getDownloadFileLocation(net.sourceforge.squirrel_sql.client.update.gui.ArtifactStatus)
+	 */
+	public FileWrapper getDownloadFileLocation(ArtifactStatus status)
+	{
+<span class="nc" id="L887">		FileWrapper result = null;</span>
+<span class="nc bnc" id="L888" title="All 2 branches missed.">		if (CORE_ARTIFACT_ID.equals(status.getType()))</span>
+		{
+<span class="nc" id="L890">			result = getFile(getCoreDownloadsDir(), status.getName());</span>
+		}
+<span class="nc bnc" id="L892" title="All 2 branches missed.">		if (PLUGIN_ARTIFACT_ID.equals(status.getType()))</span>
+		{
+<span class="nc" id="L894">			result = getFile(getPluginDownloadsDir(), status.getName());</span>
+		}
+<span class="nc bnc" id="L896" title="All 2 branches missed.">		if (TRANSLATION_ARTIFACT_ID.equals(status.getType()))</span>
+		{
+<span class="nc" id="L898">			result = getFile(getI18nDownloadsDir(), status.getName());</span>
+		}
+<span class="nc" id="L900">		return result;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#
+	 *      isPresentInDownloadsDirectory(net.sourceforge.squirrel_sql.client.update.gui.ArtifactStatus)
+	 */
+	public boolean isPresentInDownloadsDirectory(ArtifactStatus status)
+	{
+<span class="nc" id="L909">		boolean result = false;</span>
+
+<span class="nc" id="L911">		FileWrapper downloadFile = getDownloadFileLocation(status);</span>
+
+<span class="nc bnc" id="L913" title="All 2 branches missed.">		if (downloadFile.exists())</span>
+		{
+<span class="nc" id="L915">			long checkSum = getCheckSum(downloadFile);</span>
+<span class="nc bnc" id="L916" title="All 2 branches missed.">			if (status.getChecksum() == checkSum)</span>
+			{
+<span class="nc bnc" id="L918" title="All 2 branches missed.">				if (downloadFile.length() == status.getSize())</span>
+				{
+<span class="nc" id="L920">					result = true;</span>
+				}
+			}
+		}
+<span class="nc" id="L924">		return result;</span>
+	}
+
+	/* Helper Methods */
+
+	/**
+	 * Verifies that the byte size of what was downloaded matches the expected size of the artifact. If
+	 * expected is -1, this check will be skipped; this is expected in the case where the release.xml file is
+	 * being downloaded and there is no information about big it is. When -1 is expected, then a log message is
+	 * created and this check is skipped.
+	 * 
+	 * @param url
+	 *           the URL that was downloaded from
+	 * @param expected
+	 *           the number of bytes expected to be downloaded
+	 * @param actual
+	 *           the actual number of bytes downloaded
+	 * @throws Exception
+	 *            if the two counts do not match.
+	 */
+	private void verifySize(URL url, long expected, long actual) throws Exception
+	{
+<span class="nc bnc" id="L946" title="All 2 branches missed.">		if (expected == -1)</span>
+		{
+<span class="nc bnc" id="L948" title="All 2 branches missed.">			if (s_log.isInfoEnabled())</span>
+			{
+<span class="nc" id="L950">				s_log.info(&quot;verifySize: expected size was -1.  Skipping check for url: &quot; + url.toString());</span>
+			}
+<span class="nc" id="L952">			return;</span>
+		}
+<span class="nc bnc" id="L954" title="All 2 branches missed.">		if (expected != actual) { throw new Exception(&quot;Attempt to get file contents from url (&quot;</span>
+<span class="nc" id="L955">			+ url.toString() + &quot;) resulted in &quot; + actual + &quot; bytes downloaded, but &quot; + expected</span>
+			+ &quot; bytes were expected.&quot;); }
+<span class="nc" id="L957">	}</span>
+
+	/**
+	 * Writes the specified sourceFile(s) contents to the specified Zip output stream.
+	 * 
+	 * @param os
+	 *           the Zip OutputStream to write to
+	 * @param sourceFiles
+	 *           the files to read from
+	 * @throws FileNotFoundException
+	 *            if one of the files could not be found
+	 * @throws IOException
+	 *            if and IO error occurs
+	 */
+	private void zipFileOs(ZipOutputStream os, FileWrapper[] sourceFiles) throws FileNotFoundException,
+		IOException
+	{
+<span class="nc bnc" id="L974" title="All 2 branches missed.">		for (FileWrapper file : sourceFiles)</span>
+		{
+<span class="nc bnc" id="L976" title="All 2 branches missed.">			if (file.isDirectory())</span>
+			{
+<span class="nc" id="L978">				zipFileOs(os, file.listFiles());</span>
+			}
+			else
+			{
+<span class="nc" id="L982">				FileInputStream fis = null;</span>
+				try
+				{
+<span class="nc" id="L985">					fis = new FileInputStream(file.getAbsolutePath());</span>
+<span class="nc" id="L986">					os.putNextEntry(new ZipEntry(file.getPath()));</span>
+<span class="nc" id="L987">					_iou.copyBytes(fis, os);</span>
+				}
+				finally
+				{
+<span class="nc" id="L991">					_iou.closeInputStream(fis);</span>
+				}
+			}
+		}
+<span class="nc" id="L995">	}</span>
+
+	/**
+	 * @param parent
+	 * @param dirName
+	 * @param create
+	 * @return
+	 */
+	private FileWrapper getDir(FileWrapper parent, String dirName, boolean create)
+	{
+<span class="nc" id="L1005">		FileWrapper result = null;</span>
+<span class="nc bnc" id="L1006" title="All 2 branches missed.">		if (dirName != null)</span>
+		{
+<span class="nc" id="L1008">			result = _fileWrapperFactory.create(parent, dirName);</span>
+		}
+		else
+		{
+<span class="nc" id="L1012">			result = parent;</span>
+		}
+<span class="nc bnc" id="L1014" title="All 2 branches missed.">		if (!result.isDirectory())</span>
+		{
+<span class="nc bnc" id="L1016" title="All 2 branches missed.">			if (result.exists())</span>
+			{
+				// If the update dir, is actually a file, log an error.
+<span class="nc" id="L1019">				s_log.error(dirName + &quot; directory (&quot; + result.getAbsolutePath()</span>
+					+ &quot;) doesn't appear to be a directory&quot;);
+			}
+			else
+			{
+				// If the downloads dir doesn't already exist, just create it.
+<span class="nc bnc" id="L1025" title="All 2 branches missed.">				if (create)</span>
+				{
+<span class="nc" id="L1027">					result.mkdir();</span>
+				}
+			}
+		}
+<span class="nc" id="L1031">		return result;</span>
+	}
+
+	/**
+	 * @param host
+	 * @param port
+	 * @param path
+	 * @param fileToGet
+	 * @return
+	 * @throws Exception
+	 *            if the current release file could not be downloaded
+	 */
+	private ChannelXmlBean downloadCurrentReleaseHttp(final String host, final int port, final String path,
+		final String file, final IProxySettings proxySettings) throws Exception
+	{
+
+<span class="nc" id="L1047">		ChannelXmlBean result = null;</span>
+<span class="nc" id="L1048">		InputStream is = null;</span>
+		try
+		{
+<span class="nc" id="L1051">			String fileToGet = _pathUtils.buildPath(true, path, file);</span>
+
+			// We set expected and checksum to -1 here, since we don't have that information for release.xml file
+			// TODO: Can HttpClient be used to get the byte-size of release.xml so we can perform this check?
+<span class="nc" id="L1055">			String filename =</span>
+<span class="nc" id="L1056">				downloadHttpUpdateFile(host, port, fileToGet, getDownloadsDir().getAbsolutePath(), -1, -1,</span>
+					proxySettings);
+<span class="nc" id="L1058">			FileWrapper releaseXmlFile = _fileWrapperFactory.create(filename);</span>
+<span class="nc bnc" id="L1059" title="All 2 branches missed.">			if (releaseXmlFile.exists())</span>
+			{
+<span class="nc" id="L1061">				result = _serializer.readChannelBean(releaseXmlFile);</span>
+			}
+			else
+			{
+<span class="nc" id="L1065">				throw new FileNotFoundException(&quot;Current release file couldn't be downloaded&quot;);</span>
+			}
+		}
+		finally
+		{
+<span class="nc" id="L1070">			_iou.closeInputStream(is);</span>
+		}
+<span class="nc" id="L1072">		return result;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.update.UpdateUtil#
+	 *      getUpdateCheckFrequency(net.sourceforge.squirrel_sql.client.preferences.IUpdateSettings)
+	 */
+	public UpdateCheckFrequency getUpdateCheckFrequency(IUpdateSettings settings)
+	{
+<span class="nc" id="L1081">		UpdateCheckFrequency result = UpdateCheckFrequency.STARTUP;</span>
+<span class="nc" id="L1082">		String updateCheckFrequencyStr = settings.getUpdateCheckFrequency();</span>
+<span class="nc bnc" id="L1083" title="All 2 branches missed.">		if (&quot;weekly&quot;.equalsIgnoreCase(updateCheckFrequencyStr))</span>
+		{
+<span class="nc" id="L1085">			result = UpdateCheckFrequency.WEEKLY;</span>
+		}
+<span class="nc bnc" id="L1087" title="All 2 branches missed.">		if (&quot;daily&quot;.equalsIgnoreCase(updateCheckFrequencyStr))</span>
+		{
+<span class="nc" id="L1089">			result = UpdateCheckFrequency.DAILY;</span>
+		}
+<span class="nc bnc" id="L1091" title="All 2 branches missed.">		if (&quot;startup&quot;.equalsIgnoreCase(updateCheckFrequencyStr))</span>
+		{
+<span class="nc" id="L1093">			result = UpdateCheckFrequency.STARTUP;</span>
+		}
+<span class="nc" id="L1095">		return result;</span>
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,1956 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SQLDatabaseMetaData.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.fw.sql</a> &gt; <span class="el_source">SQLDatabaseMetaData.java</span></div><h1>SQLDatabaseMetaData.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.fw.sql;
+
+/*
+ * Copyright (C) 2002-2003 Colin Bell
+ * colbell@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+import java.sql.DatabaseMetaData;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.StringTokenizer;
+import java.util.TreeMap;
+import java.util.TreeSet;
+
+
+import net.sourceforge.squirrel_sql.fw.datasetviewer.DataSetException;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.DatabaseTypesDataSet;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.IDataSet;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.ResultSetDataSet;
+import net.sourceforge.squirrel_sql.fw.dialects.DialectFactory;
+import net.sourceforge.squirrel_sql.fw.dialects.DialectType;
+import net.sourceforge.squirrel_sql.fw.sql.dbobj.BestRowIdentifier;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+/**
+ * This class represents the metadata for a database. It is essentially a wrapper around
+ * &lt;TT&gt;java.sql.DatabaseMetaData&lt;/TT&gt;.
+ * &lt;P&gt;
+ * Some data can be cached on the first retrieval in order to speed up subsequent retrievals. To clear this
+ * cache call &lt;TT&gt;clearCache()&lt;/TT&gt;.
+ * &lt;P&gt;
+ * From the JavaDoc for &lt;TT&gt;java.sql.DatabaseMetaData&lt;/TT&gt;. &amp;quot;Some methods take arguments that are String
+ * patterns. These arguments all have names such as fooPattern. Within a pattern String, &quot;%&quot; means match any
+ * substring of 0 or more characters, and &quot;_&quot; means match any one character. Only metadata entries matching
+ * the search pattern are returned. If a search pattern argument is set to null, that argument's criterion
+ * will be dropped from the search.&amp;quot;
+ * &lt;P&gt;
+ * Additionally, it should be noted that some JDBC drivers (like Oracle) do not handle multi-threaded access
+ * to methods that return ResultSets very well. It is therefore highly recommended that methods in this class
+ * that return a ResultSet, should not be called outside of this class where this class' monitor has no
+ * jurisdiction. Furthermore, methods that are meant to be called externally that create a ResultSet should
+ * package the data in some container object structure for use by the caller, and should always be
+ * synchronized on this class' monitor.
+ * 
+ * @author &lt;A HREF=&quot;mailto:colbell@users.sourceforge.net&quot;&gt;Colin Bell&lt;/A&gt;
+ */
+public class SQLDatabaseMetaData implements ISQLDatabaseMetaData
+{
+
+	/** Logger for this class. */
+<span class="nc" id="L73">	private final static ILogger s_log = LoggerController.createLogger(SQLDatabaseMetaData.class);</span>
+
+	/**
+	 * Full or partial names of various JDBC driivers that can be matched to &lt;tt&gt;getDriverName()&lt;/tt&gt;.
+	 */
+	private interface IDriverNames
+	{
+		String AS400 = &quot;AS/400 Toolbox for Java JDBC Driver&quot;;
+
+		/* work-around for bug which means we must use &quot;dbo&quot; for schema */
+		String FREE_TDS = &quot;InternetCDS Type 4 JDBC driver for MS SQLServer&quot;;
+
+		String OPTA2000 = &quot;i-net OPTA 2000&quot;;
+	}
+
+<span class="nc" id="L88">	public static class DriverMatch</span>
+	{
+		private static final String COM_HTTX_DRIVER_PREFIX = &quot;com.hxtt.sql.&quot;;
+
+		public static boolean isComHttxDriver(ISQLConnection con)
+		{
+<span class="nc bnc" id="L94" title="All 2 branches missed.">			if (null == con) { return false; }</span>
+<span class="nc" id="L95">			return con.getSQLDriver().getDriverClassName().startsWith(COM_HTTX_DRIVER_PREFIX);</span>
+		}
+	}
+
+	/** Connection to database this class is supplying information for. */
+	private ISQLConnection _conn;
+
+	/**
+	 * Cache of commonly accessed metadata properties keyed by the method name that attempts to retrieve them.
+	 * Note, this cache should only be used for metadata that are not likely to be changed during an open
+	 * Session. Meta data that is likely to be changed should be kept in SchemaInfo.
+	 */
+<span class="nc" id="L107">	private Map&lt;String, Object&gt; _cache = Collections.synchronizedMap(new HashMap&lt;String, Object&gt;());</span>
+
+	/**
+	 * If previous attempts to getSuperTables fail, then this will be set to false, and prevent further
+	 * attempts.
+	 */
+<span class="nc" id="L113">	private boolean supportsSuperTables = true;</span>
+
+	/**
+	 * ctor specifying the connection that we are retrieving metadata for.
+	 * 
+	 * @param conn
+	 *           Connection to database.
+	 * @throws IllegalArgumentException
+	 *            Thrown if null SQLConnection passed.
+	 */
+	SQLDatabaseMetaData(ISQLConnection conn)
+	{
+<span class="nc" id="L125">		super();</span>
+<span class="nc bnc" id="L126" title="All 2 branches missed.">		if (conn == null) { throw new IllegalArgumentException(&quot;SQLDatabaseMetaData == null&quot;); }</span>
+<span class="nc" id="L127">		_conn = conn;</span>
+<span class="nc" id="L128">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getUserName()
+	 */
+	public synchronized String getUserName() throws SQLException
+	{
+<span class="nc" id="L135">		final String key = &quot;getUserName&quot;;</span>
+<span class="nc" id="L136">		String value = (String) _cache.get(key);</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">		if (value == null)</span>
+		{
+<span class="nc" id="L139">			value = privateGetJDBCMetaData().getUserName();</span>
+<span class="nc" id="L140">			_cache.put(key, value);</span>
+		}
+<span class="nc" id="L142">		return value;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getDatabaseProductName()
+	 */
+	public synchronized String getDatabaseProductName() throws SQLException
+	{
+<span class="nc" id="L150">		final String key = &quot;getDatabaseProductName&quot;;</span>
+<span class="nc" id="L151">		String value = (String) _cache.get(key);</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">		if (value == null)</span>
+		{
+<span class="nc" id="L154">			value = privateGetJDBCMetaData().getDatabaseProductName();</span>
+<span class="nc" id="L155">			_cache.put(key, value);</span>
+		}
+<span class="nc" id="L157">		return value;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getDatabaseProductVersion()
+	 */
+	public synchronized String getDatabaseProductVersion() throws SQLException
+	{
+<span class="nc" id="L165">		final String key = &quot;getDatabaseProductVersion&quot;;</span>
+<span class="nc" id="L166">		String value = (String) _cache.get(key);</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">		if (value == null)</span>
+		{
+<span class="nc" id="L169">			value = privateGetJDBCMetaData().getDatabaseProductVersion();</span>
+<span class="nc" id="L170">			_cache.put(key, value);</span>
+		}
+<span class="nc" id="L172">		return value;</span>
+	}
+
+	public synchronized int getDatabaseMajorVersion() throws SQLException
+	{
+<span class="nc" id="L177">		final String key = &quot;getDatabaseMajorVersion&quot;;</span>
+<span class="nc" id="L178">		Integer value = (Integer) _cache.get(key);</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">		if (value == null)</span>
+		{
+<span class="nc" id="L181">			value = privateGetJDBCMetaData().getDatabaseMajorVersion();</span>
+<span class="nc" id="L182">			_cache.put(key, value);</span>
+		}
+<span class="nc" id="L184">		return value;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getDriverName()
+	 */
+	public synchronized String getDriverName() throws SQLException
+	{
+<span class="nc" id="L192">		final String key = &quot;getDriverName&quot;;</span>
+<span class="nc" id="L193">		String value = (String) _cache.get(key);</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">		if (value == null)</span>
+		{
+<span class="nc" id="L196">			value = privateGetJDBCMetaData().getDriverName();</span>
+<span class="nc" id="L197">			_cache.put(key, value);</span>
+		}
+<span class="nc" id="L199">		return value;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getJDBCVersion()
+	 */
+	public int getJDBCVersion() throws SQLException
+	{
+<span class="nc" id="L207">		final String key = &quot;getJDBCVersion&quot;;</span>
+<span class="nc" id="L208">		Integer value = (Integer) _cache.get(key);</span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">		if (value == null)</span>
+		{
+<span class="nc" id="L211">			DatabaseMetaData md = privateGetJDBCMetaData();</span>
+<span class="nc" id="L212">			int major = md.getJDBCMajorVersion();</span>
+<span class="nc" id="L213">			int minor = md.getJDBCMinorVersion();</span>
+<span class="nc" id="L214">			int vers = (major * 100) + minor;</span>
+<span class="nc" id="L215">			value = Integer.valueOf(vers);</span>
+<span class="nc" id="L216">			_cache.put(key, value);</span>
+		}
+<span class="nc" id="L218">		return value.intValue();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getIdentifierQuoteString()
+	 */
+	public synchronized String getIdentifierQuoteString() throws SQLException
+	{
+<span class="nc" id="L226">		final String key = &quot;getIdentifierQuoteString&quot;;</span>
+<span class="nc" id="L227">		String value = (String) _cache.get(key);</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">		if (value == null)</span>
+		{
+<span class="nc" id="L230">			value = privateGetJDBCMetaData().getIdentifierQuoteString();</span>
+<span class="nc bnc" id="L231" title="All 2 branches missed.">			if (value == null)</span>
+			{
+<span class="nc" id="L233">				value = &quot;&quot;;</span>
+			}
+<span class="nc" id="L235">			_cache.put(key, value);</span>
+		}
+<span class="nc" id="L237">		return value;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getCascadeClause()
+	 */
+	public synchronized String getCascadeClause() throws SQLException
+	{
+<span class="nc" id="L245">		final String key = &quot;getCascadeClause&quot;;</span>
+<span class="nc" id="L246">		String value = (String) _cache.get(key);</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">		if (value == null)</span>
+		{
+<span class="nc bnc" id="L249" title="All 4 branches missed.">			if (DialectFactory.isDB2(this) || DialectFactory.isOracle(this))</span>
+			{
+<span class="nc" id="L251">				value = &quot;CASCADE&quot;;</span>
+			}
+			else
+			{
+<span class="nc" id="L255">				value = &quot;&quot;;</span>
+			}
+<span class="nc" id="L257">			_cache.put(key, value);</span>
+		}
+<span class="nc" id="L259">		return value;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getSchemas()
+	 */
+	public synchronized String[] getSchemas() throws SQLException
+	{
+
+<span class="nc" id="L268">		boolean hasGuest = false;</span>
+<span class="nc" id="L269">		boolean hasSysFun = false;</span>
+
+<span class="nc bnc" id="L271" title="All 4 branches missed.">		final boolean isMSSQLorSYBASE = DialectFactory.isSyBase(this) || DialectFactory.isMSSQLServer(this);</span>
+
+<span class="nc" id="L273">		final boolean isDB2 = DialectFactory.isDB2(this);</span>
+
+<span class="nc" id="L275">		final ArrayList&lt;String&gt; list = new ArrayList&lt;String&gt;();</span>
+<span class="nc" id="L276">		ResultSet rs = privateGetJDBCMetaData().getSchemas();</span>
+		try
+		{
+<span class="nc bnc" id="L279" title="All 2 branches missed.">			if (rs != null)</span>
+			{
+<span class="nc" id="L281">				DialectType dialectType = DialectFactory.getDialectType(this);</span>
+<span class="nc" id="L282">				final ResultSetReader rdr = new ResultSetReader(rs, dialectType);</span>
+<span class="nc" id="L283">				Object[] row = null;</span>
+<span class="nc bnc" id="L284" title="All 2 branches missed.">				while ((row = rdr.readRow()) != null)</span>
+				{
+<span class="nc bnc" id="L286" title="All 4 branches missed.">					if (isMSSQLorSYBASE &amp;&amp; row[0].equals(&quot;guest&quot;))</span>
+					{
+<span class="nc" id="L288">						hasGuest = true;</span>
+					}
+<span class="nc bnc" id="L290" title="All 4 branches missed.">					if (isDB2 &amp;&amp; row[0].equals(&quot;SYSFUN&quot;))</span>
+					{
+<span class="nc" id="L292">						hasSysFun = true;</span>
+					}
+<span class="nc" id="L294">					list.add((String) row[0]);</span>
+				}
+			}
+		}
+		finally
+		{
+<span class="nc" id="L300">			SQLUtilities.closeResultSet(rs);</span>
+		}
+
+		// Some drivers for both MS SQL and Sybase don't return guest as
+		// a schema name.
+<span class="nc bnc" id="L305" title="All 4 branches missed.">		if (isMSSQLorSYBASE &amp;&amp; !hasGuest)</span>
+		{
+<span class="nc" id="L307">			list.add(&quot;guest&quot;);</span>
+		}
+
+		// Some drivers for DB2 don't return SYSFUN as a schema name. A
+		// number of system stored procs are kept in this schema.
+<span class="nc bnc" id="L312" title="All 4 branches missed.">		if (isDB2 &amp;&amp; !hasSysFun)</span>
+		{
+<span class="nc" id="L314">			list.add(&quot;SYSFUN&quot;);</span>
+		}
+
+<span class="nc" id="L317">		return list.toArray(new String[list.size()]);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#supportsSchemas()
+	 */
+	public boolean supportsSchemas() throws SQLException
+	{
+<span class="nc bnc" id="L325" title="All 4 branches missed.">		return supportsSchemasInDataManipulation() || supportsSchemasInTableDefinitions();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#supportsSchemasInDataManipulation()
+	 */
+	public synchronized boolean supportsSchemasInDataManipulation() throws SQLException
+	{
+<span class="nc" id="L333">		final String key = &quot;supportsSchemasInDataManipulation&quot;;</span>
+<span class="nc" id="L334">		Boolean value = (Boolean) _cache.get(key);</span>
+<span class="nc bnc" id="L335" title="All 2 branches missed.">		if (value != null) { return value.booleanValue(); }</span>
+
+		try
+		{
+<span class="nc" id="L339">			value = Boolean.valueOf(privateGetJDBCMetaData().supportsSchemasInDataManipulation());</span>
+		}
+<span class="nc" id="L341">		catch (SQLException ex)</span>
+		{
+<span class="nc bnc" id="L343" title="All 4 branches missed.">			boolean isSQLServer = DialectFactory.isSyBase(this) || DialectFactory.isMSSQLServer(this);</span>
+
+<span class="nc bnc" id="L345" title="All 2 branches missed.">			if (isSQLServer)</span>
+			{
+<span class="nc" id="L347">				value = Boolean.TRUE;</span>
+<span class="nc" id="L348">				_cache.put(key, value);</span>
+			}
+<span class="nc" id="L350">			throw ex;</span>
+<span class="nc" id="L351">		}</span>
+
+<span class="nc" id="L353">		_cache.put(key, value);</span>
+
+<span class="nc" id="L355">		return value.booleanValue();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#supportsSchemasInTableDefinitions()
+	 */
+	public synchronized boolean supportsSchemasInTableDefinitions() throws SQLException
+	{
+<span class="nc" id="L363">		final String key = &quot;supportsSchemasInTableDefinitions&quot;;</span>
+<span class="nc" id="L364">		Boolean value = (Boolean) _cache.get(key);</span>
+<span class="nc bnc" id="L365" title="All 2 branches missed.">		if (value != null) { return value.booleanValue(); }</span>
+
+		try
+		{
+<span class="nc" id="L369">			value = Boolean.valueOf(privateGetJDBCMetaData().supportsSchemasInTableDefinitions());</span>
+		}
+<span class="nc" id="L371">		catch (SQLException ex)</span>
+		{
+<span class="nc bnc" id="L373" title="All 4 branches missed.">			boolean isSQLServer = DialectFactory.isSyBase(this) || DialectFactory.isMSSQLServer(this);</span>
+<span class="nc bnc" id="L374" title="All 2 branches missed.">			if (isSQLServer)</span>
+			{
+<span class="nc" id="L376">				value = Boolean.TRUE;</span>
+<span class="nc" id="L377">				_cache.put(key, value);</span>
+			}
+<span class="nc" id="L379">			throw ex;</span>
+<span class="nc" id="L380">		}</span>
+
+<span class="nc" id="L382">		_cache.put(key, value);</span>
+
+<span class="nc" id="L384">		return value.booleanValue();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#supportsStoredProcedures()
+	 */
+	public synchronized boolean supportsStoredProcedures() throws SQLException
+	{
+<span class="nc" id="L392">		final String key = &quot;supportsStoredProcedures&quot;;</span>
+<span class="nc" id="L393">		Boolean value = (Boolean) _cache.get(key);</span>
+<span class="nc bnc" id="L394" title="All 2 branches missed.">		if (value != null) { return value.booleanValue(); }</span>
+
+		// PostgreSQL (at least 7.3.2) returns false for
+		// supportsStoredProcedures() even though it does support them.
+<span class="nc bnc" id="L398" title="All 2 branches missed.">		if (DialectFactory.isPostgreSQL(this))</span>
+		{
+<span class="nc" id="L400">			value = Boolean.TRUE;</span>
+		}
+<span class="nc bnc" id="L402" title="All 2 branches missed.">		else if (DialectFactory.isNetezza(this))</span>
+		{
+			// Netezza driver mistakenly reports that it doesn't support stored procedures.
+<span class="nc" id="L405">			value = Boolean.TRUE;</span>
+		}
+		else
+		{
+<span class="nc" id="L409">			value = Boolean.valueOf(privateGetJDBCMetaData().supportsStoredProcedures());</span>
+		}
+<span class="nc" id="L411">		_cache.put(key, value);</span>
+
+<span class="nc" id="L413">		return value.booleanValue();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#supportsSavepoints()
+	 */
+	public synchronized boolean supportsSavepoints() throws SQLException
+	{
+
+<span class="nc" id="L422">		final String key = &quot;supportsSavepoints&quot;;</span>
+<span class="nc" id="L423">		Boolean value = (Boolean) _cache.get(key);</span>
+<span class="nc bnc" id="L424" title="All 2 branches missed.">		if (value != null) { return value.booleanValue(); }</span>
+<span class="nc" id="L425">		value = Boolean.valueOf(privateGetJDBCMetaData().supportsSavepoints());</span>
+
+<span class="nc" id="L427">		_cache.put(key, value);</span>
+
+<span class="nc" id="L429">		return value.booleanValue();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#supportsResultSetType(int)
+	 */
+	public synchronized boolean supportsResultSetType(int type) throws SQLException
+	{
+<span class="nc" id="L437">		final String key = &quot;supportsResultSetType&quot;;</span>
+<span class="nc" id="L438">		Boolean value = (Boolean) _cache.get(key);</span>
+<span class="nc bnc" id="L439" title="All 2 branches missed.">		if (value != null) { return value.booleanValue(); }</span>
+<span class="nc" id="L440">		value = Boolean.valueOf(privateGetJDBCMetaData().supportsResultSetType(type));</span>
+
+<span class="nc" id="L442">		_cache.put(key, value);</span>
+
+<span class="nc" id="L444">		return value.booleanValue();</span>
+	}
+
+	/** 
+	 * Not cached because we want to allow the user to pickup changes to this list (e.g. refreshing the object
+	 * tree) without requiring them to delete the cache.
+	 * 
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getCatalogs()
+	 */
+	public synchronized String[] getCatalogs() throws SQLException
+	{
+<span class="nc" id="L455">		final ArrayList&lt;String&gt; list = new ArrayList&lt;String&gt;();</span>
+<span class="nc" id="L456">		ResultSet rs = privateGetJDBCMetaData().getCatalogs();</span>
+		try
+		{
+<span class="nc bnc" id="L459" title="All 2 branches missed.">			if (rs != null)</span>
+			{
+<span class="nc" id="L461">				DialectType dialectType = DialectFactory.getDialectType(this);</span>
+<span class="nc" id="L462">				final ResultSetReader rdr = new ResultSetReader(rs, dialectType);</span>
+<span class="nc" id="L463">				Object[] row = null;</span>
+<span class="nc bnc" id="L464" title="All 2 branches missed.">				while ((row = rdr.readRow()) != null)</span>
+				{
+<span class="nc bnc" id="L466" title="All 4 branches missed.">					if (row != null &amp;&amp; row[0] != null)</span>
+					{
+<span class="nc" id="L468">						list.add(row[0].toString());</span>
+					}
+				}
+			}
+		}
+		finally
+		{
+<span class="nc" id="L475">			SQLUtilities.closeResultSet(rs);</span>
+		}
+
+<span class="nc" id="L478">		return list.toArray(new String[list.size()]);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getURL()
+	 */
+	public synchronized String getURL() throws SQLException
+	{
+<span class="nc" id="L486">		final String key = &quot;getURL&quot;;</span>
+<span class="nc" id="L487">		String value = (String) _cache.get(key);</span>
+<span class="nc bnc" id="L488" title="All 2 branches missed.">		if (value != null) { return value; }</span>
+
+<span class="nc" id="L490">		value = privateGetJDBCMetaData().getURL();</span>
+<span class="nc" id="L491">		_cache.put(key, value);</span>
+
+<span class="nc" id="L493">		return value;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getCatalogTerm()
+	 */
+	public synchronized String getCatalogTerm() throws SQLException
+	{
+<span class="nc" id="L501">		final String key = &quot;getCatalogTerm&quot;;</span>
+<span class="nc" id="L502">		String value = (String) _cache.get(key);</span>
+<span class="nc bnc" id="L503" title="All 2 branches missed.">		if (value != null) { return value; }</span>
+
+<span class="nc" id="L505">		value = privateGetJDBCMetaData().getCatalogTerm();</span>
+<span class="nc" id="L506">		_cache.put(key, value);</span>
+
+<span class="nc" id="L508">		return value;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getSchemaTerm()
+	 */
+	public synchronized String getSchemaTerm() throws SQLException
+	{
+<span class="nc" id="L516">		final String key = &quot;getSchemaTerm&quot;;</span>
+<span class="nc" id="L517">		String value = (String) _cache.get(key);</span>
+<span class="nc bnc" id="L518" title="All 2 branches missed.">		if (value != null) { return value; }</span>
+
+<span class="nc" id="L520">		value = privateGetJDBCMetaData().getSchemaTerm();</span>
+<span class="nc" id="L521">		_cache.put(key, value);</span>
+
+<span class="nc" id="L523">		return value;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getProcedureTerm()
+	 */
+	public synchronized String getProcedureTerm() throws SQLException
+	{
+<span class="nc" id="L531">		final String key = &quot;getProcedureTerm&quot;;</span>
+<span class="nc" id="L532">		String value = (String) _cache.get(key);</span>
+<span class="nc bnc" id="L533" title="All 2 branches missed.">		if (value != null) { return value; }</span>
+
+<span class="nc" id="L535">		value = privateGetJDBCMetaData().getProcedureTerm();</span>
+<span class="nc" id="L536">		_cache.put(key, value);</span>
+
+<span class="nc" id="L538">		return value;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getCatalogSeparator()
+	 */
+	public synchronized String getCatalogSeparator() throws SQLException
+	{
+<span class="nc" id="L546">		final String key = &quot;getCatalogSeparator&quot;;</span>
+<span class="nc" id="L547">		String value = (String) _cache.get(key);</span>
+<span class="nc bnc" id="L548" title="All 2 branches missed.">		if (value != null) { return value; }</span>
+
+<span class="nc" id="L550">		value = privateGetJDBCMetaData().getCatalogSeparator();</span>
+<span class="nc" id="L551">		_cache.put(key, value);</span>
+
+<span class="nc" id="L553">		return value;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#supportsCatalogs()
+	 */
+	public boolean supportsCatalogs() throws SQLException
+	{
+
+<span class="nc bnc" id="L562" title="All 4 branches missed.">		return supportsCatalogsInTableDefinitions() || supportsCatalogsInDataManipulation()</span>
+<span class="nc bnc" id="L563" title="All 2 branches missed.">			|| supportsCatalogsInProcedureCalls();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#supportsCatalogsInTableDefinitions()
+	 */
+	public synchronized boolean supportsCatalogsInTableDefinitions() throws SQLException
+	{
+<span class="nc" id="L571">		final String key = &quot;supportsCatalogsInTableDefinitions&quot;;</span>
+<span class="nc" id="L572">		Boolean value = (Boolean) _cache.get(key);</span>
+<span class="nc bnc" id="L573" title="All 2 branches missed.">		if (value != null) { return value.booleanValue(); }</span>
+
+		try
+		{
+<span class="nc" id="L577">			value = Boolean.valueOf(privateGetJDBCMetaData().supportsCatalogsInTableDefinitions());</span>
+		}
+<span class="nc" id="L579">		catch (SQLException ex)</span>
+		{
+<span class="nc bnc" id="L581" title="All 4 branches missed.">			boolean isSQLServer = DialectFactory.isSyBase(this) || DialectFactory.isMSSQLServer(this);</span>
+
+<span class="nc bnc" id="L583" title="All 2 branches missed.">			if (isSQLServer)</span>
+			{
+<span class="nc" id="L585">				value = Boolean.TRUE;</span>
+<span class="nc" id="L586">				_cache.put(key, value);</span>
+			}
+<span class="nc" id="L588">			throw ex;</span>
+<span class="nc" id="L589">		}</span>
+
+<span class="nc" id="L591">		_cache.put(key, value);</span>
+
+<span class="nc" id="L593">		return value.booleanValue();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#supportsCatalogsInDataManipulation()
+	 */
+	public synchronized boolean supportsCatalogsInDataManipulation() throws SQLException
+	{
+<span class="nc" id="L601">		final String key = &quot;supportsCatalogsInDataManipulation&quot;;</span>
+<span class="nc" id="L602">		Boolean value = (Boolean) _cache.get(key);</span>
+<span class="nc bnc" id="L603" title="All 2 branches missed.">		if (value != null) { return value.booleanValue(); }</span>
+
+		try
+		{
+<span class="nc" id="L607">			value = Boolean.valueOf(privateGetJDBCMetaData().supportsCatalogsInDataManipulation());</span>
+		}
+<span class="nc" id="L609">		catch (SQLException ex)</span>
+		{
+<span class="nc bnc" id="L611" title="All 4 branches missed.">			boolean isSQLServer = DialectFactory.isSyBase(this) || DialectFactory.isMSSQLServer(this);</span>
+
+<span class="nc bnc" id="L613" title="All 2 branches missed.">			if (isSQLServer)</span>
+			{
+<span class="nc" id="L615">				value = Boolean.TRUE;</span>
+<span class="nc" id="L616">				_cache.put(key, value);</span>
+			}
+<span class="nc" id="L618">			throw ex;</span>
+<span class="nc" id="L619">		}</span>
+		
+		// Netezza bug; It supports both catalogs and schemas in SQL statements, yet returns false.
+<span class="nc bnc" id="L622" title="All 2 branches missed.">		if (DialectFactory.isNetezza(this)) {</span>
+<span class="nc" id="L623">			value = true;</span>
+		}
+<span class="nc" id="L625">		_cache.put(key, value);</span>
+
+<span class="nc" id="L627">		return value.booleanValue();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#supportsCatalogsInProcedureCalls()
+	 */
+	public synchronized boolean supportsCatalogsInProcedureCalls() throws SQLException
+	{
+<span class="nc" id="L635">		final String key = &quot;supportsCatalogsInProcedureCalls&quot;;</span>
+<span class="nc" id="L636">		Boolean value = (Boolean) _cache.get(key);</span>
+<span class="nc bnc" id="L637" title="All 2 branches missed.">		if (value != null) { return value.booleanValue(); }</span>
+
+		try
+		{
+<span class="nc" id="L641">			value = Boolean.valueOf(privateGetJDBCMetaData().supportsCatalogsInProcedureCalls());</span>
+		}
+<span class="nc" id="L643">		catch (SQLException ex)</span>
+		{
+<span class="nc bnc" id="L645" title="All 4 branches missed.">			boolean isSQLServer = DialectFactory.isSyBase(this) || DialectFactory.isMSSQLServer(this);</span>
+
+<span class="nc bnc" id="L647" title="All 2 branches missed.">			if (isSQLServer)</span>
+			{
+<span class="nc" id="L649">				value = Boolean.TRUE;</span>
+<span class="nc" id="L650">				_cache.put(key, value);</span>
+			}
+<span class="nc" id="L652">			throw ex;</span>
+<span class="nc" id="L653">		}</span>
+<span class="nc" id="L654">		_cache.put(key, value);</span>
+
+<span class="nc" id="L656">		return value.booleanValue();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getJDBCMetaData()
+	 */
+	public synchronized DatabaseMetaData getJDBCMetaData() throws SQLException
+	{
+<span class="nc" id="L664">		return privateGetJDBCMetaData();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getMetaDataSet()
+	 */
+	public synchronized IDataSet getMetaDataSet() throws SQLException
+	{
+<span class="nc" id="L672">		return new MetaDataDataSet(privateGetJDBCMetaData());</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getTypeInfo()
+	 * @deprecated Replaced by getDataTypes
+	 */
+	public ResultSet getTypeInfo() throws SQLException
+	{
+<span class="nc" id="L681">		return privateGetJDBCMetaData().getTypeInfo();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getTypesDataSet()
+	 */
+	public synchronized IDataSet getTypesDataSet() throws DataSetException
+	{
+<span class="nc" id="L689">		ResultSet rs = null;</span>
+		try
+		{
+<span class="nc" id="L692">			rs = privateGetJDBCMetaData().getTypeInfo();</span>
+<span class="nc" id="L693">			return (new DatabaseTypesDataSet(rs));</span>
+		}
+<span class="nc" id="L695">		catch (SQLException e)</span>
+		{
+<span class="nc" id="L697">			throw new DataSetException(e);</span>
+		}
+		finally
+		{
+<span class="nc" id="L701">			SQLUtilities.closeResultSet(rs);</span>
+		}
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getDataTypes()
+	 */
+	public synchronized DataTypeInfo[] getDataTypes() throws SQLException
+	{
+<span class="nc" id="L710">		final DatabaseMetaData md = privateGetJDBCMetaData();</span>
+<span class="nc" id="L711">		final ArrayList&lt;DataTypeInfo&gt; list = new ArrayList&lt;DataTypeInfo&gt;();</span>
+<span class="nc" id="L712">		final ResultSet rs = md.getTypeInfo();</span>
+		try
+		{
+<span class="nc" id="L715">			ResultSetColumnReader rdr = new ResultSetColumnReader(rs);</span>
+<span class="nc bnc" id="L716" title="All 2 branches missed.">			while (rdr.next())</span>
+			{
+<span class="nc" id="L718">				final String typeName = rdr.getString(1);</span>
+<span class="nc" id="L719">				final int dataType = rdr.getLong(2).intValue();</span>
+<span class="nc" id="L720">				final int precis = rdr.getLong(3).intValue();</span>
+<span class="nc" id="L721">				final String literalPrefix = rdr.getString(4);</span>
+<span class="nc" id="L722">				final String literalSuffix = rdr.getString(5);</span>
+<span class="nc" id="L723">				final String createParams = rdr.getString(6);</span>
+<span class="nc" id="L724">				final int nullable = rdr.getLong(7).intValue();</span>
+<span class="nc" id="L725">				final boolean caseSens = rdr.getBoolean(8).booleanValue();</span>
+<span class="nc" id="L726">				final int searchable = rdr.getLong(9).intValue();</span>
+<span class="nc" id="L727">				final boolean unsigned = rdr.getBoolean(10).booleanValue();</span>
+<span class="nc" id="L728">				final boolean canBeMoney = rdr.getBoolean(11).booleanValue();</span>
+<span class="nc" id="L729">				final boolean canBeAutoInc = rdr.getBoolean(12).booleanValue();</span>
+<span class="nc" id="L730">				final String localTypeName = rdr.getString(13);</span>
+<span class="nc" id="L731">				final int min = rdr.getLong(14).intValue();</span>
+<span class="nc" id="L732">				final int max = rdr.getLong(15).intValue();</span>
+<span class="nc" id="L733">				final int radix = rdr.getLong(18).intValue();</span>
+<span class="nc" id="L734">				list.add(new DataTypeInfo(typeName, dataType, precis, literalPrefix, literalSuffix, createParams,</span>
+					nullable, caseSens, searchable, unsigned, canBeMoney, canBeAutoInc, localTypeName, min, max,
+					radix, this));
+<span class="nc" id="L737">			}</span>
+		}
+		finally
+		{
+<span class="nc" id="L741">			SQLUtilities.closeResultSet(rs);</span>
+		}
+<span class="nc" id="L743">		return list.toArray(new DataTypeInfo[list.size()]);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getProcedures(java.lang.String,
+	 *      java.lang.String, java.lang.String, net.sourceforge.squirrel_sql.fw.sql.ProgressCallBack)
+	 */
+	public synchronized IProcedureInfo[] getProcedures(String catalog, String schemaPattern,
+		String procedureNamePattern, ProgressCallBack progressCallBack) throws SQLException
+	{
+<span class="nc" id="L753">		DatabaseMetaData md = privateGetJDBCMetaData();</span>
+<span class="nc" id="L754">		ArrayList&lt;ProcedureInfo&gt; list = new ArrayList&lt;ProcedureInfo&gt;();</span>
+<span class="nc" id="L755">		ResultSet rs = md.getProcedures(catalog, schemaPattern, procedureNamePattern);</span>
+<span class="nc bnc" id="L756" title="All 2 branches missed.">		if (rs != null)</span>
+		{
+<span class="nc" id="L758">			int count = 0;</span>
+			try
+			{
+<span class="nc" id="L761">				final int[] cols = new int[] { 1, 2, 3, 7, 8 };</span>
+<span class="nc" id="L762">				DialectType dialectType = DialectFactory.getDialectType(this);</span>
+<span class="nc" id="L763">				final ResultSetReader rdr = new ResultSetReader(rs, cols, dialectType);</span>
+<span class="nc" id="L764">				Object[] row = null;</span>
+<span class="nc bnc" id="L765" title="All 2 branches missed.">				while ((row = rdr.readRow()) != null)</span>
+				{
+					// Sybase IQ using jdbc3 driver returns null for some procedure return types - this is probably
+					// outside the JDBC spec.
+					// The safest solution seems to be to set it to Unknown result type.
+<span class="nc bnc" id="L770" title="All 2 branches missed.">					if (row[4] == null)</span>
+					{
+<span class="nc" id="L772">						row[4] = DatabaseMetaData.procedureResultUnknown;</span>
+					}
+<span class="nc" id="L774">					final int type = ((Number) row[4]).intValue();</span>
+<span class="nc" id="L775">					ProcedureInfo pi =</span>
+<span class="nc" id="L776">						new ProcedureInfo(getAsString(row[0]), getAsString(row[1]), getAsString(row[2]),</span>
+<span class="nc" id="L777">							getAsString(row[3]), type, this);</span>
+
+<span class="nc" id="L779">					list.add(pi);</span>
+
+<span class="nc bnc" id="L781" title="All 2 branches missed.">					if (null != progressCallBack)</span>
+					{
+<span class="nc bnc" id="L783" title="All 2 branches missed.">						if (0 == count++ % 200)</span>
+						{
+<span class="nc" id="L785">							progressCallBack.currentlyLoading(pi.getSimpleName());</span>
+						}
+					}
+<span class="nc" id="L788">				}</span>
+			}
+			finally
+			{
+<span class="nc" id="L792">				SQLUtilities.closeResultSet(rs);</span>
+			}
+		}
+<span class="nc" id="L795">		return list.toArray(new IProcedureInfo[list.size()]);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getTableTypes()
+	 */
+	public synchronized String[] getTableTypes() throws SQLException
+	{
+<span class="nc" id="L803">		final String key = &quot;getTableTypes&quot;;</span>
+<span class="nc" id="L804">		String[] value = (String[]) _cache.get(key);</span>
+<span class="nc bnc" id="L805" title="All 2 branches missed.">		if (value != null) { return value; }</span>
+
+<span class="nc" id="L807">		final DatabaseMetaData md = privateGetJDBCMetaData();</span>
+
+		// Use a set rather than a list as some combinations of MS SQL and the
+		// JDBC/ODBC return multiple copies of each table type.
+<span class="nc" id="L811">		final Set&lt;String&gt; tableTypes = new TreeSet&lt;String&gt;();</span>
+<span class="nc" id="L812">		final ResultSet rs = md.getTableTypes();</span>
+<span class="nc bnc" id="L813" title="All 2 branches missed.">		if (rs != null)</span>
+		{
+			try
+			{
+<span class="nc bnc" id="L817" title="All 2 branches missed.">				while (rs.next())</span>
+				{
+<span class="nc" id="L819">					tableTypes.add(rs.getString(1).trim());</span>
+				}
+			}
+			finally
+			{
+<span class="nc" id="L824">				SQLUtilities.closeResultSet(rs);</span>
+			}
+		}
+
+<span class="nc" id="L828">		final String dbProductName = getDatabaseProductName();</span>
+<span class="nc" id="L829">		final int nbrTableTypes = tableTypes.size();</span>
+
+		// InstantDB (at least version 3.13) only returns &quot;TABLES&quot;
+		// for getTableTypes(). If you try to use this in a call to
+		// DatabaseMetaData.getTables() no tables will be found. For the
+		// moment hard code the types for InstantDB.
+<span class="nc bnc" id="L835" title="All 4 branches missed.">		if (nbrTableTypes == 1 &amp;&amp; dbProductName.equals(&quot;InstantDB&quot;))</span>
+		{
+<span class="nc" id="L837">			tableTypes.clear();</span>
+<span class="nc" id="L838">			tableTypes.add(&quot;TABLE&quot;);</span>
+<span class="nc" id="L839">			tableTypes.add(&quot;SYSTEM TABLE&quot;);</span>
+		}
+
+		// At least one version of PostgreSQL through the JDBC/ODBC
+		// bridge returns an empty result set for the list of table
+		// types. Another version of PostgreSQL returns 6 entries
+		// of &quot;SYSTEM TABLE&quot; (which we have already filtered back to one).
+<span class="nc bnc" id="L846" title="All 2 branches missed.">		else if (dbProductName.equals(&quot;PostgreSQL&quot;))</span>
+		{
+<span class="nc bnc" id="L848" title="All 4 branches missed.">			if (nbrTableTypes == 0 || nbrTableTypes == 1)</span>
+			{
+<span class="nc bnc" id="L850" title="All 2 branches missed.">				if (s_log.isDebugEnabled())</span>
+				{
+<span class="nc" id="L852">					s_log.debug(&quot;Detected PostgreSQL and &quot; + nbrTableTypes</span>
+						+ &quot; table types - overriding to 4 table types&quot;);
+				}
+<span class="nc" id="L855">				tableTypes.clear();</span>
+<span class="nc" id="L856">				tableTypes.add(&quot;TABLE&quot;);</span>
+<span class="nc" id="L857">				tableTypes.add(&quot;SYSTEM TABLE&quot;);</span>
+<span class="nc" id="L858">				tableTypes.add(&quot;VIEW&quot;);</span>
+<span class="nc" id="L859">				tableTypes.add(&quot;SYSTEM VIEW&quot;);</span>
+			}
+			// Treating indexes as tables interferes with the operation of the
+			// PostgreSQL plugin
+<span class="nc bnc" id="L863" title="All 2 branches missed.">			if (tableTypes.contains(&quot;INDEX&quot;))</span>
+			{
+<span class="nc" id="L865">				tableTypes.remove(&quot;INDEX&quot;);</span>
+			}
+			// Treating sequences as tables interferes with the operation of the
+			// PostgreSQL plugin
+<span class="nc bnc" id="L869" title="All 2 branches missed.">			if (tableTypes.contains(&quot;SEQUENCE&quot;))</span>
+			{
+<span class="nc" id="L871">				tableTypes.remove(&quot;SEQUENCE&quot;);</span>
+			}
+			// There are many of these &quot;tables&quot;, that PostgreSQL throws
+			// SQLExceptions for whenever a table-like operation is attempted.
+<span class="nc bnc" id="L875" title="All 2 branches missed.">			if (tableTypes.contains(&quot;SYSTEM INDEX&quot;))</span>
+			{
+<span class="nc" id="L877">				tableTypes.remove(&quot;SYSTEM INDEX&quot;);</span>
+			}
+		}
+
+		// Informix: when no database is given in the connect url, then no table types are returned. The
+		// catalog can be changed which will select a database, but by that time it is too late.
+<span class="nc bnc" id="L883" title="All 2 branches missed.">		else if (DialectFactory.getDialectType(this) == DialectType.INFORMIX)</span>
+		{
+<span class="nc bnc" id="L885" title="All 2 branches missed.">			if (nbrTableTypes == 0)</span>
+			{
+<span class="nc bnc" id="L887" title="All 2 branches missed.">				if (s_log.isDebugEnabled())</span>
+				{
+<span class="nc" id="L889">					s_log.debug(&quot;Detected Informix with no table types returned.  Defaulting to &quot;</span>
+						+ &quot;TABLE | SYSTEM TABLE | VIEW&quot;);
+				}
+<span class="nc" id="L892">				tableTypes.add(&quot;TABLE&quot;);</span>
+<span class="nc" id="L893">				tableTypes.add(&quot;SYSTEM TABLE&quot;);</span>
+<span class="nc" id="L894">				tableTypes.add(&quot;VIEW&quot;);</span>
+			}
+		}
+
+<span class="nc bnc" id="L898" title="All 2 branches missed.">		else if (DialectFactory.getDialectType(this) == DialectType.NETEZZA)</span>
+		{
+<span class="nc" id="L900">			tableTypes.clear();</span>
+<span class="nc" id="L901">			tableTypes.add(&quot;SYSTEM TABLE&quot;);</span>
+<span class="nc" id="L902">			tableTypes.add(&quot;TABLE&quot;);</span>
+<span class="nc" id="L903">			tableTypes.add(&quot;VIEW&quot;);</span>
+		}
+
+<span class="nc" id="L906">		value = tableTypes.toArray(new String[tableTypes.size()]);</span>
+<span class="nc" id="L907">		_cache.put(key, value);</span>
+<span class="nc" id="L908">		return value;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getTables(java.lang.String,
+	 *      java.lang.String, java.lang.String, java.lang.String[],
+	 *      net.sourceforge.squirrel_sql.fw.sql.ProgressCallBack)
+	 */
+	public synchronized ITableInfo[] getTables(String catalog, String schemaPattern, String tableNamePattern,
+		String[] types, ProgressCallBack progressCallBack) throws SQLException
+	{
+
+<span class="nc" id="L920">		final DatabaseMetaData md = privateGetJDBCMetaData();</span>
+<span class="nc" id="L921">		final String dbDriverName = getDriverName();</span>
+<span class="nc" id="L922">		Set&lt;ITableInfo&gt; list = new TreeSet&lt;ITableInfo&gt;();</span>
+
+		/* work-around for this driver, which must have &quot;dbo&quot; for schema.  The
+		 * JConnect family of drivers appears to not be affected and can accept a
+		 * null schema, which is necessary to find tables in other schemas, within
+		 * the same catalog.  Similarly, jTDS 1.2.2 doesn't require this, yet it
+		 * doesn't return non-dbo schema tables, unfortunately. 
+		 */
+<span class="nc bnc" id="L930" title="All 4 branches missed.">		if (dbDriverName.equals(IDriverNames.FREE_TDS) &amp;&amp; schemaPattern == null)</span>
+		{
+<span class="nc" id="L932">			schemaPattern = &quot;dbo&quot;;</span>
+		}
+<span class="nc bnc" id="L934" title="All 4 branches missed.">		if (dbDriverName.equals(IDriverNames.AS400) &amp;&amp; schemaPattern == null)</span>
+		{
+<span class="nc" id="L936">			schemaPattern = &quot;*ALLUSR&quot;;</span>
+		}
+
+		// Add begin
+<span class="nc bnc" id="L940" title="All 4 branches missed.">		if (catalog == null &amp;&amp; DriverMatch.isComHttxDriver(_conn))</span>
+		{
+<span class="nc" id="L942">			String[] catalogs = getCatalogs();</span>
+<span class="nc bnc" id="L943" title="All 2 branches missed.">			if (catalogs != null)</span>
+			{
+<span class="nc bnc" id="L945" title="All 2 branches missed.">				for (int i = 0; i &lt; catalogs.length; i++)</span>
+				{
+<span class="nc" id="L947">					ITableInfo[] tables =</span>
+<span class="nc" id="L948">						getTables(catalogs[i], schemaPattern, tableNamePattern, types, progressCallBack);</span>
+<span class="nc bnc" id="L949" title="All 2 branches missed.">					for (int j = 0; j &lt; tables.length; j++)</span>
+					{
+<span class="nc" id="L951">						list.add(tables[j]);</span>
+					}
+				}
+<span class="nc" id="L954">				return list.toArray(new ITableInfo[list.size()]);</span>
+			}
+		}
+		// Add end
+
+<span class="nc" id="L959">		Map&lt;String, ITableInfo&gt; nameMap = null;</span>
+<span class="nc" id="L960">		ResultSet superTabResult = null;</span>
+<span class="nc" id="L961">		ResultSet tabResult = null;</span>
+		try
+		{
+<span class="nc bnc" id="L964" title="All 2 branches missed.">			if (supportsSuperTables)</span>
+			{
+				try
+				{
+<span class="nc" id="L968">					superTabResult = md.getSuperTables(catalog, schemaPattern, tableNamePattern);</span>
+					// create a mapping of names if we have supertable info, since
+					// we need to find the ITableInfo again for re-ordering.
+<span class="nc bnc" id="L971" title="All 4 branches missed.">					if (superTabResult != null &amp;&amp; superTabResult.next())</span>
+					{
+<span class="nc" id="L973">						nameMap = new HashMap&lt;String, ITableInfo&gt;();</span>
+					}
+				}
+<span class="nc" id="L976">				catch (Throwable th)</span>
+				{
+<span class="nc" id="L978">					s_log.debug(&quot;DBMS/Driver doesn't support getSupertables(): &quot; + th.getMessage());</span>
+<span class="nc" id="L979">					supportsSuperTables = false;</span>
+<span class="nc" id="L980">				}</span>
+			}
+			// store all plain table info we have.
+<span class="nc" id="L983">			tabResult = md.getTables(catalog, schemaPattern, tableNamePattern, types);</span>
+<span class="nc" id="L984">			int count = 0;</span>
+<span class="nc bnc" id="L985" title="All 4 branches missed.">			while (tabResult != null &amp;&amp; tabResult.next())</span>
+			{
+<span class="nc" id="L987">				ITableInfo tabInfo =</span>
+<span class="nc" id="L988">					new TableInfo(tabResult.getString(1), tabResult.getString(2), tabResult.getString(3),</span>
+<span class="nc" id="L989">						tabResult.getString(4), tabResult.getString(5), this);</span>
+<span class="nc bnc" id="L990" title="All 2 branches missed.">				if (nameMap != null)</span>
+				{
+<span class="nc" id="L992">					nameMap.put(tabInfo.getSimpleName(), tabInfo);</span>
+				}
+<span class="nc" id="L994">				list.add(tabInfo);</span>
+
+<span class="nc bnc" id="L996" title="All 2 branches missed.">				if (null != progressCallBack)</span>
+				{
+<span class="nc bnc" id="L998" title="All 2 branches missed.">					if (0 == count++ % 100)</span>
+					{
+<span class="nc" id="L1000">						progressCallBack.currentlyLoading(tabInfo.getSimpleName());</span>
+					}
+				}
+<span class="nc" id="L1003">			}</span>
+
+			// re-order nodes if the tables are stored hierachically
+<span class="nc bnc" id="L1006" title="All 2 branches missed.">			if (nameMap != null)</span>
+			{
+				do
+				{
+<span class="nc" id="L1010">					String tabName = superTabResult.getString(3);</span>
+<span class="nc" id="L1011">					TableInfo tabInfo = (TableInfo) nameMap.get(tabName);</span>
+<span class="nc bnc" id="L1012" title="All 2 branches missed.">					if (tabInfo == null) continue;</span>
+<span class="nc" id="L1013">					String superTabName = superTabResult.getString(4);</span>
+<span class="nc bnc" id="L1014" title="All 2 branches missed.">					if (superTabName == null) continue;</span>
+<span class="nc" id="L1015">					TableInfo superInfo = (TableInfo) nameMap.get(superTabName);</span>
+<span class="nc bnc" id="L1016" title="All 2 branches missed.">					if (superInfo == null) continue;</span>
+<span class="nc" id="L1017">					superInfo.addChild(tabInfo);</span>
+<span class="nc" id="L1018">					list.remove(tabInfo); // remove from toplevel.</span>
+
+<span class="nc bnc" id="L1020" title="All 2 branches missed.">					if (null != progressCallBack)</span>
+					{
+<span class="nc bnc" id="L1022" title="All 2 branches missed.">						if (0 == count++ % 20)</span>
+						{
+<span class="nc" id="L1024">							progressCallBack.currentlyLoading(tabInfo.getSimpleName());</span>
+						}
+					}
+				}
+<span class="nc bnc" id="L1028" title="All 2 branches missed.">				while (superTabResult.next());</span>
+			}
+		}
+		finally
+		{
+<span class="nc" id="L1033">			SQLUtilities.closeResultSet(tabResult);</span>
+<span class="nc" id="L1034">			SQLUtilities.closeResultSet(superTabResult);</span>
+		}
+
+<span class="nc" id="L1037">		return list.toArray(new ITableInfo[list.size()]);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getUDTs(java.lang.String,
+	 *      java.lang.String, java.lang.String, int[])
+	 */
+	public synchronized IUDTInfo[] getUDTs(String catalog, String schemaPattern, String typeNamePattern,
+		int[] types) throws SQLException
+	{
+<span class="nc" id="L1047">		DatabaseMetaData md = privateGetJDBCMetaData();</span>
+<span class="nc" id="L1048">		ArrayList&lt;UDTInfo&gt; list = new ArrayList&lt;UDTInfo&gt;();</span>
+<span class="nc" id="L1049">		checkForInformix(catalog);</span>
+<span class="nc" id="L1050">		ResultSet rs = md.getUDTs(catalog, schemaPattern, typeNamePattern, types);</span>
+		try
+		{
+<span class="nc" id="L1053">			final int[] cols = new int[] { 1, 2, 3, 4, 5, 6 };</span>
+<span class="nc" id="L1054">			DialectType dialectType = DialectFactory.getDialectType(this);</span>
+<span class="nc" id="L1055">			final ResultSetReader rdr = new ResultSetReader(rs, cols, dialectType);</span>
+<span class="nc" id="L1056">			Object[] row = null;</span>
+<span class="nc bnc" id="L1057" title="All 2 branches missed.">			while ((row = rdr.readRow()) != null)</span>
+			{
+<span class="nc" id="L1059">				list.add(new UDTInfo(getAsString(row[0]), getAsString(row[1]), getAsString(row[2]),</span>
+<span class="nc" id="L1060">					getAsString(row[3]), getAsString(row[4]), getAsString(row[5]), this));</span>
+			}
+		}
+		finally
+		{
+<span class="nc" id="L1065">			SQLUtilities.closeResultSet(rs);</span>
+		}
+
+<span class="nc" id="L1068">		return list.toArray(new IUDTInfo[list.size()]);</span>
+	}
+
+	/**
+	 * If we are connected to Informix, then we may need to cleanup
+	 * 
+	 * @param catalogName
+	 */
+	private void checkForInformix(String catalogName)
+	{
+<span class="nc bnc" id="L1078" title="All 2 branches missed.">		if (DialectFactory.getDialectType(this) != DialectType.INFORMIX) { return; }</span>
+
+<span class="nc" id="L1080">		Statement stmt = null;</span>
+		try
+		{
+<span class="nc" id="L1083">			stmt = _conn.createStatement();</span>
+<span class="nc" id="L1084">			stmt.execute(&quot;Drop procedure mode_decode&quot;);</span>
+		}
+<span class="nc" id="L1086">		catch (SQLException e)</span>
+		{
+			// The mode_decode routine may or may not be there. We don't care if it is not there, but log an
+			// info if we failed to drop it for some other reason.
+<span class="nc" id="L1090">			s_log.info(&quot;setInformixCatalog: unable to drop procedure mode_decode: &quot; + e.getMessage(), e);</span>
+		}
+		finally
+		{
+<span class="nc" id="L1094">			SQLUtilities.closeStatement(stmt);</span>
+		}
+<span class="nc" id="L1096">	}</span>
+
+	private String getAsString(Object val)
+	{
+<span class="nc bnc" id="L1100" title="All 2 branches missed.">		if (null == val)</span>
+		{
+<span class="nc" id="L1102">			return null;</span>
+		}
+		else
+		{
+<span class="nc bnc" id="L1106" title="All 2 branches missed.">			if (val instanceof String)</span>
+			{
+<span class="nc" id="L1108">				return (String) val;</span>
+			}
+			else
+			{
+<span class="nc" id="L1112">				return &quot;&quot; + val;</span>
+			}
+		}
+
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getNumericFunctions()
+	 */
+	public synchronized String[] getNumericFunctions() throws SQLException
+	{
+<span class="nc" id="L1123">		final String key = &quot;getNumericFunctions&quot;;</span>
+<span class="nc" id="L1124">		String[] value = (String[]) _cache.get(key);</span>
+<span class="nc bnc" id="L1125" title="All 2 branches missed.">		if (value != null) { return value; }</span>
+
+<span class="nc" id="L1127">		value = makeArray(privateGetJDBCMetaData().getNumericFunctions());</span>
+<span class="nc" id="L1128">		_cache.put(key, value);</span>
+<span class="nc" id="L1129">		return value;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getStringFunctions()
+	 */
+	public synchronized String[] getStringFunctions() throws SQLException
+	{
+<span class="nc" id="L1137">		final String key = &quot;getStringFunctions&quot;;</span>
+<span class="nc" id="L1138">		String[] value = (String[]) _cache.get(key);</span>
+<span class="nc bnc" id="L1139" title="All 2 branches missed.">		if (value != null) { return value; }</span>
+
+<span class="nc" id="L1141">		value = makeArray(privateGetJDBCMetaData().getStringFunctions());</span>
+<span class="nc" id="L1142">		_cache.put(key, value);</span>
+<span class="nc" id="L1143">		return value;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getSystemFunctions()
+	 */
+	public synchronized String[] getSystemFunctions() throws SQLException
+	{
+<span class="nc" id="L1151">		final String key = &quot;getSystemFunctions&quot;;</span>
+<span class="nc" id="L1152">		String[] value = (String[]) _cache.get(key);</span>
+<span class="nc bnc" id="L1153" title="All 2 branches missed.">		if (value != null) { return value; }</span>
+
+<span class="nc" id="L1155">		value = makeArray(privateGetJDBCMetaData().getSystemFunctions());</span>
+<span class="nc" id="L1156">		_cache.put(key, value);</span>
+<span class="nc" id="L1157">		return value;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getTimeDateFunctions()
+	 */
+	public synchronized String[] getTimeDateFunctions() throws SQLException
+	{
+<span class="nc" id="L1165">		final String key = &quot;getTimeDateFunctions&quot;;</span>
+<span class="nc" id="L1166">		String[] value = (String[]) _cache.get(key);</span>
+<span class="nc bnc" id="L1167" title="All 2 branches missed.">		if (value != null) { return value; }</span>
+
+<span class="nc" id="L1169">		value = makeArray(privateGetJDBCMetaData().getTimeDateFunctions());</span>
+<span class="nc" id="L1170">		_cache.put(key, value);</span>
+<span class="nc" id="L1171">		return value;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getSQLKeywords()
+	 */
+	public synchronized String[] getSQLKeywords() throws SQLException
+	{
+<span class="nc" id="L1179">		final String key = &quot;getSQLKeywords&quot;;</span>
+<span class="nc" id="L1180">		String[] value = (String[]) _cache.get(key);</span>
+<span class="nc bnc" id="L1181" title="All 2 branches missed.">		if (value != null) { return value; }</span>
+
+<span class="nc" id="L1183">		value = makeArray(privateGetJDBCMetaData().getSQLKeywords());</span>
+<span class="nc" id="L1184">		_cache.put(key, value);</span>
+<span class="nc" id="L1185">		return value;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getBestRowIdentifier(net.sourceforge.squirrel_sql.fw.sql.ITableInfo)
+	 */
+	public synchronized BestRowIdentifier[] getBestRowIdentifier(ITableInfo ti) throws SQLException
+	{
+<span class="nc" id="L1193">		final List&lt;BestRowIdentifier&gt; results = new ArrayList&lt;BestRowIdentifier&gt;();</span>
+
+<span class="nc" id="L1195">		ResultSet rs = null;</span>
+		try
+		{
+<span class="nc" id="L1198">			boolean columnsCanBeNullable = true;</span>
+<span class="nc" id="L1199">			rs =</span>
+<span class="nc" id="L1200">				privateGetJDBCMetaData().getBestRowIdentifier(ti.getCatalogName(), ti.getSchemaName(),</span>
+<span class="nc" id="L1201">					ti.getSimpleName(), DatabaseMetaData.bestRowTransaction, columnsCanBeNullable);</span>
+
+<span class="nc" id="L1203">			final String catalog = ti.getCatalogName();</span>
+<span class="nc" id="L1204">			final String schema = ti.getSchemaName();</span>
+<span class="nc" id="L1205">			final String table = ti.getSimpleName();</span>
+
+<span class="nc" id="L1207">			final ResultSetColumnReader rdr = new ResultSetColumnReader(rs);</span>
+<span class="nc bnc" id="L1208" title="All 2 branches missed.">			while (rdr.next())</span>
+			{
+<span class="nc" id="L1210">				final BestRowIdentifier rid =</span>
+<span class="nc" id="L1211">					new BestRowIdentifier(catalog, schema, table, rdr.getLong(1).intValue(), rdr.getString(2),</span>
+<span class="nc" id="L1212">						rdr.getLong(3).shortValue(), rdr.getString(4), rdr.getLong(5).intValue(), rdr.getLong(7)</span>
+<span class="nc" id="L1213">							.shortValue(), rdr.getLong(8).shortValue(), this);</span>
+<span class="nc" id="L1214">				results.add(rid);</span>
+<span class="nc" id="L1215">			}</span>
+		}
+		finally
+		{
+<span class="nc" id="L1219">			SQLUtilities.closeResultSet(rs);</span>
+		}
+
+<span class="nc" id="L1222">		final BestRowIdentifier[] ar = new BestRowIdentifier[results.size()];</span>
+<span class="nc" id="L1223">		return results.toArray(ar);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getColumnPrivileges(net.sourceforge.squirrel_sql.fw.sql.ITableInfo)
+	 * @deprecated use getColumnPrivilegesDataSet instead.
+	 */
+	public ResultSet getColumnPrivileges(ITableInfo ti) throws SQLException
+	{
+		// MM-MYSQL driver doesnt support null for column name.
+<span class="nc bnc" id="L1233" title="All 2 branches missed.">		final String columns = DialectFactory.isMySQL(this) ? &quot;%&quot; : null;</span>
+<span class="nc" id="L1234">		return privateGetJDBCMetaData().getColumnPrivileges(ti.getCatalogName(), ti.getSchemaName(),</span>
+<span class="nc" id="L1235">			ti.getSimpleName(), columns);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getColumnPrivilegesDataSet(net.sourceforge.squirrel_sql.fw.sql.ITableInfo,
+	 *      int[], boolean)
+	 */
+	public synchronized IDataSet getColumnPrivilegesDataSet(ITableInfo ti, int[] columnIndices,
+		boolean computeWidths) throws DataSetException
+	{
+<span class="nc" id="L1245">		ResultSet rs = null;</span>
+		try
+		{
+<span class="nc" id="L1248">			DatabaseMetaData md = privateGetJDBCMetaData();</span>
+<span class="nc bnc" id="L1249" title="All 2 branches missed.">			final String columns = DialectFactory.isMySQL(this) ? &quot;%&quot; : null;</span>
+
+<span class="nc" id="L1251">			rs = md.getColumnPrivileges(ti.getCatalogName(), ti.getSchemaName(), ti.getSimpleName(), columns);</span>
+<span class="nc" id="L1252">			ResultSetDataSet rsds = new ResultSetDataSet();</span>
+<span class="nc" id="L1253">			rsds.setResultSet(rs, columnIndices, computeWidths, DialectFactory.getDialectType(this));</span>
+<span class="nc" id="L1254">			return rsds;</span>
+		}
+<span class="nc" id="L1256">		catch (SQLException e)</span>
+		{
+<span class="nc" id="L1258">			throw new DataSetException(e);</span>
+		}
+		finally
+		{
+<span class="nc" id="L1262">			SQLUtilities.closeResultSet(rs);</span>
+		}
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getExportedKeys(net.sourceforge.squirrel_sql.fw.sql.ITableInfo)
+	 * @deprecated. Replaced by getExportedKeysInfo
+	 */
+	public ResultSet getExportedKeys(ITableInfo ti) throws SQLException
+	{
+<span class="nc" id="L1272">		return privateGetJDBCMetaData().getExportedKeys(ti.getCatalogName(), ti.getSchemaName(),</span>
+<span class="nc" id="L1273">			ti.getSimpleName());</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getExportedKeysDataSet(net.sourceforge.squirrel_sql.fw.sql.ITableInfo)
+	 */
+	public synchronized IDataSet getExportedKeysDataSet(ITableInfo ti) throws DataSetException
+	{
+<span class="nc" id="L1281">		ResultSet rs = null;</span>
+		try
+		{
+<span class="nc" id="L1284">			rs =</span>
+<span class="nc" id="L1285">				privateGetJDBCMetaData().getExportedKeys(ti.getCatalogName(), ti.getSchemaName(),</span>
+<span class="nc" id="L1286">					ti.getSimpleName());</span>
+<span class="nc" id="L1287">			ResultSetDataSet rsds = new ResultSetDataSet();</span>
+<span class="nc" id="L1288">			rsds.setResultSet(rs, null, true, DialectFactory.getDialectType(this));</span>
+<span class="nc" id="L1289">			return rsds;</span>
+		}
+<span class="nc" id="L1291">		catch (SQLException e)</span>
+		{
+<span class="nc" id="L1293">			throw new DataSetException(e);</span>
+		}
+		finally
+		{
+<span class="nc" id="L1297">			SQLUtilities.closeResultSet(rs);</span>
+		}
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getImportedKeys(net.sourceforge.squirrel_sql.fw.sql.ITableInfo)
+	 * @deprecated. Replaced by getImportedKeysInfo
+	 */
+	public ResultSet getImportedKeys(ITableInfo ti) throws SQLException
+	{
+<span class="nc" id="L1307">		return privateGetJDBCMetaData().getImportedKeys(ti.getCatalogName(), ti.getSchemaName(),</span>
+<span class="nc" id="L1308">			ti.getSimpleName());</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getImportedKeysInfo(java.lang.String,
+	 *      java.lang.String, java.lang.String)
+	 */
+	public synchronized ForeignKeyInfo[] getImportedKeysInfo(String catalog, String schema, String tableName)
+		throws SQLException
+	{
+<span class="nc" id="L1318">		ResultSet rs = privateGetJDBCMetaData().getImportedKeys(catalog, schema, tableName);</span>
+<span class="nc" id="L1319">		return getForeignKeyInfo(rs);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getImportedKeysInfo(net.sourceforge.squirrel_sql.fw.sql.ITableInfo)
+	 */
+	public synchronized ForeignKeyInfo[] getImportedKeysInfo(ITableInfo ti) throws SQLException
+	{
+<span class="nc" id="L1327">		return getForeignKeyInfo(privateGetJDBCMetaData().getImportedKeys(ti.getCatalogName(),</span>
+<span class="nc" id="L1328">			ti.getSchemaName(), ti.getSimpleName()));</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getImportedKeysDataSet(net.sourceforge.squirrel_sql.fw.sql.ITableInfo)
+	 */
+	public synchronized IDataSet getImportedKeysDataSet(ITableInfo ti) throws DataSetException
+	{
+<span class="nc" id="L1336">		ResultSet rs = null;</span>
+		try
+		{
+<span class="nc" id="L1339">			rs =</span>
+<span class="nc" id="L1340">				privateGetJDBCMetaData().getImportedKeys(ti.getCatalogName(), ti.getSchemaName(),</span>
+<span class="nc" id="L1341">					ti.getSimpleName());</span>
+<span class="nc" id="L1342">			ResultSetDataSet rsds = new ResultSetDataSet();</span>
+<span class="nc" id="L1343">			rsds.setResultSet(rs, null, true, DialectFactory.getDialectType(this));</span>
+<span class="nc" id="L1344">			return rsds;</span>
+		}
+<span class="nc" id="L1346">		catch (SQLException e)</span>
+		{
+<span class="nc" id="L1348">			throw new DataSetException(e);</span>
+		}
+		finally
+		{
+<span class="nc" id="L1352">			SQLUtilities.closeResultSet(rs);</span>
+		}
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getExportedKeysInfo(java.lang.String,
+	 *      java.lang.String, java.lang.String)
+	 */
+	public synchronized ForeignKeyInfo[] getExportedKeysInfo(String catalog, String schema, String tableName)
+		throws SQLException
+	{
+<span class="nc" id="L1363">		ResultSet rs = privateGetJDBCMetaData().getExportedKeys(catalog, schema, tableName);</span>
+<span class="nc" id="L1364">		return getForeignKeyInfo(rs);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getExportedKeysInfo(net.sourceforge.squirrel_sql.fw.sql.ITableInfo)
+	 */
+	public synchronized ForeignKeyInfo[] getExportedKeysInfo(ITableInfo ti) throws SQLException
+	{
+<span class="nc" id="L1372">		return getForeignKeyInfo(privateGetJDBCMetaData().getExportedKeys(ti.getCatalogName(),</span>
+<span class="nc" id="L1373">			ti.getSchemaName(), ti.getSimpleName()));</span>
+	}
+
+	private ForeignKeyInfo[] getForeignKeyInfo(ResultSet rs) throws SQLException
+	{
+<span class="nc" id="L1378">		final Map&lt;String, ForeignKeyInfo&gt; keys = new HashMap&lt;String, ForeignKeyInfo&gt;();</span>
+<span class="nc" id="L1379">		final Map&lt;String, ArrayList&lt;ForeignKeyColumnInfo&gt;&gt; columns =</span>
+			new HashMap&lt;String, ArrayList&lt;ForeignKeyColumnInfo&gt;&gt;();
+
+		try
+		{
+<span class="nc" id="L1384">			final ResultSetColumnReader rdr = new ResultSetColumnReader(rs);</span>
+<span class="nc bnc" id="L1385" title="All 2 branches missed.">			while (rdr.next())</span>
+			{
+<span class="nc" id="L1387">				final ForeignKeyInfo fki =</span>
+<span class="nc" id="L1388">					new ForeignKeyInfo(rdr.getString(1), rdr.getString(2), rdr.getString(3), rdr.getString(4),</span>
+<span class="nc" id="L1389">						rdr.getString(5), rdr.getString(6), rdr.getString(7), rdr.getString(8), rdr.getLong(10)</span>
+<span class="nc" id="L1390">							.intValue(), rdr.getLong(11).intValue(), rdr.getString(12), rdr.getString(13),</span>
+<span class="nc" id="L1391">						rdr.getLong(14).intValue(), null, this);</span>
+<span class="nc" id="L1392">				final String key = createForeignKeyInfoKey(fki);</span>
+<span class="nc bnc" id="L1393" title="All 2 branches missed.">				if (!keys.containsKey(key))</span>
+				{
+<span class="nc" id="L1395">					keys.put(key, fki);</span>
+<span class="nc" id="L1396">					columns.put(key, new ArrayList&lt;ForeignKeyColumnInfo&gt;());</span>
+				}
+
+<span class="nc" id="L1399">				ForeignKeyColumnInfo fkiCol =</span>
+<span class="nc" id="L1400">					new ForeignKeyColumnInfo(rdr.getString(8), rdr.getString(4), rdr.getLong(9).intValue());</span>
+<span class="nc" id="L1401">				columns.get(key).add(fkiCol);</span>
+<span class="nc" id="L1402">			}</span>
+		}
+		finally
+		{
+<span class="nc" id="L1406">			SQLUtilities.closeResultSet(rs);</span>
+		}
+
+<span class="nc" id="L1409">		final ForeignKeyInfo[] results = new ForeignKeyInfo[keys.size()];</span>
+<span class="nc" id="L1410">		Iterator&lt;ForeignKeyInfo&gt; it = keys.values().iterator();</span>
+<span class="nc" id="L1411">		int idx = 0;</span>
+<span class="nc bnc" id="L1412" title="All 2 branches missed.">		while (it.hasNext())</span>
+		{
+<span class="nc" id="L1414">			final ForeignKeyInfo fki = it.next();</span>
+<span class="nc" id="L1415">			final String key = createForeignKeyInfoKey(fki);</span>
+<span class="nc" id="L1416">			final List&lt;ForeignKeyColumnInfo&gt; colsList = columns.get(key);</span>
+<span class="nc" id="L1417">			final ForeignKeyColumnInfo[] fkiCol = colsList.toArray(new ForeignKeyColumnInfo[colsList.size()]);</span>
+<span class="nc" id="L1418">			fki.setForeignKeyColumnInfo(fkiCol);</span>
+<span class="nc" id="L1419">			results[idx++] = fki;</span>
+<span class="nc" id="L1420">		}</span>
+
+<span class="nc" id="L1422">		return results;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getIndexInfo(net.sourceforge.squirrel_sql.fw.sql.ITableInfo,
+	 *      int[], boolean)
+	 */
+	public synchronized ResultSetDataSet getIndexInfo(ITableInfo ti, int[] columnIndices, boolean computeWidths)
+		throws DataSetException
+	{
+<span class="nc" id="L1432">		ResultSet rs = null;</span>
+		try
+		{
+<span class="nc" id="L1435">			rs =</span>
+<span class="nc" id="L1436">				privateGetJDBCMetaData().getIndexInfo(ti.getCatalogName(), ti.getSchemaName(),</span>
+<span class="nc" id="L1437">					ti.getSimpleName(), false, true);</span>
+<span class="nc" id="L1438">			ResultSetDataSet rsds = new ResultSetDataSet();</span>
+<span class="nc" id="L1439">			rsds.setResultSet(rs, columnIndices, computeWidths, DialectFactory.getDialectType(this));</span>
+<span class="nc" id="L1440">			return rsds;</span>
+		}
+<span class="nc" id="L1442">		catch (SQLException e)</span>
+		{
+<span class="nc" id="L1444">			throw new DataSetException(e);</span>
+		}
+		finally
+		{
+<span class="nc" id="L1448">			SQLUtilities.closeResultSet(rs);</span>
+		}
+	}
+
+	/**
+	 * Returns a list of IndexInfos describing indexes for the specified table.
+	 * 
+	 * @param ti
+	 *           the table to find all index information for.
+	 * @return a list of IndexInfos
+	 * @throws SQLException
+	 */
+	public List&lt;IndexInfo&gt; getIndexInfo(ITableInfo ti) throws SQLException
+	{
+<span class="nc" id="L1462">		List&lt;IndexInfo&gt; result = new ArrayList&lt;IndexInfo&gt;();</span>
+<span class="nc" id="L1463">		ResultSet rs = null;</span>
+		try
+		{
+<span class="nc" id="L1466">			rs =</span>
+<span class="nc" id="L1467">				privateGetJDBCMetaData().getIndexInfo(ti.getCatalogName(), ti.getSchemaName(),</span>
+<span class="nc" id="L1468">					ti.getSimpleName(), false, true);</span>
+<span class="nc bnc" id="L1469" title="All 2 branches missed.">			while (rs.next())</span>
+			{
+<span class="nc" id="L1471">				String catalog = rs.getString(1);</span>
+<span class="nc" id="L1472">				String schema = rs.getString(2);</span>
+<span class="nc" id="L1473">				String table = rs.getString(3);</span>
+<span class="nc" id="L1474">				boolean nonunique = rs.getBoolean(4);</span>
+<span class="nc" id="L1475">				String indexQualifier = rs.getString(5);</span>
+<span class="nc" id="L1476">				String indexName = rs.getString(6);</span>
+<span class="nc" id="L1477">				IndexInfo.IndexType indexType = JDBCTypeMapper.getIndexType(rs.getShort(7));</span>
+<span class="nc" id="L1478">				short ordinalPosition = rs.getShort(8);</span>
+<span class="nc" id="L1479">				String column = rs.getString(9);</span>
+<span class="nc" id="L1480">				IndexInfo.SortOrder sortOrder = JDBCTypeMapper.getIndexSortOrder(rs.getString(10));</span>
+<span class="nc" id="L1481">				int cardinality = rs.getInt(11);</span>
+<span class="nc" id="L1482">				int pages = rs.getInt(12);</span>
+<span class="nc" id="L1483">				String filterCondition = rs.getString(13);</span>
+
+<span class="nc" id="L1485">				IndexInfo indexInfo =</span>
+					new IndexInfo(catalog, schema, indexName, table, column, nonunique, indexQualifier, indexType,
+						ordinalPosition, sortOrder, cardinality, pages, filterCondition, this);
+<span class="nc" id="L1488">				result.add(indexInfo);</span>
+<span class="nc" id="L1489">			}</span>
+		}
+<span class="nc" id="L1491">		catch (SQLException e)</span>
+		{
+		}
+		finally
+		{
+<span class="nc" id="L1496">			SQLUtilities.closeResultSet(rs);</span>
+		}
+<span class="nc" id="L1498">		return result;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getPrimaryKeys(net.sourceforge.squirrel_sql.fw.sql.ITableInfo)
+	 * @deprecated use getPrimaryKey instead
+	 */
+	public ResultSet getPrimaryKeys(ITableInfo ti) throws SQLException
+	{
+<span class="nc" id="L1507">		return privateGetJDBCMetaData().getPrimaryKeys(ti.getCatalogName(), ti.getSchemaName(),</span>
+<span class="nc" id="L1508">			ti.getSimpleName());</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getPrimaryKey(net.sourceforge.squirrel_sql.fw.sql.ITableInfo,
+	 *      int[], boolean)
+	 */
+	public synchronized IDataSet getPrimaryKey(ITableInfo ti, int[] columnIndices, boolean computeWidths)
+		throws DataSetException
+	{
+<span class="nc" id="L1518">		ResultSet rs = null;</span>
+		try
+		{
+<span class="nc" id="L1521">			rs =</span>
+<span class="nc" id="L1522">				privateGetJDBCMetaData().getPrimaryKeys(ti.getCatalogName(), ti.getSchemaName(),</span>
+<span class="nc" id="L1523">					ti.getSimpleName());</span>
+<span class="nc" id="L1524">			ResultSetDataSet rsds = new ResultSetDataSet();</span>
+<span class="nc" id="L1525">			rsds.setResultSet(rs, columnIndices, computeWidths, DialectFactory.getDialectType(this));</span>
+<span class="nc" id="L1526">			return rsds;</span>
+		}
+<span class="nc" id="L1528">		catch (SQLException e)</span>
+		{
+<span class="nc" id="L1530">			throw new DataSetException(e);</span>
+		}
+		finally
+		{
+<span class="nc" id="L1534">			SQLUtilities.closeResultSet(rs);</span>
+		}
+	}
+
+	/*
+	   * (non-Javadoc)
+	   * 
+	   * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getPrimaryKey(net.sourceforge.squirrel_sql.fw.sql.ITableInfo)
+	   */
+	public synchronized PrimaryKeyInfo[] getPrimaryKey(ITableInfo ti) throws SQLException
+	{
+<span class="nc" id="L1545">		return getPrimaryKey(ti.getCatalogName(), ti.getSchemaName(), ti.getSimpleName());</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getPrimaryKey(java.lang.String,
+	 *      java.lang.String, java.lang.String)
+	 */
+	public synchronized PrimaryKeyInfo[] getPrimaryKey(String catalog, String schema, String table)
+		throws SQLException
+	{
+<span class="nc" id="L1555">		final List&lt;PrimaryKeyInfo&gt; results = new ArrayList&lt;PrimaryKeyInfo&gt;();</span>
+<span class="nc" id="L1556">		ResultSet rs = null;</span>
+		try
+		{
+<span class="nc" id="L1559">			rs = privateGetJDBCMetaData().getPrimaryKeys(catalog, schema, table);</span>
+<span class="nc bnc" id="L1560" title="All 2 branches missed.">			while (rs.next())</span>
+			{
+<span class="nc" id="L1562">				PrimaryKeyInfo pkInfo = new PrimaryKeyInfo(rs.getString(1), // catalog</span>
+<span class="nc" id="L1563">					rs.getString(2), // schema</span>
+<span class="nc" id="L1564">					rs.getString(3), // tableName</span>
+<span class="nc" id="L1565">					rs.getString(4), // columnName</span>
+<span class="nc" id="L1566">					rs.getShort(5), // keySequence</span>
+<span class="nc" id="L1567">					rs.getString(6), // pkName</span>
+					this);
+<span class="nc" id="L1569">				results.add(pkInfo);</span>
+<span class="nc" id="L1570">			}</span>
+		}
+		finally
+		{
+<span class="nc" id="L1574">			SQLUtilities.closeResultSet(rs);</span>
+		}
+
+<span class="nc" id="L1577">		final PrimaryKeyInfo[] ar = new PrimaryKeyInfo[results.size()];</span>
+<span class="nc" id="L1578">		return results.toArray(ar);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getProcedureColumns(net.sourceforge.squirrel_sql.fw.sql.IProcedureInfo)
+	 * @deprecated use getProcedureColumnsDataSet instead
+	 */
+	public ResultSet getProcedureColumns(IProcedureInfo ti) throws SQLException
+	{
+<span class="nc" id="L1587">		return privateGetJDBCMetaData().getProcedureColumns(ti.getCatalogName(), ti.getSchemaName(),</span>
+<span class="nc" id="L1588">			ti.getSimpleName(), &quot;%&quot;);</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getProcedureColumnsDataSet(net.sourceforge.squirrel_sql.fw.sql.IProcedureInfo)
+	 */
+	public synchronized IDataSet getProcedureColumnsDataSet(IProcedureInfo ti) throws DataSetException
+	{
+<span class="nc" id="L1596">		ResultSet rs = null;</span>
+		try
+		{
+<span class="nc" id="L1599">			DatabaseMetaData md = privateGetJDBCMetaData();</span>
+<span class="nc" id="L1600">			rs = md.getProcedureColumns(ti.getCatalogName(), ti.getSchemaName(), ti.getSimpleName(), &quot;%&quot;);</span>
+<span class="nc" id="L1601">			ResultSetDataSet rsds = new ResultSetDataSet();</span>
+<span class="nc" id="L1602">			rsds.setResultSet(rs, DialectFactory.getDialectType(this));</span>
+<span class="nc" id="L1603">			return rsds;</span>
+		}
+<span class="nc" id="L1605">		catch (SQLException e)</span>
+		{
+<span class="nc" id="L1607">			throw new DataSetException(e);</span>
+		}
+		finally
+		{
+<span class="nc" id="L1611">			SQLUtilities.closeResultSet(rs);</span>
+		}
+	}
+
+	/*
+	   * (non-Javadoc)
+	   * 
+	   * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getTablePrivileges(net.sourceforge.squirrel_sql.fw.sql.ITableInfo)
+	   * 
+	   * @deprecated use getTablePrivilegesDataSet instead
+	   */
+	public ResultSet getTablePrivileges(ITableInfo ti) throws SQLException
+	{
+<span class="nc" id="L1624">		return privateGetJDBCMetaData().getTablePrivileges(ti.getCatalogName(), ti.getSchemaName(),</span>
+<span class="nc" id="L1625">			ti.getSimpleName());</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getTablePrivilegesDataSet(net.sourceforge.squirrel_sql.fw.sql.ITableInfo,
+	 *      int[], boolean)
+	 */
+	public synchronized IDataSet getTablePrivilegesDataSet(ITableInfo ti, int[] columnIndices,
+		boolean computeWidths) throws DataSetException
+	{
+<span class="nc" id="L1635">		ResultSet rs = null;</span>
+		try
+		{
+<span class="nc" id="L1638">			DatabaseMetaData md = privateGetJDBCMetaData();</span>
+<span class="nc" id="L1639">			rs = md.getTablePrivileges(ti.getCatalogName(), ti.getSchemaName(), ti.getSimpleName());</span>
+<span class="nc" id="L1640">			ResultSetDataSet rsds = new ResultSetDataSet();</span>
+<span class="nc" id="L1641">			rsds.setResultSet(rs, columnIndices, computeWidths, DialectFactory.getDialectType(this));</span>
+<span class="nc" id="L1642">			return rsds;</span>
+		}
+<span class="nc" id="L1644">		catch (SQLException e)</span>
+		{
+<span class="nc" id="L1646">			throw new DataSetException(e);</span>
+		}
+		finally
+		{
+<span class="nc" id="L1650">			SQLUtilities.closeResultSet(rs);</span>
+		}
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getVersionColumns(net.sourceforge.squirrel_sql.fw.sql.ITableInfo)
+	 * 
+	 * @deprecated use getVersionColumnsDataSet instead
+	 */
+	public ResultSet getVersionColumns(ITableInfo ti) throws SQLException
+	{
+<span class="nc" id="L1663">		return privateGetJDBCMetaData().getVersionColumns(ti.getCatalogName(), ti.getSchemaName(),</span>
+<span class="nc" id="L1664">			ti.getSimpleName());</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getVersionColumnsDataSet(net.sourceforge.squirrel_sql.fw.sql.ITableInfo)
+	 */
+	public synchronized IDataSet getVersionColumnsDataSet(ITableInfo ti) throws DataSetException
+	{
+<span class="nc" id="L1672">		ResultSet rs = null;</span>
+		try
+		{
+<span class="nc" id="L1675">			DatabaseMetaData md = privateGetJDBCMetaData();</span>
+<span class="nc" id="L1676">			rs = md.getVersionColumns(ti.getCatalogName(), ti.getSchemaName(), ti.getSimpleName());</span>
+<span class="nc" id="L1677">			ResultSetDataSet rsds = new ResultSetDataSet();</span>
+<span class="nc" id="L1678">			rsds.setResultSet(rs, DialectFactory.getDialectType(this));</span>
+<span class="nc" id="L1679">			return rsds;</span>
+		}
+<span class="nc" id="L1681">		catch (SQLException e)</span>
+		{
+<span class="nc" id="L1683">			throw new DataSetException(e);</span>
+		}
+		finally
+		{
+<span class="nc" id="L1687">			SQLUtilities.closeResultSet(rs);</span>
+		}
+	}
+
+	private ResultSet getColumns(ITableInfo ti) throws SQLException
+	{
+<span class="nc" id="L1693">		return privateGetJDBCMetaData().getColumns(ti.getCatalogName(), ti.getSchemaName(), escapeTableNames(ti.getSimpleName()),</span>
+			&quot;%&quot;);
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getColumns(net.sourceforge.squirrel_sql.fw.sql.ITableInfo,
+	 *      int[], boolean)
+	 */
+	public synchronized IDataSet getColumns(ITableInfo ti, int[] columnIndices, boolean computeWidths)
+		throws DataSetException
+	{
+<span class="nc" id="L1704">		IDataSet result = null;</span>
+<span class="nc" id="L1705">		ResultSet rs = null;</span>
+		try
+		{
+<span class="nc" id="L1708">			rs = getColumns(ti);</span>
+<span class="nc" id="L1709">			ResultSetDataSet rsds = new ResultSetDataSet();</span>
+<span class="nc" id="L1710">			rsds.setResultSet(rs, columnIndices, computeWidths, DialectFactory.getDialectType(this));</span>
+<span class="nc" id="L1711">			result = rsds;</span>
+		}
+<span class="nc" id="L1713">		catch (SQLException e)</span>
+		{
+<span class="nc" id="L1715">			throw new DataSetException(e);</span>
+		}
+		finally
+		{
+<span class="nc" id="L1719">			SQLUtilities.closeResultSet(rs);</span>
+		}
+<span class="nc" id="L1721">		return result;</span>
+	}
+
+	/*
+	   * (non-Javadoc)
+	   * 
+	   * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getColumnInfo(java.lang.String,
+	   *      java.lang.String, java.lang.String)
+	   */
+	public synchronized TableColumnInfo[] getColumnInfo(String catalog, String schema, String table)
+		throws SQLException
+	{
+<span class="nc" id="L1733">		ResultSet rs = null;</span>
+		
+<span class="nc" id="L1735">		table = escapeTableNames(table);</span>
+		
+		try
+		{
+<span class="nc" id="L1739">			final Map&lt;Integer, TableColumnInfo&gt; columns = new TreeMap&lt;Integer, TableColumnInfo&gt;();</span>
+<span class="nc" id="L1740">			DatabaseMetaData md = privateGetJDBCMetaData();</span>
+<span class="nc" id="L1741">			rs = md.getColumns(catalog, schema, table, &quot;%&quot;);</span>
+<span class="nc" id="L1742">			final ResultSetColumnReader rdr = new ResultSetColumnReader(rs);</span>
+
+<span class="nc" id="L1744">			int isNullAllowed = DatabaseMetaData.typeNullableUnknown;</span>
+
+<span class="nc" id="L1746">			int index = 0;</span>
+<span class="nc bnc" id="L1747" title="All 2 branches missed.">			while (rdr.next())</span>
+			{
+				/*
+				 * PointBase doesn't follow the spec with regard to column 11 of getColumns (should return a type
+				 * constant, but instead returns a Boolean.
+				 */
+<span class="nc bnc" id="L1753" title="All 2 branches missed.">				if (DialectFactory.isPointbase(this))</span>
+				{
+<span class="nc bnc" id="L1755" title="All 2 branches missed.">					if (rdr.getBoolean(11))</span>
+					{
+<span class="nc" id="L1757">						isNullAllowed = DatabaseMetaData.typeNullable;</span>
+					}
+					else
+					{
+<span class="nc" id="L1761">						isNullAllowed = DatabaseMetaData.typeNoNulls;</span>
+					}
+				}
+				else
+				{
+<span class="nc" id="L1766">					isNullAllowed = rdr.getLong(11).intValue();</span>
+				}
+
+<span class="nc" id="L1769">				final TableColumnInfo tci = new TableColumnInfo(rdr.getString(1), // TABLE_CAT</span>
+<span class="nc" id="L1770">					rdr.getString(2), // TABLE_SCHEM</span>
+<span class="nc" id="L1771">					rdr.getString(3), // TABLE_NAME</span>
+<span class="nc" id="L1772">					rdr.getString(4), // COLUMN_NAME</span>
+<span class="nc" id="L1773">					rdr.getLong(5).intValue(), // DATA_TYPE</span>
+<span class="nc" id="L1774">					rdr.getString(6), // TYPE_NAME</span>
+<span class="nc" id="L1775">					rdr.getLong(7).intValue(), // COLUMN_SIZE</span>
+<span class="nc" id="L1776">					rdr.getLong(9).intValue(), // DECIMAL_DIGITS</span>
+<span class="nc" id="L1777">					rdr.getLong(10).intValue(), // NUM_PREC_RADIX</span>
+					isNullAllowed, // NULLABLE
+<span class="nc" id="L1779">					rdr.getString(12), // REMARKS</span>
+<span class="nc" id="L1780">					rdr.getString(13), // COLUMN_DEF</span>
+<span class="nc" id="L1781">					rdr.getLong(16).intValue(), // CHAR_OCTET_LENGTH</span>
+<span class="nc" id="L1782">					rdr.getLong(17).intValue(), // ORDINAL_POSITION</span>
+<span class="nc" id="L1783">					rdr.getString(18), // IS_NULLABLE</span>
+					this);
+				// //////////////////////////////////////////////////////////////////////////////////////////
+				// The index is needed in case this method is called with schema = null, catalog = null
+				// and two tables with the same name in different schemas/catalogs.
+				// Without the index the same ordinal position could only occur once.
+<span class="nc" id="L1789">				++index;</span>
+				//
+				// //////////////////////////////////////////////////////////////////////////////////////////
+<span class="nc" id="L1792">				columns.put(Integer.valueOf(10000 * tci.getOrdinalPosition() + index), tci);</span>
+<span class="nc" id="L1793">			}</span>
+
+<span class="nc" id="L1795">			return columns.values().toArray(new TableColumnInfo[columns.size()]);</span>
+
+		}
+		finally
+		{
+<span class="nc" id="L1800">			SQLUtilities.closeResultSet(rs);</span>
+		}
+	}
+
+	/**
+	 * For some databases, we need to escape table names.
+	 * e.g. for Oracle, we need to escape the slash in BIN$ objects, because the JDBC-driver could not handle them until now (version 11.2.0.2.0)
+	 * @param table name of the table, which might contains some chars to escape
+	 * @return the escaped table name, or the original, if escaping is not necessary.
+	 */
+	private String escapeTableNames(String table) {
+<span class="nc bnc" id="L1811" title="All 4 branches missed.">		if(DialectFactory.isOracle(this) &amp;&amp; table != null){</span>
+			/*
+			 *  For some names of BIN$ objects, the jdbc driver could not catch the columns.
+			 *  Calling DatabaseMetaData#getColumns for a table like BIN$nPl/2NHWRNXgQKjAQgFYEQ==$0 will end in a 
+			 *  ORA-01424: missing or illegal character following the escape character.
+			 *  
+			 */
+<span class="nc bnc" id="L1818" title="All 2 branches missed.">			if(table.startsWith(&quot;BIN$&quot;)){</span>
+<span class="nc" id="L1819">				table = table.replaceAll(&quot;/&quot;, &quot;//&quot;);</span>
+			}
+		}
+<span class="nc" id="L1822">		return table;</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#getColumnInfo(net.sourceforge.squirrel_sql.fw.sql.ITableInfo)
+	 */
+	public synchronized TableColumnInfo[] getColumnInfo(ITableInfo ti) throws SQLException
+	{
+<span class="nc" id="L1830">		return getColumnInfo(ti.getCatalogName(), ti.getSchemaName(), ti.getSimpleName());</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#correctlySupportsSetMaxRows()
+	 */
+	public boolean correctlySupportsSetMaxRows() throws SQLException
+	{
+<span class="nc bnc" id="L1838" title="All 2 branches missed.">		return !IDriverNames.OPTA2000.equals(getDriverName());</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#supportsMultipleResultSets()
+	 */
+	public synchronized boolean supportsMultipleResultSets() throws SQLException
+	{
+<span class="nc" id="L1846">		final String key = &quot;supportsMultipleResultSets&quot;;</span>
+<span class="nc" id="L1847">		Boolean value = (Boolean) _cache.get(key);</span>
+<span class="nc bnc" id="L1848" title="All 2 branches missed.">		if (value != null) { return value.booleanValue(); }</span>
+
+<span class="nc" id="L1850">		value = Boolean.valueOf(privateGetJDBCMetaData().supportsMultipleResultSets());</span>
+<span class="nc" id="L1851">		_cache.put(key, value);</span>
+
+<span class="nc" id="L1853">		return value.booleanValue();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#storesUpperCaseIdentifiers()
+	 */
+	public synchronized boolean storesUpperCaseIdentifiers() throws SQLException
+	{
+<span class="nc" id="L1861">		final String key = &quot;storesUpperCaseIdentifiers&quot;;</span>
+<span class="nc" id="L1862">		Boolean value = (Boolean) _cache.get(key);</span>
+<span class="nc bnc" id="L1863" title="All 2 branches missed.">		if (value != null) { return value.booleanValue(); }</span>
+
+<span class="nc" id="L1865">		value = Boolean.valueOf(privateGetJDBCMetaData().storesUpperCaseIdentifiers());</span>
+<span class="nc" id="L1866">		_cache.put(key, value);</span>
+
+<span class="nc" id="L1868">		return value.booleanValue();</span>
+	}
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData#clearCache()
+	 */
+	public void clearCache()
+	{
+<span class="nc" id="L1876">		_cache.clear();</span>
+<span class="nc" id="L1877">	}</span>
+
+	/**
+	 * Make a String array of the passed string. Commas separate the elements in the input string. The array is
+	 * sorted.
+	 * 
+	 * @param data
+	 *           Data to be split into the array.
+	 * @return data as an array.
+	 */
+	private static String[] makeArray(String data)
+	{
+<span class="nc bnc" id="L1889" title="All 2 branches missed.">		if (data == null)</span>
+		{
+<span class="nc" id="L1891">			data = &quot;&quot;;</span>
+		}
+
+<span class="nc" id="L1894">		final List&lt;String&gt; list = new ArrayList&lt;String&gt;();</span>
+<span class="nc" id="L1895">		final StringTokenizer st = new StringTokenizer(data, &quot;,&quot;);</span>
+<span class="nc bnc" id="L1896" title="All 2 branches missed.">		while (st.hasMoreTokens())</span>
+		{
+<span class="nc" id="L1898">			list.add(st.nextToken());</span>
+		}
+<span class="nc" id="L1900">		Collections.sort(list);</span>
+
+<span class="nc" id="L1902">		return list.toArray(new String[list.size()]);</span>
+	}
+
+	/**
+	 * Return the &lt;TT&gt;DatabaseMetaData&lt;/TT&gt; object for this connection.
+	 * 
+	 * @return The &lt;TT&gt;DatabaseMetaData&lt;/TT&gt; object for this connection.
+	 * @throws SQLException
+	 *            Thrown if an SQL error occurs.
+	 */
+	private DatabaseMetaData privateGetJDBCMetaData() throws SQLException
+	{
+<span class="nc" id="L1914">		checkThread();</span>
+<span class="nc" id="L1915">		return _conn.getConnection().getMetaData();</span>
+	}
+
+	/**
+	 * @param fki
+	 * @return
+	 */
+	private String createForeignKeyInfoKey(ForeignKeyInfo fki)
+	{
+<span class="nc" id="L1924">		final StringBuffer buf = new StringBuffer();</span>
+<span class="nc" id="L1925">		buf.append(fki.getForeignKeyCatalogName())</span>
+<span class="nc" id="L1926">			.append(fki.getForeignKeySchemaName())</span>
+<span class="nc" id="L1927">			.append(fki.getForeignKeyTableName())</span>
+<span class="nc" id="L1928">			.append(fki.getForeignKeyName())</span>
+<span class="nc" id="L1929">			.append(fki.getPrimaryKeyCatalogName())</span>
+<span class="nc" id="L1930">			.append(fki.getPrimaryKeySchemaName())</span>
+<span class="nc" id="L1931">			.append(fki.getPrimaryKeyTableName())</span>
+<span class="nc" id="L1932">			.append(fki.getPrimaryKeyName());</span>
+<span class="nc" id="L1933">		return buf.toString();</span>
+	}
+
+	/**
+	 * Check the thread of the caller to see if it is the event dispatch thread and if we are debugging print a
+	 * debug log message with the call trace.
+	 */
+	private void checkThread()
+	{
+		/* This is extremely useful when trying to track down Swing UI freezing.
+		 * However, it currently fills the log which obscures other debug 
+		 * messages even though UI performance is acceptable, so it is commented 
+		 * out until it is needed later. 
+		if (s_log.isDebugEnabled() &amp;&amp; SwingUtilities.isEventDispatchThread()) {
+		    try {
+		        throw new Exception(&quot;GUI Thread is doing database work&quot;);
+		    } catch (Exception e) {
+		        s_log.debug(e.getMessage(), e);
+		    }
+		}
+		*/
+<span class="nc" id="L1954">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

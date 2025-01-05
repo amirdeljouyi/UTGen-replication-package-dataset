@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TreeLoader.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.session.mainpanel.objecttree</a> &gt; <span class="el_source">TreeLoader.java</span></div><h1>TreeLoader.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (C) 2002-2004 Colin Bell
+ * colbell@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write toS the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+package net.sourceforge.squirrel_sql.client.session.mainpanel.objecttree;
+
+import java.sql.SQLException;
+import java.util.Iterator;
+import java.util.List;
+
+import javax.swing.tree.TreePath;
+
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.fw.gui.GUIUtils;
+import net.sourceforge.squirrel_sql.fw.sql.DatabaseObjectInfo;
+import net.sourceforge.squirrel_sql.fw.sql.DatabaseObjectType;
+import net.sourceforge.squirrel_sql.fw.sql.IDatabaseObjectInfo;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+/**
+ * This class actually loads the tree.
+ * Note: This class was extracted from {@link ObjectTree} to make it more testable.
+ */
+public class TreeLoader
+{
+	
+	 /** Logger for this class. */
+<span class="nc" id="L43">		private static final ILogger s_log =</span>
+<span class="nc" id="L44">			LoggerController.createLogger(TreeLoader.class);</span>
+		
+	private ObjectTree objectTree;
+	private ObjectTreeNode _parentNode;
+	private INodeExpander[] _expanders;
+	private boolean _selectParentNode;
+	private ObjectTreeModel model;
+	private ISession session;
+
+	TreeLoader(ISession session, ObjectTree objectTree, ObjectTreeModel model, ObjectTreeNode parentNode, INodeExpander[] expanders,
+				boolean selectParentNode)
+	{
+<span class="nc" id="L56">		super();</span>
+<span class="nc" id="L57">		this.session = session;</span>
+<span class="nc" id="L58">		this.objectTree = objectTree;</span>
+<span class="nc" id="L59">		this.model = model;</span>
+<span class="nc" id="L60">		_parentNode = parentNode;</span>
+<span class="nc" id="L61">		_expanders = expanders;</span>
+<span class="nc" id="L62">		_selectParentNode= selectParentNode;</span>
+<span class="nc" id="L63">	}</span>
+
+	void execute()
+	{
+		try
+		{
+			try
+			{
+<span class="nc" id="L71">				ObjectTreeNode loadingNode = showLoadingNode();</span>
+				try
+				{
+<span class="nc" id="L74">					loadChildren();</span>
+				}
+				finally
+				{
+<span class="nc bnc" id="L78" title="All 2 branches missed.">                    if (_parentNode.isNodeChild(loadingNode)){</span>
+<span class="nc" id="L79">                        _parentNode.remove(loadingNode);</span>
+                    }
+				}
+			}
+			finally
+			{
+<span class="nc" id="L85">				fireStructureChanged(_parentNode);</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">				if (_selectParentNode)</span>
+				{
+<span class="nc" id="L88">					this.objectTree.clearSelection();</span>
+<span class="nc" id="L89">					this.objectTree.setSelectionPath(new TreePath(_parentNode.getPath()));</span>
+				}
+			}
+		}
+<span class="nc" id="L93">		catch (Throwable ex)</span>
+		{
+<span class="nc" id="L95">			final String msg = &quot;Error: &quot; + _parentNode.toString();</span>
+<span class="nc" id="L96">			s_log.error(msg, ex);</span>
+<span class="nc" id="L97">			this.session.showErrorMessage(msg + &quot;: &quot; + ex.toString());</span>
+<span class="nc" id="L98">		}</span>
+<span class="nc" id="L99">	}</span>
+
+	/**
+	 * This adds a node to the tree that says &quot;Loading...&quot; in order to give
+	 * feedback to the user.
+	 */
+	private ObjectTreeNode showLoadingNode()
+	{
+<span class="nc" id="L107">		IDatabaseObjectInfo doi = new DatabaseObjectInfo(null, null,</span>
+							&quot;Loading...&quot;, DatabaseObjectType.OTHER,
+<span class="nc" id="L109">							this.session.getSQLConnection().getSQLMetaData());</span>
+<span class="nc" id="L110">		ObjectTreeNode loadingNode = new ObjectTreeNode(this.session, doi);</span>
+<span class="nc" id="L111">		_parentNode.add(loadingNode);</span>
+<span class="nc" id="L112">		fireStructureChanged(_parentNode);</span>
+<span class="nc" id="L113">		return loadingNode;</span>
+	}
+
+	/**
+	 * This expands the parent node and shows all its children.
+	 */
+	private void loadChildren() throws SQLException
+	{
+<span class="nc" id="L121">		boolean noChildrenFound = true;</span>
+<span class="nc bnc" id="L122" title="All 2 branches missed.">		for (int i = 0; i &lt; _expanders.length; ++i)</span>
+		{
+<span class="nc" id="L124">			boolean nodeTypeAllowsChildren = false;</span>
+<span class="nc" id="L125">			DatabaseObjectType lastDboType = null;</span>
+<span class="nc" id="L126">			List&lt;ObjectTreeNode&gt; list = _expanders[i].createChildren(this.session, _parentNode);</span>
+			
+<span class="nc bnc" id="L128" title="All 2 branches missed.">			if(list.isEmpty() == false){</span>
+<span class="nc" id="L129">				noChildrenFound = false;</span>
+			}
+			
+<span class="nc" id="L132">			Iterator&lt;ObjectTreeNode&gt; it = list.iterator();</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">			while (it.hasNext())</span>
+			{
+<span class="nc" id="L135">				Object nextObj = it.next();</span>
+<span class="nc bnc" id="L136" title="All 2 branches missed.">				if (nextObj instanceof ObjectTreeNode)</span>
+				{
+<span class="nc" id="L138">					ObjectTreeNode childNode = (ObjectTreeNode)nextObj;</span>
+<span class="nc bnc" id="L139" title="All 2 branches missed.">					if (childNode.getExpanders().length &gt;0)</span>
+					{
+<span class="nc" id="L141">						childNode.setAllowsChildren(true);</span>
+					}
+					else
+					{
+<span class="nc" id="L145">						DatabaseObjectType childNodeDboType = childNode.getDatabaseObjectType();</span>
+<span class="nc bnc" id="L146" title="All 2 branches missed.">						if (childNodeDboType != lastDboType)</span>
+						{
+<span class="nc" id="L148">							this.objectTree.getTypedModel().addKnownDatabaseObjectType(childNodeDboType);</span>
+<span class="nc" id="L149">							lastDboType = childNodeDboType;</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">							if (this.model.getExpanders(childNodeDboType).length &gt; 0)</span>
+							{
+<span class="nc" id="L152">								nodeTypeAllowsChildren = true;</span>
+							}
+							else
+							{
+<span class="nc" id="L156">								nodeTypeAllowsChildren = false;</span>
+							}
+						}
+<span class="nc" id="L159">						childNode.setAllowsChildren(nodeTypeAllowsChildren);</span>
+					}
+<span class="nc" id="L161">					_parentNode.add(childNode);</span>
+				}
+<span class="nc" id="L163">			}</span>
+		}
+
+		// We cann't use getChildCount, because the node has a temporary child called &quot;Loading...&quot;
+<span class="nc" id="L167">		_parentNode.setNoChildrenFoundWithExpander(noChildrenFound);</span>
+<span class="nc" id="L168">	}</span>
+
+	/**
+	 * Let the object tree model know that its structure has changed.
+	 */
+	private void fireStructureChanged(final ObjectTreeNode node)
+	{
+<span class="nc" id="L175">		GUIUtils.processOnSwingEventThread(new Runnable()</span>
+<span class="nc" id="L176">		{</span>
+			public void run()
+			{
+<span class="nc" id="L179">				model.nodeStructureChanged(node);</span>
+<span class="nc" id="L180">			}</span>
+		});
+<span class="nc" id="L182">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

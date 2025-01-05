@@ -1,0 +1,397 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GarbageCollectionService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.gc</a> &gt; <span class="el_source">GarbageCollectionService.java</span></div><h1>GarbageCollectionService.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2001-2004 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: GarbageCollectionService.java,v 1.2 2005/08/30 05:09:45 tanderson Exp $
+ */
+package org.exolab.jms.gc;
+
+import java.util.LinkedList;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import org.exolab.jms.config.Configuration;
+import org.exolab.jms.config.GarbageCollectionConfiguration;
+import org.exolab.jms.events.BasicEventManager;
+import org.exolab.jms.events.Event;
+import org.exolab.jms.events.EventHandler;
+import org.exolab.jms.events.IllegalEventDefinedException;
+import org.exolab.jms.events.EventManager;
+import org.exolab.jms.service.Service;
+import org.exolab.jms.service.ServiceException;
+
+
+/**
+ * The garbage collection service is responsible for managing all transient
+ * garbage collection for OpenJMS, which includes messages, destinations,
+ * endpoints etc. It does not deal with persistent data, which is handled
+ * through the database service. Other services or managers can register
+ * themselves with GarbageCollectionService if they implement the {@link
+ * GarbageCollectable} interface.
+ * &lt;p/&gt;
+ * Gargabe collection will be initiated when the amount of free memory falls
+ * below a low water mark, which is calculated as a percentage of total memory.
+ * By default garbage collection will run when free memory falls below 20% of
+ * total memory, this can be changed through the configuration file.
+ * &lt;p/&gt;
+ * The service will check the memory usage every 30 seconds by default. but this
+ * can also be modified through the configuration file.
+ * &lt;p/&gt;
+ * In addition the garbage collection service can also be configured to execute
+ * at regular intervals regardless the amount of residual free memory. This
+ * option can be employed to ease the burden of performing wholesale garbage
+ * collection when memory falls below the low water mark threshold. The default
+ * value for this is 300 seconds. Setting this value to 0 will disable this
+ * capability.
+ * &lt;p/&gt;
+ * This service makes use of the {@link BasicEventManager} to register events
+ * for garbage collection.
+ *
+ * @author &lt;a href=&quot;mailto:jima@intalio.com&quot;&gt;Jim Alateras&lt;/a&gt;
+ * @version $Revision: 1.2 $ $Date: 2005/08/30 05:09:45 $
+ */
+public class GarbageCollectionService
+        extends Service
+        implements EventHandler {
+
+    /**
+     * This is the value of the transient garbage collection event that is used
+     * to register with the {@link BasicEventManager}. When this event is
+     * received the memory utilization is checked to determine whether we need
+     * to perform some garbage collection.
+     */
+    private final static int CHECK_FREE_MEMORY_EVENT = 1;
+
+    /**
+     * This event is used to unconditionally trigger garbage collection.
+     */
+    private final static int GARBAGE_COLLECT_EVENT = 2;
+
+    /**
+     * The default low water threshold value before GC is initiated. This is
+     * specified as a percentage with valid values ranging from 10-50.
+     */
+<span class="nc" id="L113">    private int _gcLowWaterThreshold = 20;</span>
+
+    /**
+     * The default interval, in seconds, that memory is checked for the low
+     * water threshold. The default is 30 seconds.
+     */
+<span class="nc" id="L119">    private int _memoryCheckInterval = 30 * 1000;</span>
+
+    /**
+     * The default interval, in seconds, between successive executions of the
+     * garbage collector. This will execute regardless the amount of free memory
+     * left in the VM.
+     */
+<span class="nc" id="L126">    private int _gcInterval = 300 * 1000;</span>
+
+    /**
+     * This is the priority of that the GC thread uses to collect garbage.
+     * Changing it effects how aggressive GC is performed. The default value is
+     * 5.
+     */
+<span class="nc" id="L133">    private int _gcThreadPriority = 5;</span>
+
+    /**
+     * This is used to serialize access to the _collectingGarbage flag
+     */
+<span class="nc" id="L138">    private final Object _gcGuard = new Object();</span>
+
+    /**
+     * This flag indicates whether garabage collection is in progress
+     */
+<span class="nc" id="L143">    private boolean _collectingGarbage = false;</span>
+
+    /**
+     * Maintains a list of all GarbageCollectable instances
+     */
+<span class="nc" id="L148">    private LinkedList _gcList = new LinkedList();</span>
+
+    /**
+     * The event manager.
+     */
+    private final EventManager _eventMgr;
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L158">    private static final Log _log =</span>
+<span class="nc" id="L159">            LogFactory.getLog(GarbageCollectionService.class);</span>
+
+
+    /**
+     * Create an instance of a garbage collection service. It uses the
+     * configuration manager to extract the service parameters.
+     *
+     * @param config   the configuration to use
+     * @param eventMgr the event manager
+     */
+    public GarbageCollectionService(Configuration config,
+                                    EventManager eventMgr) {
+<span class="nc" id="L171">        super(&quot;GarbageCollectionService&quot;);</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">        if (config == null) {</span>
+<span class="nc" id="L173">            throw new IllegalArgumentException(&quot;Argument 'config' is null&quot;);</span>
+        }
+<span class="nc bnc" id="L175" title="All 2 branches missed.">        if (eventMgr == null) {</span>
+<span class="nc" id="L176">            throw new IllegalArgumentException(&quot;Argument 'eventMgr' is null&quot;);</span>
+        }
+
+<span class="nc" id="L179">        GarbageCollectionConfiguration gcConfig =</span>
+<span class="nc" id="L180">                config.getGarbageCollectionConfiguration();</span>
+
+        // read the value and ensure that it is within
+        // the specified limits
+<span class="nc" id="L184">        int low = gcConfig.getLowWaterThreshold();</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">        if (low &lt; 10) {</span>
+<span class="nc" id="L186">            low = 10;</span>
+        }
+
+<span class="nc bnc" id="L189" title="All 2 branches missed.">        if (low &gt; 50) {</span>
+<span class="nc" id="L190">            low = 50;</span>
+        }
+<span class="nc" id="L192">        _gcLowWaterThreshold = low;</span>
+
+        // read the memory check interval and fix it if it falls
+        // outside the constraints
+<span class="nc" id="L196">        int mem_interval = gcConfig.getMemoryCheckInterval();</span>
+<span class="nc bnc" id="L197" title="All 4 branches missed.">        if ((mem_interval &gt; 0) &amp;&amp;</span>
+                (mem_interval &lt; 5)) {
+<span class="nc" id="L199">            mem_interval = 5;</span>
+        }
+<span class="nc" id="L201">        _memoryCheckInterval = mem_interval * 1000;</span>
+
+        // read the gc interval, which is optional
+<span class="nc" id="L204">        int gc_interval = gcConfig.getGarbageCollectionInterval();</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">        if (gc_interval &lt;= 0) {</span>
+<span class="nc" id="L206">            gc_interval = 0;</span>
+        }
+<span class="nc" id="L208">        _gcInterval = gc_interval * 1000;</span>
+
+        // read the gc thread priority
+<span class="nc" id="L211">        int gc_priority = gcConfig.getGarbageCollectionThreadPriority();</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">        if (gc_priority &lt; Thread.MIN_PRIORITY) {</span>
+<span class="nc" id="L213">            gc_priority = Thread.MIN_PRIORITY;</span>
+        }
+
+<span class="nc bnc" id="L216" title="All 2 branches missed.">        if (gc_priority &gt; Thread.MAX_PRIORITY) {</span>
+<span class="nc" id="L217">            gc_priority = Thread.MAX_PRIORITY;</span>
+        }
+<span class="nc" id="L219">        _gcThreadPriority = gc_priority;</span>
+
+<span class="nc" id="L221">        _eventMgr = eventMgr;</span>
+<span class="nc" id="L222">    }</span>
+
+    /**
+     * Check whether the low water threshold has been reached.
+     *
+     * @return boolean - true if it has; false otherwise
+     */
+    public boolean belowLowWaterThreshold() {
+<span class="nc" id="L230">        boolean result = false;</span>
+<span class="nc" id="L231">        long threshold = (long) ((Runtime.getRuntime().totalMemory() / 100) *</span>
+                _gcLowWaterThreshold);
+<span class="nc" id="L233">        long free = Runtime.getRuntime().freeMemory();</span>
+
+<span class="nc bnc" id="L235" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L236">            _log.debug(&quot;GC Threshold=&quot; + threshold + &quot; Free=&quot; + free);</span>
+        }
+<span class="nc bnc" id="L238" title="All 2 branches missed.">        if (threshold &gt; free) {</span>
+<span class="nc" id="L239">            result = true;</span>
+        }
+
+<span class="nc" id="L242">        return result;</span>
+    }
+
+    /**
+     * Register an entity that wishes to participate in the garbage collection
+     * process. This entity will be added to the list of other registered
+     * entities and will be called when GC is triggered.
+     *
+     * @param entry the entry to add to list
+     */
+    public void register(GarbageCollectable entry) {
+<span class="nc bnc" id="L253" title="All 2 branches missed.">        if (entry != null) {</span>
+<span class="nc" id="L254">            synchronized (_gcList) {</span>
+<span class="nc" id="L255">                _gcList.add(entry);</span>
+<span class="nc" id="L256">            }</span>
+        }
+<span class="nc" id="L258">    }</span>
+
+    /**
+     * Unregister the specified entry from the list of garbge collectable
+     * entities
+     *
+     * @param entry - entry to remove
+     */
+    public void unregister(GarbageCollectable entry) {
+<span class="nc bnc" id="L267" title="All 2 branches missed.">        if (entry != null) {</span>
+<span class="nc" id="L268">            synchronized (_gcList) {</span>
+<span class="nc" id="L269">                _gcList.remove(entry);</span>
+<span class="nc" id="L270">            }</span>
+        }
+<span class="nc" id="L272">    }</span>
+
+    public void doStart()
+            throws ServiceException {
+
+        // register an event with the event manager
+<span class="nc bnc" id="L278" title="All 2 branches missed.">        if (_memoryCheckInterval &gt; 0) {</span>
+<span class="nc" id="L279">            _log.info(&quot;Registering Garbage Collection every &quot; +</span>
+                      _memoryCheckInterval + &quot; for memory.&quot;);
+<span class="nc" id="L281">            registerEvent(CHECK_FREE_MEMORY_EVENT, _memoryCheckInterval);</span>
+        }
+
+        // optionally start garbage collection
+<span class="nc bnc" id="L285" title="All 2 branches missed.">        if (_gcInterval &gt; 0) {</span>
+<span class="nc" id="L286">            _log.info(&quot;Registering Garbage Collection every &quot; +</span>
+                      _gcInterval + &quot; for other resources.&quot;);
+<span class="nc" id="L288">            registerEvent(GARBAGE_COLLECT_EVENT, _gcInterval);</span>
+        }
+<span class="nc" id="L290">    }</span>
+
+    // implementation of EventHandler.handleEvent
+    public void handleEvent(int event, Object callback, long time) {
+<span class="nc" id="L294">        boolean valid_event = false;</span>
+
+        try {
+<span class="nc bnc" id="L297" title="All 2 branches missed.">            if (event == CHECK_FREE_MEMORY_EVENT) {</span>
+<span class="nc" id="L298">                valid_event = true;</span>
+                try {
+                    // collect garbage only below threshold
+<span class="nc bnc" id="L301" title="All 2 branches missed.">                    if (belowLowWaterThreshold()) {</span>
+<span class="nc" id="L302">                        _log.info(&quot;GC Collecting Garbage Free Heap below &quot;</span>
+                                  + _gcLowWaterThreshold);
+<span class="nc" id="L304">                        collectGarbage(true);</span>
+                    }
+<span class="nc" id="L306">                } catch (Exception exception) {</span>
+<span class="nc" id="L307">                    _log.error(&quot;Error in GC Service [CHECK_FREE_MEMORY_EVENT]&quot;,</span>
+                               exception);
+<span class="nc" id="L309">                }</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">            } else if (event == GARBAGE_COLLECT_EVENT) {</span>
+<span class="nc" id="L311">                valid_event = true;</span>
+                try {
+                    // collect garbage now
+<span class="nc" id="L314">                    collectGarbage(false);</span>
+<span class="nc" id="L315">                } catch (Exception exception) {</span>
+<span class="nc" id="L316">                    _log.error(&quot;Error in GC Service [GARBAGE_COLLECT_EVENT]&quot;,</span>
+                               exception);
+<span class="nc" id="L318">                }</span>
+            }
+        } finally {
+<span class="nc bnc" id="L321" title="All 2 branches missed.">            if (valid_event) {</span>
+                try {
+<span class="nc" id="L323">                    registerEvent(event, ((Long) callback).longValue());</span>
+<span class="nc" id="L324">                } catch (Exception exception) {</span>
+<span class="nc" id="L325">                    _log.error(&quot;Error in GC Service&quot;, exception);</span>
+<span class="nc" id="L326">                }</span>
+            }
+        }
+<span class="nc" id="L329">    }</span>
+
+    /**
+     * Iterate through the list of registered {@link GarbageCollectable}s and
+     * call collectGarbage on all of them.
+     *
+     * @param aggressive - true ofr aggressive garbage collection
+     */
+    private void collectGarbage(boolean aggressive) {
+<span class="nc" id="L338">        synchronized (_gcGuard) {</span>
+<span class="nc bnc" id="L339" title="All 2 branches missed.">            if (_collectingGarbage) {</span>
+                // if we are in the middle of collecting garbage then
+                // we can ignore this request safely.
+<span class="nc" id="L342">                return;</span>
+            } else {
+<span class="nc" id="L344">                _collectingGarbage = true;</span>
+            }
+<span class="nc" id="L346">        }</span>
+
+        // if we get this far then we are the only thread that will
+        // trigger garbage collection. First we must set the priority
+        // of this thread
+<span class="nc" id="L351">        int oldPriority = Thread.currentThread().getPriority();</span>
+        try {
+<span class="nc" id="L353">            Thread.currentThread().setPriority(_gcThreadPriority);</span>
+<span class="nc" id="L354">            Object[] list = _gcList.toArray();</span>
+<span class="nc bnc" id="L355" title="All 2 branches missed.">            for (int index = 0; index &lt; list.length; index++) {</span>
+                try {
+<span class="nc" id="L357">                    GarbageCollectable collectable =</span>
+                            (GarbageCollectable) list[index];
+<span class="nc" id="L359">                    collectable.collectGarbage(aggressive);</span>
+<span class="nc" id="L360">                } catch (Exception exception) {</span>
+<span class="nc" id="L361">                    _log.error(&quot;Error while collecting garbage&quot;, exception);</span>
+<span class="nc" id="L362">                }</span>
+            }
+        } finally {
+<span class="nc" id="L365">            Thread.currentThread().setPriority(oldPriority);</span>
+        }
+
+        // we have finished collecting garbage
+<span class="nc" id="L369">        synchronized (_gcGuard) {</span>
+<span class="nc" id="L370">            _collectingGarbage = false;</span>
+<span class="nc" id="L371">        }</span>
+<span class="nc" id="L372">    }</span>
+
+    /**
+     * Register the specified event with the corresponding time with the {@link
+     * BasicEventManager}. It will throw an exception if it cannot contact the
+     * event manager or register the event.
+     *
+     * @param event the event to register
+     * @param time  the associated time
+     * @throws GarbageCollectionServiceException
+     *
+     */
+    private void registerEvent(int event, long time)
+            throws GarbageCollectionServiceException {
+        try {
+<span class="nc" id="L387">            _eventMgr.registerEventRelative(</span>
+                    new Event(event, this, new Long(time)), time);
+<span class="nc" id="L389">        } catch (IllegalEventDefinedException exception) {</span>
+            // rethrow as a more relevant exception
+<span class="nc" id="L391">            throw new GarbageCollectionServiceException(</span>
+                    &quot;Failed to register event &quot; + exception);
+<span class="nc" id="L393">        }</span>
+<span class="nc" id="L394">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

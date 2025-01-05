@@ -1,0 +1,297 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>XSLTTransformer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.protocol.xml</a> &gt; <span class="el_source">XSLTTransformer.java</span></div><h1>XSLTTransformer.java</h1><pre class="source lang-java linenums">package net.sf.xbus.protocol.xml;
+
+import java.util.Hashtable;
+
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerConfigurationException;
+import javax.xml.transform.TransformerException;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMResult;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamSource;
+
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.core.config.Configuration;
+import net.sf.xbus.base.core.reflection.ReflectionSupport;
+import net.sf.xbus.base.xbussystem.XBUSSystem;
+import net.sf.xbus.base.xml.XDomSupport;
+import net.sf.xbus.base.xml.XMLHelper;
+import net.sf.xbus.protocol.Message;
+
+import org.w3c.dom.Document;
+
+/**
+ * This is the base class for all transformation between
+ * &lt;code&gt;XMLMessages&lt;/code&gt; with XSLT stylesheets.
+ * &lt;p&gt;
+ * 
+ * The transformation is done in two steps:
+ * &lt;ol&gt;
+ * &lt;li&gt;An XSLT stylesheet which name is read from the configuration does the
+ * first part of the transformation.
+ * &lt;li&gt;The so-called XBUS_Stylets are processed to fill in extra data into the
+ * XML data.
+ * &lt;/ol&gt;
+ * &lt;p&gt;
+ * 
+ * &lt;b&gt;XBUS_Stylets:&lt;/b&gt;
+ * &lt;p&gt;
+ * XSLT stylesheets lack the possibilty to fill in data to the transformed XML
+ * data which cannot be extracted out of the source XML. To fill this gap some
+ * defined tags can be included in the transformed XML when the XSLT
+ * transformation is done. These tags are replaced in the second step with
+ * defined data. The format for XBUS_Stylets is:
+ * 
+ * &lt;pre&gt;
+ *      &amp;lt;XBUS_Stylet Name=&amp;quot;xxx&amp;quot; Tag=&amp;quot;yyy&amp;quot; Key=&amp;quot;zzz&amp;quot;&amp;gt;
+ * &lt;/pre&gt;
+ * 
+ * The XSLT code to achieve this looks like:
+ * 
+ * &lt;pre&gt;
+ *      &amp;lt;xsl:element name=&amp;quot;XBUS_Stylet&amp;quot;&amp;gt;
+ *          &amp;lt;xsl:attribute name=&amp;quot;Name&amp;quot;&amp;gt;xxx&amp;lt;/xsl:attribute&amp;gt;
+ *          &amp;lt;xsl:attribute name=&amp;quot;Tag&amp;quot;&amp;gt;yyy&amp;lt;/xsl:attribute&amp;gt;
+ *          &amp;lt;xsl:attribute name=&amp;quot;Key&amp;quot;&amp;gt;zzz&amp;lt;/xsl:attribute&amp;gt;
+ *      &amp;lt;/xsl:element&amp;gt;
+ * &lt;/pre&gt;
+ * 
+ * The meaning of the attributes is:
+ * &lt;ul&gt;
+ * &lt;li&gt;&lt;b&gt;Name:&lt;/b&gt; The name defines what data is inserted. There is a defined
+ * set of names which will be explained in the following list.&lt;/li&gt;
+ * &lt;li&gt;&lt;b&gt;Tag:&lt;/b&gt; The name of the tag under which the data is inserted.&lt;br&gt;
+ * May be omitted if &lt;code&gt;Name=&quot;Value&quot;&lt;/code&gt; or
+ * &lt;code&gt;Name=&quot;FormatDate&quot;&lt;/code&gt;. In this case only a text node for the
+ * value is inserted.&lt;/li&gt;
+ * &lt;li&gt;&lt;b&gt;Section:&lt;/b&gt; Optional, only used with the name &lt;code&gt;Value&lt;/code&gt;.
+ * Specifies the name of the mapping to get a value from.&lt;/li&gt;
+ * &lt;li&gt;&lt;b&gt;Key:&lt;/b&gt; Optional, only used with the names &lt;code&gt;Value&lt;/code&gt;,
+ * &lt;code&gt;CDATA&lt;/code&gt; and &lt;code&gt;FormatDate&lt;/code&gt;. Values come from two
+ * different sources depending on the section attribute.&lt;br&gt;
+ * If no section is specified: A key/value pair can be stored before the
+ * transformation (see method
+ * {@link #putStyletValue(Object, Object) putStyletValue}). The value for the
+ * given key is inserted.&lt;br&gt;
+ * For a given section: The value is read by the
+ * {@link net.sf.xbus.base.core.config.Configuration#getMapping(String, String) getMapping}
+ * operation of the Configuration.&lt;/li&gt;
+ * &lt;li&gt;&lt;b&gt;SourceFormat:&lt;/b&gt; Optional, only used with the name
+ * &lt;code&gt;FormatDate&lt;/code&gt;. Describes the actual format of the date given in
+ * &lt;code&gt;Key&lt;/code&gt;.&lt;/li&gt;
+ * &lt;li&gt;&lt;b&gt;DestinationFormat:&lt;/b&gt; Optional, only used with the name
+ * &lt;code&gt;FormatDate&lt;/code&gt;. Describes the format to apply to the date given
+ * in &lt;code&gt;Key&lt;/code&gt;.&lt;/li&gt;
+ * &lt;/ul&gt;
+ * 
+ * The values for the attribute &lt;code&gt;Name&lt;/code&gt; are defined as follows:
+ * &lt;ul&gt;
+ * &lt;li&gt;&lt;b&gt;Id:&lt;/b&gt; The identifier of the new &lt;code&gt;Message&lt;/code&gt; is
+ * inserted.&lt;/li&gt;
+ * &lt;li&gt;&lt;b&gt;Source:&lt;/b&gt; The logical name of the source of the
+ * &lt;code&gt;Message&lt;/code&gt; is inserted.&lt;/li&gt;
+ * &lt;li&gt;&lt;b&gt;RequestTimestamp:&lt;/b&gt; The request timestamp is inserted.&lt;/li&gt;
+ * &lt;li&gt;&lt;b&gt;Value:&lt;/b&gt; The value for the given &lt;code&gt;key&lt;/code&gt; (see above) is
+ * inserted.&lt;/li&gt;
+ * &lt;li&gt;&lt;b&gt;CDATA:&lt;/b&gt; The value for the given &lt;code&gt;key&lt;/code&gt; (see above) is
+ * inserted as a CDATA section.&lt;/li&gt;
+ * &lt;li&gt;&lt;b&gt;FormatDate:&lt;/b&gt; The format for the given date in &lt;code&gt;key&lt;/code&gt;
+ * (see above) is changed. &lt;code&gt;SourceFormat&lt;/code&gt; describes the original
+ * and &lt;code&gt;DestinationFormat&lt;/code&gt; the new format.&lt;/li&gt;
+ * &lt;/ul&gt;
+ * 
+ * If a transformation between &lt;code&gt;XMLMessages&lt;/code&gt; can be done directly
+ * via a XSLT stylesheet and XBUS_Stylet processing, this class can be used.
+ * When extra code is needed for the transformation, it has to be subclassed.
+ */
+<span class="nc" id="L108">public class XSLTTransformer implements net.sf.xbus.protocol.Transformer</span>
+{
+<span class="nc" id="L110">	protected static final String XSL_LOCATION = new StringBuffer(</span>
+<span class="nc" id="L111">			Constants.XBUS_ETC).append(&quot;xsl&quot;).append(Constants.FILE_SEPERATOR)</span>
+<span class="nc" id="L112">			.toString();</span>
+
+<span class="nc" id="L114">	private Hashtable mStyletValues = new Hashtable();</span>
+<span class="nc" id="L115">	private static Hashtable mTransformers = new Hashtable();</span>
+
+	/**
+	 * The &lt;code&gt;transform&lt;/code&gt; method is automatically called by the xBus
+	 * during the routing of messages.
+	 * 
+	 * @param inObject either the request or response that shall be transformed
+	 *            to another format
+	 * @param source the &lt;code&gt;XBUSSystem&lt;/code&gt; of the message of the
+	 *            &lt;code&gt;inObject&lt;/code&gt;
+	 * @param destination the &lt;code&gt;XBUSSystem&lt;/code&gt; of the target message
+	 * @param destinationMessage the target message eventually contains more
+	 *            information necessary for transforming
+	 * @return the transformed &lt;code&gt;Object&lt;/code&gt;, written to either the
+	 *         request or response of the target message
+	 */
+	public Object transform(Object inObject, XBUSSystem source,
+			XBUSSystem destination, Message destinationMessage)
+			throws XException
+	{
+<span class="nc" id="L135">		Configuration config = Configuration.getInstance();</span>
+
+		// After restructuring the xBus transformation calls, the old
+		// configuration
+		// key &quot;XslRequestFromRequest&quot; was no longer meaningful because the
+		// source
+		// and destination systems determine, which style sheet should be used.
+		// The differentiation between transformation from reponse or from
+		// request is
+		// done in net.sf.xbus.application.Router.distributeInternal when
+		// looking
+		// at the incoming response.
+		// The new configuration key is &quot;XSLTStylesheet&quot;;
+		// The old configuration key &quot;XslRequestFromRequest&quot; still works for
+		// upgrade compatibility.
+<span class="nc" id="L150">		String xslFile = config.getValueOptional(&quot;XslRequestFromRequest&quot;,</span>
+<span class="nc" id="L151">				source.getName(), destination.getName());</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">		if (xslFile == null)</span>
+		{
+<span class="nc" id="L154">			xslFile = config.getValue(&quot;XSLTStylesheet&quot;, source.getName(),</span>
+<span class="nc" id="L155">					destination.getName());</span>
+		}
+<span class="nc" id="L157">		xslFile = new StringBuffer(XSL_LOCATION).append(xslFile).toString();</span>
+
+<span class="nc" id="L159">		return transformXML((Document) inObject, xslFile, destinationMessage);</span>
+	}
+
+	/**
+	 * Stores a key/value pair which is used later in the processing of the
+	 * XBUS_Stylets.
+	 */
+	public void putStyletValue(Object key, Object value)
+	{
+<span class="nc" id="L168">		mStyletValues.put(key, value);</span>
+<span class="nc" id="L169">	}</span>
+
+	/**
+	 * Transforms the given XML-data with the given XSL-stylesheet. After the
+	 * XSL-transformation the so-called XBUS_Stylets are processed.
+	 * &lt;p&gt;
+	 * 
+	 * @param xmlOld the source XML-data
+	 * @param xslFile the name of the XSL-stylesheet
+	 * @param message the destination message
+	 * @throws XException if something goes wrong
+	 */
+	protected Document transformXML(Document xmlOld, String xslFile,
+			Message message) throws XException
+	{
+<span class="nc" id="L184">		Document xmlNew = null;</span>
+<span class="nc" id="L185">		DOMResult domResult = new DOMResult();</span>
+
+		try
+		{
+<span class="nc" id="L189">			Transformer transformer = getXSLTransformer(xslFile);</span>
+<span class="nc" id="L190">			transformer.transform(new DOMSource(xmlOld), domResult);</span>
+<span class="nc" id="L191">			xmlNew = (Document) domResult.getNode();</span>
+<span class="nc" id="L192">			applyStylets(xmlNew, message);</span>
+		}
+<span class="nc" id="L194">		catch (TransformerConfigurationException e)</span>
+		{
+<span class="nc" id="L196">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL, Constants.PACKAGE_PROTOCOL_XML,
+					&quot;0&quot;, e);
+		}
+<span class="nc" id="L200">		catch (TransformerException e)</span>
+		{
+<span class="nc" id="L202">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL, Constants.PACKAGE_PROTOCOL_XML,
+					&quot;0&quot;, e);
+<span class="nc" id="L205">		}</span>
+<span class="nc" id="L206">		return xmlNew;</span>
+	}
+
+	/**
+	 * Returns a &lt;code&gt;Transformer&lt;/code&gt; object needed for the XSLT
+	 * processing. The &lt;code&gt;Transformers&lt;/code&gt; are cached for every thread
+	 * and every XSLT stylesheet.
+	 */
+	protected Transformer getXSLTransformer(String xslFile) throws XException
+	{
+<span class="nc" id="L216">		Transformer transformer = null;</span>
+
+		try
+		{
+<span class="nc" id="L220">			transformer = (Transformer) mTransformers.get(Thread</span>
+<span class="nc" id="L221">					.currentThread().getName()</span>
+					+ xslFile);
+
+<span class="nc bnc" id="L224" title="All 2 branches missed.">			if (transformer == null)</span>
+			{
+<span class="nc" id="L226">				XMLHelper.setTransformerProperties();</span>
+
+<span class="nc" id="L228">				TransformerFactory tFactory = TransformerFactory.newInstance();</span>
+<span class="nc" id="L229">				transformer = tFactory</span>
+<span class="nc" id="L230">						.newTransformer(new StreamSource(xslFile));</span>
+<span class="nc" id="L231">				mTransformers.put(Thread.currentThread().getName() + xslFile,</span>
+						transformer);
+			}
+		}
+<span class="nc" id="L235">		catch (TransformerConfigurationException e)</span>
+		{
+<span class="nc" id="L237">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL, Constants.PACKAGE_PROTOCOL_XML,
+					&quot;0&quot;, e);
+<span class="nc" id="L240">		}</span>
+<span class="nc" id="L241">		return transformer;</span>
+	}
+
+	/**
+	 * Processes the so-called XBUS-Stylets. See also the JavaDoc for the class.
+	 */
+	private void applyStylets(Document xmlNew, Message message)
+			throws XException
+	{
+<span class="nc" id="L250">		IteratedStyletApplication itop = new IteratedStyletApplication(xmlNew,</span>
+				message, mStyletValues);
+		try
+		{
+<span class="nc" id="L254">			XDomSupport.traversePostOrder(xmlNew, itop);</span>
+		}
+<span class="nc" id="L256">		catch (XException e)</span>
+		{
+<span class="nc" id="L258">			throw e;</span>
+		} // catch (XException e)
+<span class="nc" id="L260">		catch (Exception e)</span>
+		{
+<span class="nc" id="L262">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL, Constants.PACKAGE_PROTOCOL_XML,
+					&quot;0&quot;, e);
+<span class="nc" id="L265">		}</span>
+<span class="nc" id="L266">	} // applyStylets(XMLMessage newMessage, Document xmlNew)</span>
+
+	/**
+	 * Creates an object which is suitable for sending data to the given
+	 * &lt;code&gt;system&lt;/code&gt;. The name of the class is read in the &lt;@link
+	 * net.sf.xbus.base.core.Configuration&gt;. The returned class must be a
+	 * subclass of &lt;code&gt;XMLMessage&lt;/code&gt;.
+	 */
+	protected XMLMessageAbstract createMessage(XBUSSystem destination,
+			XMLMessageAbstract source) throws XException
+	{
+<span class="nc" id="L277">		Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L278">		String newMessageClassShortname = config.getValue(</span>
+<span class="nc" id="L279">				Constants.CHAPTER_SYSTEM, destination.getName(), &quot;Message&quot;);</span>
+<span class="nc" id="L280">		String newMessageClass = Configuration.getClass(&quot;Message&quot;,</span>
+				newMessageClassShortname);
+
+<span class="nc" id="L283">		Class[] conArgsClass = new Class[]</span>
+		{
+<span class="nc" id="L285">				ReflectionSupport.classForName(&quot;java.lang.String&quot;),</span>
+				ReflectionSupport
+<span class="nc" id="L287">						.classForName(&quot;net.sf.xbus.base.xbussystem.XBUSSystem&quot;),</span>
+<span class="nc" id="L288">				ReflectionSupport.classForName(&quot;java.lang.String&quot;)};</span>
+
+<span class="nc" id="L290">		Object[] conArgs = new Object[]</span>
+<span class="nc" id="L291">		{source.getFunction(), source.getSource(), source.getId()};</span>
+
+<span class="nc" id="L293">		return (XMLMessageAbstract) ReflectionSupport.createObject(</span>
+				newMessageClass, conArgsClass, conArgs);
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

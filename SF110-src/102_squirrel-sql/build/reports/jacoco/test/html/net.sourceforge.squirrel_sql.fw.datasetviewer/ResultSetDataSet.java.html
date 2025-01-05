@@ -1,0 +1,459 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ResultSetDataSet.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.fw.datasetviewer</a> &gt; <span class="el_source">ResultSetDataSet.java</span></div><h1>ResultSetDataSet.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.fw.datasetviewer;
+
+/*
+ * Copyright (C) 2001-2003 Colin Bell
+ * colbell@users.sourceforge.net
+ * Copyright (C) 2001-2003 Johan Compagner
+ * jcompagner@j-com.nl
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Types;
+import java.util.ArrayList;
+import java.util.List;
+
+import net.sourceforge.squirrel_sql.fw.dialects.DialectType;
+import net.sourceforge.squirrel_sql.fw.sql.JDBCTypeMapper;
+import net.sourceforge.squirrel_sql.fw.sql.ResultSetReader;
+import net.sourceforge.squirrel_sql.fw.util.IMessageHandler;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+public class ResultSetDataSet implements IDataSet {
+<span class="nc" id="L38">   private final static ILogger s_log = LoggerController.createLogger(ResultSetDataSet.class);</span>
+
+   // TODO: These 2 should be handled with an Iterator.
+<span class="nc" id="L41">   private int _iCurrent = -1;</span>
+
+   private Object[] _currentRow;
+
+   private int _columnCount;
+
+   private DataSetDefinition _dataSetDefinition;
+
+   private List&lt;Object[]&gt; _alData;
+
+   /** If &lt;TT&gt;true&lt;/TT&gt; cancel has been requested. */
+<span class="nc" id="L52">   private volatile boolean _cancel = false;</span>
+
+   /** the result set reader, which we will notify of cancel requests */
+<span class="nc" id="L55">   private ResultSetReader rdr = null;</span>
+
+   /**
+    * The type of dialect of the session from which this data set came.  
+    * Plugins can now override behavior for standard SQL types, so
+    * it is necessary to know the current dialect so that the correct plugin 
+    * DataTypeComponent can be chosen for rendering this dataset, if one has 
+    * been registered. 
+    */   
+<span class="nc" id="L64">   private DialectType _dialectType = null;</span>
+
+   /**
+    * Default constructor.
+    */
+   public ResultSetDataSet() {
+<span class="nc" id="L70">      super();</span>
+<span class="nc" id="L71">   }</span>
+
+   /**
+    * Form used by Tabs other than ContentsTab
+    * 
+    * @param rs
+    *           the ResultSet to set.
+    * @param dialectType
+    *           the type of dialect in use.
+    * @throws DataSetException
+    */
+   public int setResultSet(ResultSet rs, DialectType dialectType)
+         throws DataSetException {
+<span class="nc" id="L84">      return setResultSet(rs, null, false, dialectType);</span>
+   }
+
+   /**
+    * Form used by ContentsTab, and for SQL results
+    * 
+    * @param rs
+    *           the ResultSet to set.
+    * @param fullTableName
+    *           the fully-qualified table name
+    * @param dialectType
+    *           the type of dialect in use.
+    * @throws DataSetException
+    */
+   public int setContentsTabResultSet(ResultSet rs, String fullTableName,
+         DialectType dialectType) throws DataSetException {
+<span class="nc" id="L100">      return setResultSet(rs, fullTableName, null, false, true, dialectType);</span>
+   }
+
+   /**
+    * Sets the ResultSet that contains the data
+    * 
+    * @param rs
+    *           the ResultSet to set.
+    * @param columnIndices
+    *           columns to read from the specified ResultSet
+    * @param dialectType
+    *           the type of dialect in use.
+    * @throws DataSetException
+    */
+   public int setResultSet(ResultSet rs, int[] columnIndices,
+         DialectType dialectType) throws DataSetException {
+<span class="nc" id="L116">      return setResultSet(rs, columnIndices, false, dialectType);</span>
+   }
+
+   /**
+    * External method to read the contents of a ResultSet that is used by all
+    * Tab classes except ContentsTab. This tunrs all the data into strings for
+    * simplicity of operation.
+    */
+   public int setResultSet(ResultSet rs, int[] columnIndices,
+         boolean computeWidths, DialectType dialectType) throws DataSetException {
+<span class="nc" id="L126">      return setResultSet(rs, null, columnIndices, computeWidths, false, dialectType);</span>
+   }
+
+   /**
+    * Internal method to read the contents of a ResultSet that is used by all
+    * Tab classes
+    *
+    * @return The number of rows read from the ResultSet
+    *
+    */
+   private int setResultSet(ResultSet rs, String fullTableName,
+         int[] columnIndices, boolean computeWidths, boolean useColumnDefs,
+         DialectType dialectType) throws DataSetException {
+<span class="nc" id="L139">      reset();</span>
+<span class="nc" id="L140">      _dialectType = dialectType;</span>
+<span class="nc bnc" id="L141" title="All 4 branches missed.">      if (columnIndices != null &amp;&amp; columnIndices.length == 0) {</span>
+<span class="nc" id="L142">         columnIndices = null;</span>
+      }
+<span class="nc" id="L144">      _iCurrent = -1;</span>
+<span class="nc" id="L145">      _alData = new ArrayList&lt;Object[]&gt;();</span>
+
+<span class="nc bnc" id="L147" title="All 2 branches missed.">      if (rs == null)</span>
+      {
+<span class="nc" id="L149">         return 0;</span>
+      }
+
+      try {
+<span class="nc" id="L153">         ResultSetMetaData md = rs.getMetaData();</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">         _columnCount = columnIndices != null ? columnIndices.length</span>
+<span class="nc" id="L155">               : md.getColumnCount();</span>
+
+         // Done before actually reading the data from the ResultSet. If done
+         // after
+         // reading the data from the ResultSet Oracle throws a
+         // NullPointerException
+         // when processing ResultSetMetaData methods for the ResultSet
+         // returned for
+         // DatabasemetaData.getExportedKeys.
+<span class="nc" id="L164">         ColumnDisplayDefinition[] colDefs = createColumnDefinitions(md,</span>
+                                                                     fullTableName,
+                                                                     columnIndices,
+                                                                     computeWidths);
+<span class="nc" id="L168">         _dataSetDefinition = new DataSetDefinition(colDefs);</span>
+
+         // Read the entire row, since some drivers complain if columns are
+         // read out of sequence
+<span class="nc" id="L172">         rdr = new ResultSetReader(rs, dialectType);</span>
+<span class="nc" id="L173">         Object[] row = null;</span>
+
+         while (true) {
+<span class="nc bnc" id="L176" title="All 2 branches missed.">            if (useColumnDefs)</span>
+<span class="nc" id="L177">               row = rdr.readRow(colDefs);</span>
+            else
+<span class="nc" id="L179">               row = rdr.readRow();</span>
+
+<span class="nc bnc" id="L181" title="All 2 branches missed.">            if (row == null)</span>
+<span class="nc" id="L182">               break;</span>
+
+<span class="nc bnc" id="L184" title="All 2 branches missed.">            if (_cancel) {</span>
+<span class="nc" id="L185">               return _alData.size();</span>
+            }
+
+            // SS: now select/reorder columns
+<span class="nc bnc" id="L189" title="All 2 branches missed.">            if (columnIndices != null) {</span>
+<span class="nc" id="L190">               Object[] newRow = new Object[_columnCount];</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">               for (int i = 0; i &lt; _columnCount; i++) {</span>
+<span class="nc bnc" id="L192" title="All 2 branches missed.">                  if (columnIndices[i] - 1 &lt; row.length) {</span>
+<span class="nc" id="L193">                     newRow[i] = row[columnIndices[i] - 1];</span>
+                  } else {
+<span class="nc" id="L195">                     newRow[i] = &quot;Unknown&quot;;</span>
+                  }
+               }
+<span class="nc" id="L198">               row = newRow;</span>
+            }
+<span class="nc" id="L200">            _alData.add(row);</span>
+         }
+
+<span class="nc" id="L203">         return _alData.size();</span>
+
+         // ColumnDisplayDefinition[] colDefs = createColumnDefinitions(md,
+         // columnIndices, computeWidths);
+         // _dataSetDefinition = new DataSetDefinition(colDefs);
+<span class="nc" id="L208">      } catch (SQLException ex) {</span>
+         // Don't log an error message here. It is possible that the user
+         // interrupted the query because it was taking too long. Just
+         // throw the exception, and let the caller decide whether or not
+         // the exception should be logged.
+<span class="nc" id="L213">         throw new DataSetException(ex);</span>
+      }
+   }
+
+   public final int getColumnCount() {
+<span class="nc" id="L218">      return _columnCount;</span>
+   }
+
+   public DataSetDefinition getDataSetDefinition() {
+<span class="nc" id="L222">      return _dataSetDefinition;</span>
+   }
+
+   public synchronized boolean next(IMessageHandler msgHandler)
+         throws DataSetException {
+      // TODO: This should be handled with an Iterator
+<span class="nc bnc" id="L228" title="All 2 branches missed.">      if (++_iCurrent &lt; _alData.size()) {</span>
+<span class="nc" id="L229">         _currentRow = _alData.get(_iCurrent);</span>
+<span class="nc" id="L230">         return true;</span>
+      }
+<span class="nc" id="L232">      return false;</span>
+   }
+
+   /*
+    * (non-Javadoc)
+    * 
+    * @see net.sourceforge.squirrel_sql.fw.datasetviewer.IDataSet#get(int)
+    */
+   public Object get(int columnIndex) {
+<span class="nc bnc" id="L241" title="All 2 branches missed.">      if (_currentRow != null) {</span>
+<span class="nc" id="L242">         return _currentRow[columnIndex];</span>
+      } else {
+<span class="nc" id="L244">         return null;</span>
+      }
+   }
+
+   public void cancelProcessing() {
+<span class="nc" id="L249">      rdr.setStopExecution(true);</span>
+<span class="nc" id="L250">      _cancel = true;</span>
+<span class="nc" id="L251">   }</span>
+
+   // SS: Modified to auto-compute column widths if &lt;computeWidths&gt; is true
+   private ColumnDisplayDefinition[] createColumnDefinitions(
+         ResultSetMetaData md, String fullTableName, int[] columnIndices,
+         boolean computeWidths) throws SQLException {
+      // TODO?? ColumnDisplayDefinition should also have the Type (String, Date,
+      // Double,Integer,Boolean)
+<span class="nc" id="L259">      int[] colWidths = null;</span>
+
+      // SS: update dynamic column widths
+<span class="nc bnc" id="L262" title="All 2 branches missed.">      if (computeWidths) {</span>
+<span class="nc" id="L263">         colWidths = new int[_columnCount];</span>
+<span class="nc bnc" id="L264" title="All 2 branches missed.">         for (int i = 0; i &lt; _alData.size(); i++) {</span>
+<span class="nc" id="L265">            Object[] row = _alData.get(i);</span>
+<span class="nc bnc" id="L266" title="All 2 branches missed.">            for (int col = 0; i &lt; _columnCount; i++) {</span>
+<span class="nc bnc" id="L267" title="All 2 branches missed.">               if (row[col] != null) {</span>
+<span class="nc" id="L268">                  int colWidth = row[col].toString().length();</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">                  if (colWidth &gt; colWidths[col]) {</span>
+<span class="nc" id="L270">                     colWidths[col] = colWidth + 2;</span>
+                  }
+               }
+            }
+         }
+      }
+
+<span class="nc" id="L277">      ColumnDisplayDefinition[] columnDefs = new ColumnDisplayDefinition[_columnCount];</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">      for (int i = 0; i &lt; _columnCount; ++i) {</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">         int idx = columnIndices != null ? columnIndices[i] : i + 1;</span>
+
+         // save various info about the column for use in user input validation
+         // when editing table contents.
+         // Note that the columnDisplaySize is included two times, where the
+         // first
+         // entry may be adjusted for actual display while the second entry is
+         // the
+         // size expected by the DB.
+         // The isNullable() method returns three values that we convert into
+         // two
+         // by saying that if it is not known whether or not a column allows
+         // nulls,
+         // we will allow the user to enter nulls and any problems will be
+         // caught
+         // when they try to save the data to the DB
+<span class="nc" id="L295">         boolean isNullable = true;</span>
+<span class="nc bnc" id="L296" title="All 2 branches missed.">         if (md.isNullable(idx) == ResultSetMetaData.columnNoNulls)</span>
+<span class="nc" id="L297">            isNullable = false;</span>
+
+         int precis;
+         try {
+<span class="nc" id="L301">            precis = md.getPrecision(idx);</span>
+<span class="nc" id="L302">         } catch (NumberFormatException ignore) {</span>
+<span class="nc" id="L303">            precis = Integer.MAX_VALUE; // Oracle throws this ex on BLOB data</span>
+                                          // types
+<span class="nc" id="L305">         }</span>
+
+<span class="nc" id="L307">         boolean isSigned = true;</span>
+         try {
+<span class="nc" id="L309">            isSigned = md.isSigned(idx); // HSQLDB 1.7.1 throws error.</span>
+<span class="nc" id="L310">         } catch (SQLException ignore) {</span>
+            // Empty block
+<span class="nc" id="L312">         }</span>
+
+<span class="nc" id="L314">         boolean isCurrency = false;</span>
+
+         try {
+            // Matt Dahlman: this causes problems with the JDBC driver delivered
+            // with Teradata V2R05.00.00.11
+<span class="nc" id="L319">            isCurrency = md.isCurrency(idx);</span>
+<span class="nc" id="L320">         } catch (SQLException e) {</span>
+<span class="nc" id="L321">            s_log.error(&quot;Failed to call ResultSetMetaData.isCurrency()&quot;, e);</span>
+<span class="nc" id="L322">         }</span>
+
+<span class="nc" id="L324">         boolean isAutoIncrement = false;</span>
+         try {
+<span class="nc" id="L326">            isAutoIncrement = md.isAutoIncrement(idx);</span>
+<span class="nc" id="L327">         } catch (SQLException e) {</span>
+<span class="nc" id="L328">            s_log.error(&quot;Failed to call ResultSetMetaData.isAutoIncrement()&quot;, e);</span>
+<span class="nc" id="L329">         }</span>
+         
+<span class="nc" id="L331">         String columnName = md.getColumnName(idx);</span>
+<span class="nc" id="L332">         String columnTypeName = md.getColumnTypeName(idx);</span>
+<span class="nc" id="L333">         int columnType = fixColumnType(columnName, md.getColumnType(idx), columnTypeName);</span>
+         
+<span class="nc bnc" id="L335" title="All 2 branches missed.">         columnDefs[i] = new ColumnDisplayDefinition(computeWidths ? colWidths[i]</span>
+<span class="nc" id="L336">                                                           : md.getColumnDisplaySize(idx),</span>
+                                                     fullTableName
+                                                           + &quot;:&quot;
+<span class="nc" id="L339">                                                           + md.getColumnLabel(idx),</span>
+                                                     columnName,
+<span class="nc" id="L341">                                                     md.getColumnLabel(idx),</span>
+                                                     columnType,
+                                                     columnTypeName,
+                                                     isNullable,
+<span class="nc" id="L345">                                                     md.getColumnDisplaySize(idx),</span>
+                                                     precis,
+<span class="nc" id="L347">                                                     md.getScale(idx),</span>
+                                                     isSigned,
+                                                     isCurrency,
+                                                     isAutoIncrement,
+                                                     _dialectType);
+      }
+<span class="nc" id="L353">      return columnDefs;</span>
+   }
+
+   /**
+    * The following is a synopsis of email conversations with David Crawshaw, who maintains the SQLite JDBC 
+    * driver: 
+    * 
+    * SQLite's JDBC driver returns Types.NULL as the column type if the table has no rows.  Columns don't 
+    * necessarily have a type attribute; the type is associated with the values in the column (this is 
+    * referred to as manifest typing).  Columns can have an affinity (a preferred storage option) which 
+    * looks just like a type in the create table statement; however, it can be whatever the user chooses, and 
+    * not necessarily a standard SQL type.  Even still, SQLite exposes no API call to retrieve the column 
+    * affinity (or storage clause).  However, it does make the type name that the user used available and that
+    * may possibly be a valid standard SQL type.  
+    * 
+    * So, if the specified column type code is Types.NULL, this method attempts to adjust the type code from 
+    * Types.NULL to a sensible Type based on the column type name reported by the driver.  If the column type 
+    * name doesn't match (ignoring case) an existing JDBC type, then this method returns Types.VARCHAR.  
+    * 
+    * @param columnName the name of the column
+    * @param columnType the type code that was given by the jdbc driver.
+    * @param columnTypeName the type name of the column that was given by the jdbc driver
+    * 
+    * @return a type code that is not Types.NULL.
+    */
+   private int fixColumnType(String columnName, int columnType, String columnTypeName) {
+<span class="nc" id="L379">   	int result = columnType;</span>
+<span class="nc bnc" id="L380" title="All 2 branches missed.">   	if (columnType == Types.NULL) {</span>
+<span class="nc" id="L381">   		result = JDBCTypeMapper.getJdbcType(columnTypeName);</span>
+<span class="nc bnc" id="L382" title="All 2 branches missed.">   		if (result == Types.NULL) {</span>
+<span class="nc" id="L383">   			result = Types.VARCHAR;</span>
+   		}
+   	}
+<span class="nc bnc" id="L386" title="All 2 branches missed.">   	if (result != columnType) {</span>
+<span class="nc bnc" id="L387" title="All 2 branches missed.">			if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L388">				s_log.debug(&quot;Converting type code for column &quot;+columnName+</span>
+					&quot;. Original column type code and name were Types.NULL and &quot;+columnTypeName+
+<span class="nc" id="L390">					&quot;; New type code is &quot;+JDBCTypeMapper.getJdbcTypeName(result));</span>
+			}   		
+   	}
+<span class="nc" id="L393">   	return result;</span>
+   }
+   
+   private void reset() {
+<span class="nc" id="L397">      _iCurrent = -1;</span>
+<span class="nc" id="L398">      _currentRow = null;</span>
+<span class="nc" id="L399">      _columnCount = 0;</span>
+<span class="nc" id="L400">      _dataSetDefinition = null;</span>
+<span class="nc" id="L401">      _alData = null;</span>
+<span class="nc" id="L402">   }</span>
+
+   public void resetCursor() {
+<span class="nc" id="L405">      _iCurrent = -1;</span>
+<span class="nc" id="L406">      _currentRow = null;</span>
+<span class="nc" id="L407">   }</span>
+
+   /**
+    * Removes the row at the specified index. 
+    * 
+    * @param index the row number starting at 0.
+    * @return the object at the specified row or null if there is not row at the
+    *         specified index.
+    */
+   public Object removeRow(int index) {
+<span class="nc bnc" id="L417" title="All 2 branches missed.">      if (_alData.size() &gt; index) {</span>
+<span class="nc" id="L418">         return _alData.remove(index);</span>
+      } else {
+<span class="nc" id="L420">         return null;</span>
+      }
+   }
+   
+   public String toString() {
+<span class="nc" id="L425">   	StringBuilder result = new StringBuilder();</span>
+<span class="nc bnc" id="L426" title="All 2 branches missed.">   	if (_dataSetDefinition != null) {</span>
+<span class="nc bnc" id="L427" title="All 2 branches missed.">   		for (ColumnDisplayDefinition colDef : _dataSetDefinition.getColumnDefinitions()) {</span>
+<span class="nc" id="L428">   			String columnName = &quot;Column&quot;;</span>
+<span class="nc bnc" id="L429" title="All 2 branches missed.">   			if (colDef != null) {</span>
+<span class="nc" id="L430">   				columnName = colDef.getColumnName();</span>
+   			} 
+<span class="nc" id="L432">   			result.append(columnName);</span>
+<span class="nc" id="L433">   			result.append(&quot;\t&quot;);</span>
+   		}
+<span class="nc" id="L435">   		result.append(&quot;\n&quot;);</span>
+   	}
+   	
+   	
+<span class="nc bnc" id="L439" title="All 2 branches missed.">   	for (Object[] row : _alData) {</span>
+<span class="nc bnc" id="L440" title="All 2 branches missed.">   		for (Object rowItem : row) {</span>
+<span class="nc bnc" id="L441" title="All 2 branches missed.">   			if (rowItem == null) {</span>
+<span class="nc" id="L442">   				result.append(&quot;&lt;null&gt;&quot;);</span>
+   			} else {
+<span class="nc" id="L444">   				result.append(rowItem.toString());</span>
+   			}
+<span class="nc" id="L446">   			result.append(&quot;\t&quot;);</span>
+   		}
+<span class="nc" id="L448">   		result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L449">   	}</span>
+<span class="nc" id="L450">   	return result.toString();</span>
+   }
+
+
+   public List&lt;Object[]&gt; getAllDataForReadOnly()
+   {
+<span class="nc" id="L456">      return _alData;</span>
+   }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,447 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ViewContainer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">43_lilith</a> &gt; <a href="index.source.html" class="el_package">de.huxhorn.lilith.swing</a> &gt; <span class="el_source">ViewContainer.java</span></div><h1>ViewContainer.java</h1><pre class="source lang-java linenums">/*
+ * Lilith - a log event viewer.
+ * Copyright (C) 2007-2009 Joern Huxhorn
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see &lt;http://www.gnu.org/licenses/&gt;.
+ */
+package de.huxhorn.lilith.swing;
+
+import de.huxhorn.lilith.buffers.FilteringBuffer;
+import de.huxhorn.lilith.data.eventsource.EventWrapper;
+import de.huxhorn.lilith.engine.EventSource;
+import de.huxhorn.lilith.engine.impl.EventSourceImpl;
+import de.huxhorn.lilith.swing.callables.CallableMetaData;
+import de.huxhorn.lilith.swing.callables.FilteringCallable;
+import de.huxhorn.sulky.buffers.Buffer;
+import de.huxhorn.sulky.buffers.DisposeOperation;
+import de.huxhorn.sulky.conditions.Condition;
+import de.huxhorn.sulky.tasks.Task;
+import de.huxhorn.sulky.tasks.TaskListener;
+import de.huxhorn.sulky.tasks.TaskManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.swing.ImageIcon;
+import javax.swing.JFrame;
+import javax.swing.JInternalFrame;
+import javax.swing.JPanel;
+import javax.swing.event.ChangeEvent;
+import javax.swing.event.ChangeListener;
+import java.awt.Container;
+import java.beans.PropertyChangeEvent;
+import java.beans.PropertyChangeListener;
+import java.io.Serializable;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+
+public abstract class ViewContainer&lt;T extends Serializable&gt;
+		extends JPanel
+		implements DisposeOperation
+{
+	// TODO: property change instead of change?
+	public static final String SELECTED_EVENT_PROPERTY_NAME = &quot;selectedEvent&quot;;
+
+	private static final ImageIcon globalFrameImageIcon;
+	private static final Map&lt;LoggingViewState, ImageIcon&gt; frameIconImages;
+
+	static
+	{
+<span class="nc" id="L66">		URL url = EventWrapperViewPanel.class.getResource(&quot;/tango/16x16/categories/applications-internet.png&quot;);</span>
+<span class="nc bnc" id="L67" title="All 2 branches missed.">		if (url != null)</span>
+		{
+<span class="nc" id="L69">			globalFrameImageIcon = new ImageIcon(url);</span>
+		}
+		else
+		{
+<span class="nc" id="L73">			globalFrameImageIcon = null;</span>
+		}
+<span class="nc" id="L75">		frameIconImages = new HashMap&lt;LoggingViewState, ImageIcon&gt;();</span>
+<span class="nc" id="L76">		url = EventWrapperViewPanel.class.getResource(&quot;/tango/16x16/status/network-receive.png&quot;);</span>
+<span class="nc bnc" id="L77" title="All 2 branches missed.">		if (url != null)</span>
+		{
+<span class="nc" id="L79">			frameIconImages.put(LoggingViewState.ACTIVE, new ImageIcon(url));</span>
+		}
+<span class="nc" id="L81">		url = EventWrapperViewPanel.class.getResource(&quot;/tango/16x16/status/network-offline.png&quot;);</span>
+<span class="nc bnc" id="L82" title="All 2 branches missed.">		if (url != null)</span>
+		{
+<span class="nc" id="L84">			frameIconImages.put(LoggingViewState.INACTIVE, new ImageIcon(url));</span>
+		}
+<span class="nc" id="L86">	}</span>
+
+<span class="nc" id="L88">	private final List&lt;ChangeListener&gt; changeListeners = new LinkedList&lt;ChangeListener&gt;();</span>
+	private EventWrapperViewPanel&lt;T&gt; defaultView;
+	private MainFrame mainFrame;
+	private TaskManager&lt;Long&gt; taskManager;
+	private Map&lt;Callable&lt;Long&gt;, EventWrapperViewPanel&lt;T&gt;&gt; filterMapping;
+	private FilterTaskListener filterTaskListener;
+	private EventSource&lt;T&gt; eventSource;
+
+	public ViewContainer(MainFrame mainFrame, EventSource&lt;T&gt; eventSource)
+<span class="nc" id="L97">	{</span>
+<span class="nc" id="L98">		this.mainFrame = mainFrame;</span>
+<span class="nc" id="L99">		this.eventSource = eventSource;</span>
+<span class="nc" id="L100">		taskManager = mainFrame.getLongWorkManager();</span>
+<span class="nc" id="L101">		filterMapping = new HashMap&lt;Callable&lt;Long&gt;, EventWrapperViewPanel&lt;T&gt;&gt;();</span>
+<span class="nc" id="L102">		filterTaskListener = new FilterTaskListener();</span>
+<span class="nc" id="L103">		taskManager.addTaskListener(filterTaskListener);</span>
+<span class="nc" id="L104">		this.defaultView = createViewPanel(eventSource);</span>
+<span class="nc" id="L105">		defaultView.addPropertyChangeListener(new PropertyChangeListener()</span>
+<span class="nc" id="L106">		{</span>
+			public void propertyChange(PropertyChangeEvent evt)
+			{
+<span class="nc bnc" id="L109" title="All 2 branches missed.">				if (EventWrapperViewPanel.STATE_PROPERTY.equals(evt.getPropertyName()))</span>
+				{
+<span class="nc" id="L111">					updateContainerIcon();</span>
+				}
+<span class="nc" id="L113">			}</span>
+		});
+
+<span class="nc" id="L116">	}</span>
+
+	public EventSource&lt;T&gt; getEventSource()
+	{
+<span class="nc" id="L120">		return eventSource;</span>
+	}
+
+	public MainFrame getMainFrame()
+	{
+<span class="nc" id="L125">		return mainFrame;</span>
+	}
+
+	protected abstract EventWrapperViewPanel&lt;T&gt; createViewPanel(EventSource&lt;T&gt; eventSource);
+
+	public abstract EventWrapperViewPanel&lt;T&gt; getViewAt(int index);
+
+	public abstract EventWrapperViewPanel&lt;T&gt; getSelectedView();
+
+	public abstract void addView(EventWrapperViewPanel&lt;T&gt; view);
+
+	public abstract void removeView(EventWrapperViewPanel&lt;T&gt; view, boolean dispose);
+
+	public abstract void showDefaultView();
+
+	public abstract Class getWrappedClass();
+
+	public EventWrapperViewPanel&lt;T&gt; getDefaultView()
+	{
+<span class="nc" id="L144">		return defaultView;</span>
+	}
+
+	public void dispose()
+	{
+<span class="nc" id="L149">		taskManager.removeTaskListener(filterTaskListener);</span>
+<span class="nc" id="L150">	}</span>
+
+	/**
+	 * Returns a new combined condition of the given view and its table if it differs from the current buffer condition.
+	 * Otherwise, null is returned.
+	 *
+	 * @param original the original view
+	 * @return the combined condition
+	 */
+	protected Condition resolveCombinedCondition(EventWrapperViewPanel&lt;T&gt; original)
+	{
+<span class="nc" id="L161">		Condition currentFilter = original.getTable().getFilterCondition();</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">		if (currentFilter == null)</span>
+		{
+<span class="nc" id="L164">			return null;</span>
+		}
+
+<span class="nc" id="L167">		Condition previousClone = original.getBufferCondition();</span>
+
+<span class="nc" id="L169">		Condition filter = original.getCombinedCondition();</span>
+<span class="nc bnc" id="L170" title="All 4 branches missed.">		if (filter == null || filter.equals(previousClone))</span>
+		{
+<span class="nc" id="L172">			return null;</span>
+		}
+<span class="nc" id="L174">		return filter;</span>
+	}
+
+	public void addFilteredView(EventWrapperViewPanel&lt;T&gt; original)
+	{
+<span class="nc" id="L179">		Condition filter = resolveCombinedCondition(original);</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">		if (filter == null)</span>
+		{
+<span class="nc" id="L182">			return;</span>
+		}
+<span class="nc" id="L184">		Buffer&lt;EventWrapper&lt;T&gt;&gt; originalBuffer = original.getSourceBuffer();</span>
+<span class="nc" id="L185">		FilteringBuffer&lt;EventWrapper&lt;T&gt;&gt; filteredBuffer = new FilteringBuffer&lt;EventWrapper&lt;T&gt;&gt;(originalBuffer, filter);</span>
+<span class="nc" id="L186">		FilteringCallable&lt;EventWrapper&lt;T&gt;&gt; callable = new FilteringCallable&lt;EventWrapper&lt;T&gt;&gt;(filteredBuffer, 500);</span>
+<span class="nc" id="L187">		EventSource&lt;T&gt; originalEventSource = original.getEventSource();</span>
+<span class="nc" id="L188">		Map&lt;String, String&gt; metaData = CallableMetaData.createFilteringMetaData(filter, originalEventSource);</span>
+
+<span class="nc" id="L190">		EventSourceImpl&lt;T&gt; newEventSource = new EventSourceImpl&lt;T&gt;(originalEventSource.getSourceIdentifier(), filteredBuffer, filter, originalEventSource.isGlobal());</span>
+<span class="nc" id="L191">		EventWrapperViewPanel&lt;T&gt; newViewPanel = createViewPanel(newEventSource);</span>
+<span class="nc" id="L192">		filterMapping.put(callable, newViewPanel);</span>
+<span class="nc" id="L193">		addView(newViewPanel);</span>
+<span class="nc" id="L194">		taskManager.startTask(callable, &quot;Filtering&quot;, &quot;Filtering &quot; + metaData</span>
+<span class="nc" id="L195">				.get(CallableMetaData.FIND_TASK_META_SOURCE_IDENTIFIER)</span>
+<span class="nc" id="L196">				+ &quot; on condition &quot; + metaData.get(CallableMetaData.FIND_TASK_META_CONDITION) + &quot;.&quot;, metaData);</span>
+<span class="nc" id="L197">	}</span>
+
+	public void replaceFilteredView(EventWrapperViewPanel&lt;T&gt; original)
+	{
+<span class="nc" id="L201">		Condition filter = resolveCombinedCondition(original);</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">		if (filter == null)</span>
+		{
+<span class="nc" id="L204">			return;</span>
+		}
+
+<span class="nc" id="L207">		EventSource&lt;T&gt; eventSource = original.getEventSource();</span>
+
+<span class="nc" id="L209">		Buffer&lt;EventWrapper&lt;T&gt;&gt; buffer = eventSource.getBuffer();</span>
+
+<span class="nc bnc" id="L211" title="All 2 branches missed.">		if (buffer instanceof FilteringBuffer)</span>
+		{
+			// replace
+<span class="nc" id="L214">			Callable&lt;Long&gt; found = null;</span>
+<span class="nc bnc" id="L215" title="All 2 branches missed.">			for (Map.Entry&lt;Callable&lt;Long&gt;, EventWrapperViewPanel&lt;T&gt;&gt; current : filterMapping.entrySet())</span>
+			{
+<span class="nc bnc" id="L217" title="All 2 branches missed.">				if (current.getValue() == original)</span>
+				{
+<span class="nc" id="L219">					found = current.getKey();</span>
+<span class="nc" id="L220">					break;</span>
+				}
+<span class="nc" id="L222">			}</span>
+<span class="nc bnc" id="L223" title="All 2 branches missed.">			if (found != null)</span>
+			{
+				// remove previous and cancel the task
+<span class="nc" id="L226">				filterMapping.remove(found);</span>
+<span class="nc" id="L227">				Task&lt;Long&gt; task = taskManager.getTaskByCallable(found);</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">				if (task != null)</span>
+				{
+<span class="nc" id="L230">					task.getFuture().cancel(true);</span>
+				}
+				// create new EventSource
+<span class="nc" id="L233">				Buffer&lt;EventWrapper&lt;T&gt;&gt; originalBuffer = original.getSourceBuffer();</span>
+<span class="nc" id="L234">				FilteringBuffer&lt;EventWrapper&lt;T&gt;&gt; filteredBuffer = new FilteringBuffer&lt;EventWrapper&lt;T&gt;&gt;(originalBuffer, filter);</span>
+<span class="nc" id="L235">				FilteringCallable&lt;EventWrapper&lt;T&gt;&gt; callable = new FilteringCallable&lt;EventWrapper&lt;T&gt;&gt;(filteredBuffer, 500);</span>
+<span class="nc" id="L236">				EventSource&lt;T&gt; originalEventSource = original.getEventSource();</span>
+<span class="nc" id="L237">				Map&lt;String, String&gt; metaData = CallableMetaData.createFilteringMetaData(filter, originalEventSource);</span>
+
+<span class="nc" id="L239">				EventSourceImpl&lt;T&gt; newEventSource = new EventSourceImpl&lt;T&gt;(originalEventSource.getSourceIdentifier(), filteredBuffer, filter, originalEventSource.isGlobal());</span>
+<span class="nc" id="L240">				original.setEventSource(newEventSource);</span>
+				// restore mapping of original view, this time with the new callable
+<span class="nc" id="L242">				filterMapping.put(callable, original);</span>
+				// start the new task.
+<span class="nc" id="L244">				taskManager.startTask(callable, &quot;Filtering&quot;, &quot;Filtering &quot; + metaData</span>
+<span class="nc" id="L245">						.get(CallableMetaData.FIND_TASK_META_SOURCE_IDENTIFIER)</span>
+<span class="nc" id="L246">						+ &quot; on condition &quot; + metaData.get(CallableMetaData.FIND_TASK_META_CONDITION) + &quot;.&quot;, metaData);</span>
+			}
+<span class="nc" id="L248">		}</span>
+		else
+		{
+			// create new
+<span class="nc" id="L252">			addFilteredView(original);</span>
+		}
+
+<span class="nc" id="L255">	}</span>
+
+	public ViewWindow resolveViewWindow()
+	{
+<span class="nc" id="L259">		Container parent = getParent();</span>
+<span class="nc bnc" id="L260" title="All 4 branches missed.">		while (parent != null &amp;&amp; !(parent instanceof ViewWindow))</span>
+		{
+<span class="nc" id="L262">			parent = parent.getParent();</span>
+		}
+<span class="nc" id="L264">		return (ViewWindow) parent;</span>
+	}
+
+	private void updateContainerIcon()
+	{
+<span class="nc" id="L269">		ViewWindow window = resolveViewWindow();</span>
+<span class="nc bnc" id="L270" title="All 2 branches missed.">		if (window instanceof JFrame)</span>
+		{
+<span class="nc" id="L272">			JFrame frame = (JFrame) window;</span>
+<span class="nc" id="L273">			updateFrameIcon(frame);</span>
+<span class="nc" id="L274">		}</span>
+<span class="nc bnc" id="L275" title="All 2 branches missed.">		else if (window instanceof JInternalFrame)</span>
+		{
+<span class="nc" id="L277">			JInternalFrame frame = (JInternalFrame) window;</span>
+<span class="nc" id="L278">			updateInternalFrameIcon(frame);</span>
+		}
+<span class="nc" id="L280">	}</span>
+
+	private static ImageIcon resolveIconForState(LoggingViewState state)
+	{
+<span class="nc" id="L284">		ImageIcon result = globalFrameImageIcon;</span>
+<span class="nc bnc" id="L285" title="All 2 branches missed.">		if (state != null)</span>
+		{
+<span class="nc" id="L287">			result = frameIconImages.get(state);</span>
+		}
+<span class="nc" id="L289">		return result;</span>
+	}
+
+	private void updateFrameIcon(JFrame frame)
+	{
+<span class="nc" id="L294">		ImageIcon frameImageIcon = resolveIconForState(defaultView.getState());</span>
+
+<span class="nc bnc" id="L296" title="All 2 branches missed.">		if (frameImageIcon != null)</span>
+		{
+<span class="nc" id="L298">			frame.setIconImage(frameImageIcon.getImage());</span>
+		}
+<span class="nc" id="L300">	}</span>
+
+	private void updateInternalFrameIcon(JInternalFrame iframe)
+	{
+<span class="nc" id="L304">		ImageIcon frameImageIcon = resolveIconForState(defaultView.getState());</span>
+
+<span class="nc bnc" id="L306" title="All 2 branches missed.">		if (frameImageIcon != null)</span>
+		{
+<span class="nc" id="L308">			iframe.setFrameIcon(frameImageIcon);</span>
+<span class="nc" id="L309">			iframe.repaint(); // Apple L&amp;F Bug workaround</span>
+		}
+<span class="nc" id="L311">	}</span>
+
+	public void addNotify()
+	{
+<span class="nc" id="L315">		super.addNotify();</span>
+<span class="nc" id="L316">		updateContainerIcon();</span>
+<span class="nc" id="L317">	}</span>
+
+	public void addChangeListener(ChangeListener listener)
+	{
+<span class="nc" id="L321">		boolean changed = false;</span>
+<span class="nc" id="L322">		synchronized (changeListeners)</span>
+		{
+<span class="nc bnc" id="L324" title="All 2 branches missed.">			if (!changeListeners.contains(listener))</span>
+			{
+<span class="nc" id="L326">				changeListeners.add(listener);</span>
+<span class="nc" id="L327">				changed = true;</span>
+			}
+<span class="nc" id="L329">		}</span>
+<span class="nc bnc" id="L330" title="All 2 branches missed.">		if (changed)</span>
+		{
+<span class="nc" id="L332">			fireChange();</span>
+		}
+<span class="nc" id="L334">	}</span>
+
+	public void removeChangeListener(ChangeListener listener)
+	{
+<span class="nc" id="L338">		boolean changed = false;</span>
+<span class="nc" id="L339">		synchronized (changeListeners)</span>
+		{
+<span class="nc bnc" id="L341" title="All 2 branches missed.">			if (changeListeners.contains(listener))</span>
+			{
+<span class="nc" id="L343">				changeListeners.remove(listener);</span>
+<span class="nc" id="L344">				changed = true;</span>
+			}
+<span class="nc" id="L346">		}</span>
+<span class="nc bnc" id="L347" title="All 2 branches missed.">		if (changed)</span>
+		{
+<span class="nc" id="L349">			fireChange();</span>
+		}
+<span class="nc" id="L351">	}</span>
+
+	public void fireChange()
+	{
+		ArrayList&lt;ChangeListener&gt; clone;
+<span class="nc" id="L356">		synchronized (changeListeners)</span>
+		{
+<span class="nc" id="L358">			clone = new ArrayList&lt;ChangeListener&gt;(changeListeners);</span>
+<span class="nc" id="L359">		}</span>
+<span class="nc" id="L360">		ChangeEvent event = new ChangeEvent(this);</span>
+<span class="nc bnc" id="L361" title="All 2 branches missed.">		for (ChangeListener listener : clone)</span>
+		{
+<span class="nc" id="L363">			listener.stateChanged(event);</span>
+<span class="nc" id="L364">		}</span>
+<span class="nc" id="L365">	}</span>
+
+<span class="nc" id="L367">	class FilterTaskListener</span>
+			implements TaskListener&lt;Long&gt;
+	{
+<span class="nc" id="L370">		private final Logger logger = LoggerFactory.getLogger(FilterTaskListener.class);</span>
+
+		public void taskCreated(Task&lt;Long&gt; longTask)
+		{
+
+<span class="nc" id="L375">		}</span>
+
+		public void executionFailed(Task&lt;Long&gt; task, ExecutionException exception)
+		{
+<span class="nc" id="L379">			EventWrapperViewPanel&lt;T&gt; view = filterMapping.get(task.getCallable());</span>
+<span class="nc bnc" id="L380" title="All 2 branches missed.">			if (view != null)</span>
+			{
+<span class="nc bnc" id="L382" title="All 2 branches missed.">				if (logger.isInfoEnabled()) logger.info(&quot;Filter execution failed!&quot;, exception);</span>
+<span class="nc" id="L383">				finished(view);</span>
+			}
+<span class="nc" id="L385">		}</span>
+
+		public void executionFinished(Task&lt;Long&gt; task, Long result)
+		{
+<span class="nc" id="L389">			EventWrapperViewPanel&lt;T&gt; view = filterMapping.get(task.getCallable());</span>
+<span class="nc bnc" id="L390" title="All 2 branches missed.">			if (view != null)</span>
+			{
+<span class="nc bnc" id="L392" title="All 2 branches missed.">				if (logger.isInfoEnabled()) logger.info(&quot;Filter execution finished: {}!&quot;, result);</span>
+<span class="nc" id="L393">				finished(view);</span>
+			}
+<span class="nc" id="L395">		}</span>
+
+		public void executionCanceled(Task&lt;Long&gt; task)
+		{
+<span class="nc" id="L399">			EventWrapperViewPanel&lt;T&gt; view = filterMapping.get(task.getCallable());</span>
+<span class="nc bnc" id="L400" title="All 2 branches missed.">			if (view != null)</span>
+			{
+<span class="nc bnc" id="L402" title="All 2 branches missed.">				if (logger.isInfoEnabled()) logger.info(&quot;Filter execution canceled.&quot;);</span>
+<span class="nc" id="L403">				finished(view);</span>
+			}
+<span class="nc" id="L405">		}</span>
+
+		public void progressUpdated(Task&lt;Long&gt; task, int progress)
+		{
+<span class="nc" id="L409">		}</span>
+
+		private void finished(EventWrapperViewPanel&lt;T&gt; view)
+		{
+<span class="nc bnc" id="L413" title="All 2 branches missed.">			if (logger.isDebugEnabled()) logger.debug(&quot;Executing FilterTaskListener.finished().&quot;);</span>
+
+<span class="nc" id="L415">			removeView(view, true);</span>
+<span class="nc" id="L416">		}</span>
+	}
+
+	public abstract void closeCurrentFilter();
+
+	public abstract void closeOtherFilters();
+
+	public abstract void closeAllFilters();
+
+	public abstract int getViewCount();
+
+	public abstract void setViewIndex(int newView);
+
+	public abstract int getViewIndex();
+
+	public abstract void hideSearchPanel();
+
+	public abstract void showSearchPanel(Task&lt;Long&gt; future);
+
+	public abstract boolean isSearching();
+
+	public abstract void cancelSearching();
+
+	public abstract ProgressGlassPane getProgressPanel();
+
+	public abstract EventWrapper&lt;T&gt; getSelectedEvent();
+
+	public abstract void updateViews();
+
+	public abstract void scrollToEvent();
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

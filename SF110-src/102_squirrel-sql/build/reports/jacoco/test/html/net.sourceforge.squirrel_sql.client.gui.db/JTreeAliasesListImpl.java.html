@@ -1,0 +1,882 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JTreeAliasesListImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.gui.db</a> &gt; <span class="el_source">JTreeAliasesListImpl.java</span></div><h1>JTreeAliasesListImpl.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.gui.db;
+
+import net.sourceforge.squirrel_sql.fw.gui.TreeDnDHandler;
+import net.sourceforge.squirrel_sql.fw.gui.TreeDnDHandlerCallback;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLAlias;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+import net.sourceforge.squirrel_sql.fw.gui.GUIUtils;
+import net.sourceforge.squirrel_sql.fw.gui.Dialogs;
+import net.sourceforge.squirrel_sql.fw.xml.XMLBeanWriter;
+import net.sourceforge.squirrel_sql.fw.xml.XMLBeanReader;
+import net.sourceforge.squirrel_sql.fw.id.IIdentifierFactory;
+import net.sourceforge.squirrel_sql.client.IApplication;
+import net.sourceforge.squirrel_sql.client.ApplicationListener;
+import net.sourceforge.squirrel_sql.client.util.ApplicationFiles;
+import net.sourceforge.squirrel_sql.client.util.IdentifierFactory;
+
+import javax.swing.*;
+import javax.swing.tree.*;
+import javax.swing.event.ListDataListener;
+import javax.swing.event.ListDataEvent;
+import java.awt.*;
+import java.awt.dnd.*;
+import java.awt.event.MouseListener;
+import java.awt.event.MouseEvent;
+import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
+import java.util.*;
+import java.io.File;
+
+public class JTreeAliasesListImpl implements IAliasesList, IAliasTreeInterface
+{
+<span class="nc" id="L35">	private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L36">		StringManagerFactory.getStringManager(JTreeAliasesListImpl.class);</span>
+
+	/** Logger for this class. */
+<span class="nc" id="L39">	private final static ILogger s_log = LoggerController.createLogger(JTreeAliasesListImpl.class);</span>
+   private TreeDnDHandler _treeDnDHandler;
+
+<span class="nc" id="L42">   private static enum PasteMode</span>
+	{
+<span class="nc" id="L44">		COPY, CUT;</span>
+	}
+
+
+<span class="nc" id="L48">   JTree _tree = new JTree()</span>
+<span class="nc" id="L49">   {</span>
+
+		public String getToolTipText(MouseEvent event)
+      {
+<span class="nc" id="L53">         return JTreeAliasesListImpl.this.getToolTipText(event);    //To change body of overridden methods use File | Settings | File Templates.</span>
+      }
+   };
+
+<span class="nc" id="L57">   private JScrollPane _comp = new JScrollPane(_tree);</span>
+   private IApplication _app;
+   private AliasesListModel _aliasesListModel;
+
+   private TreePath[] _pathsToPaste;
+   private PasteMode _pasteMode;
+
+<span class="nc" id="L64">   private boolean _dontReactToAliasAdd = false ;</span>
+
+
+   public JTreeAliasesListImpl(IApplication app, AliasesListModel aliasesListModel)
+<span class="nc" id="L68">   {</span>
+<span class="nc" id="L69">      _app = app;</span>
+<span class="nc" id="L70">      _aliasesListModel = aliasesListModel;</span>
+<span class="nc" id="L71">      _tree.setRootVisible(false);</span>
+<span class="nc" id="L72">      DefaultTreeModel treeModel = (DefaultTreeModel) _tree.getModel();</span>
+<span class="nc" id="L73">      DefaultMutableTreeNode root = (DefaultMutableTreeNode) treeModel.getRoot();</span>
+<span class="nc" id="L74">      root.removeAllChildren();</span>
+<span class="nc" id="L75">      _tree.getSelectionModel().setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);</span>
+<span class="nc" id="L76">      _tree.setToolTipText(&quot;init&quot;);</span>
+
+<span class="nc" id="L78">      initRenderer();</span>
+
+<span class="nc" id="L80">      initDnD();</span>
+
+
+<span class="nc" id="L83">      _aliasesListModel.addListDataListener(new ListDataListener()</span>
+<span class="nc" id="L84">      {</span>
+         public void intervalAdded(ListDataEvent e)
+         {
+<span class="nc" id="L87">            onAliasAdded(e);</span>
+<span class="nc" id="L88">         }</span>
+
+         public void intervalRemoved(ListDataEvent e)
+         {
+<span class="nc" id="L92">            onAliasRemoved(e);</span>
+<span class="nc" id="L93">         }</span>
+
+         public void contentsChanged(ListDataEvent e)
+         {
+<span class="nc" id="L97">            onAliasChanged(e);</span>
+<span class="nc" id="L98">         }</span>
+      });
+
+
+<span class="nc" id="L102">      _app.addApplicationListener(new ApplicationListener()</span>
+<span class="nc" id="L103">      {</span>
+         public void saveApplicationState()
+         {
+<span class="nc" id="L106">            onSaveApplicationState();</span>
+<span class="nc" id="L107">         }</span>
+      });
+
+<span class="nc" id="L110">      initTree();</span>
+
+<span class="nc" id="L112">   }</span>
+
+   private void initRenderer()
+   {
+<span class="nc" id="L116">      DefaultTreeCellRenderer treeCellRenderer = new DefaultTreeCellRenderer()</span>
+<span class="nc" id="L117">      {</span>
+			public Component getTreeCellRendererComponent(JTree tree, Object value, boolean sel, boolean expanded, boolean leaf, int row, boolean hasFocus)
+         {
+<span class="nc" id="L120">            return modifyRenderer(super.getTreeCellRendererComponent(tree, value, sel, expanded, leaf, row, hasFocus), value);</span>
+         }
+      };
+
+<span class="nc" id="L124">      _tree.setCellRenderer(treeCellRenderer);</span>
+
+
+<span class="nc" id="L127">      AbstractAction cancelCutAction = new AbstractAction()</span>
+<span class="nc" id="L128">      {</span>
+			public void actionPerformed(ActionEvent actionEvent)
+         {
+<span class="nc bnc" id="L131" title="All 4 branches missed.">            if (null != _pathsToPaste &amp;&amp; PasteMode.CUT.equals(_pasteMode))</span>
+            {
+<span class="nc" id="L133">               _pathsToPaste = null;</span>
+<span class="nc" id="L134">               _tree.repaint();</span>
+            }
+<span class="nc" id="L136">         }</span>
+      };
+<span class="nc" id="L138">      KeyStroke escapeStroke = KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0);</span>
+<span class="nc" id="L139">      _tree.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(escapeStroke, &quot;cancelCutAction&quot;);</span>
+<span class="nc" id="L140">      _tree.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(escapeStroke, &quot;cancelCutAction&quot;);</span>
+<span class="nc" id="L141">      _tree.getInputMap(JComponent.WHEN_FOCUSED).put(escapeStroke, &quot;cancelCutAction&quot;);</span>
+<span class="nc" id="L142">      _tree.getActionMap().put(&quot;cancelCutAction&quot;, cancelCutAction);</span>
+
+<span class="nc" id="L144">   }</span>
+
+   private Component modifyRenderer(Component component, Object node)
+   {
+<span class="nc" id="L148">      JLabel ret = (JLabel) component;</span>
+<span class="nc" id="L149">      ret.setEnabled(true);</span>
+
+
+<span class="nc bnc" id="L152" title="All 4 branches missed.">      if (null != _pathsToPaste &amp;&amp; PasteMode.CUT.equals(_pasteMode))</span>
+      {
+<span class="nc" id="L154">         DefaultMutableTreeNode dmtn = (DefaultMutableTreeNode) node;</span>
+
+<span class="nc" id="L156">         boolean found = false;</span>
+<span class="nc bnc" id="L157" title="All 2 branches missed.">         for (TreePath treePath : _pathsToPaste)</span>
+         {
+<span class="nc bnc" id="L159" title="All 2 branches missed.">            if(treePath.getLastPathComponent() == dmtn)</span>
+            {
+<span class="nc" id="L161">               found = true;</span>
+<span class="nc" id="L162">               break;</span>
+            }
+         }
+<span class="nc bnc" id="L165" title="All 2 branches missed.">         ret.setEnabled(!found);</span>
+<span class="nc" id="L166">         ret.setDisabledIcon(ret.getIcon());</span>
+      }
+
+<span class="nc" id="L169">      return component;</span>
+   }
+
+   private void initDnD()
+   {
+<span class="nc" id="L174">      TreeDnDHandlerCallback treeDnDHandlerCallback = new TreeDnDHandlerCallback()</span>
+<span class="nc" id="L175">      {</span>
+         @Override
+         public boolean nodeAcceptsKids(DefaultMutableTreeNode selNode)
+         {
+<span class="nc" id="L179">            return onNodeAcceptsKids(selNode);</span>
+         }
+
+         @Override
+         public void dndExecuted()
+         {
+            //To change body of implemented methods use File | Settings | File Templates.
+<span class="nc" id="L186">         }</span>
+      };
+
+<span class="nc" id="L189">      _treeDnDHandler = new TreeDnDHandler(_tree, treeDnDHandlerCallback);</span>
+<span class="nc" id="L190">   }</span>
+
+   private boolean onNodeAcceptsKids(DefaultMutableTreeNode selNode)
+   {
+<span class="nc bnc" id="L194" title="All 2 branches missed.">      return false == selNode.isLeaf();</span>
+   }
+
+
+   private void initTree()
+	{
+<span class="nc" id="L200">		DefaultTreeModel treeModel = (DefaultTreeModel) _tree.getModel();</span>
+<span class="nc" id="L201">		DefaultMutableTreeNode root = (DefaultMutableTreeNode) treeModel.getRoot();</span>
+<span class="nc" id="L202">		root.removeAllChildren();</span>
+
+<span class="nc" id="L204">		File file = new ApplicationFiles().getDatabaseAliasesTreeStructureFile();</span>
+
+<span class="nc bnc" id="L206" title="All 2 branches missed.">		if (!readTreeStructureFile(root, file))</span>
+		{
+<span class="nc bnc" id="L208" title="All 2 branches missed.">			for (int i = 0; i &lt; _aliasesListModel.size(); i++)</span>
+			{
+<span class="nc" id="L210">				root.add(new DefaultMutableTreeNode(_aliasesListModel.get(i)));</span>
+			}
+<span class="nc" id="L212">			treeModel.nodeStructureChanged(root);</span>
+		}
+<span class="nc" id="L214">	}</span>
+
+   /**
+    * Bug 2942351 (Program doesn't launch)
+	 * Safely performs the reading/parsing of the tree structure from the aliases tree structure file so that
+	 * the tree structure can be ignored if the file is somehow corrupt.
+	 * 
+	 * @param root
+	 *           the root node of the treemodel for _tree
+	 * @param file
+	 *           the file that contains the tree structure xml.
+	 * @return true if the file existed and was parsed successfully; false otherwise.
+	 */
+	private boolean readTreeStructureFile(final DefaultMutableTreeNode root, final File file)
+	{
+<span class="nc" id="L229">		boolean result = false;</span>
+		try
+		{
+<span class="nc bnc" id="L232" title="All 4 branches missed.">			if (file.exists() &amp;&amp; file.length() &gt; 0)</span>
+			{
+<span class="nc" id="L234">				XMLBeanReader rdr = new XMLBeanReader();</span>
+<span class="nc" id="L235">				rdr.load(file);</span>
+<span class="nc" id="L236">				AliasFolderState rootState = (AliasFolderState) rdr.iterator().next();</span>
+<span class="nc" id="L237">				applyAliasFolderState(root, rootState);</span>
+<span class="nc" id="L238">				result = true;</span>
+			}
+		}
+<span class="nc" id="L241">		catch (Exception e)</span>
+		{
+			// Throwing a runtime exception here will result in failure to launch the application. Since the tree
+			// structure can be recovered more easily than all of the user's aliases, we log an error and forget
+			// about the previous tree structure. Nanoxml will throw a runtime exception for any invalid xml
+			// that it finds, and we squelch that here with a log message so that launch can proceed. 
+<span class="nc" id="L247">			s_log.error(&quot;Unexpected exception while applying Aliases tree structure from file: &quot;</span>
+<span class="nc" id="L248">				+ file.getAbsolutePath(), e);</span>
+<span class="nc" id="L249">		}</span>
+<span class="nc" id="L250">		return result;</span>
+	}
+   
+   private void applyAliasFolderState(DefaultMutableTreeNode rootNode, AliasFolderState rootState)
+   {
+<span class="nc" id="L255">      DefaultTreeModel treeModel = (DefaultTreeModel) _tree.getModel();</span>
+
+<span class="nc bnc" id="L257" title="All 2 branches missed.">      for (AliasFolderState aliasFolderState : rootState.getKids())</span>
+      {
+<span class="nc" id="L259">         aliasFolderState.applyNodes(rootNode, _aliasesListModel);</span>
+      }
+
+<span class="nc" id="L262">      ArrayList&lt;SQLAlias&gt; unknownAliases = new ArrayList&lt;SQLAlias&gt;();</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">      for (int i = 0; i &lt; _aliasesListModel.size(); i++)</span>
+      {
+<span class="nc" id="L265">         SQLAlias sqlAlias = (SQLAlias) _aliasesListModel.get(i);</span>
+<span class="nc bnc" id="L266" title="All 2 branches missed.">         if(null == findNode(sqlAlias, rootNode))</span>
+         {
+<span class="nc" id="L268">            unknownAliases.add(sqlAlias);</span>
+         }
+      }
+
+<span class="nc bnc" id="L272" title="All 2 branches missed.">      for (SQLAlias alias : unknownAliases)</span>
+      {
+<span class="nc" id="L274">         rootNode.add(new DefaultMutableTreeNode(alias));</span>
+<span class="nc" id="L275">      }</span>
+<span class="nc" id="L276">      treeModel.nodeStructureChanged(rootNode);</span>
+
+<span class="nc bnc" id="L278" title="All 2 branches missed.">      for (AliasFolderState aliasFolderState : rootState.getKids())</span>
+      {
+<span class="nc" id="L280">         aliasFolderState.applyExpansionAndSelection(_tree);</span>
+      }
+<span class="nc" id="L282">   }</span>
+
+   private void onSaveApplicationState()
+   {
+      try
+      {
+<span class="nc" id="L288">         DefaultTreeModel dtm = (DefaultTreeModel) _tree.getModel();</span>
+<span class="nc" id="L289">         DefaultMutableTreeNode root = (DefaultMutableTreeNode) dtm.getRoot();</span>
+
+<span class="nc" id="L291">         AliasFolderState state = new AliasFolderState(root, _tree);</span>
+
+<span class="nc" id="L293">         XMLBeanWriter wrt = new XMLBeanWriter(state);</span>
+<span class="nc" id="L294">         wrt.save(new ApplicationFiles().getDatabaseAliasesTreeStructureFile());</span>
+      }
+<span class="nc" id="L296">      catch (Exception e)</span>
+      {
+<span class="nc" id="L298">         throw new RuntimeException(e);</span>
+<span class="nc" id="L299">      }</span>
+<span class="nc" id="L300">   }</span>
+
+   private void onAliasChanged(ListDataEvent e)
+   {
+<span class="nc" id="L304">      DefaultTreeModel treeModel = (DefaultTreeModel) _tree.getModel();</span>
+<span class="nc" id="L305">      SQLAlias changedAlias = (SQLAlias) _aliasesListModel.get(e.getIndex0());</span>
+
+<span class="nc" id="L307">      DefaultMutableTreeNode root = (DefaultMutableTreeNode) treeModel.getRoot();</span>
+
+<span class="nc" id="L309">      DefaultMutableTreeNode node = findNode(changedAlias, root);</span>
+<span class="nc" id="L310">      treeModel.nodeChanged(node);</span>
+<span class="nc" id="L311">   }</span>
+
+   private DefaultMutableTreeNode findNode(SQLAlias sqlAlias, DefaultMutableTreeNode tn)
+   {
+<span class="nc bnc" id="L315" title="All 2 branches missed.">      if(sqlAlias.equals(tn.getUserObject()))</span>
+      {
+<span class="nc" id="L317">         return tn;</span>
+      }
+
+<span class="nc bnc" id="L320" title="All 2 branches missed.">      for (int i = 0; i &lt; tn.getChildCount(); i++)</span>
+      {
+<span class="nc" id="L322">         DefaultMutableTreeNode ret = findNode(sqlAlias, (DefaultMutableTreeNode) tn.getChildAt(i));</span>
+<span class="nc bnc" id="L323" title="All 2 branches missed.">         if(null != ret)</span>
+         {
+<span class="nc" id="L325">            return ret;</span>
+         }
+      }
+
+<span class="nc" id="L329">      return null;</span>
+   }
+
+   private void onAliasRemoved(ListDataEvent e)
+   {
+<span class="nc" id="L334">      DefaultTreeModel treeModel = (DefaultTreeModel) _tree.getModel();</span>
+
+<span class="nc" id="L336">      DefaultMutableTreeNode delNode = findRemovedNode();</span>
+
+      DefaultMutableTreeNode nextToSel;
+<span class="nc" id="L339">      nextToSel = delNode.getNextSibling();</span>
+
+<span class="nc bnc" id="L341" title="All 2 branches missed.">      if(null == nextToSel)</span>
+      {
+<span class="nc" id="L343">         nextToSel = delNode.getPreviousSibling();</span>
+      }
+
+<span class="nc" id="L346">      DefaultMutableTreeNode parent = (DefaultMutableTreeNode) delNode.getParent();</span>
+<span class="nc" id="L347">      treeModel.removeNodeFromParent(delNode);</span>
+
+
+<span class="nc bnc" id="L350" title="All 2 branches missed.">      if(null != nextToSel)</span>
+      {
+<span class="nc" id="L352">         _tree.setSelectionPath(new TreePath(nextToSel.getPath()));</span>
+      }
+      else
+      {
+<span class="nc bnc" id="L356" title="All 2 branches missed.">         if(parent != _tree.getModel().getRoot())</span>
+         {
+<span class="nc" id="L358">            _tree.setSelectionPath(new TreePath(parent.getPath()));</span>
+         }
+      }
+<span class="nc" id="L361">   }</span>
+
+   private DefaultMutableTreeNode findRemovedNode()
+   {
+<span class="nc" id="L365">      ArrayList&lt;SQLAlias&gt; buf = new ArrayList&lt;SQLAlias&gt;();</span>
+
+<span class="nc" id="L367">      DefaultTreeModel treeModel = (DefaultTreeModel) _tree.getModel();</span>
+<span class="nc" id="L368">      DefaultMutableTreeNode root = (DefaultMutableTreeNode) treeModel.getRoot();</span>
+<span class="nc" id="L369">      fillAllAliasesFrom(root, buf);</span>
+
+<span class="nc bnc" id="L371" title="All 2 branches missed.">      for (SQLAlias sqlAlias : buf)</span>
+      {
+<span class="nc bnc" id="L373" title="All 2 branches missed.">         if(-1 == _aliasesListModel.getIndex(sqlAlias))</span>
+         {
+<span class="nc" id="L375">            return findNode(sqlAlias, root);</span>
+         }
+<span class="nc" id="L377">      }</span>
+
+<span class="nc" id="L379">      return null;</span>
+   }
+
+   private void fillAllAliasesFrom(DefaultMutableTreeNode node, ArrayList&lt;SQLAlias&gt; toFill)
+   {
+<span class="nc bnc" id="L384" title="All 2 branches missed.">      if(node.getUserObject() instanceof SQLAlias)</span>
+      {
+<span class="nc" id="L386">         toFill.add((SQLAlias) node.getUserObject());</span>
+      }
+      else
+      {
+<span class="nc bnc" id="L390" title="All 2 branches missed.">         for (int i = 0; i &lt; node.getChildCount(); i++)</span>
+         {
+<span class="nc" id="L392">              fillAllAliasesFrom((DefaultMutableTreeNode) node.getChildAt(i), toFill);</span>
+         }
+      }
+<span class="nc" id="L395">   }</span>
+
+   private void onAliasAdded(ListDataEvent e)
+   {
+<span class="nc bnc" id="L399" title="All 2 branches missed.">      if(_dontReactToAliasAdd)</span>
+      {
+<span class="nc" id="L401">         return;</span>
+      }
+
+<span class="nc" id="L404">      SQLAlias newAlias = (SQLAlias) _aliasesListModel.get(e.getIndex0());</span>
+<span class="nc" id="L405">      DefaultMutableTreeNode newNode = new DefaultMutableTreeNode(newAlias);</span>
+
+<span class="nc" id="L407">      DefaultTreeModel treeModel = (DefaultTreeModel) _tree.getModel();</span>
+<span class="nc" id="L408">      TreePath selPath = _tree.getSelectionPath();</span>
+
+<span class="nc bnc" id="L410" title="All 2 branches missed.">      if(null == selPath)</span>
+      {
+<span class="nc" id="L412">         DefaultMutableTreeNode root = (DefaultMutableTreeNode) treeModel.getRoot();</span>
+<span class="nc" id="L413">         root.add(newNode);</span>
+<span class="nc" id="L414">      }</span>
+      else
+      {
+<span class="nc" id="L417">         DefaultMutableTreeNode selNode = (DefaultMutableTreeNode) selPath.getLastPathComponent();</span>
+<span class="nc bnc" id="L418" title="All 2 branches missed.">         if(selNode.getUserObject() instanceof SQLAlias)</span>
+         {
+
+<span class="nc" id="L421">            DefaultMutableTreeNode parentNode = (DefaultMutableTreeNode) selPath.getParentPath().getLastPathComponent();</span>
+
+<span class="nc" id="L423">            int formerSilblingIx = treeModel.getIndexOfChild(parentNode, selNode);</span>
+<span class="nc" id="L424">            treeModel.insertNodeInto(newNode, parentNode, formerSilblingIx + 1);</span>
+<span class="nc" id="L425">         }</span>
+         else
+         {
+<span class="nc" id="L428">            selNode.add(newNode);</span>
+         }
+      }
+
+<span class="nc" id="L432">      treeModel.nodeStructureChanged((DefaultMutableTreeNode)treeModel.getRoot());</span>
+
+<span class="nc" id="L434">      _tree.setSelectionPath(new TreePath(treeModel.getPathToRoot(newNode)));</span>
+<span class="nc" id="L435">   }</span>
+
+   public SQLAlias getSelectedAlias(MouseEvent evt)
+   {
+<span class="nc" id="L439">      TreePath path = _tree.getSelectionPath();</span>
+
+<span class="nc bnc" id="L441" title="All 2 branches missed.">      if(null == path)</span>
+      {
+<span class="nc" id="L443">         return null;</span>
+      }
+
+<span class="nc bnc" id="L446" title="All 2 branches missed.">      if(false == path.getLastPathComponent() instanceof DefaultMutableTreeNode)</span>
+      {
+<span class="nc" id="L448">         return null;</span>
+      }
+
+<span class="nc bnc" id="L451" title="All 4 branches missed.">      if(null != evt &amp;&amp; false == _tree.getPathBounds(path).contains(evt.getPoint()))</span>
+      {
+         // If the mouse wasn't placed on the selected Alias we do nothing. 
+<span class="nc" id="L454">         return null;</span>
+      }
+
+<span class="nc" id="L457">      DefaultMutableTreeNode tn = (DefaultMutableTreeNode) path.getLastPathComponent();</span>
+
+<span class="nc bnc" id="L459" title="All 2 branches missed.">      if(false == tn.getUserObject() instanceof ISQLAlias)</span>
+      {
+<span class="nc" id="L461">         return null;</span>
+      }
+
+<span class="nc" id="L464">      return (SQLAlias) tn.getUserObject();</span>
+
+   }
+
+   public void sortAliases()
+   {
+<span class="nc" id="L470">      DefaultTreeModel treeModel = (DefaultTreeModel) _tree.getModel();</span>
+<span class="nc" id="L471">      DefaultMutableTreeNode root = (DefaultMutableTreeNode) treeModel.getRoot();</span>
+<span class="nc" id="L472">      AliasFolderState state = new AliasFolderState(root, _tree);</span>
+
+<span class="nc" id="L474">      state.sort();</span>
+
+<span class="nc" id="L476">      root.removeAllChildren();</span>
+
+<span class="nc" id="L478">      applyAliasFolderState(root, state);</span>
+<span class="nc" id="L479">   }</span>
+
+   public void requestFocus()
+   {
+<span class="nc" id="L483">      _tree.requestFocus();</span>
+<span class="nc" id="L484">   }</span>
+
+   public void deleteSelected()
+   {
+<span class="nc" id="L488">      TreePath[] selectionPaths = _tree.getSelectionPaths();</span>
+
+<span class="nc bnc" id="L490" title="All 2 branches missed.">      if(1 == selectionPaths.length)</span>
+      {
+<span class="nc" id="L492">         DefaultMutableTreeNode selNode = (DefaultMutableTreeNode) selectionPaths[0].getLastPathComponent();</span>
+<span class="nc" id="L493">         TreeNode parent = selNode.getParent();</span>
+
+<span class="nc bnc" id="L495" title="All 2 branches missed.">         if(selNode.getUserObject() instanceof SQLAlias)</span>
+         {
+<span class="nc" id="L497">            SQLAlias toDel = (SQLAlias) selNode.getUserObject();</span>
+<span class="nc bnc" id="L498" title="All 2 branches missed.">            if (Dialogs.showYesNo(_app.getMainFrame(), s_stringMgr.getString(&quot;JTreeAliasesListImpl.confirmDelete&quot;, toDel.getName())))</span>
+            {
+<span class="nc" id="L500">               removeAlias(toDel);</span>
+            }
+<span class="nc" id="L502">         }</span>
+         else
+         {
+<span class="nc bnc" id="L505" title="All 2 branches missed.">            if (Dialogs.showYesNo(_app.getMainFrame(), s_stringMgr.getString(&quot;JTreeAliasesListImpl.confirmDeleteFolder&quot;, selNode.getUserObject())))</span>
+            {
+<span class="nc" id="L507">               removeAllAliasesFromNode(selNode);</span>
+
+<span class="nc" id="L509">               DefaultTreeModel dtm = (DefaultTreeModel) _tree.getModel();</span>
+<span class="nc" id="L510">               int indexOfChild = dtm.getIndexOfChild(parent, selNode);</span>
+<span class="nc" id="L511">               selNode.removeFromParent();</span>
+<span class="nc" id="L512">               dtm.nodesWereRemoved(parent, new int[]{indexOfChild}, new Object[]{selNode});</span>
+               //dtm.nodeStructureChanged(parent);
+            }
+         }
+<span class="nc" id="L516">      }</span>
+<span class="nc bnc" id="L517" title="All 2 branches missed.">      else if(1 &lt; selectionPaths.length)</span>
+      {
+<span class="nc bnc" id="L519" title="All 2 branches missed.">         if (Dialogs.showYesNo(_app.getMainFrame(), s_stringMgr.getString(&quot;JTreeAliasesListImpl.confirmDeleteMultible&quot;)))</span>
+         {
+<span class="nc" id="L521">            final HashSet&lt;TreeNode&gt; parentsRemovedFrom = new HashSet&lt;TreeNode&gt;();</span>
+<span class="nc bnc" id="L522" title="All 2 branches missed.">            for (TreePath selectionPath : selectionPaths)</span>
+            {
+<span class="nc" id="L524">               DefaultMutableTreeNode selNode = (DefaultMutableTreeNode) selectionPath.getLastPathComponent();</span>
+<span class="nc" id="L525">               parentsRemovedFrom.add(selNode.getParent());</span>
+
+<span class="nc bnc" id="L527" title="All 2 branches missed.">               if(selNode.getUserObject() instanceof SQLAlias)</span>
+               {
+<span class="nc" id="L529">                  SQLAlias toDel = (SQLAlias) selNode.getUserObject();</span>
+<span class="nc" id="L530">                 removeAlias(toDel);</span>
+<span class="nc" id="L531">               }</span>
+               else
+               {
+<span class="nc" id="L534">                  removeAllAliasesFromNode(selNode);</span>
+<span class="nc" id="L535">                  selNode.removeFromParent();</span>
+               }
+            }
+
+<span class="nc" id="L539">            final DefaultTreeModel dtm = (DefaultTreeModel) _tree.getModel();</span>
+
+<span class="nc" id="L541">            SwingUtilities.invokeLater(</span>
+               new Runnable()
+<span class="nc" id="L543">               {</span>
+                  public void run()
+                  {
+<span class="nc bnc" id="L546" title="All 2 branches missed.">                     for (TreeNode node : parentsRemovedFrom)</span>
+                     {
+<span class="nc" id="L548">                        dtm.nodeStructureChanged(node);</span>
+<span class="nc" id="L549">                     }</span>
+<span class="nc" id="L550">                  }</span>
+               });
+         }
+      }
+<span class="nc" id="L554">   }</span>
+
+   public void modifySelected()
+   {
+<span class="nc" id="L558">      TreePath selPath = _tree.getSelectionPath();</span>
+
+<span class="nc bnc" id="L560" title="All 2 branches missed.">      if(null == selPath)</span>
+      {
+<span class="nc" id="L562">         return;</span>
+      }
+
+<span class="nc" id="L565">      DefaultMutableTreeNode selNode = (DefaultMutableTreeNode) selPath.getLastPathComponent();</span>
+
+<span class="nc bnc" id="L567" title="All 2 branches missed.">      if(selNode.getUserObject() instanceof SQLAlias)</span>
+      {
+<span class="nc" id="L569">         _app.getWindowManager().showModifyAliasInternalFrame((ISQLAlias) selNode.getUserObject());</span>
+      }
+      else
+      {
+<span class="nc" id="L573">         String title = s_stringMgr.getString(&quot;JTreeAliasesListImpl.EditAliasFolderDlgTitle&quot;);</span>
+<span class="nc" id="L574">         String text = s_stringMgr.getString(&quot;JTreeAliasesListImpl.EditAliasFolderDlgText&quot;);</span>
+<span class="nc" id="L575">         EditAliasFolderDlg dlg = new EditAliasFolderDlg(_app.getMainFrame(), title, text, selNode.getUserObject().toString());</span>
+
+<span class="nc" id="L577">         GUIUtils.centerWithinParent(dlg);</span>
+
+<span class="nc" id="L579">         dlg.setVisible(true);</span>
+
+<span class="nc" id="L581">         String folderName = dlg.getFolderName();</span>
+
+<span class="nc bnc" id="L583" title="All 2 branches missed.">         if(null == folderName)</span>
+         {
+<span class="nc" id="L585">            return;</span>
+         }
+
+<span class="nc" id="L588">         selNode.setUserObject(folderName);</span>
+
+<span class="nc" id="L590">         DefaultTreeModel treeModel = (DefaultTreeModel) _tree.getModel();</span>
+<span class="nc" id="L591">         treeModel.nodeChanged(selNode);</span>
+      }
+<span class="nc" id="L593">   }</span>
+
+   public boolean isEmpty()
+   {
+<span class="nc bnc" id="L597" title="All 2 branches missed.">      return 0 == _aliasesListModel.getSize();</span>
+   }
+
+   private void removeAllAliasesFromNode(DefaultMutableTreeNode selNode)
+   {
+<span class="nc bnc" id="L602" title="All 2 branches missed.">      if(selNode.getUserObject() instanceof SQLAlias)</span>
+      {
+<span class="nc" id="L604">         SQLAlias toDel = (SQLAlias) selNode.getUserObject();</span>
+<span class="nc" id="L605">         removeAlias(toDel);</span>
+
+<span class="nc" id="L607">      }</span>
+      else
+      {
+<span class="nc" id="L610">         ArrayList&lt;DefaultMutableTreeNode&gt; buf = new ArrayList&lt;DefaultMutableTreeNode&gt;();</span>
+
+<span class="nc bnc" id="L612" title="All 2 branches missed.">         for (int i = 0; i &lt; selNode.getChildCount(); i++)</span>
+         {
+<span class="nc" id="L614">            buf.add((DefaultMutableTreeNode) selNode.getChildAt(i));</span>
+         }
+
+<span class="nc bnc" id="L617" title="All 2 branches missed.">         for (DefaultMutableTreeNode defaultMutableTreeNode : buf)</span>
+         {
+<span class="nc" id="L619">            removeAllAliasesFromNode(defaultMutableTreeNode);</span>
+<span class="nc" id="L620">         }</span>
+      }
+<span class="nc" id="L622">   }</span>
+
+   private void removeAlias(SQLAlias toDel)
+   {
+<span class="nc" id="L626">      _aliasesListModel.remove(_aliasesListModel.getIndex(toDel));</span>
+<span class="nc" id="L627">      _app.getDataCache().removeAlias(toDel);</span>
+<span class="nc" id="L628">   }</span>
+
+   public void selectListEntryAtPoint(Point point)
+   {
+<span class="nc" id="L632">      TreePath path = _tree.getPathForLocation(point.x, point.y);</span>
+
+<span class="nc bnc" id="L634" title="All 2 branches missed.">      if(null != path)</span>
+      {
+<span class="nc" id="L636">         _tree.setSelectionPath(path);</span>
+      }
+<span class="nc" id="L638">   }</span>
+
+   public JComponent getComponent()
+   {
+<span class="nc" id="L642">      return _comp;</span>
+   }
+
+   public void addMouseListener(MouseListener mouseListener)
+   {
+<span class="nc" id="L647">      _tree.addMouseListener(mouseListener);</span>
+<span class="nc" id="L648">   }</span>
+
+   public void removeMouseListener(MouseListener mouseListener)
+   {
+<span class="nc" id="L652">      _tree.removeMouseListener(mouseListener);</span>
+<span class="nc" id="L653">   }</span>
+
+
+   public String getToolTipText(MouseEvent evt)
+   {
+<span class="nc" id="L658">      TreePath path = _tree.getPathForLocation(evt.getPoint().x, evt.getPoint().y);</span>
+
+<span class="nc bnc" id="L660" title="All 2 branches missed.">      if(null == path)</span>
+      {
+<span class="nc" id="L662">         return null;</span>
+      }
+
+<span class="nc bnc" id="L665" title="All 2 branches missed.">      if(false == path.getLastPathComponent() instanceof DefaultMutableTreeNode)</span>
+      {
+<span class="nc" id="L667">         return null;</span>
+      }
+
+<span class="nc" id="L670">      Object userObj = ((DefaultMutableTreeNode) path.getLastPathComponent()).getUserObject();</span>
+
+<span class="nc bnc" id="L672" title="All 2 branches missed.">      if(false == userObj instanceof ISQLAlias)</span>
+      {
+<span class="nc" id="L674">         return null;</span>
+      }
+
+<span class="nc" id="L677">      return ((ISQLAlias)userObj).getName();</span>
+   }
+
+   public void createNewFolder()
+   {
+<span class="nc" id="L682">      String title = s_stringMgr.getString(&quot;JTreeAliasesListImpl.NewAliasFolderDlgTitle&quot;);</span>
+<span class="nc" id="L683">      String text = s_stringMgr.getString(&quot;JTreeAliasesListImpl.NewAliasFolderDlgText&quot;);</span>
+<span class="nc" id="L684">      EditAliasFolderDlg dlg = new EditAliasFolderDlg(_app.getMainFrame(), title, text, null);</span>
+<span class="nc" id="L685">      GUIUtils.centerWithinParent(dlg);</span>
+
+<span class="nc" id="L687">      dlg.setVisible(true);</span>
+
+<span class="nc" id="L689">      String folderName = dlg.getFolderName();</span>
+
+<span class="nc bnc" id="L691" title="All 2 branches missed.">      if(null == folderName)</span>
+      {
+<span class="nc" id="L693">         return;</span>
+      }
+
+
+<span class="nc" id="L697">      DefaultTreeModel treeModel = (DefaultTreeModel) _tree.getModel();</span>
+<span class="nc" id="L698">      TreePath selPath = _tree.getSelectionPath();</span>
+
+<span class="nc" id="L700">      DefaultMutableTreeNode newFolder = AliasesTreeUtil.createFolderNode(folderName);</span>
+
+
+<span class="nc bnc" id="L703" title="All 2 branches missed.">      if(null != selPath)</span>
+      {
+<span class="nc" id="L705">         DefaultMutableTreeNode tn = (DefaultMutableTreeNode) selPath.getLastPathComponent();</span>
+
+<span class="nc bnc" id="L707" title="All 2 branches missed.">         if(tn.isLeaf())</span>
+         {
+<span class="nc" id="L709">            DefaultMutableTreeNode parent = (DefaultMutableTreeNode) tn.getParent();</span>
+<span class="nc" id="L710">            int childIndex = parent.getIndex(tn) + 1;</span>
+<span class="nc" id="L711">            parent.insert(newFolder, childIndex);</span>
+<span class="nc" id="L712">            treeModel.nodesWereInserted(parent, new int[]{childIndex});</span>
+<span class="nc" id="L713">         }</span>
+         else
+         {
+<span class="nc" id="L716">            tn.add(newFolder);</span>
+<span class="nc" id="L717">            treeModel.nodeStructureChanged(tn);</span>
+         }
+<span class="nc" id="L719">      }</span>
+      else
+      {
+<span class="nc" id="L722">         DefaultMutableTreeNode root = (DefaultMutableTreeNode) _tree.getModel().getRoot();</span>
+
+<span class="nc" id="L724">         int[] childIndices = new int[]{root.getChildCount()};</span>
+<span class="nc" id="L725">         root.add(newFolder);</span>
+<span class="nc" id="L726">         treeModel.nodesWereInserted(root, childIndices);</span>
+      }
+
+      //_tree.expandPath(new TreePath(newFolder.getPath()));
+<span class="nc" id="L730">      _tree.setSelectionPath(new TreePath(newFolder.getPath()));</span>
+      
+<span class="nc" id="L732">   }</span>
+
+   public void cutSelected()
+   {
+<span class="nc" id="L736">      _pathsToPaste = _tree.getSelectionPaths();</span>
+<span class="nc" id="L737">      _pasteMode = PasteMode.CUT;</span>
+<span class="nc" id="L738">      _tree.repaint();</span>
+<span class="nc" id="L739">   }</span>
+
+   public void pasteSelected()
+   {
+      try
+      {
+<span class="nc bnc" id="L745" title="All 2 branches missed.">         if (null == _pathsToPaste)</span>
+         {
+<span class="nc" id="L747">            return;</span>
+         }
+
+<span class="nc bnc" id="L750" title="All 3 branches missed.">         switch (_pasteMode)</span>
+         {
+            case COPY:
+<span class="nc" id="L753">               execCopyToPaste(_pathsToPaste, _tree.getSelectionPath());</span>
+<span class="nc" id="L754">               break;</span>
+            case CUT:
+<span class="nc" id="L756">               _treeDnDHandler.execCut(_pathsToPaste, _tree.getSelectionPath());</span>
+               break;
+         }
+      }
+      finally
+      {
+<span class="nc" id="L762">         _pathsToPaste = null;</span>
+      }
+<span class="nc" id="L764">   }</span>
+
+   private void execCopyToPaste(TreePath[] pathsToPaste, TreePath targetPath)
+   {
+<span class="nc" id="L768">      DefaultTreeModel dtm = (DefaultTreeModel) _tree.getModel();</span>
+
+<span class="nc" id="L770">      DefaultMutableTreeNode[] copiedNodes = new DefaultMutableTreeNode[pathsToPaste.length];</span>
+
+<span class="nc bnc" id="L772" title="All 2 branches missed.">      for (int i = 0; i &lt; pathsToPaste.length; i++)</span>
+      {
+<span class="nc" id="L774">         copiedNodes[i] = createCopy((DefaultMutableTreeNode) pathsToPaste[i].getLastPathComponent());</span>
+      }
+
+
+<span class="nc bnc" id="L778" title="All 2 branches missed.">      if (null == targetPath)</span>
+      {
+<span class="nc" id="L780">         DefaultMutableTreeNode root = (DefaultMutableTreeNode) dtm.getRoot();</span>
+
+<span class="nc bnc" id="L782" title="All 2 branches missed.">         for (int i = 0; i &lt; copiedNodes.length; i++)</span>
+         {
+<span class="nc" id="L784">            root.add(copiedNodes[i]);</span>
+         }
+<span class="nc" id="L786">         dtm.nodeStructureChanged(root);</span>
+<span class="nc" id="L787">      }</span>
+      else
+      {
+<span class="nc" id="L790">         DefaultMutableTreeNode selNode = (DefaultMutableTreeNode) targetPath.getLastPathComponent();</span>
+
+<span class="nc bnc" id="L792" title="All 2 branches missed.">         if (selNode.isLeaf())</span>
+         {
+<span class="nc" id="L794">            DefaultMutableTreeNode parent = (DefaultMutableTreeNode) selNode.getParent();</span>
+<span class="nc bnc" id="L795" title="All 2 branches missed.">            for (int i = 0; i &lt; copiedNodes.length; i++)</span>
+            {
+<span class="nc" id="L797">               parent.insert(copiedNodes[i], parent.getIndex(selNode) + 1);</span>
+            }
+<span class="nc" id="L799">            dtm.nodeStructureChanged(parent);</span>
+
+<span class="nc" id="L801">         }</span>
+         else
+         {
+<span class="nc bnc" id="L804" title="All 2 branches missed.">            for (int i = 0; i &lt; copiedNodes.length; i++)</span>
+            {
+<span class="nc" id="L806">               selNode.add(copiedNodes[i]);</span>
+            }
+<span class="nc" id="L808">            dtm.nodeStructureChanged(selNode);</span>
+         }
+      }
+
+<span class="nc" id="L812">      TreePath[] newSelPaths = new TreePath[copiedNodes.length];</span>
+<span class="nc bnc" id="L813" title="All 2 branches missed.">      for (int i = 0; i &lt; newSelPaths.length; i++)</span>
+      {
+<span class="nc" id="L815">         newSelPaths[i] = new TreePath(copiedNodes[i].getPath());</span>
+      }
+<span class="nc" id="L817">      _tree.setSelectionPaths(newSelPaths);</span>
+<span class="nc" id="L818">   }</span>
+
+   private DefaultMutableTreeNode createCopy(DefaultMutableTreeNode nodeToCopy)
+   {
+      try
+      {
+<span class="nc bnc" id="L824" title="All 2 branches missed.">         if(nodeToCopy.getUserObject() instanceof SQLAlias)</span>
+         {
+<span class="nc" id="L826">            SQLAlias source = (SQLAlias) nodeToCopy.getUserObject();</span>
+<span class="nc" id="L827">            final IIdentifierFactory factory = IdentifierFactory.getInstance();</span>
+<span class="nc" id="L828">            SQLAlias newAlias = _app.getDataCache().createAlias(factory.createIdentifier());</span>
+<span class="nc" id="L829">            newAlias.assignFrom(source, false);</span>
+
+            try
+            {
+<span class="nc" id="L833">               _dontReactToAliasAdd = true;</span>
+<span class="nc" id="L834">               _app.getDataCache().addAlias(newAlias);</span>
+            }
+            finally
+            {
+<span class="nc" id="L838">               _dontReactToAliasAdd = false;</span>
+            }
+<span class="nc" id="L840">            return new DefaultMutableTreeNode(newAlias);</span>
+         }
+         else
+         {
+<span class="nc" id="L844">            DefaultMutableTreeNode ret = AliasesTreeUtil.createFolderNode((String) nodeToCopy.getUserObject());</span>
+
+<span class="nc bnc" id="L846" title="All 2 branches missed.">            for (int i = 0; i &lt; nodeToCopy.getChildCount(); i++)</span>
+            {
+<span class="nc" id="L848">               ret.add(createCopy((DefaultMutableTreeNode) nodeToCopy.getChildAt(i)));</span>
+            }
+<span class="nc" id="L850">            return ret;</span>
+         }
+      }
+<span class="nc" id="L853">      catch (Exception e)</span>
+      {
+<span class="nc" id="L855">         throw new RuntimeException(e);</span>
+      }
+   }
+
+   public void copyToPasteSelected()
+   {
+<span class="nc" id="L861">      _pathsToPaste = _tree.getSelectionPaths();</span>
+<span class="nc" id="L862">      _pasteMode = PasteMode.COPY;</span>
+<span class="nc" id="L863">   }</span>
+
+   public void collapseAll()
+   {
+<span class="nc bnc" id="L867" title="All 2 branches missed.">      for (int i = 0; i &lt; _tree.getRowCount(); i++)</span>
+      {
+<span class="nc" id="L869">         _tree.collapseRow(i);</span>
+      }
+<span class="nc" id="L871">   }</span>
+
+   public void expandAll()
+   {
+<span class="nc bnc" id="L875" title="All 2 branches missed.">      for (int i = 0; i &lt; _tree.getRowCount(); i++)</span>
+      {
+<span class="nc" id="L877">         _tree.expandRow(i);</span>
+      }
+<span class="nc" id="L879">   }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

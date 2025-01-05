@@ -1,0 +1,315 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SimpleSendBytesService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">43_lilith</a> &gt; <a href="index.source.html" class="el_package">de.huxhorn.lilith.sender</a> &gt; <span class="el_source">SimpleSendBytesService.java</span></div><h1>SimpleSendBytesService.java</h1><pre class="source lang-java linenums">/*
+ * Lilith - a log event viewer.
+ * Copyright (C) 2007-2009 Joern Huxhorn
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ * 
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see &lt;http://www.gnu.org/licenses/&gt;.
+ */
+package de.huxhorn.lilith.sender;
+
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+
+public class SimpleSendBytesService
+	implements SendBytesService
+{
+	/**
+	 * The default reconnection delay (30000 milliseconds or 30 seconds).
+	 */
+	public static final int DEFAULT_RECONNECTION_DELAY = 30000;
+
+	public static final int DEFAULT_QUEUE_SIZE = 1000;
+
+	public static final int DEFAULT_POLL_INTERVALL = 100;
+
+	private final BlockingQueue&lt;byte[]&gt; localEventBytes;
+
+	private WriteByteStrategy writeByteStrategy;
+	private DataOutputStreamFactory dataOutputStreamFactory;
+	//private boolean shutdown;
+	private final int reconnectionDelay;
+	private final int queueSize;
+	private final int pollIntervall;
+	private ConnectionState connectionState;
+	private SendBytesThread sendBytesThread;
+	private boolean debug;
+
+	public SimpleSendBytesService(DataOutputStreamFactory dataOutputStreamFactory, WriteByteStrategy writeByteStrategy)
+	{
+<span class="nc" id="L53">		this(dataOutputStreamFactory, writeByteStrategy, DEFAULT_QUEUE_SIZE, DEFAULT_RECONNECTION_DELAY, DEFAULT_POLL_INTERVALL);</span>
+<span class="nc" id="L54">	}</span>
+
+	public SimpleSendBytesService(DataOutputStreamFactory dataOutputStreamFactory, WriteByteStrategy writeByteStrategy, int queueSize, int reconnectionDelay, int pollIntervall)
+<span class="nc" id="L57">	{</span>
+<span class="nc bnc" id="L58" title="All 2 branches missed.">		if(dataOutputStreamFactory == null)</span>
+		{
+<span class="nc" id="L60">			throw new IllegalArgumentException(&quot;dataOutputStreamFactory must not be null!&quot;);</span>
+		}
+<span class="nc bnc" id="L62" title="All 2 branches missed.">		if(writeByteStrategy == null)</span>
+		{
+<span class="nc" id="L64">			throw new IllegalArgumentException(&quot;writeByteStrategy must not be null!&quot;);</span>
+		}
+<span class="nc bnc" id="L66" title="All 2 branches missed.">		if(queueSize &lt;= 0)</span>
+		{
+<span class="nc" id="L68">			throw new IllegalArgumentException(&quot;queueSize must be greater than zero!&quot;);</span>
+		}
+<span class="nc bnc" id="L70" title="All 2 branches missed.">		if(reconnectionDelay &lt;= 0)</span>
+		{
+<span class="nc" id="L72">			throw new IllegalArgumentException(&quot;reconnectionDelay must be greater than zero!&quot;);</span>
+		}
+<span class="nc bnc" id="L74" title="All 2 branches missed.">		if(pollIntervall &lt;= 0)</span>
+		{
+<span class="nc" id="L76">			throw new IllegalArgumentException(&quot;pollIntervall must be greater than zero!&quot;);</span>
+		}
+<span class="nc" id="L78">		this.connectionState = ConnectionState.Offline;</span>
+<span class="nc" id="L79">		this.localEventBytes = new ArrayBlockingQueue&lt;byte[]&gt;(queueSize, true);</span>
+<span class="nc" id="L80">		this.dataOutputStreamFactory = dataOutputStreamFactory;</span>
+<span class="nc" id="L81">		this.writeByteStrategy = writeByteStrategy;</span>
+<span class="nc" id="L82">		this.queueSize = queueSize;</span>
+<span class="nc" id="L83">		this.reconnectionDelay = reconnectionDelay;</span>
+<span class="nc" id="L84">		this.pollIntervall = pollIntervall;</span>
+<span class="nc" id="L85">	}</span>
+
+	public boolean isDebug()
+	{
+<span class="nc" id="L89">		return debug;</span>
+	}
+
+	public void setDebug(boolean debug)
+	{
+<span class="nc" id="L94">		this.debug = debug;</span>
+<span class="nc" id="L95">	}</span>
+
+	public ConnectionState getConnectionState()
+	{
+<span class="nc" id="L99">		return connectionState;</span>
+	}
+
+	public void sendBytes(byte[] bytes)
+	{
+<span class="nc bnc" id="L104" title="All 4 branches missed.">		if(sendBytesThread != null &amp;&amp; bytes != null) // just to make sure...</span>
+		{
+			try
+			{
+<span class="nc" id="L108">				localEventBytes.put(bytes);</span>
+			}
+<span class="nc" id="L110">			catch(InterruptedException e)</span>
+			{
+				// ignore
+<span class="nc" id="L113">			}</span>
+		}
+<span class="nc" id="L115">	}</span>
+
+	public synchronized void startUp()
+	{
+<span class="nc bnc" id="L119" title="All 2 branches missed.">		if(sendBytesThread == null)</span>
+		{
+<span class="nc" id="L121">			sendBytesThread = new SendBytesThread();</span>
+<span class="nc" id="L122">			sendBytesThread.start();</span>
+		}
+<span class="nc" id="L124">	}</span>
+
+	public synchronized void shutDown()
+	{
+<span class="nc" id="L128">		connectionState = ConnectionState.Canceled;</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">		if(sendBytesThread != null)</span>
+		{
+<span class="nc" id="L131">			sendBytesThread.interrupt();</span>
+<span class="nc" id="L132">			sendBytesThread = null;</span>
+<span class="nc" id="L133">			localEventBytes.clear();</span>
+		}
+<span class="nc" id="L135">	}</span>
+
+	private class SendBytesThread
+		extends Thread
+	{
+		private DataOutputStream dataOutputStream;
+
+		public SendBytesThread()
+<span class="nc" id="L143">		{</span>
+<span class="nc" id="L144">			super(&quot;SendBytes@&quot; + dataOutputStreamFactory);</span>
+<span class="nc" id="L145">			setDaemon(true);</span>
+<span class="nc" id="L146">		}</span>
+
+		public void closeConnection()
+		{
+<span class="nc" id="L150">			synchronized(SimpleSendBytesService.this)</span>
+			{
+<span class="nc bnc" id="L152" title="All 2 branches missed.">				if(dataOutputStream != null)</span>
+				{
+					//IOUtils.closeQuietly(dataOutputStream);
+					// the above call can result in a ClassNotFoundException if a
+					// webapp is already unloaded!!!
+					try
+					{
+<span class="nc" id="L159">						dataOutputStream.close();</span>
+					}
+<span class="nc" id="L161">					catch(IOException e)</span>
+					{
+						// ignore
+<span class="nc" id="L164">					}</span>
+<span class="nc" id="L165">					dataOutputStream = null;</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">					if(connectionState != ConnectionState.Canceled)</span>
+					{
+<span class="nc" id="L168">						connectionState = ConnectionState.Offline;</span>
+					}
+<span class="nc bnc" id="L170" title="All 2 branches missed.">					if(debug)</span>
+					{
+<span class="nc" id="L172">						System.err.println(&quot;Closed dataOutputStream.&quot;);</span>
+					}
+				}
+<span class="nc" id="L175">				SimpleSendBytesService.this.notifyAll();</span>
+<span class="nc" id="L176">			}</span>
+<span class="nc" id="L177">		}</span>
+
+		public void run()
+		{
+<span class="nc" id="L181">			Thread reconnectionThread = new ReconnectionThread();</span>
+<span class="nc" id="L182">			reconnectionThread.start();</span>
+
+<span class="nc" id="L184">			List&lt;byte[]&gt; copy = new ArrayList&lt;byte[]&gt;(queueSize);</span>
+			for(; ;)
+			{
+				try
+				{
+<span class="nc" id="L189">					localEventBytes.drainTo(copy);</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">					if(copy.size() &gt; 0)</span>
+					{
+						DataOutputStream outputStream;
+<span class="nc" id="L193">						synchronized(SimpleSendBytesService.this)</span>
+						{
+<span class="nc" id="L195">							outputStream = dataOutputStream;</span>
+<span class="nc" id="L196">						}</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">						if(outputStream != null)</span>
+						{
+//								System.out.println(this+&quot; - about to write &quot;+copy.size()+&quot; events...&quot;);
+							try
+							{
+<span class="nc bnc" id="L202" title="All 2 branches missed.">								for(byte[] current : copy)</span>
+								{
+<span class="nc" id="L204">									writeByteStrategy.writeBytes(outputStream, current);</span>
+<span class="nc" id="L205">								}</span>
+<span class="nc" id="L206">								outputStream.flush();</span>
+//									System.out.println(this+&quot; wrote &quot;+copy.size()+&quot; events.&quot;);
+							}
+<span class="nc" id="L209">							catch(IOException e)</span>
+							{
+<span class="nc" id="L211">								closeConnection();</span>
+							}
+<span class="nc" id="L213">							catch(Throwable e)</span>
+							{
+<span class="nc" id="L215">								closeConnection();</span>
+<span class="nc" id="L216">							}</span>
+						}
+<span class="nc" id="L218">						copy.clear();</span>
+					}
+//						else
+//						{
+//							System.out.println(this+&quot; ignored &quot;+copy.size()+&quot; events because of missing connection.&quot;);
+//						}
+<span class="nc" id="L224">					Thread.sleep(pollIntervall);</span>
+				}
+<span class="nc" id="L226">				catch(InterruptedException e)</span>
+				{
+<span class="nc" id="L228">					reconnectionThread.interrupt();</span>
+<span class="nc" id="L229">					closeConnection();</span>
+<span class="nc" id="L230">					shutDown();</span>
+<span class="nc" id="L231">					return;</span>
+					//e.printStackTrace();
+<span class="nc" id="L233">				}</span>
+			}
+		}
+
+		private class ReconnectionThread
+			extends Thread
+		{
+			public ReconnectionThread()
+<span class="nc" id="L241">			{</span>
+<span class="nc" id="L242">				super(&quot;Reconnection@&quot; + dataOutputStreamFactory);</span>
+<span class="nc" id="L243">				setDaemon(true);</span>
+<span class="nc" id="L244">			}</span>
+
+			public void run()
+			{
+				for(; ;)
+				{
+<span class="nc" id="L250">					boolean connect = false;</span>
+<span class="nc" id="L251">					synchronized(SimpleSendBytesService.this)</span>
+					{
+<span class="nc bnc" id="L253" title="All 4 branches missed.">						if(dataOutputStream == null &amp;&amp; connectionState != ConnectionState.Canceled)</span>
+						{
+<span class="nc" id="L255">							connect = true;</span>
+<span class="nc" id="L256">							connectionState = ConnectionState.Connecting;</span>
+						}
+<span class="nc" id="L258">					}</span>
+<span class="nc" id="L259">					DataOutputStream newStream = null;</span>
+<span class="nc bnc" id="L260" title="All 2 branches missed.">					if(connect)</span>
+					{
+						try
+						{
+<span class="nc" id="L264">							newStream = dataOutputStreamFactory.createDataOutputStream();</span>
+						}
+<span class="nc" id="L266">						catch(IOException e)</span>
+						{
+							// ignore
+<span class="nc" id="L269">						}</span>
+					}
+
+<span class="nc" id="L272">					synchronized(SimpleSendBytesService.this)</span>
+					{
+<span class="nc bnc" id="L274" title="All 2 branches missed.">						if(connect)</span>
+						{
+<span class="nc bnc" id="L276" title="All 2 branches missed.">							if(newStream != null)</span>
+							{
+<span class="nc bnc" id="L278" title="All 2 branches missed.">								if(connectionState == ConnectionState.Canceled)</span>
+								{
+									// cleanup
+									try
+									{
+<span class="nc" id="L283">										newStream.close();</span>
+									}
+<span class="nc" id="L285">									catch(IOException e)</span>
+									{
+										// ignore
+<span class="nc" id="L288">									}</span>
+								}
+								else
+								{
+<span class="nc" id="L292">									dataOutputStream = newStream;</span>
+<span class="nc" id="L293">									connectionState = ConnectionState.Connected;</span>
+								}
+							}
+<span class="nc bnc" id="L296" title="All 2 branches missed.">							else if(connectionState != ConnectionState.Canceled)</span>
+							{
+<span class="nc" id="L298">								connectionState = ConnectionState.Offline;</span>
+							}
+						}
+						try
+						{
+<span class="nc" id="L303">							SimpleSendBytesService.this.wait(reconnectionDelay);</span>
+						}
+<span class="nc" id="L305">						catch(InterruptedException e)</span>
+						{
+<span class="nc" id="L307">							return;</span>
+<span class="nc" id="L308">						}</span>
+<span class="nc" id="L309">					}</span>
+<span class="nc" id="L310">				}</span>
+			}
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

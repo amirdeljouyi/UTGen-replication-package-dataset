@@ -1,0 +1,447 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FileSender.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.technical.file</a> &gt; <span class="el_source">FileSender.java</span></div><h1>FileSender.java</h1><pre class="source lang-java linenums">package net.sf.xbus.technical.file;
+
+import java.io.BufferedOutputStream;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.util.List;
+import java.util.Vector;
+
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.TAManager;
+import net.sf.xbus.base.core.TAResource;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.xbussystem.XBUSSystem;
+import net.sf.xbus.technical.Sender;
+import net.sf.xbus.technical.TextSender;
+
+/**
+ * &lt;code&gt;FileSender&lt;/code&gt; manages writing a text file on a mounted file
+ * system.
+ * &lt;p&gt;
+ * &lt;b&gt;Configuration: &lt;/b&gt;
+ * &lt;p&gt;
+ * &lt;table border&gt;
+ * &lt;tr&gt;
+ * &lt;th&gt;Chapter&lt;/th&gt;
+ * &lt;th&gt;Section&lt;/th&gt;
+ * &lt;th&gt;Key&lt;/th&gt;
+ * &lt;th&gt;Content&lt;/th&gt;
+ * &lt;/tr&gt;
+ * &lt;tr&gt;
+ * &lt;td&gt;System&lt;/td&gt;
+ * &lt;td&gt;Interface&lt;/td&gt;
+ * &lt;td&gt;Filename&lt;/td&gt;
+ * &lt;td&gt;File path name on the mounted-system&lt;/td&gt;
+ * &lt;/tr&gt;
+ * &lt;tr&gt;
+ * &lt;td&gt;System&lt;/td&gt;
+ * &lt;td&gt;Interface&lt;/td&gt;
+ * &lt;td&gt;ConflictResolution&lt;/td&gt;
+ * &lt;td&gt;Three actions must be possible when a file already exists &lt;br&gt;
+ * &lt;b&gt;&lt;i&gt;append, overwrite &lt;i&gt;&lt;b&gt;or &lt;b&gt;&lt;i&gt;error &lt;/i&gt; &lt;/b&gt;&lt;/td&gt;
+ * &lt;/tr&gt;
+ * &lt;tr&gt;
+ * &lt;td&gt;System&lt;/td&gt;
+ * &lt;td&gt;Interface&lt;/td&gt;
+ * &lt;td&gt;Encoding&lt;/td&gt;
+ * &lt;td&gt;Specified character encoding of the interface &lt;i&gt;(Optional) &lt;/i&gt;&lt;/td&gt;
+ * &lt;/tr&gt;
+ * &lt;/table border&gt;
+ */
+public class FileSender extends FileBase
+		implements
+			Sender,
+			TAResource,
+			TextSender
+{
+<span class="nc" id="L60">	protected FileSenderConfiguration mConfiguration = null;</span>
+
+	/**
+	 * Path name of the temporary file to be write Array for broadcasting
+	 */
+<span class="nc" id="L65">	protected String[] mTempFilename = null;</span>
+
+	/**
+	 * Path name for the backup copy Array for broadcasting
+	 */
+<span class="nc" id="L70">	protected String[] mBackupFilename = null;</span>
+
+	/**
+	 * Indicates wether execute has been called, used in commit and rollback
+	 */
+<span class="nc" id="L75">	protected boolean senderExecuted = false;</span>
+
+	/**
+	 * Constructs a FileSender object giving all necessary data from the
+	 * standard configuration, checking file permissions and registering current
+	 * resource by the {@link net.sf.xbus.base.core.TAManager}.
+	 * 
+	 * @param system destination of the message
+	 * @exception XException if an error occurs
+	 */
+	public FileSender(XBUSSystem system) throws XException
+<span class="nc" id="L86">	{</span>
+<span class="nc" id="L87">		readConfiguration(system);</span>
+<span class="nc" id="L88">		TAManager taManager = TAManager.getInstance();</span>
+<span class="nc" id="L89">		taManager.registerResource(this);</span>
+<span class="nc" id="L90">	}</span>
+
+	/**
+	 * Reads follow data for the given XBUSSystem object from the standard
+	 * configuration and stores it in the class variables.
+	 * &lt;p&gt;
+	 * &lt;dl&gt;
+	 * &lt;dd&gt;&lt;table&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;&lt;code&gt;Filename&lt;/code&gt;&lt;/td&gt;
+	 * &lt;td&gt;&lt;/td&gt;
+	 * &lt;td&gt;path name of the file to be write&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;&lt;code&gt;ConflictResolution&lt;/code&gt;&lt;/td&gt;
+	 * &lt;td&gt;&lt;/td&gt;
+	 * &lt;td&gt;resolved action when the file already exists &lt;br&gt;
+	 * &lt;i&gt;(append, overwrite, error) &lt;/i&gt;&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;&lt;code&gt;Encoding&lt;/code&gt;&lt;/td&gt;
+	 * &lt;td&gt;&lt;/td&gt;
+	 * &lt;td&gt;specified character encoding of the interface&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;/table&gt;
+	 * &lt;/dl&gt;
+	 * 
+	 * @param xbusSystem XBUSSystem object which consists of two informations:
+	 *            &lt;br&gt;
+	 *            &amp;nbsp;&amp;nbsp;-the name of the system is used to identify the
+	 *            system &lt;br&gt;
+	 *            &amp;nbsp;&amp;nbsp;-additionally an adress might be available.
+	 * @exception XException if any error occurs
+	 */
+	private void readConfiguration(XBUSSystem xbusSystem) throws XException
+	{
+		try
+		{
+<span class="nc" id="L128">			mConfiguration = new FileSenderConfiguration(xbusSystem);</span>
+			// The original file names.
+<span class="nc" id="L130">			String[] fileNames = mConfiguration.getFileNames();</span>
+			// The temporay file names used during file creation.
+<span class="nc" id="L132">			mTempFilename = new String[fileNames.length];</span>
+			// The backup file names.
+<span class="nc" id="L134">			mBackupFilename = new String[fileNames.length];</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">			for (int fileNo = 0; fileNo &lt; fileNames.length; fileNo++)</span>
+			{
+<span class="nc" id="L137">				mTempFilename[fileNo] = fileNames[fileNo]</span>
+						+ Constants.TEMP_SUFFIX;
+<span class="nc" id="L139">				mBackupFilename[fileNo] = fileNames[fileNo]</span>
+<span class="nc" id="L140">						+ Constants.getDateAsString();</span>
+			} // for (int fileNo=0; fileNo&lt;fileNames.length; fileNo++)
+		}
+<span class="nc" id="L143">		catch (Exception ex)</span>
+		{
+<span class="nc" id="L145">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_FILE, &quot;0&quot;, ex);
+<span class="nc" id="L148">		}</span>
+<span class="nc" id="L149">	}</span>
+
+	/**
+	 * Implemented method &lt;code&gt;execute&lt;/code&gt; from TextSender sends the given
+	 * string &lt;i&gt;callData &lt;/i&gt; to the neighbor-system. Three actions must be
+	 * taking into account when a file already exists:
+	 * &lt;p&gt;
+	 * &lt;dl&gt;
+	 * &lt;dd&gt;&lt;table&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;&lt;code&gt;Append&lt;/code&gt;&lt;/td&gt;
+	 * &lt;td&gt;&lt;/td&gt;
+	 * &lt;td&gt;append new data to the existing file&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;&lt;code&gt;Overwrite&lt;/code&gt;&lt;/td&gt;
+	 * &lt;td&gt;&lt;/td&gt;
+	 * &lt;td&gt;overwrite existing file with the new data&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;&lt;code&gt;Error&lt;/code&gt;&lt;/td&gt;
+	 * &lt;td&gt;&lt;/td&gt;
+	 * &lt;td&gt;throw XException&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;/table&gt;
+	 * &lt;/dl&gt;
+	 * 
+	 * @param function Name of the interface
+	 * @param callData String to be written
+	 * @exception XException if any error occurs
+	 */
+	public String execute(String function, String callData) throws XException
+	{
+<span class="nc" id="L182">		senderExecuted = true;</span>
+
+<span class="nc bnc" id="L184" title="All 2 branches missed.">		if (callData == null)</span>
+<span class="nc" id="L185">			callData = &quot;&quot;;</span>
+
+<span class="nc" id="L187">		BufferedWriter buffOut = null;</span>
+
+		// The file name to write to finnally.
+		// Only several ones for broadcasting.
+		// Otherwise only the first array element is filled.
+<span class="nc" id="L192">		String[] fileNames = mConfiguration.getFileNames();</span>
+
+<span class="nc bnc" id="L194" title="All 2 branches missed.">		for (int fileNo = 0; fileNo &lt; fileNames.length; fileNo++)</span>
+		{ // Loop over destination files.
+<span class="nc" id="L196">			checkFilePermissions(fileNames[fileNo]);</span>
+
+<span class="nc" id="L198">			buffOut = prepareWriter(fileNames[fileNo], fileNo);</span>
+
+			// write callData into the file.
+			// Characters written to it are translated into bytes
+			// according to a specified character encoding.
+			try
+			{
+<span class="nc" id="L205">				buffOut.write(callData);</span>
+				// Writing an end of file sign on Unix systems
+<span class="nc bnc" id="L207" title="All 2 branches missed.">				if (Constants.LINE_SEPERATOR.equals(&quot;\n&quot;)</span>
+<span class="nc bnc" id="L208" title="All 4 branches missed.">						&amp;&amp; (callData.length() == 0 || callData.charAt(callData</span>
+<span class="nc" id="L209">								.length() - 1) != '\n'))</span>
+<span class="nc" id="L210">					buffOut.newLine();</span>
+<span class="nc" id="L211">				buffOut.close();</span>
+			}
+<span class="nc" id="L213">			catch (IOException e)</span>
+			{
+<span class="nc" id="L215">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_FILE, &quot;0&quot;, e);
+<span class="nc" id="L218">			}</span>
+		}
+<span class="nc" id="L220">		return null;</span>
+	}
+
+	protected BufferedWriter prepareWriter(String fileName, int fileNo)
+			throws XException
+	{
+<span class="nc" id="L226">		prepareWriteFile(fileName, fileNo);</span>
+		BufferedWriter buffOut;
+		try
+		{
+<span class="nc" id="L230">			buffOut = new BufferedWriter(new OutputStreamWriter(</span>
+					new FileOutputStream(mTempFilename[fileNo], true),
+<span class="nc" id="L232">					mConfiguration.getEncoding()));</span>
+		}
+<span class="nc" id="L234">		catch (Exception e)</span>
+		{
+<span class="nc" id="L236">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_FILE, &quot;0&quot;, e);
+<span class="nc" id="L239">		}</span>
+<span class="nc" id="L240">		return buffOut;</span>
+	}
+
+	protected void prepareWriteFile(String fileName, int fileNo)
+			throws XException
+	{
+<span class="nc bnc" id="L246" title="All 2 branches missed.">		if (new File(mTempFilename[fileNo]).exists())</span>
+		{
+<span class="nc" id="L248">			deleteFile(mTempFilename[fileNo]);</span>
+		}
+
+<span class="nc bnc" id="L251" title="All 2 branches missed.">		if (new File(fileName).exists())</span>
+		{
+<span class="nc" id="L253">			renameFile(fileName, mBackupFilename[fileNo]);</span>
+
+			// copy existing file if it exist and append is allowed
+<span class="nc bnc" id="L256" title="All 2 branches missed.">			if (mConfiguration.getResolution().equals(Constants.WRITE_APPEND))</span>
+			{
+<span class="nc" id="L258">				copyFile(mBackupFilename[fileNo], mTempFilename[fileNo]);</span>
+<span class="nc bnc" id="L259" title="All 2 branches missed.">				if (getFileLength(mTempFilename[fileNo]) &gt; 0</span>
+<span class="nc bnc" id="L260" title="All 2 branches missed.">						&amp;&amp; getLastByteOfFile(mTempFilename[fileNo]) != 10)</span>
+				{
+					try
+					{
+<span class="nc" id="L264">						BufferedOutputStream buffOut = new BufferedOutputStream(</span>
+								new FileOutputStream(mTempFilename[fileNo],
+										true));
+<span class="nc" id="L267">						buffOut.write(Constants.LINE_SEPERATOR</span>
+<span class="nc" id="L268">								.getBytes(mConfiguration.getEncoding()));</span>
+<span class="nc" id="L269">						buffOut.close();</span>
+					}
+<span class="nc" id="L271">					catch (Exception e)</span>
+					{
+<span class="nc" id="L273">						throw new XException(Constants.LOCATION_EXTERN,</span>
+								Constants.LAYER_TECHNICAL,
+								Constants.PACKAGE_TECHNICAL_FILE, &quot;0&quot;, e);
+<span class="nc" id="L276">					}</span>
+				}
+			}
+		}
+		else
+		{
+<span class="nc" id="L282">			mBackupFilename[fileNo] = null;</span>
+		}
+<span class="nc" id="L284">	}</span>
+
+	/**
+	 * On the basis of the ConflictResolution (resolved action when the file
+	 * already exists) having read from the standard configuration, checks this
+	 * method a file on an opportunity to meet the requirements
+	 * &lt;p&gt;
+	 * &lt;table border&gt;
+	 * &lt;tr&gt;
+	 * &lt;th&gt;Resolution&lt;/th&gt;
+	 * &lt;th&gt;Requirements&lt;/th&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;Error&lt;/td&gt;
+	 * &lt;td&gt;the physical file may not exist&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;Overwrite, Append&lt;/td&gt;
+	 * &lt;td&gt;1. the file is a normal file (not a directory)&lt;br&gt;
+	 * 2. the application can modify this file&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;/table border&gt;
+	 * 
+	 * @param fileName the file path
+	 * @return true if the file meets the requirements of ConflictResolution,
+	 *         otherwise false
+	 * @exception XException if any error occurs
+	 */
+	private void checkFilePermissions(String fileName) throws XException
+	{
+<span class="nc" id="L314">		File srcFile = new File(fileName);</span>
+		// constructing the file object doesn't create a file on disk!
+
+<span class="nc bnc" id="L317" title="All 2 branches missed.">		if (srcFile.exists())</span>
+		{
+			// 1.check if resolution = error
+<span class="nc bnc" id="L320" title="All 2 branches missed.">			if (mConfiguration.getResolution().equals(Constants.WRITE_ERROR))</span>
+			{
+<span class="nc" id="L322">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_FILE, &quot;29&quot;);
+			}
+
+			// 2. check if it is one file
+<span class="nc bnc" id="L328" title="All 2 branches missed.">			if (!srcFile.isFile())</span>
+			{
+<span class="nc" id="L330">				List params = new Vector();</span>
+<span class="nc" id="L331">				params.add(mConfiguration.getFileNames());</span>
+<span class="nc" id="L332">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_FILE, &quot;30&quot;, params);
+			}
+
+			// 3. check write permissions
+<span class="nc bnc" id="L338" title="All 2 branches missed.">			if (!srcFile.canWrite())</span>
+			{
+<span class="nc" id="L340">				List params = new Vector();</span>
+<span class="nc" id="L341">				params.add(fileName);</span>
+<span class="nc" id="L342">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_FILE, &quot;31&quot;, params);
+			}
+		}
+<span class="nc" id="L347">	}</span>
+
+	/**
+	 * Implemented method &lt;code&gt;commit&lt;/code&gt; from TAResource interface. The
+	 * purpose of commit actions is to remove any backup information that had
+	 * been created during process (tansaction).
+	 * &lt;p&gt;
+	 * Undepending on the ConflictResolution, the following acts commit all
+	 * actions.
+	 * &lt;ol&gt;
+	 * &lt;li&gt;remove resorce from the TAManager
+	 * &lt;li&gt;rename temporary file to the current file
+	 * &lt;li&gt;delete backup copy if exist
+	 * &lt;/ol&gt;
+	 * 
+	 * @see net.sf.xbus.base.core.TAResource#commit()
+	 * @exception XException if any error occurs
+	 */
+	public void commit() throws XException
+	{
+<span class="nc" id="L367">		TAManager.getInstance().removeResource(this);</span>
+
+<span class="nc bnc" id="L369" title="All 2 branches missed.">		if (senderExecuted)</span>
+		{
+			// The destination files.
+			// Up to now the transferred data is still in the tempoirary files.
+<span class="nc" id="L373">			String[] fileNames = mConfiguration.getFileNames();</span>
+<span class="nc bnc" id="L374" title="All 2 branches missed.">			for (int fileNo = 0; fileNo &lt; fileNames.length; fileNo++)</span>
+			{
+				// rename temp file to original
+<span class="nc" id="L377">				renameFile(mTempFilename[fileNo], fileNames[fileNo]);</span>
+
+				// delete backup file if it exists
+<span class="nc bnc" id="L380" title="All 2 branches missed.">				if ((mBackupFilename[fileNo] != null)</span>
+<span class="nc bnc" id="L381" title="All 2 branches missed.">						&amp;&amp; (!mConfiguration.getResolution().equals(</span>
+								Constants.WRITE_RENAME)))
+				{
+<span class="nc" id="L384">					deleteFile(mBackupFilename[fileNo]);</span>
+				} // if ((mBackupFilename[fileNo] != null) &amp;&amp;
+					// (!mConfiguration.getResolution().equals(Constants.WRITE_RENAME)))
+			} // for (int fileNo=0; fileNo&lt;fileNames.length;fileNo++)
+		} // if (senderExecuted)
+<span class="nc" id="L389">	} // commit()</span>
+
+	/**
+	 * Implemented method &lt;code&gt;rollback&lt;/code&gt; from TAResource ignores all
+	 * changes have made since the beginning of the process (transaction).
+	 * &lt;p&gt;
+	 * Undepending on the ConflictResolution, the following acts roll back all
+	 * modifications that have been made in the file system associated with this
+	 * &lt;code&gt;FileSender&lt;/code&gt;:
+	 * &lt;ol&gt;
+	 * &lt;li&gt;remove resorce from the TAManager
+	 * &lt;li&gt;delete temp file
+	 * &lt;li&gt;if backup copy exist, then rename it to the original file
+	 * &lt;/ol&gt;
+	 * 
+	 * @see net.sf.xbus.base.core.TAResource#rollback()
+	 * @exception XException if any error occurs
+	 */
+	public void rollback() throws XException
+	{
+<span class="nc" id="L409">		TAManager.getInstance().removeResource(this);</span>
+
+<span class="nc bnc" id="L411" title="All 2 branches missed.">		if (senderExecuted)</span>
+		{
+			// The destination files.
+			// The transferred data is still in the tempoirary files.
+<span class="nc" id="L415">			String[] fileNames = mConfiguration.getFileNames();</span>
+<span class="nc bnc" id="L416" title="All 2 branches missed.">			for (int fileNo = 0; fileNo &lt; fileNames.length; fileNo++)</span>
+			{
+<span class="nc" id="L418">				deleteFile(mTempFilename[fileNo]);</span>
+<span class="nc bnc" id="L419" title="All 2 branches missed.">				if (mBackupFilename[fileNo] != null</span>
+<span class="nc bnc" id="L420" title="All 2 branches missed.">						&amp;&amp; new File(mBackupFilename[fileNo]).exists())</span>
+				{
+<span class="nc" id="L422">					renameFile(mBackupFilename[fileNo], fileNames[fileNo]);</span>
+				} // if (mBackupFilename[fileNo] != null &amp;&amp; new
+					// File(mBackupFilename[fileNo]).exists())
+			} // for (int fileNo=0; fileNo&lt;fileNames.length;fileNo++)
+		} // if (senderExecuted)
+<span class="nc" id="L427">	} // rollback()</span>
+
+	/**
+	 * Is not implemented for file system
+	 */
+	public void open()
+<span class="nc" id="L433">	{} // open()</span>
+
+	/**
+	 * Is not implemented for file system
+	 */
+	public void close()
+<span class="nc" id="L439">	{} // close()</span>
+
+	public String getType()
+	{
+<span class="nc" id="L443">		return Constants.TYPE_TEXT;</span>
+	} // getType()
+
+} // FileSender
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

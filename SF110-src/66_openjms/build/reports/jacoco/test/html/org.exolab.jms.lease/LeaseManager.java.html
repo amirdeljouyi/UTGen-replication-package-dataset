@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LeaseManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.lease</a> &gt; <span class="el_source">LeaseManager.java</span></div><h1>LeaseManager.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2000-2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: LeaseManager.java,v 1.4 2005/12/26 04:45:30 tanderson Exp $
+ */
+package org.exolab.jms.lease;
+
+
+import org.exolab.jms.service.BasicService;
+import org.exolab.jms.service.ServiceException;
+import org.exolab.jms.common.util.OrderedQueue;
+
+
+/**
+ * The LeaseManager is responsible for creating and managing the lease objects.
+ * The Leasemanager is a singleton. When a BaseLease object is created it is
+ * added to the queue according to the duration (i.e. leases with shorter
+ * durations are placed at the top of the queue.
+ * &lt;p&gt;
+ * When the lease expires the LeeaseManager calls the leasee's associated
+ * listener(s).
+ *
+ * @version     $Revision: 1.4 $ $Date: 2005/12/26 04:45:30 $
+ * @author      &lt;a href=&quot;mailto:jima@comware.com.au&quot;&gt;Jim Alateras&lt;/a&gt;
+ */
+public class LeaseManager extends BasicService {
+
+    /**
+     * An ordered list of leases.
+     */
+<span class="nc" id="L70">    private OrderedQueue _queue = null;</span>
+
+    /**
+     * Helper for waiting for leases to expire.
+     */
+<span class="nc" id="L75">    private final Object _waiter = new Object();</span>
+
+
+    /**
+     * Create a new sorted tree set using the lease comparator as the
+     * sorting functor.
+     */
+    public LeaseManager() {
+<span class="nc" id="L83">        super(&quot;LeaseManager&quot;);</span>
+<span class="nc" id="L84">        _queue = new OrderedQueue(new LeaseComparator());</span>
+<span class="nc" id="L85">    }</span>
+
+    /**
+     * Add a lease.
+     *
+     * @param lease the lease to add
+     */
+    public void addLease(BaseLease lease) {
+<span class="nc" id="L93">        synchronized (_queue) {</span>
+<span class="nc" id="L94">            _queue.add(lease);</span>
+<span class="nc bnc" id="L95" title="All 2 branches missed.">            if (_queue.firstElement() == lease) {</span>
+                // inserted before the first element, so reset scan
+<span class="nc" id="L97">                synchronized (_waiter) {</span>
+<span class="nc" id="L98">                    _waiter.notify();</span>
+<span class="nc" id="L99">                }</span>
+            }
+<span class="nc" id="L101">        }</span>
+<span class="nc" id="L102">    }</span>
+
+    /**
+     * Remove a lease.
+     *
+     * @param       lease           lease to remove
+     * @return      boolean         true if successful; false otherwise
+     */
+    public boolean removeLease(BaseLease lease) {
+<span class="nc" id="L111">        boolean result = false;</span>
+
+<span class="nc" id="L113">        synchronized (_queue) {</span>
+<span class="nc" id="L114">            result = _queue.remove(lease);</span>
+<span class="nc" id="L115">        }</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">        if (result) {</span>
+<span class="nc" id="L117">            synchronized (_waiter) {</span>
+<span class="nc" id="L118">                _waiter.notify();</span>
+<span class="nc" id="L119">            }</span>
+        }
+
+<span class="nc" id="L122">        return result;</span>
+    }
+
+    /**
+     * Renew the lease on the specified object
+     *
+     * @param lease the lease to renew
+     * @param duration the new duration of the lease in ms
+     */
+    public BaseLease renewLease(BaseLease lease, long duration) {
+<span class="nc" id="L132">        BaseLease newlease = null;</span>
+
+<span class="nc bnc" id="L134" title="All 4 branches missed.">        if ((lease != null) &amp;&amp; (duration &gt; 0)) {</span>
+<span class="nc" id="L135">            synchronized (_queue) {</span>
+                // check that the lease hasn't expired yet.
+<span class="nc bnc" id="L137" title="All 2 branches missed.">                if (_queue.remove(lease)) {</span>
+<span class="nc" id="L138">                    lease.setDuration(duration);</span>
+<span class="nc" id="L139">                    _queue.add(lease);</span>
+<span class="nc" id="L140">                    newlease = lease;</span>
+<span class="nc" id="L141">                    synchronized (_waiter) {</span>
+<span class="nc" id="L142">                        _waiter.notify();</span>
+<span class="nc" id="L143">                    }</span>
+                }
+<span class="nc" id="L145">            }</span>
+        }
+
+<span class="nc" id="L148">        return newlease;</span>
+    }
+
+    /**
+     * Remove all the leases from the queue. Do not expire any of them
+     */
+    public void removeAll() {
+<span class="nc" id="L155">        synchronized (_queue) {</span>
+<span class="nc" id="L156">            _queue.clear();</span>
+<span class="nc" id="L157">        }</span>
+<span class="nc" id="L158">    }</span>
+
+    /**
+     * The run method will search for expired leases, remove them from the
+     * list and notify listeners
+     */
+    public void run() {
+<span class="nc bnc" id="L165" title="All 2 branches missed.">        while (!Thread.interrupted()) {</span>
+<span class="nc" id="L166">            expire();</span>
+
+            // wait until a lease is available, or the service is terminated
+<span class="nc" id="L169">            synchronized (_waiter) {</span>
+                try {
+<span class="nc" id="L171">                    _waiter.wait();</span>
+<span class="nc" id="L172">                } catch (InterruptedException terminate) {</span>
+<span class="nc" id="L173">                    break;</span>
+<span class="nc" id="L174">                }</span>
+<span class="nc" id="L175">            }</span>
+        }
+<span class="nc" id="L177">    }</span>
+
+    /**
+     * Stop the service.
+     *
+     * @throws ServiceException if the service fails to stop
+     */
+    public void doStop() throws ServiceException {
+<span class="nc" id="L185">        synchronized (_waiter) {</span>
+<span class="nc" id="L186">            _waiter.notifyAll();</span>
+<span class="nc" id="L187">        }</span>
+<span class="nc" id="L188">    }</span>
+
+    /**
+     * Expires active leases
+     */
+    protected void expire() {
+<span class="nc bnc" id="L194" title="All 2 branches missed.">        while (_queue.size() &gt; 0) {</span>
+<span class="nc" id="L195">            BaseLease lease = null;</span>
+<span class="nc" id="L196">            boolean expired = false;</span>
+<span class="nc" id="L197">            synchronized (_queue) {</span>
+<span class="nc" id="L198">                lease = (BaseLease) _queue.firstElement();</span>
+<span class="nc bnc" id="L199" title="All 2 branches missed.">                if (lease == null) {</span>
+<span class="nc" id="L200">                    continue;</span>
+                }
+                
+<span class="nc bnc" id="L203" title="All 2 branches missed.">                if (lease.getExpiryTime() &lt;= System.currentTimeMillis()) {</span>
+                    // remove from the list and notify listeners
+<span class="nc" id="L205">                    _queue.removeFirstElement();</span>
+<span class="nc" id="L206">                    expired = true;</span>
+                }
+<span class="nc" id="L208">            }</span>
+
+<span class="nc bnc" id="L210" title="All 2 branches missed.">            if (expired) {</span>
+<span class="nc" id="L211">                lease.notifyLeaseExpired();</span>
+            } else {
+                // wait until the first element in the list is
+                // ready to expire
+<span class="nc" id="L215">                long time = lease.getExpiryTime() - </span>
+<span class="nc" id="L216">                    System.currentTimeMillis();</span>
+                
+<span class="nc bnc" id="L218" title="All 2 branches missed.">                if (time &gt; 0) {</span>
+                    try {
+<span class="nc" id="L220">                        synchronized (_waiter) {</span>
+<span class="nc" id="L221">                            _waiter.wait(time);</span>
+<span class="nc" id="L222">                        }</span>
+<span class="nc" id="L223">                    } catch (InterruptedException ignore) {</span>
+<span class="nc" id="L224">                    }</span>
+                }
+            }
+<span class="nc" id="L227">        }</span>
+<span class="nc" id="L228">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,783 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SQLPanelAPI.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.session</a> &gt; <span class="el_source">SQLPanelAPI.java</span></div><h1>SQLPanelAPI.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.session;
+/*
+ * Copyright (C) 2002-2004 Colin Bell and Johan Compagner
+ * colbell@users.sourceforge.net
+ * jcompagner@j-com.nl
+ *
+ * Modifications Copyright (C) 2003-2004 Jason Height
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+
+import net.sourceforge.squirrel_sql.client.IApplication;
+import net.sourceforge.squirrel_sql.client.action.ActionCollection;
+import net.sourceforge.squirrel_sql.client.gui.desktopcontainer.SessionTabWidget;
+import net.sourceforge.squirrel_sql.client.gui.session.ToolsPopupController;
+import net.sourceforge.squirrel_sql.client.preferences.PreferenceType;
+import net.sourceforge.squirrel_sql.client.preferences.SquirrelPreferences;
+import net.sourceforge.squirrel_sql.client.resources.SquirrelResources;
+import net.sourceforge.squirrel_sql.client.session.action.*;
+import net.sourceforge.squirrel_sql.client.session.event.ISQLExecutionListener;
+import net.sourceforge.squirrel_sql.client.session.event.ISQLPanelListener;
+import net.sourceforge.squirrel_sql.client.session.event.ISQLResultExecuterTabListener;
+import net.sourceforge.squirrel_sql.client.session.mainpanel.ISQLResultExecuter;
+import net.sourceforge.squirrel_sql.client.session.mainpanel.SQLHistoryItem;
+import net.sourceforge.squirrel_sql.client.session.mainpanel.SQLPanel;
+import net.sourceforge.squirrel_sql.client.session.mainpanel.SqlPanelListener;
+import net.sourceforge.squirrel_sql.client.util.PrintUtilities;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+
+import javax.swing.*;
+import javax.swing.event.UndoableEditEvent;
+import javax.swing.event.UndoableEditListener;
+import java.io.File;
+import java.util.ArrayList;
+
+/**
+ * This class is the API through which plugins can work with the SQL Panel.
+ *
+ * @author &lt;A HREF=&quot;mailto:colbell@users.sourceforge.net&quot;&gt;Colin Bell&lt;/A&gt;
+ */
+public class SQLPanelAPI implements ISQLPanelAPI
+{
+	/** Internationalized strings for this class. */
+<span class="nc" id="L57">    private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L58">        StringManagerFactory.getStringManager(SQLPanelAPI.class);</span>
+
+	/** The SQL Panel. */
+	private SQLPanel _panel;
+
+   private ToolsPopupController _toolsPopupController;
+<span class="nc" id="L64">   private FileManager _fileManager = new FileManager(this);</span>
+
+<span class="nc" id="L66">   private boolean fileOpened = false;</span>
+<span class="nc" id="L67">   private boolean fileSaved = false;</span>
+<span class="nc" id="L68">    private boolean unsavedEdits = false;</span>
+   
+   /**
+	 * Ctor specifying the panel.
+	 *
+	 * @param	panel	&lt;TT&gt;SQLPanel&lt;/TT&gt; is the SQL Panel.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if &lt;T&gt;null&lt;/TT&gt; &lt;TT&gt;SQLPanel&lt;/TT&gt; passed.
+	 */
+	public SQLPanelAPI(SQLPanel panel)
+	{
+<span class="nc" id="L80">		super();</span>
+<span class="nc bnc" id="L81" title="All 2 branches missed.">		if (panel == null)</span>
+		{
+<span class="nc" id="L83">			throw new IllegalArgumentException(&quot;SQLPanel == null&quot;);</span>
+		}
+<span class="nc" id="L85">		_panel = panel;</span>
+<span class="nc" id="L86">        _panel.getSQLEntryPanel().addUndoableEditListener(new SQLEntryUndoListener());</span>
+<span class="nc" id="L87">      initToolsPopUp();</span>
+
+<span class="nc" id="L89">      createStandardEntryAreaMenuItems();</span>
+<span class="nc" id="L90">	}</span>
+
+   private void initToolsPopUp()
+   {
+<span class="nc" id="L94">      _toolsPopupController = new ToolsPopupController(getSession(), _panel.getSQLEntryPanel());</span>
+
+
+<span class="nc" id="L97">      ActionCollection ac = getSession().getApplication().getActionCollection();</span>
+
+<span class="nc" id="L99">      _toolsPopupController.addAction(&quot;undo&quot;, _panel.getUndoAction());</span>
+<span class="nc" id="L100">      _toolsPopupController.addAction(&quot;redo&quot;, _panel.getRedoAction());</span>
+<span class="nc" id="L101">      _toolsPopupController.addAction(&quot;runsql&quot;, ac.get(ExecuteSqlAction.class));</span>
+<span class="nc" id="L102">      _toolsPopupController.addAction(&quot;fileopen&quot;, ac.get(FileOpenAction.class));</span>
+<span class="nc" id="L103">      _toolsPopupController.addAction(&quot;filesave&quot;, ac.get(FileSaveAction.class));</span>
+<span class="nc" id="L104">      _toolsPopupController.addAction(&quot;filesaveas&quot;, ac.get(FileSaveAsAction.class));</span>
+<span class="nc" id="L105">      _toolsPopupController.addAction(&quot;filenew&quot;, ac.get(FileNewAction.class));</span>
+<span class="nc" id="L106">      _toolsPopupController.addAction(&quot;fileappend&quot;, ac.get(FileAppendAction.class));</span>
+<span class="nc" id="L107">      _toolsPopupController.addAction(&quot;fileprint&quot;, ac.get(FilePrintAction.class));</span>
+<span class="nc" id="L108">      _toolsPopupController.addAction(&quot;fileclose&quot;, ac.get(FileCloseAction.class));</span>
+
+<span class="nc" id="L110">      _toolsPopupController.addAction(&quot;tabnext&quot;, ac.get(GotoNextResultsTabAction.class));</span>
+<span class="nc" id="L111">      _toolsPopupController.addAction(&quot;tabprevious&quot;, ac.get(GotoPreviousResultsTabAction.class));</span>
+<span class="nc" id="L112">      _toolsPopupController.addAction(&quot;tabcloseall&quot;, ac.get(CloseAllSQLResultTabsAction.class));</span>
+<span class="nc" id="L113">      _toolsPopupController.addAction(&quot;tabcloseallbutcur&quot;, ac.get(CloseAllSQLResultTabsButCurrentAction.class));</span>
+<span class="nc" id="L114">      _toolsPopupController.addAction(&quot;tabclosecur&quot;, ac.get(CloseCurrentSQLResultTabAction.class));</span>
+<span class="nc" id="L115">      _toolsPopupController.addAction(&quot;tabsticky&quot;, ac.get(ToggleCurrentSQLResultTabStickyAction.class));</span>
+
+<span class="nc" id="L117">      _toolsPopupController.addAction(&quot;sqlprevious&quot;, ac.get(PreviousSqlAction.class));</span>
+<span class="nc" id="L118">      _toolsPopupController.addAction(&quot;sqlnext&quot;, ac.get(NextSqlAction.class));</span>
+<span class="nc" id="L119">      _toolsPopupController.addAction(&quot;sqlselect&quot;, ac.get(SelectSqlAction.class));</span>
+
+<span class="nc" id="L121">      _toolsPopupController.addAction(&quot;format&quot;, ac.get(FormatSQLAction.class));</span>
+
+<span class="nc" id="L123">      _toolsPopupController.addAction(&quot;sqlhist&quot;, ac.get(OpenSqlHistoryAction.class));</span>
+
+<span class="nc bnc" id="L125" title="All 2 branches missed.">      if (_panel.isInMainSessionWindow())</span>
+      {
+<span class="nc" id="L127">         _toolsPopupController.addAction(&quot;viewinobjecttree&quot;, ac.get(ViewObjectAtCursorInObjectTreeAction.class));</span>
+      }
+
+<span class="nc" id="L130">   }</span>
+
+
+   private void createStandardEntryAreaMenuItems()
+   {
+      JMenuItem item;
+<span class="nc" id="L136">      SquirrelResources resources = getSession().getApplication().getResources();</span>
+
+
+<span class="nc" id="L139">      Action toolsPopupAction = _panel.getSession().getApplication().getActionCollection().get(ToolsPopupAction.class);</span>
+<span class="nc" id="L140">      item = getSQLEntryPanel().addToSQLEntryAreaMenu(toolsPopupAction);</span>
+<span class="nc" id="L141">      resources.configureMenuItem(toolsPopupAction, item);</span>
+
+<span class="nc bnc" id="L143" title="All 2 branches missed.">      if(_panel.isInMainSessionWindow())</span>
+      {
+<span class="nc" id="L145">         Action vioAction = _panel.getSession().getApplication().getActionCollection().get(ViewObjectAtCursorInObjectTreeAction.class);</span>
+<span class="nc" id="L146">         item = getSQLEntryPanel().addToSQLEntryAreaMenu(vioAction);</span>
+<span class="nc" id="L147">         resources.configureMenuItem(vioAction, item);</span>
+      }
+
+<span class="nc" id="L150">      Action formatSqlAction = _panel.getSession().getApplication().getActionCollection().get(FormatSQLAction.class);</span>
+<span class="nc" id="L151">      item = getSQLEntryPanel().addToSQLEntryAreaMenu(formatSqlAction);</span>
+<span class="nc" id="L152">      resources.configureMenuItem(formatSqlAction, item);</span>
+<span class="nc" id="L153">   }</span>
+
+
+   public void addToToolsPopUp(String selectionString, Action action)
+   {
+<span class="nc" id="L158">      _toolsPopupController.addAction(selectionString, action);</span>
+<span class="nc" id="L159">   }</span>
+
+   public boolean fileSave()
+   {
+<span class="nc bnc" id="L163" title="All 2 branches missed.">      if (_fileManager.save()) {</span>
+<span class="nc" id="L164">          fileSaved = true;</span>
+<span class="nc" id="L165">          unsavedEdits = false;</span>
+<span class="nc" id="L166">          getActiveSessionTabWidget().setUnsavedEdits(false);</span>
+<span class="nc" id="L167">          ActionCollection actions = </span>
+<span class="nc" id="L168">              getSession().getApplication().getActionCollection();</span>
+<span class="nc" id="L169">          actions.enableAction(FileSaveAction.class, false);</span>
+<span class="nc" id="L170">          return true;</span>
+      } else {
+<span class="nc" id="L172">          return false;</span>
+      }
+   }
+
+   private SessionTabWidget getActiveSessionTabWidget()
+   {
+<span class="nc" id="L178">      return (SessionTabWidget) getSession().getActiveSessionWindow();</span>
+   }
+
+   /* (non-Javadoc)
+   * @see net.sourceforge.squirrel_sql.client.session.ISQLPanelAPI#fileAppend()
+   */
+   public void fileAppend() {
+<span class="nc bnc" id="L185" title="All 2 branches missed.">       if (_fileManager.open(true)) {</span>
+<span class="nc" id="L186">           fileOpened = true;</span>
+<span class="nc" id="L187">           fileSaved = false;</span>
+<span class="nc" id="L188">           unsavedEdits = false;</span>
+<span class="nc" id="L189">           ActionCollection actions = </span>
+<span class="nc" id="L190">               getSession().getApplication().getActionCollection();</span>
+<span class="nc" id="L191">           actions.enableAction(FileSaveAction.class, true);           </span>
+       }
+<span class="nc" id="L193">   }</span>
+   
+   
+   /* (non-Javadoc)
+    * @see net.sourceforge.squirrel_sql.client.session.ISQLPanelAPI#fileClose()
+    */
+   public void fileClose() {
+<span class="nc bnc" id="L200" title="All 2 branches missed.">       if (unsavedEdits) {</span>
+<span class="nc" id="L201">           showConfirmSaveDialog();</span>
+       }
+<span class="nc" id="L203">       setEntireSQLScript(&quot;&quot;);</span>
+<span class="nc" id="L204">       getActiveSessionTabWidget().setSqlFile(null);</span>
+<span class="nc" id="L205">       fileOpened = false;</span>
+<span class="nc" id="L206">       fileSaved = false;</span>
+<span class="nc" id="L207">       unsavedEdits = false;</span>
+<span class="nc" id="L208">       ActionCollection actions = </span>
+<span class="nc" id="L209">           getSession().getApplication().getActionCollection();</span>
+<span class="nc" id="L210">       actions.enableAction(FileSaveAction.class, true);</span>
+<span class="nc" id="L211">       _fileManager.clearCurrentFile();</span>
+<span class="nc" id="L212">   }</span>
+   
+   
+   /* (non-Javadoc)
+    * @see net.sourceforge.squirrel_sql.client.session.ISQLPanelAPI#fileNew()
+    */
+   public void fileNew() {
+<span class="nc" id="L219">       fileClose();</span>
+<span class="nc" id="L220">	}</span>
+   
+   /* (non-Javadoc)
+    * @see net.sourceforge.squirrel_sql.client.session.ISQLPanelAPI#fileSaveAs()
+    */
+   public void fileSaveAs()
+   {
+<span class="nc bnc" id="L227" title="All 2 branches missed.">       if (_fileManager.saveAs()) {</span>
+<span class="nc" id="L228">           fileSaved = true;</span>
+<span class="nc" id="L229">           unsavedEdits = false;</span>
+<span class="nc" id="L230">           getActiveSessionTabWidget().setUnsavedEdits(false);</span>
+<span class="nc" id="L231">           ActionCollection actions = </span>
+<span class="nc" id="L232">               getSession().getApplication().getActionCollection();</span>
+<span class="nc" id="L233">           actions.enableAction(FileSaveAction.class, false);         </span>
+       }
+<span class="nc" id="L235">   }</span>
+
+   /* (non-Javadoc)
+    * @see net.sourceforge.squirrel_sql.client.session.ISQLPanelAPI#fileOpen()
+    */
+   public void fileOpen()
+   {
+<span class="nc bnc" id="L242" title="All 2 branches missed.">       if (unsavedEdits) {</span>
+<span class="nc" id="L243">           showConfirmSaveDialog();</span>
+       }       
+<span class="nc bnc" id="L245" title="All 2 branches missed.">       if (_fileManager.open(false)) {</span>
+<span class="nc" id="L246">           fileOpened = true;</span>
+<span class="nc" id="L247">           fileSaved = false;</span>
+<span class="nc" id="L248">           unsavedEdits = false;</span>
+<span class="nc" id="L249">           ActionCollection actions = </span>
+<span class="nc" id="L250">               getSession().getApplication().getActionCollection();</span>
+<span class="nc" id="L251">           actions.enableAction(FileSaveAction.class, false);           </span>
+       }
+<span class="nc" id="L253">   }</span>
+
+   public void fileOpen(File f) {
+<span class="nc bnc" id="L256" title="All 2 branches missed.">       if (unsavedEdits) {</span>
+<span class="nc" id="L257">           showConfirmSaveDialog();</span>
+       }              
+<span class="nc bnc" id="L259" title="All 2 branches missed.">       if (_fileManager.open(f)) {</span>
+<span class="nc" id="L260">           fileOpened = true;</span>
+<span class="nc" id="L261">           fileSaved = false;</span>
+<span class="nc" id="L262">           unsavedEdits = false;</span>
+<span class="nc" id="L263">           ActionCollection actions = </span>
+<span class="nc" id="L264">               getSession().getApplication().getActionCollection();</span>
+<span class="nc" id="L265">           actions.enableAction(FileSaveAction.class, false);           </span>
+       }
+       
+<span class="nc" id="L268">   }</span>
+   
+   /* (non-Javadoc)
+    * @see net.sourceforge.squirrel_sql.client.session.ISQLPanelAPI#filePrint()
+    */
+   public void filePrint() {
+<span class="nc bnc" id="L274" title="All 2 branches missed.">       if (_panel == null) {</span>
+<span class="nc" id="L275">           throw new IllegalStateException(&quot;_panel is null&quot;);</span>
+       }
+<span class="nc" id="L277">       ISQLEntryPanel panel = _panel.getSQLEntryPanel();</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">       if (panel == null) {</span>
+<span class="nc" id="L279">           throw new IllegalStateException(&quot;_panel.getSQLEntryPanel() is null&quot;);</span>
+       }
+<span class="nc" id="L281">       PrintUtilities.printComponent(panel.getTextComponent());</span>
+<span class="nc" id="L282">   }       </span>
+   
+   public void showToolsPopup()
+   {
+<span class="nc" id="L286">      _toolsPopupController.showToolsPopup();</span>
+<span class="nc" id="L287">   }</span>
+
+
+   public void addExecutor(ISQLResultExecuter exec)
+	{
+<span class="nc" id="L292">		_panel.addExecutor(exec);</span>
+<span class="nc" id="L293">	}</span>
+
+	public void removeExecutor(ISQLResultExecuter exec)
+	{
+<span class="nc" id="L297">		_panel.removeExecutor(exec);</span>
+<span class="nc" id="L298">	}</span>
+
+	/**
+	 * Add a listener listening for SQL Execution.
+	 *
+	 * @param	lis		Listener to add
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if a null &lt;TT&gt;ISQLExecutionListener&lt;/TT&gt; passed.
+	 */
+	public synchronized void addSQLExecutionListener(ISQLExecutionListener lis)
+	{
+<span class="nc bnc" id="L310" title="All 2 branches missed.">		if (lis == null)</span>
+		{
+<span class="nc" id="L312">			throw new IllegalArgumentException(&quot;null ISQLExecutionListener passed&quot;);</span>
+		}
+<span class="nc" id="L314">		_panel.addSQLExecutionListener(lis);</span>
+<span class="nc" id="L315">	}</span>
+
+	/**
+	 * Remove an SQL execution listener.
+	 *
+	 * @param	lis	 Listener
+	 *
+	 * @throws	IllegalArgumentException
+	 *			If a null &lt;TT&gt;ISQLExecutionListener&lt;/TT&gt; passed.
+	 */
+	public synchronized void removeSQLExecutionListener(ISQLExecutionListener lis)
+	{
+<span class="nc bnc" id="L327" title="All 2 branches missed.">		if (lis == null)</span>
+		{
+<span class="nc" id="L329">			throw new IllegalArgumentException(&quot;null ISQLExecutionListener passed&quot;);</span>
+		}
+<span class="nc" id="L331">		_panel.removeSQLExecutionListener(lis);</span>
+<span class="nc" id="L332">	}</span>
+
+	/**
+	 * Add a listener for events in this sql panel executer tabs.
+	 *
+	 * @param	lis		The listener.
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if a null &lt;TT&gt;ISQLResultExecuterTabListener&lt;/TT&gt; passed.
+	 */
+	public void addExecuterTabListener(ISQLResultExecuterTabListener lis)
+	{
+<span class="nc bnc" id="L344" title="All 2 branches missed.">		if (lis == null)</span>
+		{
+<span class="nc" id="L346">			throw new IllegalArgumentException(&quot;ISQLResultExecuterTabListener == null&quot;);</span>
+		}
+<span class="nc" id="L348">		_panel.addExecuterTabListener(lis);</span>
+<span class="nc" id="L349">	}</span>
+
+	/**
+	 * Remove a listener for events from this sql panel executer tabs.
+	 *
+	 * @param	lis		The listener.
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if a null &lt;TT&gt;ISQLResultExecuterTabListener&lt;/TT&gt; passed.
+	 */
+	public void removeExecuterTabListener(ISQLResultExecuterTabListener lis)
+	{
+<span class="nc bnc" id="L361" title="All 2 branches missed.">		if (lis == null)</span>
+		{
+<span class="nc" id="L363">			throw new IllegalArgumentException(&quot;ISQLResultExecuterTabListener == null&quot;);</span>
+		}
+<span class="nc" id="L365">		_panel.removeExecuterTabListener(lis);</span>
+<span class="nc" id="L366">	}</span>
+
+	/**
+	 * Add a listener for events in this SQL Panel.
+	 *
+	 * @param	lis		Listener to add
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if a null &lt;TT&gt;ISQLPanelListener&lt;/TT&gt; passed.
+	 */
+	public synchronized void addSQLPanelListener(ISQLPanelListener lis)
+	{
+<span class="nc bnc" id="L378" title="All 2 branches missed.">		if (lis == null)</span>
+		{
+<span class="nc" id="L380">			throw new IllegalArgumentException(&quot;ISQLPanelListener == null&quot;);</span>
+		}
+<span class="nc" id="L382">		_panel.addSQLPanelListener(lis);</span>
+<span class="nc" id="L383">	}</span>
+
+	/**
+	 * Remove a listener.
+	 *
+	 * @param	lis		Listener to remove
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if a null &lt;TT&gt;ISQLPanelListener&lt;/TT&gt; passed.
+	 */
+	public synchronized void removeSQLPanelListener(ISQLPanelListener lis)
+	{
+<span class="nc bnc" id="L395" title="All 2 branches missed.">		if (lis == null)</span>
+		{
+<span class="nc" id="L397">			throw new IllegalArgumentException(&quot;ISQLPanelListener == null&quot;);</span>
+		}
+<span class="nc" id="L399">		_panel.removeSQLPanelListener(lis);</span>
+<span class="nc" id="L400">	}</span>
+
+	public ISQLEntryPanel getSQLEntryPanel()
+	{
+<span class="nc" id="L404">		return _panel.getSQLEntryPanel();</span>
+	}
+
+    /**
+     * Returns the result execution panel that stores such things as IResultTabs
+     * 
+     * @return an implementation of ISQLResultExecuter 
+     */
+    public ISQLResultExecuter getSQLResultExecuter() {
+<span class="nc" id="L413">        return _panel.getSQLExecPanel();</span>
+    }
+    
+	/**
+	 * Return the entire contents of the SQL entry area.
+	 *
+	 * @return	the entire contents of the SQL entry area.
+	 */
+	public synchronized String getEntireSQLScript()
+	{
+<span class="nc" id="L423">		return _panel.getSQLEntryPanel().getText();</span>
+	}
+
+	/**
+	 * Return the selected contents of the SQL entry area.
+	 *
+	 * @return	the selected contents of the SQL entry area.
+	 */
+	public String getSelectedSQLScript()
+	{
+<span class="nc" id="L433">		return _panel.getSQLEntryPanel().getSelectedText();</span>
+	}
+
+	/**
+	 * Return the SQL script to be executed.
+	 *
+	 * @return	the SQL script to be executed.
+	 */
+	public synchronized String getSQLScriptToBeExecuted()
+	{
+<span class="nc" id="L443">		return _panel.getSQLEntryPanel().getSQLToBeExecuted();</span>
+	}
+
+	/**
+	 * Append the passed SQL script to the SQL entry area but don't select
+	 * it.
+	 *
+	 * @param	sqlScript	The script to be appended.
+	 */
+	public synchronized void appendSQLScript(String sqlScript)
+	{
+<span class="nc" id="L454">		_panel.getSQLEntryPanel().appendText(sqlScript);</span>
+<span class="nc" id="L455">	}</span>
+
+	/**
+	 * Append the passed SQL script to the SQL entry area and specify
+	 * whether it should be selected.
+	 *
+	 * @param	sqlScript	The script to be appended.
+	 * @param	select		If &lt;TT&gt;true&lt;/TT&gt; then select the passed script
+	 * 						in the sql entry area.
+	 */
+	public synchronized void appendSQLScript(String sqlScript, boolean select)
+	{
+<span class="nc" id="L467">        _panel.getSQLEntryPanel().appendText(sqlScript, select);</span>
+<span class="nc" id="L468">	}</span>
+
+	/**
+	 * Replace the contents of the SQL entry area with the passed
+	 * SQL script without selecting it.
+	 *
+	 * @param	sqlScript	The script to be placed in the SQL entry area.
+	 */
+	public synchronized void setEntireSQLScript(String sqlScript)
+	{
+<span class="nc" id="L478">		_panel.getSQLEntryPanel().setText(sqlScript);</span>
+<span class="nc" id="L479">	}</span>
+
+	/**
+	 * Replace the contents of the SQL entry area with the passed
+	 * SQL script and specify whether to select it.
+	 *
+	 * @param	sqlScript	The script to be placed in the SQL entry area.
+	 * @param	select		If &lt;TT&gt;true&lt;/TT&gt; then select the passed script
+	 * 						in the sql entry area.
+	 */
+	public synchronized void setEntireSQLScript(String sqlScript, boolean select)
+	{
+<span class="nc" id="L491">		_panel.getSQLEntryPanel().setText(sqlScript, select);</span>
+<span class="nc" id="L492">	}</span>
+
+	/**
+	 * Replace the currently selected text in the SQL entry area
+	 * with the passed text.
+	 *
+	 * @param	sqlScript	The script to be placed in the SQL entry area.
+	 * @param	select		If &lt;TT&gt;true&lt;/TT&gt; then select the passed script
+	 * 						in the sql entry area.
+	 */
+	public synchronized void replaceSelectedSQLScript(String sqlScript, boolean select)
+	{
+<span class="nc bnc" id="L504" title="All 2 branches missed.">		if (sqlScript == null)</span>
+		{
+<span class="nc" id="L506">			sqlScript = &quot;&quot;;</span>
+		}
+<span class="nc" id="L508">		final ISQLEntryPanel pnl = _panel.getSQLEntryPanel();</span>
+<span class="nc" id="L509">		int selStart = -1;</span>
+<span class="nc bnc" id="L510" title="All 2 branches missed.">		if (select)</span>
+		{
+<span class="nc" id="L512">			selStart = pnl.getSelectionStart();</span>
+		}
+<span class="nc" id="L514">		pnl.replaceSelection(sqlScript);</span>
+<span class="nc bnc" id="L515" title="All 2 branches missed.">		if (select)</span>
+		{
+<span class="nc" id="L517">			int entireLen = getEntireSQLScript().length();</span>
+<span class="nc bnc" id="L518" title="All 2 branches missed.">			if (selStart == -1)</span>
+			{
+<span class="nc" id="L520">				selStart = 0;</span>
+			}
+<span class="nc" id="L522">			int selEnd = selStart + sqlScript.length() - 1;</span>
+<span class="nc bnc" id="L523" title="All 2 branches missed.">			if (selEnd &gt; entireLen - 1)</span>
+			{
+<span class="nc" id="L525">				selEnd = entireLen - 1;</span>
+			}
+<span class="nc bnc" id="L527" title="All 2 branches missed.">			if (selStart &lt;= selEnd)</span>
+			{
+<span class="nc" id="L529">				pnl.setSelectionStart(selStart);</span>
+<span class="nc" id="L530">				pnl.setSelectionEnd(selEnd);</span>
+			}
+		}
+<span class="nc" id="L533">	}</span>
+
+	/**
+	 * Return the offset into the SQL entry area where the current select
+	 * starts.
+	 *
+	 * @return	the current selections start position.
+	 */
+	public synchronized int getSQLScriptSelectionStart()
+	{
+<span class="nc" id="L543">		return _panel.getSQLEntryPanel().getSelectionStart();</span>
+	}
+
+	/**
+	 * Return the offset into the SQL entry area where the current select
+	 * ends.
+	 *
+	 * @return	the current selections end position.
+	 */
+	public synchronized int getSQLScriptSelectionEnd()
+	{
+<span class="nc" id="L554">		return _panel.getSQLEntryPanel().getSelectionEnd();</span>
+	}
+
+	/**
+	 * Set the offset into the SQL entry area where the current select
+	 * starts.
+	 *
+	 * param	start	the new selections start position.
+	 */
+	public synchronized void setSQLScriptSelectionStart(int start)
+	{
+<span class="nc" id="L565">		_panel.getSQLEntryPanel().setSelectionStart(start);</span>
+<span class="nc" id="L566">	}</span>
+
+	/**
+	 * Set the offset into the SQL entry area where the current select
+	 * ends.
+	 *
+	 * param	start	the new selections start position.
+	 */
+	public synchronized void setSQLScriptSelectionEnd(int end)
+	{
+<span class="nc" id="L576">		_panel.getSQLEntryPanel().setSelectionEnd(end);</span>
+<span class="nc" id="L577">	}</span>
+
+	/**
+	 * Execute the current SQL. Not &lt;TT&gt;synchronized&lt;/TT&gt; as multiple SQL statements
+	 * can be executed simultaneously.
+	 */
+	public void executeCurrentSQL()
+	{
+<span class="nc" id="L585">		_panel.runCurrentExecuter();</span>
+<span class="nc" id="L586">	}</span>
+
+   /**
+	 * Close all the SQL result tabs.
+	 */
+	public void closeAllSQLResultTabs()
+	{
+<span class="nc" id="L593">		_panel.getSQLExecPanel().closeAllSQLResultTabs();</span>
+<span class="nc" id="L594">	}</span>
+
+   public void closeAllButCurrentResultTabs()
+   {
+<span class="nc" id="L598">      _panel.getSQLExecPanel().closeAllButCurrentResultTabs();</span>
+<span class="nc" id="L599">   }</span>
+
+   public void closeCurrentResultTab()
+   {
+<span class="nc" id="L603">      _panel.getSQLExecPanel().closeCurrentResultTab();</span>
+<span class="nc" id="L604">   }</span>
+
+   public void toggleCurrentSQLResultTabSticky()
+   {
+<span class="nc" id="L608">      _panel.getSQLExecPanel().toggleCurrentSQLResultTabSticky();</span>
+<span class="nc" id="L609">   }</span>
+
+	/**
+	 * Close all the &quot;torn off&quot; SQL result frames.
+	 */
+	public void closeAllSQLResultFrames()
+	{
+<span class="nc" id="L616">		_panel.getSQLExecPanel().closeAllSQLResultFrames();</span>
+<span class="nc" id="L617">	}</span>
+
+	/**
+	 * Display the next tab in the SQL results.
+	 */
+	public synchronized void gotoNextResultsTab()
+	{
+<span class="nc" id="L624">		_panel.getSQLExecPanel().gotoNextResultsTab();</span>
+<span class="nc" id="L625">	}</span>
+
+	/**
+	 * Display the previous tab in the SQL results.
+	 */
+	public void gotoPreviousResultsTab()
+	{
+<span class="nc" id="L632">		_panel.getSQLExecPanel().gotoPreviousResultsTab();</span>
+<span class="nc" id="L633">	}</span>
+
+	/**
+	 * The passed SQL should be added to the SQL history.
+	 *
+	 * @param	sql		SQL to be added to history.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;sql&lt;/TT&gt; passed.
+	 */
+	public synchronized void addSQLToHistory(String sql)
+	{
+<span class="nc bnc" id="L645" title="All 2 branches missed.">		if (sql == null)</span>
+		{
+<span class="nc" id="L647">			throw new IllegalArgumentException(&quot;sql == null&quot;);</span>
+		}
+
+<span class="nc" id="L650">      final ISession session = _panel.getSession();</span>
+<span class="nc" id="L651">		final SQLHistoryItem shi = new SQLHistoryItem(sql, session.getAlias().getName());</span>
+<span class="nc bnc" id="L652" title="All 2 branches missed.">		if (session.getProperties().getSQLShareHistory())</span>
+		{
+<span class="nc" id="L654">			session.getApplication().getSQLHistory().add(shi);</span>
+<span class="nc" id="L655">			session.getApplication().savePreferences(PreferenceType.SQLHISTORY);</span>
+		}
+<span class="nc" id="L657">		_panel.addSQLToHistory(shi);</span>
+<span class="nc" id="L658">	}</span>
+
+	/**
+	 * Add a hierarchical menu to the SQL Entry Area popup menu.
+	 *
+	 * @param	menu	The menu that will be added.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;Menu&lt;/TT&gt; passed.
+	 */
+	public void addToSQLEntryAreaMenu(JMenu menu)
+	{
+<span class="nc bnc" id="L670" title="All 2 branches missed.">		if (menu == null)</span>
+		{
+<span class="nc" id="L672">			throw new IllegalArgumentException(&quot;Menu == null&quot;);</span>
+		}
+<span class="nc" id="L674">		_panel.addToSQLEntryAreaMenu(menu);</span>
+<span class="nc" id="L675">	}</span>
+
+	/**
+	 * Add an &lt;TT&gt;Action&lt;/TT&gt; to the SQL Entry Area popup menu.
+	 *
+	 * @param	action	The action to be added.
+	 *
+	 * @return	The newly create menu item.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;Action&lt;/TT&gt; passed.
+	 */
+	public JMenuItem addToSQLEntryAreaMenu(Action action)
+	{
+<span class="nc bnc" id="L689" title="All 2 branches missed.">		if (action == null)</span>
+		{
+<span class="nc" id="L691">			throw new IllegalArgumentException(&quot;Action == null&quot;);</span>
+		}
+<span class="nc" id="L693">		return _panel.addToSQLEntryAreaMenu(action);</span>
+	}
+
+	/** JASON: Remove once deprecated interface removed*/
+	public ISession getSession()
+	{
+<span class="nc" id="L699">		return _panel.getSession();</span>
+	}
+
+   public boolean isInMainSessionWindow()
+   {
+<span class="nc" id="L704">      return _panel.isInMainSessionWindow();</span>
+   }
+
+   public boolean confirmClose() {
+<span class="nc bnc" id="L708" title="All 2 branches missed.">       if (unsavedEdits) {</span>
+<span class="nc" id="L709">           return showConfirmSaveDialog();</span>
+       }
+<span class="nc" id="L711">       return true;</span>
+   }
+
+   public void addSqlPanelListener(SqlPanelListener sqlPanelListener)
+   {
+<span class="nc" id="L716">      _panel.addSqlPanelListener(sqlPanelListener);</span>
+<span class="nc" id="L717">   }</span>
+
+   public ArrayList&lt;SQLHistoryItem&gt; getSQLHistoryItems()
+   {
+<span class="nc" id="L721">      return _panel.getSQLHistoryItems();</span>
+   }
+
+   private boolean showConfirmSaveDialog() 
+   {
+<span class="nc" id="L726">       File file = _fileManager.getFile();</span>
+       
+       // i18n[SQLPanelAPI.untitledLabel=Untitled]
+<span class="nc" id="L729">       String filename = s_stringMgr.getString(&quot;SQLPanelAPI.untitledLabel&quot;);</span>
+       
+<span class="nc bnc" id="L731" title="All 2 branches missed.">       if (file != null) {</span>
+<span class="nc" id="L732">           filename = file.getAbsolutePath();</span>
+       }
+<span class="nc" id="L734">       String msg = s_stringMgr.getString(&quot;SQLPanelAPI.unsavedchanges&quot;,</span>
+                                          filename);
+       
+       
+       
+<span class="nc" id="L739">       String title = </span>
+<span class="nc" id="L740">           s_stringMgr.getString(&quot;SQLPanelAPI.unsavedchangestitle&quot;,</span>
+<span class="nc" id="L741">                                 &quot;: &quot;+_panel.getSession().getAlias().getName());</span>
+       
+<span class="nc" id="L743">       JFrame f = getSession().getApplication().getMainFrame();</span>
+<span class="nc" id="L744">       int option = </span>
+<span class="nc" id="L745">           JOptionPane.showConfirmDialog(f, </span>
+                                         msg, 
+                                         title, 
+                                         JOptionPane.YES_NO_OPTION);
+<span class="nc bnc" id="L749" title="All 2 branches missed.">       if (option == JOptionPane.YES_OPTION) {</span>
+<span class="nc" id="L750">           return fileSave();</span>
+       }
+<span class="nc" id="L752">       return true;</span>
+   }   
+   
+   /**
+    * A class to listen for events that indicate that the content in the 
+    * SQLEntryPanel has changed and could be lost.
+    */
+<span class="nc" id="L759">   private class SQLEntryUndoListener implements UndoableEditListener {</span>
+
+    /* (non-Javadoc)
+     * @see javax.swing.event.UndoableEditListener#undoableEditHappened(javax.swing.event.UndoableEditEvent)
+     */
+    public void undoableEditHappened(UndoableEditEvent e) {
+<span class="nc" id="L765">        IApplication app = getSession().getApplication();</span>
+<span class="nc" id="L766">        SquirrelPreferences prefs = app.getSquirrelPreferences();</span>
+        
+<span class="nc bnc" id="L768" title="All 4 branches missed.">        if (fileOpened || fileSaved) {</span>
+<span class="nc bnc" id="L769" title="All 2 branches missed.">            if (prefs.getWarnForUnsavedFileEdits()) {</span>
+<span class="nc" id="L770">                unsavedEdits = true;</span>
+            }
+<span class="nc" id="L772">            getActiveSessionTabWidget().setUnsavedEdits(true);</span>
+<span class="nc" id="L773">            ActionCollection actions = </span>
+<span class="nc" id="L774">                getSession().getApplication().getActionCollection();</span>
+<span class="nc" id="L775">            actions.enableAction(FileSaveAction.class, true);</span>
+<span class="nc bnc" id="L776" title="All 2 branches missed.">        } else if (prefs.getWarnForUnsavedBufferEdits()) {</span>
+<span class="nc" id="L777">            unsavedEdits = true;</span>
+        }
+<span class="nc" id="L779">    }</span>
+       
+   }   
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,279 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RemoteServerConnector.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.server.net</a> &gt; <span class="el_source">RemoteServerConnector.java</span></div><h1>RemoteServerConnector.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2004-2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: RemoteServerConnector.java,v 1.7 2006/02/23 11:17:40 tanderson Exp $
+ */
+package org.exolab.jms.server.net;
+
+import java.rmi.RemoteException;
+import java.util.Hashtable;
+import java.util.Map;
+import javax.naming.Context;
+import javax.naming.NamingException;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.codehaus.spice.jndikit.NamingProvider;
+
+import org.exolab.jms.client.net.JmsServerStubImpl;
+import org.exolab.jms.config.Configuration;
+import org.exolab.jms.config.types.SchemeType;
+import org.exolab.jms.net.connector.Authenticator;
+import org.exolab.jms.net.orb.ORB;
+import org.exolab.jms.net.orb.ORBFactory;
+import org.exolab.jms.net.registry.LocalRegistry;
+import org.exolab.jms.server.AdminConnectionManager;
+import org.exolab.jms.server.NameService;
+import org.exolab.jms.server.ServerConnectionFactory;
+import org.exolab.jms.server.ServerConnector;
+import org.exolab.jms.server.ServerException;
+import org.exolab.jms.common.threads.ThreadPoolFactory;
+
+
+/**
+ * Implementation of the {@link ServerConnector} interface, that provides
+ * remoting via an {@link ORB}.
+ *
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.7 $ $Date: 2006/02/23 11:17:40 $
+ */
+public class RemoteServerConnector implements ServerConnector {
+
+    /**
+     * The configuration.
+     */
+    private final Configuration _config;
+
+    /**
+     * The connector configuration.
+     */
+    private final ConnectorCfg _connector;
+
+    /**
+     * The authenticator, for authenticating clients.
+     */
+    private final Authenticator _authenticator;
+
+    /**
+     * The factory for &lt;code&gt;ServerConnection&lt;/code&gt; instances.
+     */
+    private final ServerConnectionFactory _factory;
+
+    /**
+     * The admin connection manager.
+     */
+    private final AdminConnectionManager _manager;
+
+    /**
+     * The name service.
+     */
+    private final NameService _names;
+
+    /**
+     * The thread pool factory.
+     */
+    private final ThreadPoolFactory _threads;
+
+    /**
+     * The URI to export the server on. This is the URI that the server accepts
+     * connections from clients.
+     */
+    private final String _exportURI;
+
+    /**
+     * The URI that clients connect to the server on. This is different to the
+     * {@link _exportURI) if clients connect via a webserver.
+     */
+    private final String _connectURI;
+
+    /**
+     * The ORB.
+     */
+    private ORB _orb;
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L136">    private static final Log _log = LogFactory.getLog(</span>
+            RemoteServerConnector.class);
+
+
+    /**
+     * Construct a new &lt;code&gt;RemoteServerConnector&lt;/code&gt;.
+     *
+     * @param scheme        the type of the connector to use
+     * @param config        the server configuration
+     * @param authenticator the authenticator for authenticating clients
+     * @param factory       the factory for &lt;code&gt;ServerConnection&lt;/code&gt;
+     *                      instances
+     * @param names         the name service
+     * @param threads       the thread pool factory
+     */
+    public RemoteServerConnector(SchemeType scheme, Configuration config,
+                                 Authenticator authenticator,
+                                 ServerConnectionFactory factory,
+                                 AdminConnectionManager manager,
+                                 NameService names,
+<span class="nc" id="L156">                                 ThreadPoolFactory threads) {</span>
+<span class="nc bnc" id="L157" title="All 2 branches missed.">        if (scheme == null) {</span>
+<span class="nc" id="L158">            throw new IllegalArgumentException(&quot;Argument 'scheme' is null&quot;);</span>
+        }
+<span class="nc bnc" id="L160" title="All 2 branches missed.">        if (config == null) {</span>
+<span class="nc" id="L161">            throw new IllegalArgumentException(&quot;Argument 'config' is null&quot;);</span>
+        }
+<span class="nc bnc" id="L163" title="All 2 branches missed.">        if (authenticator == null) {</span>
+<span class="nc" id="L164">            throw new IllegalArgumentException(</span>
+                    &quot;Argument 'authenticator' is null&quot;);
+        }
+<span class="nc bnc" id="L167" title="All 2 branches missed.">        if (factory == null) {</span>
+<span class="nc" id="L168">            throw new IllegalArgumentException(&quot;Argument 'factory' is null&quot;);</span>
+        }
+<span class="nc bnc" id="L170" title="All 2 branches missed.">        if (manager == null) {</span>
+<span class="nc" id="L171">            throw new IllegalArgumentException(&quot;Argument 'manager' is null&quot;);</span>
+        }
+<span class="nc bnc" id="L173" title="All 2 branches missed.">        if (names == null) {</span>
+<span class="nc" id="L174">            throw new IllegalArgumentException(&quot;Arguement 'names' is null&quot;);</span>
+        }
+<span class="nc bnc" id="L176" title="All 2 branches missed.">        if (threads == null) {</span>
+<span class="nc" id="L177">            throw new IllegalArgumentException(&quot;Arguement 'threads' is null&quot;);</span>
+        }
+<span class="nc" id="L179">        _connector = ConnectorCfgFactory.create(scheme, config);</span>
+<span class="nc" id="L180">        _config = config;</span>
+<span class="nc" id="L181">        _authenticator = authenticator;</span>
+<span class="nc" id="L182">        _factory = factory;</span>
+<span class="nc" id="L183">        _manager = manager;</span>
+<span class="nc" id="L184">        _names = names;</span>
+<span class="nc" id="L185">        _threads = threads;</span>
+<span class="nc" id="L186">        _exportURI = _connector.getExportURI();</span>
+<span class="nc" id="L187">        _connectURI = _connector.getConnectURI();</span>
+<span class="nc" id="L188">    }</span>
+
+    /**
+     * Initialises the server interface for the specified connector.
+     *
+     * @throws ServerException if the interface cannot be initialised
+     */
+    public void init() throws ServerException {
+        try {
+<span class="nc" id="L197">            Map properties = _connector.getAcceptProperties();</span>
+<span class="nc" id="L198">            properties.put(&quot;org.exolab.jms.net.orb.threads.factory&quot;, _threads);</span>
+<span class="nc" id="L199">            _orb = ORBFactory.createORB(_authenticator, properties);</span>
+<span class="nc bnc" id="L200" title="All 2 branches missed.">            if (!_connectURI.equals(_exportURI)) {</span>
+<span class="nc" id="L201">                _orb.addRoute(_exportURI, _connectURI);</span>
+            }
+<span class="nc" id="L203">        } catch (RemoteException exception) {</span>
+<span class="nc" id="L204">            throw new ServerException(</span>
+                    &quot;Failed to create ORB for URI:&quot; + _exportURI, exception);
+<span class="nc" id="L206">        }</span>
+        try {
+<span class="nc" id="L208">            LocalRegistry registry = _orb.getRegistry();</span>
+
+<span class="nc" id="L210">            RemoteServerConnectionFactory server =</span>
+                    new RemoteServerConnectionFactory(_factory, _orb,
+                                                      _exportURI);
+<span class="nc" id="L213">            registry.bind(&quot;server&quot;, server.getProxy());</span>
+<span class="nc bnc" id="L214" title="All 2 branches missed.">            if (_log.isInfoEnabled()) {</span>
+<span class="nc" id="L215">                _log.info(&quot;Server accepting connections on &quot; + _exportURI);</span>
+            }
+
+<span class="nc bnc" id="L218" title="All 2 branches missed.">            if (_config.getServerConfiguration().getEmbeddedJNDI()) {</span>
+<span class="nc" id="L219">                NamingProvider provider = _names.getNamingProvider();</span>
+<span class="nc" id="L220">                RemoteNamingProvider jndi = new RemoteNamingProvider(provider,</span>
+                                                                     _orb,
+<span class="nc" id="L222">                                                                     _connector.getJNDIExportURI());</span>
+<span class="nc" id="L223">                registry.bind(&quot;jndi&quot;, jndi.getProxy());</span>
+<span class="nc bnc" id="L224" title="All 2 branches missed.">                if (_log.isInfoEnabled()) {</span>
+<span class="nc" id="L225">                    _log.info(&quot;JNDI service accepting connections on &quot;</span>
+<span class="nc" id="L226">                              + _connector.getJNDIExportURI());</span>
+                }
+            }
+
+<span class="nc" id="L230">            JmsAdminServerImpl admin = new JmsAdminServerImpl(_manager,</span>
+                                                              _orb,
+<span class="nc" id="L232">                                                              _connector.getAdminExportURI());</span>
+<span class="nc" id="L233">            registry.bind(&quot;admin&quot;, admin.getProxy());</span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">            if (_log.isInfoEnabled()) {</span>
+<span class="nc" id="L235">                _log.info(&quot;Admin service accepting connections on &quot;</span>
+<span class="nc" id="L236">                          + _connector.getAdminExportURI());</span>
+            }
+
+<span class="nc" id="L239">            registry.setReadOnly(true);</span>
+<span class="nc" id="L240">        } catch (Exception exception) {</span>
+<span class="nc" id="L241">            throw new ServerException(</span>
+                    &quot;Failed to initialise the server interface&quot;, exception);
+<span class="nc" id="L243">        }</span>
+<span class="nc" id="L244">    }</span>
+
+    /**
+     * Bind any factory object specified in the configuration file to the
+     * specified JNDI context.
+     *
+     * @param context context to bind factory objects
+     * @throws NamingException if a naming error occurs
+     */
+    public void bindConnectionFactories(Context context)
+            throws NamingException {
+        // put together a list of parameters that the connection factories will
+        // need to use to connect to this server
+<span class="nc" id="L257">        Map properties = _connector.getConnectProperties();</span>
+<span class="nc" id="L258">        Hashtable env = new Hashtable();</span>
+<span class="nc" id="L259">        env.putAll(properties);</span>
+<span class="nc" id="L260">        ConnectionFactoryHelper.bind(context,</span>
+<span class="nc" id="L261">                                     _connector.getConnectionFactories(),</span>
+                                     JmsServerStubImpl.class, env);
+<span class="nc" id="L263">    }</span>
+
+    /**
+     * Close the interface, releasing any resources.
+     *
+     * @throws ServerException if the interface cannot be closed
+     */
+    public void close() throws ServerException {
+        try {
+<span class="nc" id="L272">            _orb.shutdown();</span>
+<span class="nc" id="L273">        } catch (RemoteException exception) {</span>
+<span class="nc" id="L274">            throw new ServerException(exception.getMessage(), exception);</span>
+<span class="nc" id="L275">        }</span>
+<span class="nc" id="L276">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

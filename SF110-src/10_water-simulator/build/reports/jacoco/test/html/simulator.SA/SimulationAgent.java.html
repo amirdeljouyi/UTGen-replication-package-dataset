@@ -1,0 +1,936 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SimulationAgent.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">10_water-simulator</a> &gt; <a href="index.source.html" class="el_package">simulator.SA</a> &gt; <span class="el_source">SimulationAgent.java</span></div><h1>SimulationAgent.java</h1><pre class="source lang-java linenums">package simulator.SA;
+
+
+
+
+import jade.content.ContentElement;
+import jade.content.lang.Codec;
+import jade.content.lang.Codec.CodecException;
+import jade.content.lang.sl.SLCodec;
+import jade.content.onto.OntologyException;
+import jade.content.onto.basic.Action;
+import jade.core.AID;
+import jade.core.behaviours.CyclicBehaviour;
+import jade.core.behaviours.OneShotBehaviour;
+import jade.gui.GuiAgent;
+import jade.gui.GuiEvent;
+import jade.lang.acl.ACLMessage;
+import jade.lang.acl.MessageTemplate;
+import jade.wrapper.AgentController;
+import jade.wrapper.ControllerException;
+import jade.wrapper.StaleProxyException;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.util.Vector;
+
+import javax.swing.UIManager;
+import javax.swing.event.InternalFrameAdapter;
+import javax.swing.event.InternalFrameEvent;
+
+import org.apache.log4j.Logger;
+
+import simulator.DAWN;
+import simulator.SA.gui.AboutFrame;
+import simulator.SA.gui.DemandCurveParameterFrame;
+import simulator.SA.gui.PricingPolicyFrame;
+import simulator.SA.gui.ProgressGui;
+import simulator.SA.gui.ReviewGUI;
+import simulator.SA.gui.SimulationParametersFrame;
+import simulator.SA.gui.SuiteGUI;
+import simulator.ontology.LaunchGUI;
+import simulator.ontology.SavePersonalData;
+import simulator.ontology.SavingPath;
+import simulator.ontology.Start;
+import simulator.ontology.StepAttr;
+import simulator.ontology.StepTotalConsumption;
+import simulator.ontology.WDS_Ontology;
+import simulator.ontology.WaterConsumption;
+import simulator.util.AIDs;
+import simulator.util.ConsumerAttributes;
+import simulator.util.ConsumerType;
+import simulator.util.Function;
+import simulator.util.ParameterAttributes;
+
+
+/**
+ * The Simulatation Agent is the heart of the system. 
+ * It is the first agent that is launched so it is responsible for 
+ * collecting all inputs of scenario's design (StartUpWizard gui). 
+ * After that launches  * progress GUI and it is in charge of starting
+ * every simulation step by sending stepID to SA. Finally, it collects 
+ * step result which is presented to the user via the Progress GUI
+ * 
+ * @author Vartalas Panagiotis
+ * @author Ioannis N. Athanasiadis
+ * @version 1.9
+ * @since 2003-2006
+ */
+
+<span class="nc" id="L76">public class SimulationAgent extends GuiAgent {</span>
+
+  private static final long serialVersionUID = -8861903386335599576L;
+  
+  public static final int START_SIMULATION_MENU = 1000;
+  public static final int LAUNCH_CONSUMER_GUI = 1001;
+  public static final int START_BUTTON_GUI = 1002;
+  public static final int LOAD_SCENARIO = 1003;
+  public static final int SAVE_SCENARIO = 1004;
+  public static final int WIZARD_ENDED = 1005;
+  public static final int SAVE_RESULTS = 1006;
+  public static final int EDIT_SIMULATION_PARAMETERS = 1007;
+  public static final int EDIT_DEMAND_CURVE_PARAMETERS = 1008;
+  public static final int EDIT_METDATA_FILE = 1009;
+  public static final int EDIT_PRICING_POLICY = 1010;
+  public static final int SIMULATION_PARAMETERS_INPUT = 1011;
+  public static final int PRICING_POLICY_INPUT = 1012;
+  public static final int REVIEW_COMBOS_CHANGED = 1013;
+  public static final int PARAMETER_INPUT = 1014;
+  public static final int SAVE_CONSUMERS_RESULTS = 1015;
+  public static final int ABOUT = 1016;
+
+  // Ontology
+<span class="nc" id="L99">  private WDS_Ontology ontology = WDS_Ontology.getInstance();</span>
+<span class="nc" id="L100">  private Codec codec = new SLCodec();</span>
+
+  // Gui parameters
+  private static int gridDimension;
+  private static int sightLimit;
+  private static int population;
+  private static int simulationDuration;
+  private static int simulationStep;
+  private static Boolean consumptionLN;
+  private static int parametersNumber;
+  private static ConsumerType[] consumerTypes;
+  private static ParameterAttributes[][] demandCurveParameters;
+  private static File metDataFile;
+<span class="nc" id="L113">  private static Vector priceData = new Vector(0,1);</span>
+  private static float distributionMean;
+  private static float distributionDeviation;
+
+<span class="nc" id="L117">  private float initialConsumption=0;</span>
+
+<span class="nc" id="L119">  private static int stepId=1;</span>
+
+  private SuiteGUI suiteGUI;
+  private ProgressGui progressGui;
+  private ReviewGUI reviewGUI;
+
+  //All consumers that SA launches
+  private ConsumerAttributes[] consumers;
+
+  //Store consumptions
+<span class="nc" id="L129">  private Vector consumptions = new Vector(0,1);</span>
+  //{ consumptions.addElement(new Float(0));}
+
+  // logger
+<span class="nc" id="L133">  Logger log = Logger.getLogger(SimulationAgent.class); </span>
+  protected void setup() {
+
+      // Register language and ontology
+<span class="nc" id="L137">      getContentManager().registerLanguage(codec);</span>
+<span class="nc" id="L138">      getContentManager().registerOntology(ontology);</span>
+
+      // Set the look and feel
+<span class="nc" id="L141">      try { UIManager.setLookAndFeel(UIManager.getCrossPlatformLookAndFeelClassName());}</span>
+<span class="nc" id="L142">      catch(Exception e) { log.error(e.getStackTrace()); }</span>
+
+      // Launch Suite GUI
+<span class="nc" id="L145">      suiteGUI = new SuiteGUI(this);</span>
+
+      // Receive step results and update progress GUI
+<span class="nc" id="L148">      addBehaviour(new BehaviourReceiveStepResult(this));</span>
+<span class="nc" id="L149">      addBehaviour(new BehaviourHandleOutOfSequenceMessages(this));</span>
+
+
+<span class="nc" id="L152">  }</span>
+
+  /**
+   * &quot;Unpack&quot; the inputs SA receives from GUI (load operation or scenario design Wizard).
+   * The arguments are elements of an object array.
+   * @param ev Gui Event received by startUpWizard
+   */
+
+  //Vector temp1 = new Vector(0,1);
+
+  private void unpackGuiInputs(GuiEvent ev){
+
+
+      // Simulation Parameters
+<span class="nc" id="L166">      gridDimension = ((Integer) ev.getParameter(0)).intValue();</span>
+<span class="nc" id="L167">      sightLimit = ((Integer) ev.getParameter(1)).intValue();</span>
+<span class="nc" id="L168">      population = ((Integer) ev.getParameter(2)).intValue();</span>
+<span class="nc" id="L169">      simulationDuration = ((Integer) ev.getParameter(3)).intValue();</span>
+<span class="nc" id="L170">      simulationStep = ((Integer) ev.getParameter(4)).intValue();</span>
+
+      //Consumer Types
+<span class="nc" id="L173">      Vector temp = (Vector)ev.getParameter(5);</span>
+<span class="nc" id="L174">      consumerTypes = new ConsumerType[temp.size()];</span>
+<span class="nc" id="L175">      temp.copyInto(consumerTypes);</span>
+
+<span class="nc" id="L177">      SimulationAgent.consumptionLN = (Boolean) ev.getParameter(6);</span>
+<span class="nc" id="L178">      parametersNumber = ((Integer) ev.getParameter(7)).intValue();</span>
+
+<span class="nc" id="L180">      demandCurveParameters = new ParameterAttributes[SimulationAgent.consumerTypes.length][SimulationAgent.parametersNumber];</span>
+
+      //All parameters for all consumers types
+      //Stored in demandCurveParameters array
+      // rows indicate i consumer type
+      // columns indicate j parameter of the demand curve
+<span class="nc" id="L186">      temp = (Vector) ev.getParameter(8);</span>
+
+<span class="nc" id="L188">      int k=0;</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">      for(int j = 0 ; j&lt; SimulationAgent.consumerTypes.length ; j++)</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">         for(int i = 0 ; i&lt; SimulationAgent.parametersNumber ; i++){</span>
+<span class="nc" id="L191">            demandCurveParameters[j][i] = (ParameterAttributes) temp.elementAt(k);</span>
+<span class="nc" id="L192">            k++;</span>
+         }
+
+<span class="nc" id="L195">      metDataFile = (File) ev.getParameter(9);</span>
+<span class="nc" id="L196">      priceData = (Vector) ev.getParameter(10);</span>
+
+<span class="nc" id="L198">      Vector distributionData = (Vector) ev.getParameter(11);</span>
+
+<span class="nc" id="L200">      distributionMean = ((Float)distributionData.elementAt(0)).floatValue();</span>
+<span class="nc" id="L201">      distributionDeviation = ((Float)distributionData.elementAt(1)).floatValue();</span>
+
+<span class="nc" id="L203">  }//END of unpackArguments()</span>
+
+
+  /**
+   * Launching the consumer agents, MOA and WSA. Called from BehaviourStartSimulation
+   */
+
+  private void instantiatePlatform(){
+
+      // A new simulation is started
+<span class="nc" id="L213">      this.initialConsumption = 0;</span>
+
+
+      try{
+
+        // BUILD THE GRID
+<span class="nc" id="L219">        GridGenerator grid = new GridGenerator(gridDimension,population);</span>
+<span class="nc" id="L220">        Vector consumers = grid.getConsumers();</span>
+
+        // Instatiate GaussGenerator
+<span class="nc" id="L223">        GaussGenerator gaussGenerator = new GaussGenerator(SimulationAgent.distributionMean,</span>
+                                                           SimulationAgent.distributionDeviation);
+
+<span class="nc" id="L226">        int counter = 0; // Counts the consumers</span>
+
+        //distributeTypesToAgents();
+
+<span class="nc bnc" id="L230" title="All 2 branches missed.">        for(int t = 0; t &lt; consumerTypes.length ; t++){</span>
+
+            // LAUNCH A POPULATION OF A SPECIFIED AGENT TYPE
+<span class="nc bnc" id="L233" title="All 2 branches missed.">            for (int i=0; i &lt; consumerTypes[t].getMembers() ; i++){</span>
+
+<span class="nc" id="L235">              ((ConsumerAttributes)consumers.elementAt(counter)).setConsumerType(consumerTypes[t].getName());</span>
+
+              // get n-agent's neighbours
+<span class="nc" id="L238">              Vector neighbours = new Vector(0);</span>
+<span class="nc bnc" id="L239" title="All 2 branches missed.">              if(SimulationAgent.sightLimit!=0)</span>
+<span class="nc" id="L240">                neighbours = grid.getNeighbours((ConsumerAttributes)consumers.elementAt(counter),sightLimit);</span>
+
+              // Prepare demand curve parameters
+<span class="nc" id="L243">              ParameterAttributes[] myParameters = demandCurveParameters[t];</span>
+
+              // Prepare arguments to pass
+<span class="nc" id="L246">              Object[] consumerArguments = new Object[4 + myParameters.length];</span>
+
+              //  convention : first argument --&gt; initial consumption (step=0)
+              //               second argument --&gt; AP / MP (price type)
+              //               third argument --&gt; neighbours
+              //               fourth argument --&gt; consumption LN
+              //               fifth argument --&gt; number of demand curve parameters
+
+<span class="nc" id="L254">              consumerArguments[0] = gaussGenerator.getRandomInitialConsumption();</span>
+
+<span class="nc" id="L256">              this.initialConsumption += ((Float)consumerArguments[0]).floatValue();</span>
+
+<span class="nc" id="L258">              consumerArguments[1] = priceData.elementAt(5);</span>
+
+<span class="nc" id="L260">              consumerArguments[2] = neighbours;</span>
+
+<span class="nc" id="L262">              consumerArguments[3] = SimulationAgent.consumptionLN;</span>
+
+<span class="nc bnc" id="L264" title="All 2 branches missed.">              for(int k=0 ; k &lt; myParameters.length ; k++)</span>
+<span class="nc" id="L265">                  consumerArguments[k+4] = myParameters[k];</span>
+
+              // Launching one consumer agent of this group ( ConsumerType[t] )
+
+<span class="nc" id="L269">              this.progressGui.updateMessageArea(</span>
+<span class="nc" id="L270">                         ((ConsumerAttributes)consumers.elementAt(counter)).getName() + &quot; is launched&quot;);</span>
+<span class="nc" id="L271">              AgentController cons = DAWN.jadeContainer.createNewAgent</span>
+<span class="nc" id="L272">                            (((ConsumerAttributes)consumers.elementAt(counter)).getName(), &quot;simulator.CA.ConsumerAgent&quot;, consumerArguments);</span>
+<span class="nc" id="L273">              cons.start();</span>
+
+              // for next consumer from the list
+<span class="nc" id="L276">              counter++;</span>
+
+            } // END of an agent TYPE
+
+        }// END (t)
+
+        // SA property
+<span class="nc bnc" id="L283" title="All 2 branches missed.">        for(int i=0; i&lt;consumers.size();i++)</span>
+<span class="nc" id="L284">          ((ConsumerAttributes)consumers.elementAt(i)).setAID(new AID(</span>
+<span class="nc" id="L285">                                            ((ConsumerAttributes)consumers.elementAt(i)).getName(),false));</span>
+
+<span class="nc" id="L287">        this.consumers = new ConsumerAttributes[consumers.size()];</span>
+<span class="nc" id="L288">        consumers.copyInto(this.consumers);</span>
+
+
+
+<span class="nc bnc" id="L292" title="All 2 branches missed.">        if (SimulationAgent.metDataFile.getPath() != &quot;&quot;) {</span>
+              // Prepare Arguments
+<span class="nc" id="L294">              Object[] metOfficeArguments = {</span>
+            		  new Integer(SimulationAgent.simulationDuration), 
+            		  SimulationAgent.metDataFile, 
+            		  new Integer(SimulationAgent.simulationStep) };
+
+              //**********************************************************
+              // MET OFFICE AGENT LAUNCHED
+<span class="nc" id="L301">              this.progressGui.updateMessageArea(&quot;MetOfficeAgent is launched&quot;);</span>
+<span class="nc" id="L302">              AgentController metOffice = DAWN.jadeContainer.createNewAgent</span>
+<span class="nc" id="L303">                            (&quot;metOffice&quot;, &quot;simulator.MOA.MetOfficeAgent&quot;, metOfficeArguments);</span>
+<span class="nc" id="L304">              metOffice.start();</span>
+        }
+
+        //Prepare WSA's arguments
+
+<span class="nc" id="L309">        Object[] supplierArguments = new Object[5];</span>
+
+<span class="nc bnc" id="L311" title="All 2 branches missed.">        supplierArguments[0] = new Boolean( (SimulationAgent.metDataFile.getPath() != &quot;&quot;)?true:false);</span>
+<span class="nc" id="L312">        supplierArguments[1] = consumers;</span>
+<span class="nc" id="L313">        supplierArguments[2] = priceData;</span>
+<span class="nc" id="L314">        supplierArguments[3] = new Integer(SimulationAgent.simulationStep);</span>
+
+        //**********************************************************
+        // WATER SUPPLIER AGENT LAUNCHED
+<span class="nc" id="L318">        this.progressGui.updateMessageArea(&quot;WaterSupplierAgent is launched&quot;);</span>
+<span class="nc" id="L319">        AgentController supplier = DAWN.jadeContainer.createNewAgent</span>
+<span class="nc" id="L320">                      (&quot;supplier&quot;, &quot;simulator.WSA.WaterSupplierAgent&quot;, supplierArguments);</span>
+<span class="nc" id="L321">        supplier.start();</span>
+
+      }
+<span class="nc" id="L324">      catch (StaleProxyException spe){</span>
+<span class="nc" id="L325">    	  log.error(spe.getStackTrace());</span>
+      }
+<span class="nc" id="L327">      catch (ControllerException ce){</span>
+<span class="nc" id="L328">    	  log.error(ce.getStackTrace());</span>
+<span class="nc" id="L329">      }</span>
+<span class="nc" id="L330">  }</span>
+
+
+
+  /**
+   * AGENT OPERATIONS FOLLOWING GUI EVENTS
+   * @param ev Gui Event
+   */
+
+
+  protected void onGuiEvent(GuiEvent ev){
+
+<span class="nc" id="L342">     int[] selections = new int[2];</span>
+
+<span class="nc bnc" id="L344" title="All 18 branches missed.">     switch(ev.getType()){</span>
+
+        case START_SIMULATION_MENU   : 
+<span class="nc" id="L347">        								log.info(&quot;Selected: START_SIMULATION_MENU&quot;);</span>
+<span class="nc" id="L348">        								this.addBehaviour(new BehaviourStartSimulation(this));</span>
+<span class="nc" id="L349">        								break;</span>
+
+<span class="nc" id="L351">        case LAUNCH_CONSUMER_GUI     : log.info(&quot;Selected: LAUNCH_CONSUMER_GUI&quot;);</span>
+<span class="nc" id="L352">        						       sendGuiRequestMessage((String)ev.getParameter(0));</span>
+		   								
+<span class="nc" id="L354">                                       break;</span>
+
+<span class="nc" id="L356">        case START_BUTTON_GUI        : stepId = 1;</span>
+<span class="nc" id="L357">			                           log.info(&quot;Selected: START_BUTTON_GUI&quot;);</span>
+<span class="nc" id="L358">                                       addBehaviour(new BehaviourStartSimulationStep</span>
+                                                             (SimulationAgent.this, new Integer(stepId)));
+<span class="nc" id="L360">                                       progressGui.updateMessageArea(&quot;******Simulation Started******&quot;);</span>
+<span class="nc" id="L361">                                       break;</span>
+        case LOAD_SCENARIO           : 
+<span class="nc" id="L363">        								log.info(&quot;Selected: LOAD_SCENARIO&quot; );</span>
+<span class="nc bnc" id="L364" title="All 2 branches missed.">        								if (((File)ev.getParameter(0)) != null){</span>
+<span class="nc" id="L365">                                                loadScenarioFromFile((File)ev.getParameter(0));</span>
+<span class="nc" id="L366">                                                launchReviewGui();</span>
+        								}
+        								break;
+<span class="nc" id="L369">        case SAVE_SCENARIO           :  log.info(&quot;Selected: SAVE_SCENARIO&quot; );</span>
+<span class="nc bnc" id="L370" title="All 2 branches missed.">        								if (((File)ev.getParameter(0)) != null)</span>
+<span class="nc" id="L371">                                                saveScenarioToFile((File)ev.getParameter(0));</span>
+                                       break;
+<span class="nc" id="L373">        case WIZARD_ENDED            : log.info(&quot;Selected: WIZARD_ENDED&quot; );</span>
+<span class="nc" id="L374">        								unpackGuiInputs(ev);</span>
+<span class="nc" id="L375">                                       launchReviewGui();</span>
+<span class="nc" id="L376">                                       break;</span>
+<span class="nc" id="L377">        case SAVE_RESULTS            : log.info(&quot;Selected: SAVE_RESULTS&quot; );</span>
+<span class="nc bnc" id="L378" title="All 2 branches missed.">        								if (((File)ev.getParameter(0)) != null)</span>
+<span class="nc" id="L379">                                                saveResultsToFile((File)ev.getParameter(0));</span>
+                                       break;
+<span class="nc" id="L381">        case SAVE_CONSUMERS_RESULTS  : log.info(&quot;Selected: SAVE_CONSUMERS_RESULTS&quot; );</span>
+<span class="nc bnc" id="L382" title="All 2 branches missed.">        								if (((File)ev.getParameter(0)) != null)</span>
+<span class="nc" id="L383">                                               sendSaveResultsRequestToConsumers((File)ev.getParameter(0));</span>
+                                       break;
+<span class="nc" id="L385">        case EDIT_SIMULATION_PARAMETERS :log.info(&quot;Selected: EDIT_SIMULATION_PARAMETERS&quot; );</span>
+<span class="nc" id="L386">                                        SimulationParametersFrame simulationParametersFrame =</span>
+                                                     new SimulationParametersFrame(this,
+                                                                                   SimulationAgent.population,
+                                                                                   SimulationAgent.gridDimension,
+                                                                                   SimulationAgent.sightLimit,
+                                                                                   SimulationAgent.simulationDuration,
+                                                                                   SimulationAgent.simulationStep);
+                                        //Launch simulationParametersFrame
+<span class="nc" id="L394">                                        suiteGUI.addToMainPanel(simulationParametersFrame,</span>
+                                                                                      SuiteGUI.TOP_LAYER);
+<span class="nc" id="L396">                                        simulationParametersFrame.show();</span>
+<span class="nc" id="L397">                                        break;</span>
+<span class="nc" id="L398">        case SIMULATION_PARAMETERS_INPUT : log.info(&quot;Selected: SIMULATION_PARAMETERS_INPUT&quot; );</span>
+<span class="nc" id="L399">                                       setSimulationParameters(ev);</span>
+<span class="nc" id="L400">                                       distributeTypesToAgents();</span>
+<span class="nc" id="L401">                                       reviewGUI.updateSimulationParametersLabels(SimulationAgent.population,</span>
+                                    		   SimulationAgent.gridDimension,
+                                    		   SimulationAgent.sightLimit,
+                                    		   SimulationAgent.simulationDuration,
+                                    		   SimulationAgent.simulationStep);
+<span class="nc" id="L406">                                       break;</span>
+<span class="nc" id="L407">        case EDIT_DEMAND_CURVE_PARAMETERS : log.info(&quot;Selected: EDIT_DEMAND_CURVE_PARAMETERS&quot; );</span>
+<span class="nc" id="L408">                                       selections = reviewGUI.getCombosSelections();</span>
+<span class="nc" id="L409">                                       DemandCurveParameterFrame demandCurveParameterFrame =</span>
+                                            new DemandCurveParameterFrame(this,
+<span class="nc" id="L411">                                                 (Function[])ev.getParameter(0),</span>
+                                                 SimulationAgent.consumerTypes[selections[0]],
+                                                 SimulationAgent.demandCurveParameters[selections[0]][selections[1]]);
+<span class="nc" id="L414">                                       suiteGUI.addToMainPanel(demandCurveParameterFrame,SuiteGUI.TOP_LAYER);</span>
+<span class="nc" id="L415">                                       demandCurveParameterFrame.show();</span>
+<span class="nc" id="L416">                                       break;</span>
+<span class="nc" id="L417">        case PARAMETER_INPUT         :  log.info(&quot;Selected: PARAMETER_INPUT&quot; );</span>
+<span class="nc" id="L418">        								selections = reviewGUI.getCombosSelections();</span>
+<span class="nc" id="L419">                                        SimulationAgent.demandCurveParameters[selections[0]][selections[1]] =</span>
+<span class="nc" id="L420">                                                                  (ParameterAttributes)ev.getParameter(0);</span>
+<span class="nc" id="L421">                                        reviewGUI.updateDemandCurveParameter(</span>
+                                              SimulationAgent.demandCurveParameters[selections[0]][selections[1]]);
+<span class="nc" id="L423">                                       break;</span>
+<span class="nc" id="L424">        case REVIEW_COMBOS_CHANGED   : log.info(&quot;Selected: REVIEW_COMBOS_CHANGED&quot; );</span>
+<span class="nc" id="L425">        								selections = reviewGUI.getCombosSelections();</span>
+<span class="nc" id="L426">                                       reviewGUI.updateDemandCurveParameter(</span>
+                                              SimulationAgent.demandCurveParameters[selections[0]][selections[1]]);
+
+<span class="nc" id="L429">                                       break;</span>
+
+<span class="nc" id="L431">        case EDIT_METDATA_FILE       : log.info(&quot;Selected: EDIT_METDATA_FILE&quot; );</span>
+<span class="nc bnc" id="L432" title="All 2 branches missed.">        								if (((File)ev.getParameter(0)) != null){</span>
+<span class="nc" id="L433">                                              SimulationAgent.metDataFile = (File)ev.getParameter(0);</span>
+<span class="nc" id="L434">                                              reviewGUI.updateFileLabel(((File)ev.getParameter(0)).getPath());</span>
+                                       }
+                                       break;
+<span class="nc" id="L437">        case EDIT_PRICING_POLICY     : log.info(&quot;Selected: EDIT_PRICING_POLICY&quot; );</span>
+<span class="nc" id="L438">        								PricingPolicyFrame pricingPolicyFrame =</span>
+                                                     new PricingPolicyFrame(this,
+<span class="nc" id="L440">                                                                            (String[])ev.getParameter(0),</span>
+                                                                            SimulationAgent.priceData);
+                                        //Launch simulationParametersFrame
+<span class="nc" id="L443">                                        suiteGUI.addToMainPanel(pricingPolicyFrame,SuiteGUI.TOP_LAYER);</span>
+<span class="nc" id="L444">                                        pricingPolicyFrame.show();</span>
+
+<span class="nc" id="L446">                                       break;</span>
+<span class="nc" id="L447">        case PRICING_POLICY_INPUT :    log.info(&quot;Selected: PRICING_POLICY_INPUT&quot; );</span>
+<span class="nc" id="L448">        								SimulationAgent.priceData = (Vector)ev.getParameter(0);</span>
+<span class="nc" id="L449">                                       updatePricingPolicyToReviewGUI();</span>
+<span class="nc" id="L450">                                       break;</span>
+       
+<span class="nc" id="L452">        case ABOUT :                   log.info(&quot;Selected: ABOUT&quot; ); 				   </span>
+<span class="nc" id="L453">        	                           AboutFrame ab = new AboutFrame();</span>
+<span class="nc" id="L454">        							   suiteGUI.addToMainPanel(ab,SuiteGUI.TOP_LAYER);</span>
+<span class="nc" id="L455">                                       ab.show();</span>
+                          			   break;
+     }// Switch
+
+<span class="nc" id="L459">  }// END onGuiEvent</span>
+
+
+  /**
+   *
+   * BehaviourStartSimulation starts the simulation : instantiates progressGUI, instantiates Platform&lt;/p&gt;
+ * @author Vartalas Panagiotis
+ * @author Ioannis N. Athanasiadis
+ * @version 1.9
+ * @since 2003-2006
+   */
+
+  private class BehaviourStartSimulation extends OneShotBehaviour{
+
+	private static final long serialVersionUID = 4852389811841434827L;
+	private SimulationAgent myAgent;
+
+<span class="nc" id="L476">      BehaviourStartSimulation(SimulationAgent a){</span>
+<span class="nc" id="L477">          super(a);</span>
+<span class="nc" id="L478">          this.myAgent = a;</span>
+<span class="nc" id="L479">      }</span>
+
+
+      @SuppressWarnings(&quot;unchecked&quot;)
+	public void action(){
+
+            // Empty consumptions' Vector (last executed scenario's values)
+<span class="nc" id="L486">            SimulationAgent.this.consumptions.removeAllElements();</span>
+
+            // Instatiate simulation progress GUI
+<span class="nc" id="L489">            progressGui = new ProgressGui(SimulationAgent.this);</span>
+<span class="nc" id="L490">            suiteGUI.addToMainPanel(progressGui,SuiteGUI.TOP_LAYER);</span>
+<span class="nc" id="L491">            progressGui.setLocation(50,50);</span>
+<span class="nc" id="L492">            progressGui.show();</span>
+<span class="nc" id="L493">            progressGui.addInternalFrameListener(new InternalFrameAdapter(){</span>
+                public void internalFrameClosed(InternalFrameEvent e){
+                   AgentController cons;
+                   try{
+<span class="nc bnc" id="L497" title="All 2 branches missed.">                       for(int i=0; i&lt;SimulationAgent.this.consumers.length ; i++){</span>
+<span class="nc" id="L498">                        cons = DAWN.jadeContainer.getAgent(SimulationAgent.this.consumers[i].getName());</span>
+<span class="nc" id="L499">                        cons.suspend();</span>
+<span class="nc" id="L500">                        cons.kill();</span>
+                       }
+<span class="nc" id="L502">                       cons = DAWN.jadeContainer.getAgent(&quot;metOffice&quot;);</span>
+<span class="nc" id="L503">                       cons.kill();</span>
+<span class="nc" id="L504">                       cons = DAWN.jadeContainer.getAgent(&quot;supplier&quot;);</span>
+<span class="nc" id="L505">                       cons.kill();</span>
+                   }
+<span class="nc" id="L507">                   catch(ControllerException ce){</span>
+<span class="nc" id="L508">                	   log.error(ce.getStackTrace());</span>
+<span class="nc" id="L509">                   }</span>
+<span class="nc" id="L510">                }</span>
+            });
+            // Launch agents
+<span class="nc" id="L513">            instantiatePlatform();</span>
+
+            // Set initial consumption
+<span class="nc" id="L516">            this.myAgent.consumptions.addElement(new Float(this.myAgent.initialConsumption));</span>
+<span class="nc" id="L517">            progressGui.updateChart((double)this.myAgent.initialConsumption, 0);</span>
+
+<span class="nc" id="L519">            progressGui.updateMessageArea(&quot;Painting grid...Wait&quot;);</span>
+<span class="nc" id="L520">            progressGui.paintGrid(SimulationAgent.gridDimension,myAgent.consumers,SimulationAgent.consumerTypes);</span>
+<span class="nc" id="L521">            progressGui.enableStartButton(true);</span>
+<span class="nc" id="L522">     }</span>
+
+  }// END of BehaviourStartSimulation
+
+
+
+  /**
+   * BehaviourStartSimulationStep sends the Message to WSA that starts one simulation step&lt;/p&gt;
+  * @author Vartalas Panagiotis
+ * @author Ioannis N. Athanasiadis
+ * @version 1.9
+ * @since 2003-2006
+   */
+
+
+  private class BehaviourStartSimulationStep extends OneShotBehaviour implements AIDs{
+
+	private static final long serialVersionUID = 5552139150976590116L;
+
+	private SimulationAgent myAgent;
+
+     private Integer step;
+
+     /**
+      * CONSTRUCTOR
+      * The SA's behaviour that starts one simulation step by informing Water Supplier Agent
+      * @param a Simulation Agent
+      * @param step step's ID to start
+      */
+
+
+<span class="nc" id="L553">     public BehaviourStartSimulationStep(SimulationAgent a,Integer step) {</span>
+<span class="nc" id="L554">         super(a);</span>
+<span class="nc" id="L555">         myAgent = a;</span>
+<span class="nc" id="L556">         this.step = step;</span>
+<span class="nc" id="L557">     }</span>
+
+     // ACTION
+     public void action() {
+
+         // Create message
+<span class="nc" id="L563">         ACLMessage startMsg = new ACLMessage(ACLMessage.REQUEST);</span>
+<span class="nc" id="L564">         startMsg.addReceiver(WATER_SUPPLIER);</span>
+<span class="nc" id="L565">         startMsg.setLanguage(myAgent.codec.getName());</span>
+<span class="nc" id="L566">         startMsg.setOntology(myAgent.ontology.getName());</span>
+
+         // Create content
+           // Fill concept
+<span class="nc" id="L570">         StepAttr step = new StepAttr();</span>
+<span class="nc" id="L571">         step.setId(this.step);</span>
+           // Fill agentAction
+<span class="nc" id="L573">         Start aa = new Start();</span>
+<span class="nc" id="L574">         aa.setSimulationStep(step);</span>
+           // Fill message content
+<span class="nc" id="L576">         Action act = new Action(WATER_SUPPLIER,aa);</span>
+         try{
+<span class="nc" id="L578">            myAgent.getContentManager().fillContent(startMsg,act);</span>
+<span class="nc" id="L579">            myAgent.send(startMsg);</span>
+         }
+<span class="nc" id="L581">         catch (CodecException ce){ log.error(ce.getStackTrace()); }</span>
+<span class="nc" id="L582">         catch (OntologyException oe){ log.error(oe.getStackTrace());}</span>
+
+<span class="nc" id="L584">     } // End of action</span>
+
+  } // End BehaviourStartSimStep
+
+
+  /**
+   * BehaviourReceiveStepResult receives step results and updates progressGUI&lt;/p&gt;
+ * @author Vartalas Panagiotis
+ * @author Ioannis N. Athanasiadis
+ * @version 1.9
+ * @since 2003-2006
+   */
+
+  private class BehaviourReceiveStepResult extends CyclicBehaviour implements AIDs{
+
+	private static final long serialVersionUID = 1781630253559756364L;
+	private SimulationAgent myAgent;
+
+      // Constructor
+<span class="nc" id="L603">      public BehaviourReceiveStepResult(SimulationAgent a){</span>
+<span class="nc" id="L604">            super(a);</span>
+<span class="nc" id="L605">            myAgent = a;</span>
+<span class="nc" id="L606">      }</span>
+
+
+      // ACTION
+
+      @SuppressWarnings(&quot;unchecked&quot;)
+	public void action() {
+
+<span class="nc" id="L614">        MessageTemplate mt = MessageTemplate.and(</span>
+<span class="nc" id="L615">            MessageTemplate.MatchSender(WATER_SUPPLIER),</span>
+<span class="nc" id="L616">            MessageTemplate.MatchPerformative(ACLMessage.INFORM));</span>
+
+<span class="nc" id="L618">        ACLMessage receivedMsg = myAgent.receive(mt);</span>
+
+
+<span class="nc bnc" id="L621" title="All 2 branches missed.">        if (receivedMsg!= null){</span>
+            //TEST
+<span class="nc" id="L623">            log.info(&quot;SA : &quot; + receivedMsg.getContent());</span>
+
+            try{
+<span class="nc" id="L626">               ContentElement ce = myAgent.getContentManager().extractContent(receivedMsg);</span>
+<span class="nc bnc" id="L627" title="All 2 branches missed.">               if (ce instanceof StepTotalConsumption) {</span>
+<span class="nc" id="L628">                     StepTotalConsumption tc = (StepTotalConsumption) ce;</span>
+<span class="nc" id="L629">                     WaterConsumption wc = (WaterConsumption) tc.getStepConsumption();</span>
+                     // store result and update GUI
+<span class="nc" id="L631">                     myAgent.consumptions.addElement(wc.getQuantity());</span>
+<span class="nc" id="L632">                     myAgent.progressGui.updateChart((double)wc.getQuantity().floatValue(),(double)stepId);</span>
+               }
+            }
+<span class="nc" id="L635">            catch (CodecException ce){ log.error(ce.getStackTrace()); }</span>
+<span class="nc" id="L636">            catch (OntologyException oe){ log.error(oe.getStackTrace()); }</span>
+<span class="nc" id="L637">            catch (Exception ioe){ log.error(ioe.getStackTrace()); }</span>
+
+            // TEMP GUI
+<span class="nc bnc" id="L640" title="All 2 branches missed.">            if (stepId &gt;=simulationDuration){</span>
+<span class="nc" id="L641">                myAgent.progressGui.updateBar(100);</span>
+<span class="nc" id="L642">                myAgent.progressGui.updateMessageArea(&quot;**** Simulation Ended ****&quot;);</span>
+            }
+            else{
+<span class="nc" id="L645">                 myAgent.progressGui.updateBar(Math.round((stepId*100)/simulationDuration));</span>
+<span class="nc" id="L646">                 stepId++;</span>
+<span class="nc" id="L647">                 myAgent.addBehaviour(new BehaviourStartSimulationStep(myAgent,new Integer(stepId)));</span>
+            }
+        }
+        else
+<span class="nc" id="L651">	    block();</span>
+
+<span class="nc" id="L653">      }// END of action</span>
+
+  }// END Behaviour
+
+
+  /**
+   * BehaviourReceiveOutOfSequenceMessages handles all out of sequence messages. All message are shown on ProgressGUI&lt;/p&gt;
+ * @author Vartalas Panagiotis
+ * @author Ioannis N. Athanasiadis
+ * @version 1.9
+ * @since 2003-2006
+   */
+
+  private class BehaviourHandleOutOfSequenceMessages extends CyclicBehaviour implements AIDs{
+
+	private static final long serialVersionUID = 2774341201231523471L;
+	private SimulationAgent myAgent;
+
+      // Constructor
+<span class="nc" id="L672">      public BehaviourHandleOutOfSequenceMessages(SimulationAgent a){</span>
+<span class="nc" id="L673">            super(a);</span>
+<span class="nc" id="L674">            myAgent = a;</span>
+<span class="nc" id="L675">      }</span>
+
+
+      // ACTION
+
+      public void action() {
+
+<span class="nc" id="L682">        MessageTemplate mt = MessageTemplate.not(MessageTemplate.and(</span>
+<span class="nc" id="L683">                                                  MessageTemplate.MatchPerformative(ACLMessage.INFORM),</span>
+<span class="nc" id="L684">                                                  MessageTemplate.MatchSender(WATER_SUPPLIER)));</span>
+
+<span class="nc" id="L686">        ACLMessage receivedMsg = myAgent.receive(mt);</span>
+
+<span class="nc bnc" id="L688" title="All 2 branches missed.">        if (receivedMsg!= null)</span>
+<span class="nc" id="L689">            myAgent.progressGui.updateMessageArea(&quot;[ &quot; + receivedMsg.getSender().getLocalName() + &quot; ]  :  &quot;</span>
+<span class="nc" id="L690">                                                                          + receivedMsg.getContent() );</span>
+        else
+<span class="nc" id="L692">	    block();</span>
+
+<span class="nc" id="L694">      }// END of action</span>
+
+  }// END BehaviourHandleOutOfSequenceMessages
+
+  /**
+   * Sends a REQUEST message to a consumer agent to launch its personal GUI
+   * @param agentName The CA's name to which the message is sent
+   */
+  private void sendGuiRequestMessage(String agentName){
+<span class="nc" id="L703">      boolean found = false;</span>
+<span class="nc" id="L704">      int i=-1;</span>
+<span class="nc" id="L705">      ACLMessage msg = new ACLMessage(ACLMessage.REQUEST);</span>
+<span class="nc bnc" id="L706" title="All 4 branches missed.">      while(!found &amp;&amp; i&lt;this.consumers.length){</span>
+<span class="nc" id="L707">        i++;</span>
+<span class="nc bnc" id="L708" title="All 2 branches missed.">        if (consumers[i].getName().equals(agentName))</span>
+<span class="nc" id="L709">            found=true;</span>
+      }
+<span class="nc" id="L711">      msg.addReceiver(consumers[i].getAID());</span>
+<span class="nc" id="L712">      msg.setLanguage(codec.getName());</span>
+<span class="nc" id="L713">      msg.setOntology(ontology.getName());</span>
+      // Create content
+<span class="nc" id="L715">      LaunchGUI lg = new LaunchGUI();</span>
+<span class="nc" id="L716">      Action act = new Action(consumers[i].getAID(),lg);</span>
+      try{
+<span class="nc" id="L718">          getContentManager().fillContent(msg,act);</span>
+<span class="nc" id="L719">          send(msg);</span>
+      }
+<span class="nc" id="L721">      catch (CodecException ce){ log.error(ce.getStackTrace()); }</span>
+<span class="nc" id="L722">      catch (OntologyException oe){ log.error(oe.getStackTrace());}</span>
+
+<span class="nc" id="L724">  }</span>
+
+  private void sendSaveResultsRequestToConsumers(File directoryPath){
+
+<span class="nc bnc" id="L728" title="All 2 branches missed.">      for(int i=0 ; i&lt;this.consumers.length ; i++){</span>
+<span class="nc" id="L729">          ACLMessage msg = new ACLMessage(ACLMessage.REQUEST);</span>
+<span class="nc" id="L730">          msg.addReceiver(consumers[i].getAID());</span>
+<span class="nc" id="L731">          msg.setLanguage(codec.getName());</span>
+<span class="nc" id="L732">          msg.setOntology(ontology.getName());</span>
+          // Create content
+<span class="nc" id="L734">          SavingPath sp = new SavingPath();</span>
+<span class="nc" id="L735">          sp.setDirectory(directoryPath.getPath());</span>
+<span class="nc" id="L736">          SavePersonalData spd = new SavePersonalData();</span>
+<span class="nc" id="L737">          spd.setToDirectory(sp);</span>
+<span class="nc" id="L738">          Action act = new Action(consumers[i].getAID(),spd);</span>
+          try{
+<span class="nc" id="L740">              getContentManager().fillContent(msg,act);</span>
+<span class="nc" id="L741">              send(msg);</span>
+          }
+<span class="nc" id="L743">          catch (CodecException ce){ log.error(ce.getStackTrace());}</span>
+<span class="nc" id="L744">          catch (OntologyException oe){ log.error(oe.getStackTrace());}</span>
+      }
+
+<span class="nc" id="L747">  }// END of method</span>
+
+
+  private int saveScenarioToFile(File fileName){
+<span class="nc" id="L751">    int ok = 0;</span>
+<span class="nc" id="L752">    String errorMsg = &quot;An error occured while saving scenario&quot;;</span>
+    try{
+<span class="nc" id="L754">      FileOutputStream out = new FileOutputStream(fileName);</span>
+<span class="nc" id="L755">      ObjectOutputStream s = new ObjectOutputStream(out);</span>
+      //s.writeObject(temp1);
+      // Simulation Parameters
+<span class="nc" id="L758">      s.writeObject(new Integer(gridDimension));</span>
+<span class="nc" id="L759">      s.writeObject(new Integer(sightLimit));</span>
+<span class="nc" id="L760">      s.writeObject(new Integer(population));</span>
+<span class="nc" id="L761">      s.writeObject(new Integer(simulationDuration));</span>
+<span class="nc" id="L762">      s.writeObject(new Integer(simulationStep));</span>
+      //Consumer Types
+<span class="nc" id="L764">      s.writeObject(consumerTypes);</span>
+<span class="nc" id="L765">      s.writeObject(SimulationAgent.consumptionLN);</span>
+<span class="nc" id="L766">      s.writeObject(demandCurveParameters);</span>
+
+<span class="nc" id="L768">      s.writeObject(metDataFile);</span>
+<span class="nc" id="L769">      s.writeObject(priceData);</span>
+<span class="nc" id="L770">      s.writeObject(new Float(distributionMean));</span>
+<span class="nc" id="L771">      s.writeObject(new Float(distributionDeviation));</span>
+<span class="nc" id="L772">      s.flush();</span>
+    }
+<span class="nc" id="L774">    catch(FileNotFoundException fnfe){log.error(fnfe.getStackTrace()); ok = 1;this.suiteGUI.errorMessage(errorMsg);}</span>
+<span class="nc" id="L775">    catch(IOException ioe){log.error(ioe.getStackTrace()); ok = 2;this.suiteGUI.errorMessage(errorMsg);}</span>
+
+<span class="nc" id="L777">    return ok;</span>
+  }
+
+   private int loadScenarioFromFile(File fileName){
+<span class="nc" id="L781">    int ok = 0;</span>
+<span class="nc" id="L782">    String errorMsg = &quot;An error occured while loading scenario&quot;;</span>
+    try{
+<span class="nc" id="L784">      FileInputStream in = new FileInputStream(fileName);</span>
+<span class="nc" id="L785">      ObjectInputStream s = new ObjectInputStream(in);</span>
+
+      // Simulation Parameters
+<span class="nc" id="L788">      SimulationAgent.gridDimension = ((Integer)s.readObject()).intValue();</span>
+<span class="nc" id="L789">      SimulationAgent.sightLimit = ((Integer)s.readObject()).intValue();</span>
+<span class="nc" id="L790">      SimulationAgent.population = ((Integer)s.readObject()).intValue();</span>
+<span class="nc" id="L791">      SimulationAgent.simulationDuration = ((Integer)s.readObject()).intValue();</span>
+<span class="nc" id="L792">      SimulationAgent.simulationStep = ((Integer)s.readObject()).intValue();</span>
+
+      //Consumer Types
+<span class="nc" id="L795">      SimulationAgent.consumerTypes = (ConsumerType[])s.readObject();</span>
+
+<span class="nc" id="L797">      SimulationAgent.consumptionLN = (Boolean)s.readObject();</span>
+
+<span class="nc" id="L799">      SimulationAgent.demandCurveParameters = (ParameterAttributes[][])s.readObject();</span>
+
+<span class="nc" id="L801">      SimulationAgent.metDataFile = (File)s.readObject();</span>
+<span class="nc" id="L802">      SimulationAgent.priceData = (Vector)s.readObject();</span>
+<span class="nc" id="L803">      SimulationAgent.distributionMean = ((Float)s.readObject()).floatValue();</span>
+<span class="nc" id="L804">      SimulationAgent.distributionDeviation = ((Float)s.readObject()).floatValue();</span>
+
+    }
+<span class="nc" id="L807">    catch(FileNotFoundException fnfe){log.error(fnfe.getStackTrace()); ok = 1;this.suiteGUI.errorMessage(errorMsg);}</span>
+<span class="nc" id="L808">    catch(IOException ioe){log.error(ioe.getStackTrace()); ok = 2;this.suiteGUI.errorMessage(errorMsg);}</span>
+<span class="nc" id="L809">    catch(ClassNotFoundException cnfe){log.error(cnfe.getStackTrace());; ok = 3;this.suiteGUI.errorMessage(errorMsg);}</span>
+
+<span class="nc" id="L811">    return ok;</span>
+  }
+
+  private int saveResultsToFile(File fileName){
+<span class="nc" id="L815">    int ok = 0;</span>
+<span class="nc" id="L816">    String errorMsg = &quot;An error occured while saving results&quot;;</span>
+
+    try{
+<span class="nc" id="L819">        FileWriter out = new FileWriter(fileName);</span>
+<span class="nc" id="L820">        out.write(&quot;Step\tTotal Consumption\n&quot;);</span>
+<span class="nc bnc" id="L821" title="All 2 branches missed.">        for (int i = 0 ; i&lt;this.consumptions.capacity(); i++){</span>
+
+<span class="nc" id="L823">            out.write(new Integer(i).toString());</span>
+<span class="nc" id="L824">            out.write('\t');</span>
+<span class="nc" id="L825">            out.write(((Float)this.consumptions.elementAt(i)).toString());</span>
+<span class="nc" id="L826">            out.write('\n');</span>
+        }
+<span class="nc" id="L828">        out.close();</span>
+    }
+<span class="nc" id="L830">    catch(FileNotFoundException fnfe){log.error(fnfe.getStackTrace()); ok = 1;this.suiteGUI.errorMessage(errorMsg);}</span>
+<span class="nc" id="L831">    catch(IOException ioe){log.error(ioe.getStackTrace()); ok = 2; this.suiteGUI.errorMessage(errorMsg);}</span>
+<span class="nc" id="L832">    return ok;</span>
+  }
+
+  private void launchReviewGui(){
+    try{
+      //Launch reviewGUI
+<span class="nc" id="L838">      reviewGUI = new ReviewGUI(this);</span>
+<span class="nc" id="L839">      suiteGUI.addToMainPanel(reviewGUI,SuiteGUI.BACKGROUND_LAYER);</span>
+<span class="nc" id="L840">      reviewGUI.setMaximum(true);</span>
+      // Update labels
+<span class="nc" id="L842">      reviewGUI.updateSimulationParametersLabels(SimulationAgent.population,SimulationAgent.gridDimension,SimulationAgent.sightLimit,</span>
+    		  SimulationAgent.simulationDuration,SimulationAgent.simulationStep);
+      //elementAt [1] ---&gt; scenario parameters
+<span class="nc" id="L845">      reviewGUI.updatePricingPolicyLabels(((Float)SimulationAgent.priceData.elementAt(3)).floatValue(),</span>
+<span class="nc" id="L846">                                          ((Float)SimulationAgent.priceData.elementAt(4)).floatValue(),</span>
+                                          SuiteGUI.pricingScenarios[
+<span class="nc" id="L848">                                                       ((Integer)SimulationAgent.priceData.elementAt(0)).intValue()],</span>
+<span class="nc" id="L849">                                           ((Integer)SimulationAgent.priceData.elementAt(2)).intValue() );</span>
+<span class="nc" id="L850">      int temp = 7;</span>
+<span class="nc" id="L851">      reviewGUI.setPriceTableSize(((Integer)SimulationAgent.priceData.elementAt(6)).intValue());</span>
+<span class="nc bnc" id="L852" title="All 2 branches missed.">      for(int i=0; i &lt; ((Integer)SimulationAgent.priceData.elementAt(6)).intValue(); i++){</span>
+<span class="nc" id="L853">          reviewGUI.updatePriceTable(new Integer(i+1),i,0);</span>
+<span class="nc" id="L854">          reviewGUI.updatePriceTable(SimulationAgent.priceData.elementAt(temp),i,1);</span>
+<span class="nc" id="L855">          temp++;</span>
+<span class="nc" id="L856">          reviewGUI.updatePriceTable(SimulationAgent.priceData.elementAt(temp),i,2);</span>
+<span class="nc" id="L857">          temp++;</span>
+<span class="nc" id="L858">          reviewGUI.updatePriceTable(SimulationAgent.priceData.elementAt(temp),i,3);</span>
+<span class="nc" id="L859">          temp++;</span>
+      }
+
+<span class="nc bnc" id="L862" title="All 2 branches missed.">      for(int i=0; i &lt; SimulationAgent.consumerTypes.length; i++){</span>
+<span class="nc" id="L863">        reviewGUI.updateTypesCombo(SimulationAgent.consumerTypes[i].getName());</span>
+      }
+<span class="nc" id="L865">      reviewGUI.updateFileLabel(SimulationAgent.metDataFile.getPath());</span>
+
+<span class="nc bnc" id="L867" title="All 2 branches missed.">      for(int i=0; i &lt; SimulationAgent.demandCurveParameters[0].length; i++){</span>
+<span class="nc" id="L868">        reviewGUI.updateCurveCombo(SimulationAgent.demandCurveParameters[0][i].getName());</span>
+      }
+<span class="nc" id="L870">      int [] selections = reviewGUI.getCombosSelections();</span>
+<span class="nc" id="L871">      reviewGUI.updateDemandCurveParameter(SimulationAgent.demandCurveParameters[selections[0]][selections[1]]);</span>
+
+      //update Demand Curve Representation on review GUI
+<span class="nc bnc" id="L874" title="All 2 branches missed.">      String demandCurve = (SimulationAgent.consumptionLN.booleanValue()?&quot;lnC&quot;:&quot;C&quot;);</span>
+<span class="nc bnc" id="L875" title="All 2 branches missed.">      for (int i=0 ; i&lt;SimulationAgent.demandCurveParameters[0].length ; i++){</span>
+<span class="nc bnc" id="L876" title="All 2 branches missed.">          if (i==0)</span>
+<span class="nc" id="L877">              demandCurve += &quot; = &quot;;</span>
+          else
+<span class="nc" id="L879">              demandCurve += &quot; + &quot;;</span>
+<span class="nc bnc" id="L880" title="All 2 branches missed.">          demandCurve += &quot;e&quot; + i + &quot; &quot; + (SimulationAgent.demandCurveParameters[0][i].getLn()?&quot;Ln(&quot;:&quot;&quot;) +</span>
+<span class="nc" id="L881">                                SimulationAgent.demandCurveParameters[0][i].getName() +</span>
+<span class="nc bnc" id="L882" title="All 2 branches missed.">                               (SimulationAgent.demandCurveParameters[0][i].getLn()?&quot;)&quot;:&quot;&quot;);</span>
+
+<span class="nc bnc" id="L884" title="All 2 branches missed.">          if ( (i%4) == 3)</span>
+<span class="nc" id="L885">                demandCurve += &quot;\n&quot;;</span>
+      }
+<span class="nc" id="L887">      reviewGUI.updateDemandCurveRepresentation(demandCurve);</span>
+<span class="nc" id="L888">      reviewGUI.show();</span>
+    }
+<span class="nc" id="L890">    catch(Exception e){log.error(e.getStackTrace());}</span>
+<span class="nc" id="L891">  }</span>
+
+  private void setSimulationParameters(GuiEvent ge){
+
+    // Simulation Parameters
+<span class="nc" id="L896">      SimulationAgent.population = ((Integer) ge.getParameter(0)).intValue();</span>
+<span class="nc" id="L897">      SimulationAgent.gridDimension = ((Integer) ge.getParameter(1)).intValue();</span>
+<span class="nc" id="L898">      SimulationAgent.sightLimit = ((Integer) ge.getParameter(2)).intValue();</span>
+<span class="nc" id="L899">      SimulationAgent.simulationDuration = ((Integer) ge.getParameter(3)).intValue();</span>
+<span class="nc" id="L900">      SimulationAgent.simulationStep = ((Integer) ge.getParameter(4)).intValue();</span>
+
+<span class="nc" id="L902">  }</span>
+
+  private void updatePricingPolicyToReviewGUI(){
+<span class="nc" id="L905">      this.reviewGUI.updatePricingPolicyLabels(((Float)SimulationAgent.priceData.elementAt(3)).floatValue(),</span>
+<span class="nc" id="L906">                                               ((Float)SimulationAgent.priceData.elementAt(4)).floatValue(),</span>
+                                               SuiteGUI.pricingScenarios[
+<span class="nc" id="L908">                                                       ((Integer)SimulationAgent.priceData.elementAt(0)).intValue()],</span>
+<span class="nc" id="L909">                                               ((Integer)SimulationAgent.priceData.elementAt(2)).intValue() );</span>
+<span class="nc" id="L910">      int temp = 7;</span>
+<span class="nc" id="L911">      reviewGUI.setPriceTableSize(((Integer)SimulationAgent.priceData.elementAt(6)).intValue());</span>
+<span class="nc bnc" id="L912" title="All 2 branches missed.">      for(int i=0; i &lt; ((Integer)SimulationAgent.priceData.elementAt(6)).intValue(); i++){</span>
+<span class="nc" id="L913">          reviewGUI.updatePriceTable(new Integer(i+1),i,0);</span>
+<span class="nc" id="L914">          reviewGUI.updatePriceTable(SimulationAgent.priceData.elementAt(temp),i,1);</span>
+<span class="nc" id="L915">          temp++;</span>
+<span class="nc" id="L916">          reviewGUI.updatePriceTable(SimulationAgent.priceData.elementAt(temp),i,2);</span>
+<span class="nc" id="L917">          temp++;</span>
+<span class="nc" id="L918">          reviewGUI.updatePriceTable(SimulationAgent.priceData.elementAt(temp),i,3);</span>
+<span class="nc" id="L919">          temp++;</span>
+      }
+
+<span class="nc" id="L922">  }</span>
+
+  private void distributeTypesToAgents(){
+<span class="nc" id="L925">     int total = 0;</span>
+<span class="nc bnc" id="L926" title="All 2 branches missed.">     for(int i=0; i&lt;(SimulationAgent.consumerTypes.length-1) ; i++){</span>
+<span class="nc" id="L927">        int temp = Math.round((SimulationAgent.consumerTypes[i].getPercentage().floatValue()/100) * SimulationAgent.population);</span>
+<span class="nc" id="L928">        SimulationAgent.consumerTypes[i].setMembers(temp);</span>
+<span class="nc" id="L929">        total += temp;</span>
+     }
+<span class="nc" id="L931">     SimulationAgent.consumerTypes[SimulationAgent.consumerTypes.length-1].setMembers(Math.abs(population-total));</span>
+
+<span class="nc" id="L933">  }</span>
+
+}// END Simulator Agent
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

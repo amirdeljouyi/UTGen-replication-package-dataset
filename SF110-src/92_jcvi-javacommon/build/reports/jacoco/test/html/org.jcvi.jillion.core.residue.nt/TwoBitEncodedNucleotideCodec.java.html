@@ -1,0 +1,436 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TwoBitEncodedNucleotideCodec.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.core.residue.nt</a> &gt; <span class="el_source">TwoBitEncodedNucleotideCodec.java</span></div><h1>TwoBitEncodedNucleotideCodec.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+package org.jcvi.jillion.core.residue.nt;
+
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+import java.util.NoSuchElementException;
+
+import org.jcvi.jillion.core.Range;
+import org.jcvi.jillion.internal.core.io.ValueSizeStrategy;
+
+
+/**
+ * {@code TwoBitEncodedNucleotideCodec} is a
+ * {@link NucleotideCodec} that
+ * is able to encode
+ * up to 5 different nucleotides as 2 bits each
+ * plus some extra bytes to store offsets
+ * of the 5th base.  The best uses of this
+ * codec is to store ACGT and -/N as the 5th base type.
+ * @author dkatzel
+ *
+ *
+ */
+abstract class TwoBitEncodedNucleotideCodec implements NucleotideCodec{
+	private static final int END_OF_ITER = Integer.MIN_VALUE;
+<span class="nc" id="L50">        private static final ValueSizeStrategy[] VALUE_SIZE_STRATEGIES = ValueSizeStrategy.values();</span>
+		/*
+         * Implementation Details:
+         * ====================================
+         * We store everything as a single byte array which
+         * contains a header with the decoded size, and number of gaps as ints.
+         * Header
+         * byte : ordinal of ValueSizeStrategy
+         * 1 -4 bytes: decoded size packed according to valueSizeStrategy
+         * byte : ordinal of ValueSizeStrategy for number of gaps
+         * 0 -4 bytes: decoded #gaps packed according to valueSizeStrategy.  
+         * if previous ordinal of ValueStrategy was for ValueSizeStrategy#NONE
+         * then this field is 0 bytes long.
+         * 
+         * Next, we store gaps offsets (if any)
+         * We can use the decoded size to figure out how many
+         * bits per offset we need (unsigned). Anything &lt;256 (like a next-gen read)
+         * only needs 1 byte while sanger/ small contig consensuses can fit in 2 bytes.
+         * 
+         * Finally, the rest of the byte array contains the ACGT- basecalls
+         * stored as 2bits each.  A gap is recorded here to keep offsets correct.
+         * 
+         * We can find a basecall by pulling out the gap offsets and seeing if 
+         * the offset we want is there.  If so return gap, else compute offset into encoded 
+         * byte array for ACGT call and then do bit shifting to get the 2bits we need.
+         */
+
+        
+        /**
+         * We can store ACGTs as 2 bits so that's 4 per byte.
+         */
+        private static final int NUCLEOTIDES_PER_BYTE =4;
+        /**
+         * This is a sentinel value for a gap.  Since we 
+         * can only store 2 bits per base, a byte of 5 is too big.
+         * 
+         */
+        private static final byte GAP_BYTE = 5;
+        /**
+         * This is the 5th {@link Nucleotide} of our 2 bit encoding
+         * usually a &quot;-&quot; or &quot;N&quot;.  These 5th bases will occasionally occur
+         * but infrequently enough that we should still use our
+         * 2 bit encoding for all sequences.
+         */
+        private final Nucleotide sententialBase;
+<span class="nc" id="L95">        protected TwoBitEncodedNucleotideCodec(Nucleotide sententialBase){</span>
+<span class="nc" id="L96">            this.sententialBase = sententialBase;</span>
+<span class="nc" id="L97">        }</span>
+        
+       private Nucleotide getNucleotide2(byte encodedByte, int index){
+    	   //endian is backwards
+<span class="nc" id="L101">    	   int j = (3-index%4)*2;</span>
+<span class="nc" id="L102">    	   return getGlyphFor((byte)((encodedByte&gt;&gt;j) &amp;0x3));</span>
+       }
+       
+		protected List&lt;Integer&gt; getSentinelOffsetsFrom(ByteBuffer buf, ValueSizeStrategy offsetStrategy){
+<span class="nc" id="L106">			ValueSizeStrategy sentinelStrategy = VALUE_SIZE_STRATEGIES[buf.get()];</span>
+<span class="nc bnc" id="L107" title="All 2 branches missed.">            if(sentinelStrategy == ValueSizeStrategy.NONE){</span>
+<span class="nc" id="L108">            	return Collections.&lt;Integer&gt;emptyList();</span>
+            }else{            	
+            	//there are gaps
+<span class="nc" id="L111">            	int numberOfSentinels = sentinelStrategy.getNext(buf);</span>
+<span class="nc" id="L112">            	List&lt;Integer&gt; sentinelOffsets = new ArrayList&lt;Integer&gt;(numberOfSentinels);</span>
+<span class="nc bnc" id="L113" title="All 2 branches missed.">            	for(int i = 0; i&lt; numberOfSentinels; i++){</span>
+<span class="nc" id="L114">            		sentinelOffsets.add(Integer.valueOf(offsetStrategy.getNext(buf)));</span>
+            	}
+<span class="nc" id="L116">            	return sentinelOffsets;</span>
+            }
+
+		}
+        
+		
+        
+       
+        @Override
+        public Nucleotide decode(byte[] encodedGlyphs, long index){
+<span class="nc bnc" id="L126" title="All 2 branches missed.">        	if(index &lt;0){</span>
+<span class="nc" id="L127">        		throw new IndexOutOfBoundsException(String.format(&quot;offset %d can not be negative &quot;, index));</span>
+        	}
+<span class="nc" id="L129">        	ByteBuffer buf = ByteBuffer.wrap(encodedGlyphs);</span>
+<span class="nc" id="L130">            ValueSizeStrategy offsetStrategy = VALUE_SIZE_STRATEGIES[buf.get()];</span>
+<span class="nc" id="L131">            int length=offsetStrategy.getNext(buf);</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">            if(index &gt;=length){</span>
+<span class="nc" id="L133">            	throw new IndexOutOfBoundsException(String.format(&quot;offset %d is &gt;= length (%d)&quot;, index,length));</span>
+            }
+<span class="nc bnc" id="L135" title="All 2 branches missed.">            if(isSentinelOffset(buf,offsetStrategy,(int)index)){</span>
+<span class="nc" id="L136">            	return sententialBase;</span>
+            }
+<span class="nc" id="L138">            int currentPosition =buf.position();</span>
+<span class="nc" id="L139">            int bytesToSkip = (int)(index/4);</span>
+<span class="nc" id="L140">            buf.position(currentPosition+ bytesToSkip);</span>
+
+<span class="nc" id="L142">            int offsetIntoBitSet = (int)(index%4);</span>
+<span class="nc" id="L143">            return getNucleotide2(buf.get(), offsetIntoBitSet);</span>
+        
+        }
+        private boolean isSentinelOffset(ByteBuffer buf, ValueSizeStrategy offsetStrategy, int index) {
+<span class="nc" id="L147">        	ValueSizeStrategy sentinelStrategy = VALUE_SIZE_STRATEGIES[buf.get()];</span>
+<span class="nc bnc" id="L148" title="All 2 branches missed.">        	if(sentinelStrategy == ValueSizeStrategy.NONE){</span>
+<span class="nc" id="L149">        		return false;</span>
+        	}
+<span class="nc" id="L151">        	int numberOfSentinels = sentinelStrategy.getNext(buf);</span>
+<span class="nc" id="L152">        	int nextSentinelOffset= Integer.MIN_VALUE;</span>
+        	//even though the offsets are sorted so if we get past
+        	//the desired index we can short circuit the for loop
+        	//we don't want to do that because 
+        	//we need to read thru the entire sentinel
+        	//section of the buffer
+<span class="nc bnc" id="L158" title="All 2 branches missed.">        	for(int i = 0; i&lt; numberOfSentinels; i++){</span>
+<span class="nc" id="L159">        		nextSentinelOffset = offsetStrategy.getNext(buf);</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">				if(index ==nextSentinelOffset){</span>
+<span class="nc" id="L161">        			return true;</span>
+        		}
+        	}
+        	
+<span class="nc" id="L165">			return false;</span>
+		}
+		
+       
+
+        @Override
+		public byte[] encode(int numberOfNucleotides,
+				Iterator&lt;Nucleotide&gt; nucleotides) {
+<span class="nc" id="L173">        	 return encodeNucleotides(nucleotides, numberOfNucleotides);</span>
+		}
+		@Override
+        public byte[] encode(Collection&lt;Nucleotide&gt; glyphs) {
+<span class="nc" id="L177">            final int unEncodedSize = glyphs.size();</span>
+<span class="nc" id="L178">            return encodeNucleotides(glyphs.iterator(), unEncodedSize);</span>
+            
+        }
+        /**
+         * Convenience method to encode a single basecall.
+         * @param glyph
+         * @return
+         */
+        @Override
+        public byte[] encode(Nucleotide glyph) {
+<span class="nc" id="L188">            return encodeNucleotides(Arrays.asList(glyph).iterator(),1);</span>
+            
+        }
+        
+        public static int getNumberOfEncodedBytesFor(int totalLength, int numberOfSentinelValues){
+<span class="nc" id="L193">        	int encodedBasesSize = computeHeaderlessEncodedSize(totalLength);</span>
+<span class="nc" id="L194">        	ValueSizeStrategy numBasesSizeStrategy = ValueSizeStrategy.getStrategyFor(totalLength);</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">            ValueSizeStrategy sentinelSizeStrategy = numberOfSentinelValues==0</span>
+            											?	ValueSizeStrategy.NONE 
+<span class="nc" id="L197">            											:	ValueSizeStrategy.getStrategyFor(numberOfSentinelValues);</span>
+<span class="nc" id="L198">            return computeEncodedBufferSize(encodedBasesSize,</span>
+					numBasesSizeStrategy, numberOfSentinelValues,
+					sentinelSizeStrategy);
+        }
+        private byte[] encodeNucleotides(Iterator&lt;Nucleotide&gt; iterator,
+                final int unEncodedSize) {
+<span class="nc" id="L204">            int encodedBasesSize = computeHeaderlessEncodedSize(unEncodedSize);</span>
+<span class="nc" id="L205">            ByteBuffer encodedBases = ByteBuffer.allocate(encodedBasesSize);</span>
+<span class="nc" id="L206">            List&lt;Integer&gt; sentinels = encodeAll(iterator, unEncodedSize, encodedBases);</span>
+<span class="nc" id="L207">            encodedBases.flip();</span>
+<span class="nc" id="L208">            ValueSizeStrategy numBasesSizeStrategy = ValueSizeStrategy.getStrategyFor(unEncodedSize);</span>
+<span class="nc" id="L209">            int numberOfSentinels = sentinels.size();</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">			ValueSizeStrategy sentinelSizeStrategy = sentinels.isEmpty()</span>
+            											?	ValueSizeStrategy.NONE 
+<span class="nc" id="L212">            											:	ValueSizeStrategy.getStrategyFor(numberOfSentinels);</span>
+            
+<span class="nc" id="L214">            int bufferSize = computeEncodedBufferSize(encodedBasesSize,</span>
+					numBasesSizeStrategy, numberOfSentinels,
+					sentinelSizeStrategy);
+            
+<span class="nc" id="L218">            ByteBuffer result = ByteBuffer.allocate(bufferSize);</span>
+<span class="nc" id="L219">            result.put((byte)numBasesSizeStrategy.ordinal());</span>
+<span class="nc" id="L220">            numBasesSizeStrategy.put(result, unEncodedSize);</span>
+<span class="nc" id="L221">            result.put((byte)sentinelSizeStrategy.ordinal());</span>
+<span class="nc bnc" id="L222" title="All 2 branches missed.">            if(sentinelSizeStrategy != ValueSizeStrategy.NONE){</span>
+<span class="nc" id="L223">            	sentinelSizeStrategy.put(result, numberOfSentinels);</span>
+<span class="nc bnc" id="L224" title="All 2 branches missed.">            	for(Integer sentinel : sentinels){</span>
+<span class="nc" id="L225">            		numBasesSizeStrategy.put(result, sentinel.intValue());</span>
+<span class="nc" id="L226">                }</span>
+            }
+<span class="nc" id="L228">            result.put(encodedBases);</span>
+<span class="nc" id="L229">            return result.array();</span>
+        }
+		private static int computeEncodedBufferSize(int encodedBasesSize,
+				ValueSizeStrategy numBasesSizeStrategy, int numberOfSentinels,
+				ValueSizeStrategy sentinelSizeStrategy) {
+<span class="nc" id="L234">			int bufferSize = 2 + numBasesSizeStrategy.getNumberOfBytesPerValue() + sentinelSizeStrategy.getNumberOfBytesPerValue()</span>
+<span class="nc" id="L235">            		+ numBasesSizeStrategy.getNumberOfBytesPerValue() * numberOfSentinels + encodedBasesSize;</span>
+<span class="nc" id="L236">			return bufferSize;</span>
+		}
+        /**
+         * pack every 4 nucleotides into a single byte.
+         * @param glyphs
+         * @param unEncodedSize
+         * @param result
+         */
+        private List&lt;Integer&gt; encodeAll(Iterator&lt;Nucleotide&gt; glyphs,
+                final int unEncodedSize, ByteBuffer result) {
+<span class="nc" id="L246">            List&lt;Integer&gt; gaps= new ArrayList&lt;Integer&gt;();</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">            for(int i=0; i&lt;unEncodedSize; i+=NUCLEOTIDES_PER_BYTE){</span>
+<span class="nc" id="L248">                gaps.addAll(encodeNext4Values(glyphs, result,i));</span>
+            }
+<span class="nc" id="L250">            return gaps;</span>
+        }
+       
+        private static int computeHeaderlessEncodedSize(final int size) {
+<span class="nc" id="L254">            return (size+3)/4;</span>
+        }
+       
+        
+        private byte getByteFor(Nucleotide nuc){
+<span class="nc bnc" id="L259" title="All 5 branches missed.">            switch(nuc){</span>
+<span class="nc" id="L260">                case Adenine : return (byte)0;</span>
+<span class="nc" id="L261">                case Cytosine : return (byte)1;</span>
+<span class="nc" id="L262">                case Guanine : return (byte)2;</span>
+<span class="nc" id="L263">                case Thymine : return (byte)3;</span>
+<span class="nc" id="L264">                default : throw new IllegalArgumentException(&quot;only A,C,G,T supported : &quot;+ nuc);</span>
+            }
+        }
+        private Nucleotide getGlyphFor(byte b){
+<span class="nc bnc" id="L268" title="All 2 branches missed.">            if(b == (byte)0){</span>
+<span class="nc" id="L269">                return Nucleotide.Adenine;</span>
+            }
+<span class="nc bnc" id="L271" title="All 2 branches missed.">            if(b == (byte)1){</span>
+<span class="nc" id="L272">                return Nucleotide.Cytosine;</span>
+            }
+<span class="nc bnc" id="L274" title="All 2 branches missed.">            if(b == (byte)2){</span>
+<span class="nc" id="L275">                return Nucleotide.Guanine;</span>
+            }
+<span class="nc bnc" id="L277" title="All 2 branches missed.">            if(b == (byte)3){</span>
+<span class="nc" id="L278">                return Nucleotide.Thymine;</span>
+            }
+<span class="nc" id="L280">            throw new IllegalArgumentException(&quot;unknown encoded value : &quot;+b);</span>
+        }
+       
+        private List&lt;Integer&gt; encodeNext4Values(Iterator&lt;Nucleotide&gt; glyphs, ByteBuffer result, int offset) {
+<span class="nc bnc" id="L284" title="All 2 branches missed.">            byte b0 = glyphs.hasNext() ? getSentienelByteFor(glyphs.next()) : 0;</span>
+<span class="nc bnc" id="L285" title="All 2 branches missed.">            byte b1 = glyphs.hasNext() ? getSentienelByteFor(glyphs.next()) : 0;</span>
+<span class="nc bnc" id="L286" title="All 2 branches missed.">            byte b2 = glyphs.hasNext() ? getSentienelByteFor(glyphs.next()) : 0;</span>
+<span class="nc bnc" id="L287" title="All 2 branches missed.">            byte b3 = glyphs.hasNext() ? getSentienelByteFor(glyphs.next()) : 0;</span>
+            
+<span class="nc" id="L289">            List&lt;Integer&gt; sentenielOffsets = new ArrayList&lt;Integer&gt;();</span>
+<span class="nc bnc" id="L290" title="All 2 branches missed.">            if(b0== GAP_BYTE){</span>
+<span class="nc" id="L291">                sentenielOffsets.add(offset);</span>
+<span class="nc" id="L292">                b0=0;</span>
+            }
+<span class="nc bnc" id="L294" title="All 2 branches missed.">            if(b1== GAP_BYTE){</span>
+<span class="nc" id="L295">                sentenielOffsets.add(offset+1);</span>
+<span class="nc" id="L296">                b1=0;</span>
+            }
+<span class="nc bnc" id="L298" title="All 2 branches missed.">            if(b2== GAP_BYTE){</span>
+<span class="nc" id="L299">                sentenielOffsets.add(offset+2);</span>
+<span class="nc" id="L300">                b2=0;</span>
+            }
+<span class="nc bnc" id="L302" title="All 2 branches missed.">            if(b3== GAP_BYTE){</span>
+<span class="nc" id="L303">                sentenielOffsets.add(offset+3);</span>
+<span class="nc" id="L304">                b3=0;</span>
+            }
+<span class="nc" id="L306">            result.put((byte) ((b0&lt;&lt;6 | b1&lt;&lt;4 | b2&lt;&lt;2 | b3) &amp;0xFF));</span>
+<span class="nc" id="L307">            return sentenielOffsets;</span>
+        }
+        
+        
+        private byte getSentienelByteFor(Nucleotide nucleotide){
+<span class="nc bnc" id="L312" title="All 2 branches missed.">            if(nucleotide == sententialBase){</span>
+<span class="nc" id="L313">                return GAP_BYTE;</span>
+            }
+<span class="nc" id="L315">            return getByteFor(nucleotide);</span>
+        }
+     
+       
+        @Override
+        public int decodedLengthOf(byte[] encodedGlyphs) {
+<span class="nc" id="L321">            ByteBuffer buf = ByteBuffer.wrap(encodedGlyphs);</span>
+<span class="nc" id="L322">            return VALUE_SIZE_STRATEGIES[buf.get()].getNext(buf);</span>
+        }
+		@Override
+		public Iterator&lt;Nucleotide&gt; iterator(byte[] encodedData) {
+<span class="nc" id="L326">			return new IteratorImpl(encodedData);</span>
+		}
+		
+		@Override
+		public Iterator&lt;Nucleotide&gt; iterator(byte[] encodedData, Range range) {
+<span class="nc" id="L331">			return new IteratorImpl(encodedData, range);</span>
+		}
+		@Override
+		public String toString(byte[] encodedData) {
+<span class="nc" id="L335">			Iterator&lt;Nucleotide&gt; iter = iterator(encodedData);</span>
+<span class="nc" id="L336">			StringBuilder builder = new StringBuilder(decodedLengthOf(encodedData));</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">			while(iter.hasNext()){</span>
+<span class="nc" id="L338">				builder.append(iter.next());</span>
+			}
+<span class="nc" id="L340">			return builder.toString();</span>
+		}
+
+		private final class IteratorImpl implements Iterator&lt;Nucleotide&gt;{
+			
+			private final int length;
+			private final int[] sentinelArray;
+			
+			private int nextSentinel;
+<span class="nc" id="L349">			private int currentOffset=0;</span>
+<span class="nc" id="L350">			private int sentinelIndex=0;</span>
+			private final byte[] encodedBytes;
+			
+<span class="nc" id="L353">			public IteratorImpl(byte[] encodedGlyphs){</span>
+<span class="nc" id="L354">				ByteBuffer buf = ByteBuffer.wrap(encodedGlyphs);</span>
+<span class="nc" id="L355">				ValueSizeStrategy offsetStrategy = VALUE_SIZE_STRATEGIES[buf.get()];</span>
+<span class="nc" id="L356">	            this.length =offsetStrategy.getNext(buf);</span>
+<span class="nc" id="L357">	            this.sentinelArray = parseSentinelOffsetsIteratorFrom(buf,offsetStrategy);</span>
+<span class="nc" id="L358">	            this.encodedBytes =new byte[buf.remaining()];</span>
+<span class="nc" id="L359">	            buf.get(encodedBytes);</span>
+<span class="nc" id="L360">	            this.nextSentinel = getNextSentinel();	           </span>
+<span class="nc" id="L361">			}</span>
+			
+<span class="nc" id="L363">			public IteratorImpl(byte[] encodedGlyphs, Range range){</span>
+<span class="nc" id="L364">				ByteBuffer buf = ByteBuffer.wrap(encodedGlyphs);</span>
+<span class="nc" id="L365">				ValueSizeStrategy offsetStrategy = VALUE_SIZE_STRATEGIES[buf.get()];</span>
+<span class="nc" id="L366">	            int sequenceLength =offsetStrategy.getNext(buf);</span>
+<span class="nc bnc" id="L367" title="All 4 branches missed.">	            if(range.getBegin()&lt;0 || range.getEnd()&gt;=sequenceLength){</span>
+<span class="nc" id="L368">					throw new IndexOutOfBoundsException(&quot;range &quot;+range +&quot; is out of range of sequence which is only &quot;+ new Range.Builder(sequenceLength).build());</span>
+				}
+<span class="nc" id="L370">	            this.length = (int)range.getEnd()+1;</span>
+<span class="nc" id="L371">	            this.sentinelArray = parseSentinelOffsetsIteratorFrom(buf,offsetStrategy);</span>
+<span class="nc" id="L372">	            this.nextSentinel = getNextSentinel();</span>
+<span class="nc" id="L373">	            currentOffset = (int)range.getBegin();</span>
+<span class="nc bnc" id="L374" title="All 4 branches missed.">	            while(nextSentinel!=END_OF_ITER &amp;&amp; nextSentinel &lt; currentOffset){</span>
+<span class="nc" id="L375">	            	this.nextSentinel = getNextSentinel();</span>
+	            }
+<span class="nc" id="L377">	            this.encodedBytes =new byte[buf.remaining()];</span>
+<span class="nc" id="L378">	            buf.get(encodedBytes);</span>
+	           	           
+<span class="nc" id="L380">			}</span>
+			
+			private int[] parseSentinelOffsetsIteratorFrom(
+					ByteBuffer buf, ValueSizeStrategy offsetStrategy) {
+<span class="nc" id="L384">				ValueSizeStrategy sentinelStrategy = VALUE_SIZE_STRATEGIES[buf.get()];</span>
+	            //no sentinels (no gaps or N's)
+<span class="nc bnc" id="L386" title="All 2 branches missed.">	            if(sentinelStrategy == ValueSizeStrategy.NONE){</span>
+<span class="nc" id="L387">	            	return new int[0];</span>
+	            }else{            	
+<span class="nc" id="L389">	            	int numberOfSentinels = sentinelStrategy.getNext(buf);</span>
+	            	//
+<span class="nc" id="L391">	            	int[] sentinelArray = new int[numberOfSentinels];</span>
+	            	
+<span class="nc bnc" id="L393" title="All 2 branches missed.">	            	for(int i = 0; i&lt; numberOfSentinels; i++){</span>
+<span class="nc" id="L394">	            		sentinelArray[i] =offsetStrategy.getNext(buf);</span>
+	            	}
+<span class="nc" id="L396">	            	return sentinelArray;</span>
+	            }
+			}
+			
+			private int getNextSentinel() {
+<span class="nc bnc" id="L401" title="All 2 branches missed.">				if(sentinelIndex&gt;= sentinelArray.length){</span>
+<span class="nc" id="L402">					return END_OF_ITER;</span>
+				}
+<span class="nc" id="L404">				return sentinelArray[sentinelIndex++];</span>
+			}
+			@Override
+			public boolean hasNext() {
+<span class="nc bnc" id="L408" title="All 2 branches missed.">				return currentOffset&lt;length;</span>
+			}
+
+			@Override
+			public Nucleotide next() {
+<span class="nc bnc" id="L413" title="All 2 branches missed.">				if(!hasNext()){</span>
+<span class="nc" id="L414">					throw new NoSuchElementException(&quot;no more elements&quot;);</span>
+				}
+<span class="nc bnc" id="L416" title="All 4 branches missed.">				if(nextSentinel !=END_OF_ITER &amp;&amp; nextSentinel == currentOffset){</span>
+<span class="nc" id="L417">            		nextSentinel = getNextSentinel();</span>
+<span class="nc" id="L418">            		currentOffset++;</span>
+<span class="nc" id="L419">            		return sententialBase;</span>
+				}
+<span class="nc" id="L421">				Nucleotide next= getNucleotide2(encodedBytes[currentOffset/4], currentOffset%4);</span>
+<span class="nc" id="L422">				currentOffset++;</span>
+<span class="nc" id="L423">				return next;</span>
+			}
+
+			@Override
+			public void remove() {
+<span class="nc" id="L428">				throw new UnsupportedOperationException(&quot;can not modify immutable sequence&quot;);</span>
+				
+				
+			}
+			
+		}
+        
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

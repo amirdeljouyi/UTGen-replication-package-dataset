@@ -1,0 +1,263 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FTPReceiver.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.technical.ftp</a> &gt; <span class="el_source">FTPReceiver.java</span></div><h1>FTPReceiver.java</h1><pre class="source lang-java linenums">package net.sf.xbus.technical.ftp;
+
+import java.util.Iterator;
+import java.util.List;
+
+import net.sf.xbus.application.Adapter;
+import net.sf.xbus.application.PostProcessor;
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.TAManager;
+import net.sf.xbus.base.core.TAResource;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.core.config.Configuration;
+import net.sf.xbus.base.core.trace.Trace;
+import net.sf.xbus.base.deletedMessageStore.DeletedMessageStore;
+import net.sf.xbus.base.notifyerror.NotifyError;
+import net.sf.xbus.base.xbussystem.XBUSSystem;
+import net.sf.xbus.technical.Receiver;
+import net.sf.xbus.technical.ReceiverSingleInterface;
+import net.sf.xbus.technical.file.FileReceiverConfiguration;
+
+/**
+ * The class &lt;code&gt;FTPReceiver&lt;/code&gt; receives data by reading a file on a FTP
+ * server.
+ * &lt;p /&gt;
+ * It creates a &lt;code&gt;Message&lt;/code&gt; object and calls the application layer.
+ */
+<span class="nc" id="L27">public class FTPReceiver</span>
+		implements
+			Receiver,
+			ReceiverSingleInterface,
+			TAResource
+{
+<span class="nc" id="L33">	protected FileReceiverConfiguration mConfiguration = null;</span>
+<span class="nc" id="L34">	private FTPConnection mFTPConnection = null;</span>
+<span class="nc" id="L35">	private String mSystem = null;</span>
+<span class="nc" id="L36">	private String mFileName = null;</span>
+<span class="nc" id="L37">	private String mWorkDir = null;</span>
+
+	/**
+	 * Reads data from files on a FTP server specified by the given system. If
+	 * the file name contains variables, they will be filled with their actual
+	 * values before.
+	 */
+	public void receive(String system)
+	{
+<span class="nc" id="L46">		mSystem = system;</span>
+
+		try
+		{
+<span class="nc" id="L50">			mConfiguration = new FileReceiverConfiguration(system);</span>
+
+			// FileReceiver will be registered by TAManager
+<span class="nc" id="L53">			TAManager taManager = TAManager.getInstance();</span>
+<span class="nc" id="L54">			taManager.clearManager();</span>
+<span class="nc" id="L55">			taManager.registerResource(this);</span>
+<span class="nc" id="L56">			taManager.begin();</span>
+
+			// determine the list of XBUSSystem for the system
+<span class="nc" id="L59">			List systems = XBUSSystem.getSystems(system, mConfiguration</span>
+<span class="nc" id="L60">					.getFileName());</span>
+<span class="nc" id="L61">			boolean successful = true;</span>
+<span class="nc bnc" id="L62" title="All 2 branches missed.">			for (Iterator it = systems.iterator(); it.hasNext();)</span>
+			{
+<span class="nc" id="L64">				XBUSSystem xbusSystem = (XBUSSystem) it.next();</span>
+<span class="nc" id="L65">				Trace.info(&quot;Start processing &quot; + xbusSystem.getCompleteName());</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">				if (!doReceive(xbusSystem))</span>
+				{
+<span class="nc" id="L68">					successful = false;</span>
+				}
+<span class="nc" id="L70">			}</span>
+
+<span class="nc bnc" id="L72" title="All 2 branches missed.">			if (successful)</span>
+			{
+<span class="nc" id="L74">				PostProcessor.start(new XBUSSystem(system), null,</span>
+						Constants.POSTPROCESSING_FINAL);
+			}
+		}
+<span class="nc" id="L78">		catch (Throwable e)</span>
+		{
+			try
+			{
+<span class="nc" id="L82">				NotifyError.notifyError(this, new XBUSSystem(system), e</span>
+<span class="nc" id="L83">						.getMessage(), null, null);</span>
+			}
+<span class="nc" id="L85">			catch (XException e1)</span>
+			{
+				// do nothing
+<span class="nc" id="L88">			}</span>
+		}
+		finally
+		{
+			// close resources and remove from the resources
+<span class="nc" id="L93">			TAManager.getInstance().close();</span>
+<span class="nc" id="L94">			TAManager.getInstance().removeResource(this);</span>
+		}
+<span class="nc" id="L96">	}</span>
+
+	/**
+	 * Receives data for one system.
+	 */
+	private boolean doReceive(XBUSSystem source)
+	{
+<span class="nc" id="L103">		String request = null;</span>
+
+		try
+		{
+			/*
+			 * Get the transaction manager
+			 */
+<span class="nc" id="L110">			TAManager taManager = TAManager.getInstance();</span>
+<span class="nc" id="L111">			taManager.begin();</span>
+
+<span class="nc" id="L113">			mFileName = source.replaceAllMarkers(mConfiguration.getFileName())[0];</span>
+
+			/*
+			 * The FileName may contain a directory. It is split up into the
+			 * name of the directory and the name of the file itself.
+			 */
+<span class="nc" id="L119">			mWorkDir = FTPConnection.getWorkingDirectory(mFileName);</span>
+<span class="nc" id="L120">			mFileName = FTPConnection.getFileName(mFileName);</span>
+
+<span class="nc bnc" id="L122" title="All 2 branches missed.">			if (!mFTPConnection.existsFile(mWorkDir, mFileName))</span>
+			{
+<span class="nc" id="L124">				return true;</span>
+			}
+			else
+			{
+<span class="nc" id="L128">				Trace.info(&quot;Receiving data from &quot;</span>
+<span class="nc" id="L129">						+ mFTPConnection.getFTPName(mWorkDir, mFileName));</span>
+
+				/*
+				 * Retrieve data from FTP connection
+				 */
+<span class="nc" id="L134">				request = getRequestContent();</span>
+
+				/*
+				 * Process data
+				 */
+<span class="nc" id="L139">				Adapter adapter = new Adapter();</span>
+<span class="nc" id="L140">				adapter.callApplication(source, request, getType());</span>
+<span class="nc" id="L141">				Object responseObject = adapter.getResponse();</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">				if (Constants.RC_OK.equals(adapter.getReturncode()))</span>
+				{
+<span class="nc" id="L144">					taManager.commit();</span>
+<span class="nc" id="L145">					PostProcessor.start(source, responseObject,</span>
+							Constants.POSTPROCESSING_PERSYSTEM);
+<span class="nc" id="L147">					Trace.info(&quot;End processing &quot; + source.getCompleteName());</span>
+<span class="nc" id="L148">					Trace.info(&quot;----------------------------&quot;);</span>
+<span class="nc" id="L149">					return true;</span>
+				}
+				else
+				{
+<span class="nc" id="L153">					taManager.rollback();</span>
+
+<span class="nc" id="L155">					NotifyError.notifyError(this, source, adapter</span>
+<span class="nc" id="L156">							.getErrormessage(), request, null);</span>
+
+<span class="nc" id="L158">					Trace.info(&quot;Error while processing &quot;</span>
+<span class="nc" id="L159">							+ source.getCompleteName());</span>
+<span class="nc" id="L160">					Trace.info(&quot;----------------------------&quot;);</span>
+<span class="nc" id="L161">					return false;</span>
+				}
+			}
+		}
+<span class="nc" id="L165">		catch (Throwable t)</span>
+		{
+<span class="nc" id="L167">			Trace.error(t);</span>
+<span class="nc" id="L168">			Trace.info(&quot;Error while processing &quot; + source.getCompleteName());</span>
+<span class="nc" id="L169">			Trace.info(&quot;----------------------------&quot;);</span>
+<span class="nc" id="L170">			return false;</span>
+		}
+	}
+
+	/**
+	 * @see net.sf.xbus.technical.Receiver#getType()
+	 * 
+	 * @return &lt;code&gt;Constants.TYPE_TEXT&lt;/code&gt;
+	 */
+	public String getType()
+	{
+<span class="nc" id="L181">		return Constants.TYPE_TEXT;</span>
+	}
+
+	/**
+	 * Opens the connection to the FTP server.
+	 */
+	public void open() throws XException
+	{
+<span class="nc" id="L189">		String ftpName = Configuration.getInstance().getValue(</span>
+				Constants.CHAPTER_SYSTEM, mSystem, &quot;FTPConnection&quot;);
+<span class="nc" id="L191">		mFTPConnection = FTPConnection.getInstance(ftpName);</span>
+<span class="nc" id="L192">	}</span>
+
+	/**
+	 * Closes the connection to the FTP server.
+	 */
+	public void close()
+	{
+<span class="nc bnc" id="L199" title="All 2 branches missed.">		if (mFTPConnection != null)</span>
+		{
+<span class="nc" id="L201">			mFTPConnection.close();</span>
+		}
+<span class="nc" id="L203">	}</span>
+
+	/**
+	 * Depending on the parameter &lt;code&gt;FinalResolution&lt;/code&gt;, the file
+	 * previously read will either be renamed, deleted or will not be touched.
+	 */
+	public void commit() throws XException
+	{
+<span class="nc bnc" id="L211" title="All 2 branches missed.">		if (mConfiguration.getResolution().equals(Constants.READ_RENAME))</span>
+		{
+<span class="nc" id="L213">			String newFileName = mFileName + Constants.getDateAsString();</span>
+<span class="nc" id="L214">			mFTPConnection.rename(mWorkDir, mFileName, newFileName);</span>
+<span class="nc" id="L215">		}</span>
+<span class="nc bnc" id="L216" title="All 2 branches missed.">		else if (mConfiguration.getResolution().equals(Constants.READ_DELETE))</span>
+		{
+<span class="nc" id="L218">			mFTPConnection.delete(mWorkDir, mFileName);</span>
+		}
+<span class="nc" id="L220">	}</span>
+
+	/**
+	 * Depending on the parameter &lt;code&gt;OnError&lt;/code&gt;, the file previously
+	 * read will either be renamed, deleted or will not be touched.
+	 */
+	public void rollback() throws XException
+	{
+<span class="nc" id="L228">		String onError = mConfiguration.getOnError();</span>
+
+<span class="nc bnc" id="L230" title="All 2 branches missed.">		if (onError.equals(Constants.READ_DELETE))</span>
+		{
+<span class="nc bnc" id="L232" title="All 2 branches missed.">			if (DeletedMessageStore.getInstance().writeMessage())</span>
+			{
+<span class="nc" id="L234">				mFTPConnection.delete(mWorkDir, mFileName);</span>
+			}
+			else
+			{
+<span class="nc" id="L238">				Trace.warn(&quot;Renaming &quot;</span>
+<span class="nc" id="L239">						+ mFTPConnection.getFTPName(mWorkDir, mFileName));</span>
+<span class="nc" id="L240">				onError = Constants.READ_RENAME;</span>
+			}
+		}
+<span class="nc bnc" id="L243" title="All 2 branches missed.">		if (onError.equals(Constants.READ_RENAME))</span>
+		{
+<span class="nc" id="L245">			String newFileName = mFileName + Constants.getDateAsString();</span>
+<span class="nc" id="L246">			mFTPConnection.rename(mWorkDir, mFileName, newFileName);</span>
+		}
+<span class="nc" id="L248">	}</span>
+	
+	protected String getRequestContent() throws XException
+	{
+<span class="nc" id="L252">		return mFTPConnection.retrieveFile(FTPConnection.getWorkingDirectory(mFileName), </span>
+<span class="nc" id="L253">				FTPConnection.getFileName(mFileName),</span>
+<span class="nc" id="L254">				mConfiguration.getEncoding());</span>
+
+	}
+	
+	protected String getAddress()
+	{
+<span class="nc" id="L260">		return new StringBuffer(mWorkDir).append(mFileName).toString();</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

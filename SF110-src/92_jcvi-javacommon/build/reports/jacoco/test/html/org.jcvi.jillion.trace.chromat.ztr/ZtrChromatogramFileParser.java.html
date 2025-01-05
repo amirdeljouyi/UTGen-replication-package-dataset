@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ZtrChromatogramFileParser.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.trace.chromat.ztr</a> &gt; <span class="el_source">ZtrChromatogramFileParser.java</span></div><h1>ZtrChromatogramFileParser.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+package org.jcvi.jillion.trace.chromat.ztr;
+
+import java.io.EOFException;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+
+import org.jcvi.jillion.core.io.IOUtil;
+import org.jcvi.jillion.core.residue.nt.NucleotideSequence;
+import org.jcvi.jillion.internal.trace.chromat.ztr.ZTRUtil;
+import org.jcvi.jillion.internal.trace.chromat.ztr.chunk.Chunk;
+import org.jcvi.jillion.internal.trace.chromat.ztr.chunk.ChunkException;
+import org.jcvi.jillion.trace.TraceDecoderException;
+import org.jcvi.jillion.trace.chromat.ChromatogramFileVisitor;
+
+/**
+ * {@code ZTRChromatogramFileParser} is a utility class 
+ * for parsing ZTR encoded chromatogram files.
+ * @author dkatzel
+ *
+ *
+ */
+public final class ZtrChromatogramFileParser {
+   
+	private ZtrChromatogramFileParser(){
+		//can not instantiate
+	}
+    /**
+     * Parse the given ZTR encoded chromatogram file
+     * and call the appropriate visitXXX methods of the given
+     * visitor while parsing.
+     * @param ztrFile the ZTR chromatogram file
+     * to parse.
+     * @param visitor the visitor instance to call visitXXX methods on
+     * (can not be null).
+     * @throws TraceDecoderException if there is  a problem
+     * parsing the ZTR file.
+     * @throws FileNotFoundException if the file does not exist.
+     * @throws NullPointerException if visitor is null.
+     */
+    public static void parse(File ztrFile, ChromatogramFileVisitor visitor) throws FileNotFoundException, TraceDecoderException{
+<span class="nc bnc" id="L64" title="All 2 branches missed.">        if(visitor ==null){</span>
+<span class="nc" id="L65">            throw new NullPointerException(&quot;visitor can not be null&quot;);</span>
+        }
+<span class="nc" id="L67">        InputStream in = new FileInputStream(ztrFile);</span>
+        try{
+<span class="nc" id="L69">            parse(in, visitor);</span>
+        }finally{
+<span class="nc" id="L71">            IOUtil.closeAndIgnoreErrors(in);</span>
+        }
+        
+<span class="nc" id="L74">    }</span>
+    /**
+     * Parse the given ZTR encoded chromatogram {@link InputStream}
+     * and call the appropriate visitXXX methods of the given
+     * visitor while parsing.
+     * @param ztrStream the ZTR chromatogram {@link InputStream}
+     * to parse.
+     * @param visitor the visitor instance to call visitXXX methods on
+     * (can not be null).
+     * @throws TraceDecoderException if there is  a problem
+     * parsing the ZTR file.
+     * @throws NullPointerException if visitor is null.
+     */
+    public static void parse(InputStream ztrStream, ChromatogramFileVisitor visitor) throws TraceDecoderException{
+<span class="nc" id="L88">        parseHeader(ztrStream);</span>
+<span class="nc" id="L89">        visitor.visitNewTrace();</span>
+<span class="nc" id="L90">        Chunk currentChunk = parseNextChunk(ztrStream);</span>
+<span class="nc" id="L91">        NucleotideSequence basecalls = null;</span>
+<span class="nc bnc" id="L92" title="All 2 branches missed.">        while(currentChunk !=null){</span>
+<span class="nc" id="L93">             basecalls =currentChunk.parseChunk(ztrStream, visitor,basecalls);</span>
+
+<span class="nc" id="L95">            currentChunk = parseNextChunk(ztrStream);</span>
+        }
+<span class="nc" id="L97">        visitor.visitEndOfTrace();</span>
+<span class="nc" id="L98">    }</span>
+    
+    /**
+     * parse the header of the .ztr file.  The header
+     * should consist of 8 bytes for the ztr magic number
+     * then 2 bytes for the .ztr version.
+     * &lt;p&gt;
+     * &lt;pre&gt;
+        typedef struct {
+        
+                    unsigned char  magic[8];      0xae5a54520d0a1a0a (be)
+                    unsigned char  version_major; // 1 //
+                    unsigned char  version_minor; // 1 //
+        } ztr_header_t;
+                
+        // The ZTR magic numbers //
+        #define ZTR_MAGIC       &quot;\256ZTR\r\n\032\n&quot;
+        #define ZTR_VERSION_MAJOR   1
+        #define ZTR_VERSION_MINOR   1
+        &lt;/pre&gt;
+        &lt;p&gt;
+        So the total header will consist of:
+        &lt;pre&gt;
+        Byte number   0  1  2  3  4  5  6  7  8  9
+                    +--+--+--+--+--+--+--+--+--+--+
+        Hex values  |ae 5a 54 52 0d 0a 1a 0a|01 01|
+                    +--+--+--+--+--+--+--+--+--+--+
+                    &lt;/pre&gt;
+     * @throws TraceDecoderException
+     */
+    private static void parseHeader(InputStream inputStream) throws TraceDecoderException{
+        try {
+
+<span class="nc" id="L131">            validateZTRMagicNumber(inputStream);</span>
+<span class="nc" id="L132">            checkVersion(inputStream);</span>
+
+<span class="nc" id="L134">        } catch (IOException ioEx) {</span>
+<span class="nc" id="L135">            throw new TraceDecoderException(&quot;error parsing ztr header&quot;,ioEx);</span>
+<span class="nc" id="L136">        }</span>
+<span class="nc" id="L137">    }</span>
+
+    private static void checkVersion(InputStream inputStream) throws IOException,
+            TraceDecoderException {
+<span class="nc" id="L141">        int majorVersion = inputStream.read();</span>
+<span class="nc" id="L142">        int minorVersion = inputStream.read();</span>
+<span class="nc bnc" id="L143" title="All 4 branches missed.">        if(majorVersion != 1 &amp;&amp; minorVersion &gt;2){</span>
+<span class="nc" id="L144">            String message = &quot;Unsupported ZTR version&quot;;</span>
+<span class="nc" id="L145">            throw new TraceDecoderException(message);</span>
+        }
+<span class="nc" id="L147">    }</span>
+
+    private static  void validateZTRMagicNumber(InputStream inputStream)
+            throws TraceDecoderException, IOException {
+
+<span class="nc" id="L152">        byte[] ztrMagic = readZTRMagicNumber(inputStream);</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">        if(!ZTRUtil.isMagicNumber(ztrMagic)){</span>
+
+           //does not match
+<span class="nc" id="L156">            String message = &quot;ZTR header magic number does not match expected &quot; +new String(ztrMagic,IOUtil.UTF_8) ;</span>
+<span class="nc" id="L157">            throw new TraceDecoderException(message);</span>
+        }
+<span class="nc" id="L159">    }</span>
+
+    private static byte[] readZTRMagicNumber(InputStream inputStream) throws TraceDecoderException {
+       try{
+<span class="nc" id="L163">           return IOUtil.toByteArray(inputStream, 8);</span>
+<span class="nc" id="L164">       }catch(IOException e){</span>
+<span class="nc" id="L165">           throw new TraceDecoderException(&quot;invalid ZTR header&quot;,e);</span>
+       }
+    }
+    
+    /**
+     * Determine what type of chunk is next and return object.
+     * @return the appropriate {@link Chunk} may be null.
+     */
+    private static Chunk parseNextChunk(InputStream inputStream) throws TraceDecoderException{
+        try{
+<span class="nc" id="L175">            byte[] chunkType = new byte[4];</span>
+            try{
+<span class="nc" id="L177">            	IOUtil.blockingRead(inputStream, chunkType);</span>
+<span class="nc" id="L178">            }catch(EOFException e){</span>
+<span class="nc" id="L179">            	return null;</span>
+<span class="nc" id="L180">            }                      </span>
+<span class="nc" id="L181">            return Chunk.getChunk(new String(chunkType,IOUtil.UTF_8));</span>
+        }
+<span class="nc" id="L183">        catch(Exception e)</span>
+        {
+<span class="nc" id="L185">            throw new ChunkException(&quot;error parsing next chunk&quot;,e);</span>
+        }
+
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

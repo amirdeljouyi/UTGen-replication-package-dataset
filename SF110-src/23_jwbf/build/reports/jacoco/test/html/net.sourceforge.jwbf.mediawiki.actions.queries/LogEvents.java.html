@@ -1,0 +1,383 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LogEvents.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">23_jwbf</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.jwbf.mediawiki.actions.queries</a> &gt; <span class="el_source">LogEvents.java</span></div><h1>LogEvents.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2007 Thomas Stock.
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
+ *
+ * Contributors:
+ *
+ */
+package net.sourceforge.jwbf.mediawiki.actions.queries;
+
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_11;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_12;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_13;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_14;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_15;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_16;
+
+import java.io.IOException;
+import java.io.Reader;
+import java.io.StringReader;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.Vector;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import lombok.extern.slf4j.Slf4j;
+import net.sourceforge.jwbf.core.actions.Get;
+import net.sourceforge.jwbf.core.actions.util.ActionException;
+import net.sourceforge.jwbf.core.actions.util.HttpAction;
+import net.sourceforge.jwbf.core.actions.util.ProcessException;
+import net.sourceforge.jwbf.mediawiki.actions.util.MWAction;
+import net.sourceforge.jwbf.mediawiki.actions.util.SupportedBy;
+import net.sourceforge.jwbf.mediawiki.actions.util.VersionException;
+import net.sourceforge.jwbf.mediawiki.bots.MediaWikiBot;
+import net.sourceforge.jwbf.mediawiki.contentRep.LogItem;
+
+import org.jdom.Document;
+import org.jdom.Element;
+import org.jdom.JDOMException;
+import org.jdom.input.SAXBuilder;
+import org.xml.sax.InputSource;
+
+/**
+ *
+ * List log events, filtered by time range, event type, user type, or the page
+ * it applies to. Ordered by event timestamp. Parameters: letype (flt), lefrom
+ * (paging timestamp), leto (flt), ledirection (dflt=older), leuser (flt),
+ * letitle (flt), lelimit (dflt=10, max=500/5000)
+ *
+ * api.php ? action=query &amp; list=logevents      - List last 10 events of any type
+ *
+ * TODO This is a semi-complete extension point
+ * @author Thomas Stock
+ *
+ */
+<span class="nc" id="L67">@Slf4j</span>
+@SupportedBy({ MW1_11, MW1_12, MW1_13, MW1_14, MW1_15, MW1_16 })
+public class LogEvents extends MWAction implements Iterator&lt;LogItem&gt;, Iterable&lt;LogItem&gt; {
+
+
+  /** value for the bllimit-parameter. * */
+
+
+  public static final String BLOCK = &quot;block&quot;;
+  public static final String PROTECT = &quot;protect&quot;;
+  public static final String RIGHTS = &quot;rights&quot;;
+  public static final String DELETE = &quot;delete&quot;;
+  public static final String UPLOAD = &quot;upload&quot;;
+  public static final String MOVE = &quot;move&quot;;
+  public static final String IMPORT = &quot;mport&quot;;
+  public static final String PATROL = &quot;patrol&quot;;
+  public static final String MERGE = &quot;merge&quot;;
+
+  private final int limit;
+
+  private Get msg;
+  private final MediaWikiBot bot;
+  /* first run variable */
+<span class="nc" id="L90">  private boolean init = true;</span>
+<span class="nc" id="L91">  private boolean selvEx = true;</span>
+  /**
+   * Collection that will contain the result (titles of articles linking to
+   * the target) after performing the action has finished.
+   */
+<span class="nc" id="L96">  private Collection&lt;LogItem&gt; logCollection = new Vector&lt;LogItem&gt;();</span>
+<span class="nc" id="L97">  private Iterator&lt;LogItem&gt; logIterator = null;</span>
+  private final String [] type;
+<span class="nc" id="L99">  private String nextPageInfo =  &quot;&quot;;</span>
+<span class="nc" id="L100">  private boolean hasMoreResults = true;</span>
+  /**
+   * information necessary to get the next api page.
+   */
+
+
+  /**
+   * @param bot a
+   * @param type of like {@link #MOVE}
+   * @throws VersionException if incompatible with this version
+   */
+  public LogEvents(MediaWikiBot bot, String type) throws VersionException {
+<span class="nc" id="L112">    this(bot, new String [] {type});</span>
+<span class="nc" id="L113">  }</span>
+
+  /**
+   * @param bot a
+   * @param type of like {@link #MOVE}
+   * @throws VersionException if incompatible with this version
+   */
+  public LogEvents(MediaWikiBot bot, String [] type) throws VersionException {
+<span class="nc" id="L121">    this(bot, 50, type.clone());</span>
+<span class="nc" id="L122">  }</span>
+
+
+  /**
+   * @param bot a
+   * @param limit of events
+   * @param type of like {@link #MOVE}
+   * @throws VersionException if incompatible with this version
+   */
+  public LogEvents(MediaWikiBot bot, int limit, String type) throws VersionException {
+<span class="nc" id="L132">    this(bot, limit, new String [] {type});</span>
+<span class="nc" id="L133">  }</span>
+  /**
+   * @param bot a
+   * @param limit of events
+   * @param type of like {@link #MOVE}
+   * @throws VersionException if incompatible with this version
+   */
+  public LogEvents(MediaWikiBot bot, int limit, String [] type) throws VersionException {
+<span class="nc" id="L141">    super(bot.getVersion());</span>
+<span class="nc" id="L142">    this.bot = bot;</span>
+<span class="nc" id="L143">    this.type = type;</span>
+<span class="nc" id="L144">    this.limit = limit;</span>
+<span class="nc" id="L145">  }</span>
+
+  /**
+   * generates the next MediaWiki-request (GetMethod) and adds it to msgs.
+   *
+   * @param logtype
+   *            type of log, like upload
+   * @return a
+   */
+  private Get generateRequest(String ... logtype) {
+
+<span class="nc" id="L156">    String uS = &quot;&quot;;</span>
+
+<span class="nc" id="L158">    uS = &quot;/api.php?action=query&amp;list=logevents&quot;;</span>
+<span class="nc bnc" id="L159" title="All 2 branches missed.">    if (logtype.length &gt; 0) {</span>
+<span class="nc" id="L160">      StringBuffer logtemp = new StringBuffer();</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">      for (int i = 0; i &lt; logtype.length; i++) {</span>
+<span class="nc" id="L162">        logtemp.append(logtype[i] + &quot;|&quot;);</span>
+      }
+<span class="nc" id="L164">      uS += &quot;&amp;letype=&quot; + logtemp.substring(0, logtemp.length() - 1);</span>
+    }
+
+<span class="nc" id="L167">    uS += &quot;&amp;lelimit=&quot; + limit + &quot;&amp;format=xml&quot;;</span>
+
+<span class="nc" id="L169">    return new Get(uS);</span>
+
+  }
+
+  /**
+   * generates the next MediaWiki-request (GetMethod) and adds it to msgs.
+   *
+   * @param logtype
+   *            type of log, like upload
+   * @return a
+   */
+  private Get generateContinueRequest(String [] logtype, String continueing) {
+
+<span class="nc" id="L182">    String uS = &quot;&quot;;</span>
+
+<span class="nc" id="L184">    uS = &quot;/api.php?action=query&amp;list=logevents&quot;;</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">    if (logtype.length &gt; 0) {</span>
+<span class="nc" id="L186">      StringBuffer logtemp = new StringBuffer();</span>
+<span class="nc bnc" id="L187" title="All 2 branches missed.">      for (int i = 0; i &lt; logtype.length; i++) {</span>
+<span class="nc" id="L188">        logtemp.append(logtype[i] + &quot;|&quot;);</span>
+      }
+<span class="nc" id="L190">      uS += &quot;&amp;letype=&quot; + logtemp.substring(0, logtemp.length() - 1);</span>
+    }
+
+<span class="nc" id="L193">    uS += &quot;&amp;lelimit=&quot; + limit + &quot;&amp;format=xml&quot;;</span>
+
+<span class="nc" id="L195">    return new Get(uS);</span>
+
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public String processAllReturningText(final String s)
+      throws ProcessException {
+<span class="nc" id="L205">    logCollection.clear();</span>
+<span class="nc" id="L206">    parseArticleTitles(s);</span>
+<span class="nc" id="L207">    parseHasMore(s);</span>
+<span class="nc" id="L208">    logIterator = logCollection.iterator();</span>
+<span class="nc" id="L209">    return &quot;&quot;;</span>
+  }
+
+  /**
+   * picks the article name from a MediaWiki api response.
+   *
+   * @param s
+   *            text for parsing
+   */
+  private void parseArticleTitles(String s) {
+
+<span class="nc" id="L220">    SAXBuilder builder = new SAXBuilder();</span>
+<span class="nc" id="L221">    Element root = null;</span>
+    try {
+<span class="nc" id="L223">      Reader i = new StringReader(s);</span>
+<span class="nc" id="L224">      Document doc = builder.build(new InputSource(i));</span>
+
+<span class="nc" id="L226">      root = doc.getRootElement();</span>
+
+<span class="nc" id="L228">    } catch (JDOMException e) {</span>
+<span class="nc" id="L229">      e.printStackTrace();</span>
+<span class="nc" id="L230">    } catch (IOException e) {</span>
+<span class="nc" id="L231">      e.printStackTrace();</span>
+<span class="nc" id="L232">    }</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">    if (root != null)</span>
+<span class="nc" id="L234">      findContent(root);</span>
+
+<span class="nc" id="L236">  }</span>
+
+  /**
+   * gets the information about a follow-up page from a provided api response.
+   * If there is one, a new request is added to msgs by calling generateRequest.
+   *
+   * @param s   text for parsing
+   */
+  private void parseHasMore(final String s) {
+
+    // get the blcontinue-value
+
+<span class="nc" id="L248">    Pattern p = Pattern.compile(</span>
+        &quot;&lt;query-continue&gt;.*?&quot;
+            + &quot;&lt;logevents *lestart=\&quot;([^\&quot;]*)\&quot; */&gt;&quot;
+            + &quot;.*?&lt;/query-continue&gt;&quot;,
+            Pattern.DOTALL | Pattern.MULTILINE);
+
+<span class="nc" id="L254">    Matcher m = p.matcher(s);</span>
+
+<span class="nc bnc" id="L256" title="All 2 branches missed.">    if (m.find()) {</span>
+<span class="nc" id="L257">      nextPageInfo = m.group(1);</span>
+<span class="nc" id="L258">      hasMoreResults = true;</span>
+    } else {
+<span class="nc" id="L260">      hasMoreResults = false;</span>
+    }
+<span class="nc bnc" id="L262" title="All 2 branches missed.">    if (log.isDebugEnabled())</span>
+<span class="nc" id="L263">      log.debug(&quot;has more = &quot; + hasMoreResults);</span>
+
+<span class="nc" id="L265">  }</span>
+
+  @SuppressWarnings(&quot;unchecked&quot;)
+  private void findContent(final Element root) {
+
+<span class="nc" id="L270">    Iterator&lt;Element&gt; el = root.getChildren().iterator();</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">    while (el.hasNext()) {</span>
+<span class="nc" id="L272">      Element element = el.next();</span>
+<span class="nc bnc" id="L273" title="All 2 branches missed.">      if (element.getQualifiedName().equalsIgnoreCase(&quot;item&quot;)) {</span>
+
+<span class="nc" id="L275">        LogItem l = new LogItem();</span>
+<span class="nc" id="L276">        l.setTitle(element.getAttributeValue(&quot;title&quot;));</span>
+<span class="nc" id="L277">        l.setType(element.getAttributeValue(&quot;type&quot;));</span>
+<span class="nc" id="L278">        l.setUser(element.getAttributeValue(&quot;user&quot;));</span>
+<span class="nc" id="L279">        logCollection.add(l);</span>
+
+<span class="nc" id="L281">      } else {</span>
+<span class="nc" id="L282">        findContent(element);</span>
+      }
+
+<span class="nc" id="L285">    }</span>
+<span class="nc" id="L286">  }</span>
+
+
+  private void prepareCollection() {
+
+<span class="nc bnc" id="L291" title="All 6 branches missed.">    if (init || (!logIterator.hasNext() &amp;&amp; hasMoreResults)) {</span>
+<span class="nc bnc" id="L292" title="All 2 branches missed.">      if (init) {</span>
+<span class="nc" id="L293">        msg = generateRequest(type);</span>
+      } else {
+<span class="nc" id="L295">        msg = generateContinueRequest(type, nextPageInfo);</span>
+      }
+<span class="nc" id="L297">      init = false;</span>
+      try {
+<span class="nc" id="L299">        selvEx = false; // TODO not good</span>
+<span class="nc" id="L300">        bot.performAction(this);</span>
+<span class="nc" id="L301">        selvEx = true; // TODO not good</span>
+<span class="nc" id="L302">        setHasMoreMessages(true);</span>
+<span class="nc bnc" id="L303" title="All 2 branches missed.">        if (log.isDebugEnabled())</span>
+<span class="nc" id="L304">          log.debug(&quot;preparing success&quot;);</span>
+<span class="nc" id="L305">      } catch (ActionException e) {</span>
+<span class="nc" id="L306">        e.printStackTrace();</span>
+<span class="nc" id="L307">        setHasMoreMessages(false);</span>
+<span class="nc" id="L308">      } catch (ProcessException e) {</span>
+<span class="nc" id="L309">        e.printStackTrace();</span>
+<span class="nc" id="L310">        setHasMoreMessages(false);</span>
+<span class="nc" id="L311">      }</span>
+
+    }
+<span class="nc" id="L314">  }</span>
+
+
+  /**
+   * {@inheritDoc}
+   */
+  public HttpAction getNextMessage() {
+<span class="nc" id="L321">    return msg;</span>
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  public boolean hasNext() {
+<span class="nc" id="L328">    prepareCollection();</span>
+<span class="nc" id="L329">    return logIterator.hasNext();</span>
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  public LogItem next() {
+<span class="nc" id="L336">    prepareCollection();</span>
+<span class="nc" id="L337">    return logIterator.next();</span>
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  public void remove() {
+<span class="nc" id="L344">    logIterator.remove();</span>
+
+<span class="nc" id="L346">  }</span>
+
+  /**
+   * {@inheritDoc}
+   */
+  @SuppressWarnings(&quot;unchecked&quot;)
+  public Iterator&lt;LogItem&gt; iterator() {
+    try {
+<span class="nc" id="L354">      return (Iterator&lt;LogItem&gt;) clone();</span>
+<span class="nc" id="L355">    } catch (CloneNotSupportedException e) {</span>
+<span class="nc" id="L356">      e.printStackTrace();</span>
+<span class="nc" id="L357">      return null;</span>
+    }
+  }
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  protected Object clone() throws CloneNotSupportedException {
+    try {
+<span class="nc" id="L366">      return new LogEvents(bot, limit, type);</span>
+<span class="nc" id="L367">    } catch (VersionException e) {</span>
+<span class="nc" id="L368">      throw new CloneNotSupportedException(e.getLocalizedMessage());</span>
+    }
+  }
+  /**
+   * {@inheritDoc}
+   * @deprecated see super
+   */
+  @Deprecated
+  @Override
+  public boolean isSelfExecuter() {
+<span class="nc" id="L378">    return selvEx;</span>
+  }
+
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

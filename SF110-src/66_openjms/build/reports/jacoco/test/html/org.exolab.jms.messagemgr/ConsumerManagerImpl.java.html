@@ -1,0 +1,919 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ConsumerManagerImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.messagemgr</a> &gt; <span class="el_source">ConsumerManagerImpl.java</span></div><h1>ConsumerManagerImpl.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2001-2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: ConsumerManagerImpl.java,v 1.3 2005/12/23 12:17:25 tanderson Exp $
+ */
+package org.exolab.jms.messagemgr;
+
+import java.sql.Connection;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import javax.jms.InvalidDestinationException;
+import javax.jms.InvalidSelectorException;
+import javax.jms.JMSException;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import org.exolab.jms.client.JmsDestination;
+import org.exolab.jms.client.JmsQueue;
+import org.exolab.jms.client.JmsTopic;
+import org.exolab.jms.persistence.DatabaseService;
+import org.exolab.jms.persistence.PersistenceAdapter;
+import org.exolab.jms.persistence.PersistenceException;
+import org.exolab.jms.service.Service;
+import org.exolab.jms.service.ServiceException;
+
+
+/**
+ * The consumer manager is responsible for creating and managing the lifecycle
+ * of consumers. The consumer manager maintains a list of all active consumers.
+ *
+ * @author &lt;a href=&quot;mailto:jima@comware.com.au&quot;&gt;Jim Alateras&lt;/a&gt;
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.3 $ $Date: 2005/12/23 12:17:25 $
+ */
+public class ConsumerManagerImpl extends Service implements ConsumerManager {
+
+    /**
+     * The destination manager.
+     */
+    private final DestinationManager _destinations;
+
+    /**
+     * The database service.
+     */
+    private final DatabaseService _database;
+
+    /**
+     * Maintains a list of all consumers, durable and non-durable. All durable
+     * subscribers are maintained in memory until they are removed from the
+     * system entirely. All non-durable subscribers are maintained in memory
+     * until their endpoint is removed.
+     */
+<span class="nc" id="L95">    private HashMap _consumers = new HashMap();</span>
+
+    /**
+     * The set of all consumer endpoints. This is a map of {@link
+     * ConsumerEndpoint} instances, keyed on {@link ConsumerEndpoint#getPersistentId()}
+     * if non null; otherwise {@link ConsumerEndpoint#getId()}.
+     */
+<span class="nc" id="L102">    private HashMap _endpoints = new HashMap();</span>
+
+
+    /**
+     * Maintains a mapping between destinations and consumers. A destination can
+     * have more than one consumer and a consumer can also be registered to more
+     * than one destination
+     */
+<span class="nc" id="L110">    private HashMap _destToConsumerMap = new HashMap();</span>
+
+    /**
+     * The set of all wildcard consumers, represented by a map of ConsumerEntry
+     * -&gt; JmsTopic instances.
+     */
+<span class="nc" id="L116">    private HashMap _wildcardConsumers = new HashMap();</span>
+
+    /**
+     * The seed to allocate identifiers to new consumers.
+     */
+<span class="nc" id="L121">    private long _consumerIdSeed = 0;</span>
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L126">    private static final Log _log = LogFactory.getLog(</span>
+            ConsumerManagerImpl.class);
+
+
+    /**
+     * Construct a new  &lt;code&gt;ConsumerManager&lt;/code&gt;.
+     *
+     * @param destinations the destination manager
+     * @param database     the database service
+     */
+    public ConsumerManagerImpl(DestinationManager destinations,
+<span class="nc" id="L137">                               DatabaseService database) {</span>
+<span class="nc bnc" id="L138" title="All 2 branches missed.">        if (destinations == null) {</span>
+<span class="nc" id="L139">            throw new IllegalArgumentException(</span>
+                    &quot;Argument 'destinations' is null&quot;);
+        }
+<span class="nc bnc" id="L142" title="All 2 branches missed.">        if (database == null) {</span>
+<span class="nc" id="L143">            throw new IllegalArgumentException(&quot;Argument 'database' is null&quot;);</span>
+        }
+<span class="nc" id="L145">        _destinations = destinations;</span>
+<span class="nc" id="L146">        _database = database;</span>
+<span class="nc" id="L147">    }</span>
+
+    /**
+     * Create a new durable subscription.
+     * &lt;p/&gt;
+     * A client can change an existing durable subscription by creating a new
+     * subscription with the same name and a new topic. Changing a durable
+     * subscriber is equivalent to unsubscribing the old one and creating a new
+     * one.
+     *
+     * @param topic    the topic to subscribe to
+     * @param name     the subscription name
+     * @param clientID the client identifier. May be &lt;code&gt;null&lt;/code&gt;
+     * @throws InvalidDestinationException if &lt;code&gt;topic&lt;/code&gt; is not a
+     *                                     persistent destination, or
+     *                                     &lt;code&gt;name&lt;/code&gt; is an invalid
+     *                                     subscription name
+     * @throws JMSException                if the durable consumer can't be
+     *                                     created
+     */
+    public synchronized void subscribe(JmsTopic topic, String name,
+                                       String clientID)
+            throws JMSException {
+<span class="nc" id="L170">        createInactiveDurableConsumer(topic, name, clientID);</span>
+<span class="nc" id="L171">    }</span>
+
+
+    /**
+     * Remove a durable subscription.
+     * &lt;p/&gt;
+     * A subscription may only be removed if the associated {@link
+     * DurableConsumerEndpoint} is inactive.
+     *
+     * @param name     the subscription name
+     * @param clientID the client identifier. May be &lt;code&gt;null&lt;/code&gt;
+     * @throws InvalidDestinationException if an invalid subscription name is
+     *                                     specified.
+     * @throws JMSException                if the durable consumer is active, or
+     *                                     cannot be removed
+     */
+    public synchronized void unsubscribe(String name, String clientID)
+            throws JMSException {
+<span class="nc bnc" id="L189" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L190">            _log.debug(&quot;unsubscribe(name=&quot; + name + &quot;, clientID=&quot;</span>
+                       + clientID + &quot;)&quot;);
+        }
+
+<span class="nc" id="L194">        DurableConsumerEndpoint consumer</span>
+<span class="nc" id="L195">                = (DurableConsumerEndpoint) _endpoints.remove(name);</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">        if (consumer == null) {</span>
+<span class="nc" id="L197">            throw new InvalidDestinationException(&quot;Durable consumer &quot; + name</span>
+                                                  + &quot; is not defined.&quot;);
+        }
+<span class="nc bnc" id="L200" title="All 2 branches missed.">        if (consumer.isActive()) {</span>
+<span class="nc" id="L201">            throw new JMSException(&quot;Cannot remove durable consumer=&quot; + name</span>
+                                   + &quot;: consumer is active&quot;);
+        }
+<span class="nc" id="L204">        consumer.close();</span>
+
+        // remove it from the persistent store.
+        try {
+<span class="nc" id="L208">            _database.begin();</span>
+<span class="nc" id="L209">            Connection connection = _database.getConnection();</span>
+
+<span class="nc" id="L211">            _database.getAdapter().removeDurableConsumer(connection, name);</span>
+<span class="nc" id="L212">            removeConsumerEntry(name);</span>
+<span class="nc" id="L213">            _database.commit();</span>
+<span class="nc" id="L214">        } catch (PersistenceException exception) {</span>
+<span class="nc" id="L215">            String msg = &quot;Failed to remove durable consumer, name=&quot; + name;</span>
+<span class="nc" id="L216">            rethrow(msg, exception);</span>
+<span class="nc" id="L217">        }</span>
+<span class="nc" id="L218">    }</span>
+
+    /**
+     * Remove all durable subscriptions for a destination.
+     * &lt;p/&gt;
+     * Subscriptions may only be removed if the associated {@link
+     * ConsumerEndpoint}s are inactive.
+     *
+     * @param topic the topic to remove consumers for
+     * @throws JMSException if the subscriptions can't be removed
+     */
+    public synchronized void unsubscribe(JmsTopic topic) throws JMSException {
+<span class="nc" id="L230">        List list = (List) _destToConsumerMap.get(topic);</span>
+<span class="nc bnc" id="L231" title="All 2 branches missed.">        if (list != null) {</span>
+<span class="nc" id="L232">            ConsumerEntry[] consumers</span>
+<span class="nc" id="L233">                    = (ConsumerEntry[]) list.toArray(new ConsumerEntry[0]);</span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">            for (int i = 0; i &lt; consumers.length; ++i) {</span>
+<span class="nc" id="L235">                ConsumerEntry consumer = consumers[i];</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">                if (consumer.isDurable()) {</span>
+                    // remove the durable consumer. This operation
+                    // will fail if the consumer is active.
+<span class="nc" id="L239">                    unsubscribe(consumer.getName(), consumer.getClientID());</span>
+                }
+            }
+        }
+
+        // remove all consumers for the specified destination
+<span class="nc" id="L245">        removeFromConsumerCache(topic);</span>
+<span class="nc" id="L246">    }</span>
+
+    /**
+     * Create a transient consumer for the specified destination.
+     *
+     * @param destination  the destination to consume messages from
+     * @param connectionId the identity of the connection that owns this
+     *                     consumer
+     * @param selector     the message selector. May be &lt;code&gt;null&lt;/code&gt;
+     * @param noLocal      if true, and the destination is a topic, inhibits the
+     *                     delivery of messages published by its own connection.
+     *                     The behavior for &lt;code&gt;noLocal&lt;/code&gt; is not
+     *                     specified if the destination is a queue.
+     * @return a new transient consumer
+     */
+    public synchronized ConsumerEndpoint createConsumer(
+            JmsDestination destination, long connectionId,
+            String selector,
+            boolean noLocal)
+            throws JMSException, InvalidSelectorException {
+
+<span class="nc bnc" id="L267" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L268">            _log.debug(&quot;createConsumerEndpoint(destination=&quot; + destination</span>
+                       + &quot;, connectionId=&quot; + connectionId
+                       + &quot;, selector=&quot; + selector
+                       + &quot;, noLocal=&quot; + noLocal + &quot;)&quot;);
+        }
+
+<span class="nc" id="L274">        ConsumerEndpoint consumer = null;</span>
+
+        // ensure that the destination is valid before proceeding
+<span class="nc" id="L277">        getDestination(destination, true);</span>
+
+<span class="nc" id="L279">        long consumerId = getNextConsumerId();</span>
+
+        try {
+<span class="nc" id="L282">            _database.begin();</span>
+            // determine what type of consumer to create based on the destination
+            // it subscribes to.
+<span class="nc bnc" id="L285" title="All 2 branches missed.">            if (destination instanceof JmsTopic) {</span>
+<span class="nc" id="L286">                JmsTopic topic = (JmsTopic) destination;</span>
+<span class="nc" id="L287">                consumer = new TopicConsumerEndpoint(consumerId, connectionId,</span>
+                                                     topic, selector, noLocal,
+                                                     _destinations);
+<span class="nc bnc" id="L290" title="All 2 branches missed.">            } else if (destination instanceof JmsQueue) {</span>
+                QueueDestinationCache cache;
+<span class="nc" id="L292">                cache = (QueueDestinationCache) _destinations.getDestinationCache(</span>
+                        destination);
+<span class="nc" id="L294">                consumer = new QueueConsumerEndpoint(consumerId, cache, selector);</span>
+            }
+
+<span class="nc bnc" id="L297" title="All 2 branches missed.">            if (consumer != null) {</span>
+                // add it to the list of managed consumers. If it has a persistent
+                // identity, use that as the key, otherwise use its transient
+                // identity.
+<span class="nc" id="L301">                Object key = ConsumerEntry.getConsumerKey(consumer);</span>
+<span class="nc" id="L302">                _endpoints.put(key, consumer);</span>
+<span class="nc" id="L303">                addConsumerEntry(key, destination, null, false);</span>
+            }
+<span class="nc" id="L305">            _database.commit();</span>
+<span class="nc" id="L306">        } catch (Exception exception) {</span>
+<span class="nc" id="L307">            rethrow(&quot;Failed to create consumer&quot;, exception);</span>
+<span class="nc" id="L308">        }</span>
+
+<span class="nc" id="L310">        return consumer;</span>
+    }
+
+    /**
+     * Create a durable consumer.
+     *
+     * @param topic        the topic to subscribe to
+     * @param name         the subscription name
+     * @param clientID     the client identifier. May be &lt;code&gt;null&lt;/code&gt;.
+     * @param connectionId the identity of the connection that owns this
+     *                     consumer
+     * @param noLocal      if true, and the destination is a topic, inhibits the
+     *                     delivery of messages published by its own
+     *                     connection.
+     * @param selector     the message selector. May be &lt;code&gt;null&lt;/code&gt;
+     * @return the durable consumer endpoint
+     * @throws InvalidDestinationException if &lt;code&gt;topic&lt;/code&gt; is not a
+     *                                     persistent destination
+     * @throws InvalidSelectorException    if the selector is not well formed
+     * @throws JMSException                if a durable consumer is already
+     *                                     active with the same &lt;code&gt;name&lt;/code&gt;
+     */
+    public synchronized DurableConsumerEndpoint createDurableConsumer(
+            JmsTopic topic, String name, String clientID, long connectionId,
+            boolean noLocal,
+            String selector)
+            throws JMSException {
+
+<span class="nc bnc" id="L338" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L339">            _log.debug(&quot;createDurableConsumer(topic=&quot; + topic</span>
+                       + &quot;, name=&quot; + name + &quot;, connectionId=&quot; + connectionId
+                       + &quot;, selector=&quot; + selector + &quot;, noLocal=&quot; + noLocal
+                       + &quot;)&quot;);
+        }
+
+<span class="nc" id="L345">        DurableConsumerEndpoint consumer</span>
+<span class="nc" id="L346">                = createInactiveDurableConsumer(topic, name, clientID);</span>
+<span class="nc" id="L347">        consumer.activate(connectionId, selector, noLocal);</span>
+
+<span class="nc" id="L349">        return consumer;</span>
+    }
+
+    /**
+     * Create a browser for the specified destination and the selector. A
+     * browser is responsible for passing all messages back to the client that
+     * reside on the queue
+     *
+     * @param queue    the queue to browse
+     * @param selector the message selector. May be &lt;code&gt;null&lt;/code&gt;
+     * @return the queue browser endpoint
+     * @throws JMSException             if the browser can't be created
+     */
+    public synchronized ConsumerEndpoint createQueueBrowser(JmsQueue queue,
+                                                            String selector)
+            throws JMSException {
+
+        // ensure that the destination is valid before proceeding
+<span class="nc" id="L367">        getDestination(queue, true);</span>
+
+<span class="nc" id="L369">        long consumerId = getNextConsumerId();</span>
+
+
+<span class="nc" id="L372">        ConsumerEndpoint consumer = null;</span>
+        try {
+<span class="nc" id="L374">            _database.begin();</span>
+            QueueDestinationCache cache;
+<span class="nc" id="L376">            cache = (QueueDestinationCache) _destinations.getDestinationCache(</span>
+                    queue);
+<span class="nc" id="L378">            consumer = new QueueBrowserEndpoint(consumerId, cache, selector);</span>
+<span class="nc" id="L379">            Object key = ConsumerEntry.getConsumerKey(consumer);</span>
+<span class="nc" id="L380">            _endpoints.put(key, consumer);</span>
+<span class="nc" id="L381">            addConsumerEntry(key, queue, null, false);</span>
+<span class="nc" id="L382">            _database.commit();</span>
+<span class="nc" id="L383">        } catch (Exception exception) {</span>
+<span class="nc" id="L384">            rethrow(&quot;Failed to create browser&quot;, exception);</span>
+<span class="nc" id="L385">        }</span>
+
+<span class="nc" id="L387">        return consumer;</span>
+    }
+
+    /**
+     * Close a consumer.
+     *
+     * @param consumer the consumer to close
+     */
+    public synchronized void closeConsumer(ConsumerEndpoint consumer) {
+<span class="nc bnc" id="L396" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L397">            _log.debug(&quot;closeConsumerEndpoint(consumer=[Id=&quot;</span>
+<span class="nc" id="L398">                       + consumer.getId() + &quot;, destination=&quot;</span>
+<span class="nc" id="L399">                       + consumer.getDestination() + &quot;)&quot;);</span>
+        }
+
+<span class="nc" id="L402">        Object key = ConsumerEntry.getConsumerKey(consumer);</span>
+
+<span class="nc" id="L404">        ConsumerEndpoint existing = (ConsumerEndpoint) _endpoints.get(key);</span>
+<span class="nc bnc" id="L405" title="All 2 branches missed.">        if (existing != null) {</span>
+            try {
+<span class="nc" id="L407">                 _database.begin();</span>
+<span class="nc bnc" id="L408" title="All 2 branches missed.">                if (consumer.getId() != existing.getId()) {</span>
+                    // As a fix for bug 759752, only remove the consumer if it
+                    // matches the existing one.
+                    // @todo - not sure if this situation can arise any longer
+<span class="nc" id="L412">                    _log.error(&quot;Existing endpoint doesn't match that to be closed &quot;</span>
+                               + &quot;- retaining&quot;);
+<span class="nc bnc" id="L414" title="All 2 branches missed.">                } else if (existing instanceof DurableConsumerEndpoint) {</span>
+<span class="nc" id="L415">                    DurableConsumerEndpoint durable</span>
+                            = (DurableConsumerEndpoint) existing;
+<span class="nc bnc" id="L417" title="All 2 branches missed.">                    if (durable.isActive()) {</span>
+                        try {
+<span class="nc" id="L419">                            durable.deactivate();</span>
+<span class="nc" id="L420">                        } catch (JMSException exception) {</span>
+<span class="nc" id="L421">                            _log.error(&quot;Failed to deactivate durable consumer=&quot;</span>
+                                       + durable, exception);
+<span class="nc" id="L423">                        }</span>
+                    }
+<span class="nc" id="L425">                } else {</span>
+<span class="nc" id="L426">                    _endpoints.remove(key);</span>
+<span class="nc" id="L427">                    consumer.close();</span>
+<span class="nc" id="L428">                    removeConsumerEntry(key);</span>
+                }
+<span class="nc" id="L430">                _database.commit();</span>
+<span class="nc" id="L431">            } catch (PersistenceException exception) {</span>
+<span class="nc" id="L432">                _log.error(&quot;Failed to close consumer=&quot; + consumer, exception);</span>
+<span class="nc" id="L433">                rollback();</span>
+<span class="nc" id="L434">            }</span>
+        }
+<span class="nc" id="L436">    }</span>
+
+    /**
+     * Return the consumer with the specified identity.
+     *
+     * @param consumerId the identity of the consumer
+     * @return the associated consumer, or &lt;code&gt;null&lt;/code&gt; if none exists
+     */
+    public synchronized ConsumerEndpoint getConsumerEndpoint(long consumerId) {
+<span class="nc" id="L445">        return (ConsumerEndpoint) _endpoints.get(new Long(consumerId));</span>
+    }
+
+    /**
+     * Return the consumer with the specified persistent identity.
+     *
+     * @param persistentId the persistent identity of the consumer
+     * @return the associated consumer, or &lt;code&gt;null&lt;/code&gt; if none exists
+     */
+    public synchronized ConsumerEndpoint getConsumerEndpoint(
+            String persistentId) {
+<span class="nc" id="L456">        return (ConsumerEndpoint) _endpoints.get(persistentId);</span>
+    }
+
+    /**
+     * Determines if there are any active consumers for a destination.
+     *
+     * @param destination the destination
+     * @return &lt;code&gt;true&lt;/code&gt; if there is at least one consumer
+     */
+    public synchronized boolean hasActiveConsumers(JmsDestination destination) {
+<span class="nc" id="L466">        boolean result = false;</span>
+<span class="nc" id="L467">        ConsumerEndpoint[] consumers = getConsumers();</span>
+<span class="nc bnc" id="L468" title="All 2 branches missed.">        for (int i = 0; i &lt; consumers.length; ++i) {</span>
+<span class="nc bnc" id="L469" title="All 2 branches missed.">            if (consumers[i].canConsume(destination)) {</span>
+<span class="nc" id="L470">                result = true;</span>
+<span class="nc" id="L471">                break;</span>
+            }
+        }
+<span class="nc" id="L474">        return result;</span>
+    }
+
+    /**
+     * Start the service.
+     *
+     * @throws ServiceException if the service fails to start
+     */
+    protected void doStart() throws ServiceException {
+        try {
+<span class="nc" id="L484">            _database.begin();</span>
+<span class="nc" id="L485">            Connection connection = _database.getConnection();</span>
+
+<span class="nc" id="L487">            PersistenceAdapter adapter = _database.getAdapter();</span>
+
+            // return a list of JmsDestination objects.
+<span class="nc" id="L490">            HashMap map = adapter.getAllDurableConsumers(connection);</span>
+<span class="nc" id="L491">            Iterator iter = map.keySet().iterator();</span>
+
+            // Create an endpoint for each durable consumer
+<span class="nc bnc" id="L494" title="All 2 branches missed.">            while (iter.hasNext()) {</span>
+<span class="nc" id="L495">                String consumer = (String) iter.next();</span>
+<span class="nc" id="L496">                String deststr = (String) map.get(consumer);</span>
+
+<span class="nc" id="L498">                JmsDestination dest = _destinations.getDestination(deststr);</span>
+<span class="nc bnc" id="L499" title="All 2 branches missed.">                if (dest == null) {</span>
+                    // this maybe a wildcard subscription
+<span class="nc" id="L501">                    dest = new JmsTopic(deststr);</span>
+<span class="nc bnc" id="L502" title="All 2 branches missed.">                    if (!((JmsTopic) dest).isWildCard()) {</span>
+<span class="nc" id="L503">                        dest = null;</span>
+                    }
+                }
+
+<span class="nc bnc" id="L507" title="All 6 branches missed.">                if (consumer != null &amp;&amp; dest != null &amp;&amp;</span>
+                        dest instanceof JmsTopic) {
+                    // cache the consumer-destination mapping in memory.
+<span class="nc" id="L510">                    addDurableConsumer((JmsTopic) dest, consumer, null);</span>
+                } else {
+                    // @todo
+<span class="nc" id="L513">                    _log.error(&quot;Failure in ConsumerManager.init : &quot; + consumer +</span>
+                               &quot;:&quot; + dest);
+                }
+<span class="nc" id="L516">            }</span>
+<span class="nc" id="L517">            _database.commit();</span>
+<span class="nc" id="L518">        } catch (Exception exception) {</span>
+<span class="nc" id="L519">            rollback();</span>
+<span class="nc" id="L520">            throw new ServiceException(&quot;Failed to initialise ConsumerManager&quot;,</span>
+                                       exception);
+<span class="nc" id="L522">        }</span>
+<span class="nc" id="L523">    }</span>
+
+    /**
+     * Stop the service.
+     */
+    protected synchronized void doStop() {
+        // clean up all the destinations
+<span class="nc" id="L530">        Object[] endpoints = _endpoints.values().toArray();</span>
+<span class="nc bnc" id="L531" title="All 2 branches missed.">        for (int index = 0; index &lt; endpoints.length; index++) {</span>
+<span class="nc" id="L532">            closeConsumer((ConsumerEndpoint) endpoints[index]);</span>
+        }
+<span class="nc" id="L534">        _endpoints.clear();</span>
+
+        // remove cache data structures
+<span class="nc" id="L537">        _consumers.clear();</span>
+<span class="nc" id="L538">        _destToConsumerMap.clear();</span>
+<span class="nc" id="L539">        _wildcardConsumers.clear();</span>
+<span class="nc" id="L540">    }</span>
+
+    /**
+     * Create an inactive durable consumer.
+     * &lt;p/&gt;
+     * If the consumer doesn't exist, it will created in the persistent store.
+     * If it does exist, and is inactive, it will be recreated. If it does
+     * exist, but is active, an exception will be raised.
+     *
+     * @param topic    the topic to subscribe to
+     * @param name     the subscription name
+     * @param clientID the client identifier. May be &lt;code&gt;null&lt;/code&gt;.
+     * @return the durable consumer
+     * @throws InvalidDestinationException if &lt;code&gt;topic&lt;/code&gt; is not a
+     *                                     persistent destination
+     * @throws JMSException                if a durable consumer is already
+     *                                     active with the same &lt;code&gt;name&lt;/code&gt;,
+     *                                     or the consumer can't be created
+     */
+    private DurableConsumerEndpoint createInactiveDurableConsumer(
+            JmsTopic topic, String name, String clientID)
+            throws JMSException {
+        DurableConsumerEndpoint endpoint;
+
+<span class="nc bnc" id="L564" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L565">            _log.debug(&quot;createInactiveDurableConsumer(topic=&quot; + topic</span>
+                       + &quot;, name=&quot; + name + &quot;, clientID=&quot; + clientID + &quot;)&quot;);
+        }
+
+        // check that the destination exists, if the topic is not a wildcard
+<span class="nc bnc" id="L570" title="All 2 branches missed.">        if (!topic.isWildCard()) {</span>
+<span class="nc" id="L571">            topic = (JmsTopic) getDestination(topic, false);</span>
+        }
+
+<span class="nc bnc" id="L574" title="All 4 branches missed.">        if (name == null || name.length() == 0) {</span>
+<span class="nc" id="L575">            throw new InvalidDestinationException(</span>
+                    &quot;Invalid subscription name: &quot; + name);
+        }
+<span class="nc" id="L578">        endpoint = (DurableConsumerEndpoint) _endpoints.get(name);</span>
+<span class="nc bnc" id="L579" title="All 2 branches missed.">        if (endpoint != null) {</span>
+<span class="nc bnc" id="L580" title="All 2 branches missed.">            if (endpoint.isActive()) {</span>
+<span class="nc" id="L581">                throw new JMSException(</span>
+                        &quot;Durable subscriber already exists with name: &quot; + name);
+            }
+<span class="nc bnc" id="L584" title="All 2 branches missed.">            if (!endpoint.getDestination().equals(topic)) {</span>
+                // subscribing to a different topic. Need to re-subscribe.
+<span class="nc" id="L586">                unsubscribe(name, clientID);</span>
+<span class="nc" id="L587">                endpoint = null;</span>
+            }
+        }
+<span class="nc bnc" id="L590" title="All 2 branches missed.">        if (endpoint == null) {</span>
+            try {
+<span class="nc" id="L592">                _database.begin();</span>
+<span class="nc" id="L593">                PersistenceAdapter adapter = _database.getAdapter();</span>
+<span class="nc" id="L594">                Connection connection = _database.getConnection();</span>
+<span class="nc" id="L595">                adapter.addDurableConsumer(connection, topic.getName(), name);</span>
+<span class="nc" id="L596">                endpoint = addDurableConsumer(topic, name, clientID);</span>
+<span class="nc" id="L597">                _database.commit();</span>
+<span class="nc" id="L598">            } catch (Exception exception) {</span>
+<span class="nc" id="L599">                String msg = &quot;Failed to create durable consumer, name=&quot; + name</span>
+<span class="nc" id="L600">                        + &quot;, for topic=&quot; + topic.getName();</span>
+<span class="nc" id="L601">                rethrow(msg, exception);</span>
+<span class="nc" id="L602">            }</span>
+        }
+
+<span class="nc" id="L605">        return endpoint;</span>
+    }
+
+    /**
+     * Register an inactive durable consumer.
+     *
+     * @param topic    the topic to subscribe to
+     * @param name     the subscription name
+     * @param clientID the client identifier. May be &lt;code&gt;null&lt;/code&gt;.
+     * @return the durable consumer
+     * @throws JMSException for any JMS error
+     * @throws PersistenceException for any persistence error
+     */
+    private DurableConsumerEndpoint addDurableConsumer(JmsTopic topic,
+                                                       String name,
+                                                       String clientID)
+            throws JMSException, PersistenceException {
+        DurableConsumerEndpoint consumer;
+        // cache the consumer locally
+<span class="nc" id="L624">        addConsumerEntry(name, topic, clientID, true);</span>
+
+<span class="nc" id="L626">        long consumerId = getNextConsumerId();</span>
+<span class="nc" id="L627">        consumer = new DurableConsumerEndpoint(consumerId, topic, name,</span>
+                                               _destinations);
+<span class="nc" id="L629">        _endpoints.put(consumer.getPersistentId(), consumer);</span>
+<span class="nc" id="L630">        return consumer;</span>
+    }
+
+    /**
+     * Add a consumer entry.
+     *
+     * @param key         a key to identify the entry.
+     * @param destination the destination it is subscribed to. It can be a
+     *                    wildcard
+     * @param clientID    the client identifier. May be &lt;code&gt;null&lt;/code&gt;
+     * @param durable     indicates whether it is a durable subscription
+     * @throws JMSException if key specifies a duplicate entry.
+     */
+    private void addConsumerEntry(Object key, JmsDestination destination,
+                                  String clientID,
+                                  boolean durable)
+            throws JMSException {
+<span class="nc bnc" id="L647" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L648">            _log.debug(&quot;addConsumerEntry(key=&quot; + key + &quot;, destination=&quot;</span>
+                       + destination + &quot;, clientID=&quot; + clientID
+                       + &quot;, durable=&quot; + durable + &quot;)&quot;);
+        }
+
+<span class="nc bnc" id="L653" title="All 2 branches missed.">        if (_consumers.containsKey(key)) {</span>
+<span class="nc" id="L654">            throw new JMSException(&quot;Duplicate consumer key:&quot; + key);</span>
+        }
+
+<span class="nc" id="L657">        ConsumerEntry entry = new ConsumerEntry(key, destination, clientID,</span>
+                                                durable);
+<span class="nc" id="L659">        _consumers.put(key, entry);</span>
+
+<span class="nc bnc" id="L661" title="All 2 branches missed.">        if (destination instanceof JmsTopic</span>
+<span class="nc bnc" id="L662" title="All 2 branches missed.">                &amp;&amp; ((JmsTopic) destination).isWildCard()) {</span>
+            // if the specified destination is a JmsTopic and also a wildcard
+            // then we need to add it to all matching destinations
+<span class="nc" id="L665">            _wildcardConsumers.put(entry, destination);</span>
+        } else {
+            // we also need to add the reverse mapping
+<span class="nc" id="L668">            List consumers = (List) _destToConsumerMap.get(destination);</span>
+<span class="nc bnc" id="L669" title="All 2 branches missed.">            if (consumers == null) {</span>
+<span class="nc" id="L670">                consumers = new ArrayList();</span>
+<span class="nc" id="L671">                _destToConsumerMap.put(destination, consumers);</span>
+            }
+
+            // add the mapping
+<span class="nc" id="L675">            consumers.add(entry);</span>
+        }
+<span class="nc" id="L677">    }</span>
+
+    /**
+     * Remove the specified consumer from the cache.
+     *
+     * @param key the consumer key
+     */
+    private void removeConsumerEntry(Object key) {
+<span class="nc bnc" id="L685" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L686">            _log.debug(&quot;removeConsumerEntry(key=&quot; + key + &quot;)&quot;);</span>
+        }
+
+<span class="nc" id="L689">        ConsumerEntry entry = (ConsumerEntry) _consumers.remove(key);</span>
+<span class="nc bnc" id="L690" title="All 2 branches missed.">        if (entry != null) {</span>
+<span class="nc" id="L691">            JmsDestination dest = entry.getDestination();</span>
+
+<span class="nc bnc" id="L693" title="All 4 branches missed.">            if (dest instanceof JmsTopic &amp;&amp; ((JmsTopic) dest).isWildCard()) {</span>
+                // remove it from the wildcard cache.
+<span class="nc" id="L695">                _wildcardConsumers.remove(entry);</span>
+            } else {
+                // remove it from the specified destination
+<span class="nc" id="L698">                List consumers = (List) _destToConsumerMap.get(dest);</span>
+<span class="nc bnc" id="L699" title="All 2 branches missed.">                if (consumers != null) {</span>
+<span class="nc" id="L700">                    consumers.remove(entry);</span>
+
+                    // if consumers is of size 0 then remove it
+<span class="nc bnc" id="L703" title="All 2 branches missed.">                    if (consumers.isEmpty()) {</span>
+<span class="nc" id="L704">                        _destToConsumerMap.remove(dest);</span>
+                    }
+                }
+            }
+<span class="nc bnc" id="L708" title="All 2 branches missed.">        } else if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L709">            _log.debug(&quot;removeConsumerEntry(key=&quot; + key</span>
+                       + &quot;): consumer not found&quot;);
+        }
+<span class="nc" id="L712">    }</span>
+
+    /**
+     * Remove all the consumers for the specified destination from the cache.
+     *
+     * @param destination the destination to remove
+     */
+    private void removeFromConsumerCache(JmsDestination destination) {
+<span class="nc" id="L720">        _destToConsumerMap.remove(destination);</span>
+<span class="nc" id="L721">    }</span>
+
+    /**
+     * Returns the next seed value to be allocated to a new consumer.
+     *
+     * @return a unique identifier for a consumer
+     */
+    private long getNextConsumerId() {
+<span class="nc" id="L729">        return ++_consumerIdSeed;</span>
+    }
+
+    /**
+     * Returns the destination managed by {@link DestinationManager}
+     * corresponding to that supplied, creating it if needed.
+     *
+     * @param destination the destination to look up
+     * @param create      if &lt;code&gt;true&lt;/code&gt; the destination may be created if
+     *                    it doesn't exist
+     * @return the destination managed by {@link DestinationManager}
+     *         corresponding to &lt;code&gt;destination&lt;/code&gt;.
+     * @throws InvalidDestinationException if the destination doesn't exist and
+     *                                     &lt;code&gt;create&lt;/code&gt; is false; or the
+     *                                     destination's properties don't match
+     *                                     the existing destination
+     * @throws JMSException                if the destination can't be created
+     */
+    private JmsDestination getDestination(JmsDestination destination,
+                                          boolean create)
+            throws InvalidDestinationException, JMSException {
+<span class="nc" id="L750">        final String name = destination.getName();</span>
+        JmsDestination result;
+<span class="nc" id="L752">        JmsDestination existing = _destinations.getDestination(name);</span>
+
+<span class="nc bnc" id="L754" title="All 2 branches missed.">        if (existing == null) {</span>
+<span class="nc bnc" id="L755" title="All 2 branches missed.">            if (!create) {</span>
+<span class="nc" id="L756">                throw new InvalidDestinationException(</span>
+                        &quot;No destination with name=&quot; + name + &quot; exists&quot;);
+            }
+            // register the destination dynamically.
+<span class="nc" id="L760">            _destinations.createDestination(destination);</span>
+<span class="nc" id="L761">            result = _destinations.getDestination(destination.getName());</span>
+        } else {
+            // make sure the supplied destination has the same properties
+            // as the existing one
+<span class="nc bnc" id="L765" title="All 2 branches missed.">            if (!destination.getClass().getName().equals(</span>
+<span class="nc" id="L766">                    existing.getClass().getName())) {</span>
+<span class="nc" id="L767">                throw new InvalidDestinationException(</span>
+                        &quot;Mismatched destination properties for destination&quot;
+                        + &quot; with name=&quot; + name);
+            }
+<span class="nc bnc" id="L771" title="All 2 branches missed.">            if (existing.getPersistent() != destination.getPersistent()) {</span>
+<span class="nc" id="L772">                throw new InvalidDestinationException(</span>
+                        &quot;Mismatched destination properties for destination&quot;
+                        + &quot; with name=&quot; + name);
+            }
+<span class="nc" id="L776">            result = existing;</span>
+        }
+<span class="nc" id="L778">        return result;</span>
+    }
+
+    /**
+     * Returns the consumers managed by this.
+     *
+     * @return an array of consumers
+     */
+    private ConsumerEndpoint[] getConsumers() {
+<span class="nc" id="L787">        return (ConsumerEndpoint[]) _endpoints.values().toArray(</span>
+                new ConsumerEndpoint[0]);
+    }
+
+    /**
+     * Rollback any transaction.
+     */
+    private void rollback() {
+        try {
+<span class="nc bnc" id="L796" title="All 2 branches missed.">            if (_database.isTransacted()) {</span>
+<span class="nc" id="L797">                _database.rollback();</span>
+            }
+<span class="nc" id="L799">        } catch (PersistenceException error) {</span>
+<span class="nc" id="L800">            _log.warn(&quot;Failed to rollback after error&quot;, error);</span>
+<span class="nc" id="L801">        }</span>
+<span class="nc" id="L802">    }</span>
+
+    /**
+     * Helper to clean up after a failed call, and rethrow.
+     * Any transaction will be rolled back.
+     *
+     * @param message   the message to log
+     * @param exception the exception
+     * @throws JMSException the original exception adapted to a
+     *                      &lt;code&gt;JMSException&lt;/code&gt; if necessary
+     */
+    private void rethrow(String message, Exception exception)
+            throws JMSException {
+<span class="nc" id="L815">        rollback();</span>
+
+<span class="nc bnc" id="L817" title="All 2 branches missed.">        if (exception instanceof JMSException) {</span>
+<span class="nc" id="L818">            _log.debug(message, exception);</span>
+<span class="nc" id="L819">            throw (JMSException) exception;</span>
+        }
+        // need to adapt the exception, so log as an error before rethrow
+<span class="nc" id="L822">        _log.error(message, exception);</span>
+<span class="nc" id="L823">        throw new JMSException(exception.getMessage());</span>
+    }
+
+    /**
+     * Helper class used to maintain consumer information
+     */
+    private static final class ConsumerEntry {
+
+        /**
+         * An identifier for the consumer.
+         */
+        private final Object _key;
+
+        /**
+         * The destination that the consumer is subscribed to.
+         */
+        private final JmsDestination _destination;
+
+        /**
+         * The client identifier. May be &lt;code&gt;null&lt;/code&gt;.
+         */
+        private final String _clientID;
+
+        /**
+         * Indicated whether this entry is for a durable subscriber
+         */
+        private final boolean _durable;
+
+
+        /**
+         * Construct a new &lt;code&gt;ConsumerEntry&lt;/code&gt;.
+         *
+         * @param key         an identifier for the consumer
+         * @param destination the destination consumer is subscribed to
+         * @param clientID    the client identifier. May be &lt;code&gt;null&lt;/code&gt;
+         * @param durable     indicates whether it is a durable subscription
+         */
+        public ConsumerEntry(Object key, JmsDestination destination,
+<span class="nc" id="L861">                             String clientID, boolean durable) {</span>
+<span class="nc" id="L862">            _key = key;</span>
+<span class="nc" id="L863">            _destination = destination;</span>
+<span class="nc" id="L864">            _clientID = clientID;</span>
+<span class="nc" id="L865">            _durable = durable;</span>
+<span class="nc" id="L866">        }</span>
+
+        public boolean equals(Object obj) {
+<span class="nc" id="L869">            boolean result = false;</span>
+<span class="nc bnc" id="L870" title="All 2 branches missed.">            if (obj instanceof ConsumerEntry) {</span>
+<span class="nc" id="L871">                result = ((ConsumerEntry) obj)._key.equals(_key);</span>
+            }
+
+<span class="nc" id="L874">            return result;</span>
+        }
+
+        public Object getKey() {
+<span class="nc" id="L878">            return _key;</span>
+        }
+
+        public String getName() {
+<span class="nc bnc" id="L882" title="All 2 branches missed.">            return (_key instanceof String) ? (String) _key : null;</span>
+        }
+
+        public JmsDestination getDestination() {
+<span class="nc" id="L886">            return _destination;</span>
+        }
+
+        public String getClientID() {
+<span class="nc" id="L890">            return _clientID;</span>
+        }
+
+        public boolean isDurable() {
+<span class="nc" id="L894">            return _durable;</span>
+        }
+
+        /**
+         * Helper to return a key for identifying {@link ConsumerEndpoint}
+         * instances. This returns the consumers persistent identifier if it has
+         * one; if not, it returns its transient identifier.
+         *
+         * @param consumer the consumer
+         * @return a key for identifying &lt;code&gt;consumer&lt;/code&gt;
+         */
+        public static Object getConsumerKey(ConsumerEndpoint consumer) {
+<span class="nc" id="L906">            Object key = null;</span>
+<span class="nc" id="L907">            String id = consumer.getPersistentId();</span>
+<span class="nc bnc" id="L908" title="All 2 branches missed.">            if (id != null) {</span>
+<span class="nc" id="L909">                key = id;</span>
+            } else {
+<span class="nc" id="L911">                key = new Long(consumer.getId());</span>
+            }
+<span class="nc" id="L913">            return key;</span>
+        }
+    }
+
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

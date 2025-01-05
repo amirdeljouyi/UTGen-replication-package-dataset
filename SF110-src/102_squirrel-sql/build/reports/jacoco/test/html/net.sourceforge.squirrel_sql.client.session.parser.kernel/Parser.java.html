@@ -1,0 +1,1909 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Parser.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.session.parser.kernel</a> &gt; <span class="el_source">Parser.java</span></div><h1>Parser.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.session.parser.kernel;
+
+import net.sourceforge.squirrel_sql.client.session.parser.kernel.completions.*;
+
+import java.util.*;
+
+public class Parser
+{
+	private static final int maxT = 103;
+
+	private static final boolean T = true;
+	private static final boolean G = true; // to see Gerds changes
+	private static final boolean x = false;
+	private static final int minErrDist = 2;
+
+<span class="nc" id="L16">	private int errDist = minErrDist;</span>
+
+<span class="nc" id="L18">	private Vector&lt;ParserListener&gt; parserListeners = new Vector&lt;ParserListener&gt;();</span>
+<span class="nc" id="L19">	private Vector&lt;SQLSelectStatementListener&gt; sqlSelectStatlisteners = new Vector&lt;SQLSelectStatementListener&gt;();</span>
+
+	private Scanner scanner;  // input scanner
+	private Token token;      // last recognized token
+	private Token t;          // lookahead token
+
+<span class="nc" id="L25">	private List&lt;SQLStatement&gt; statements = new ArrayList&lt;SQLStatement&gt;();</span>
+	private SQLSchema rootSchema;
+
+	private Stack&lt;SQLStatementContext&gt; stack;
+
+	protected void addRootStatement(SQLStatement statement)
+	{
+<span class="nc" id="L32">		statement.setSqlSchema(rootSchema);</span>
+<span class="nc" id="L33">		fireStatementAdded(statement);</span>
+<span class="nc" id="L34">		statements.add(statement);</span>
+<span class="nc" id="L35">		stack = new Stack&lt;SQLStatementContext&gt;();</span>
+<span class="nc" id="L36">		stack.push(statement);</span>
+<span class="nc" id="L37">	}</span>
+
+	private void fireStatementAdded(SQLStatement statement)
+	{
+<span class="nc" id="L41">		ParserListener[] clone = parserListeners.toArray(new ParserListener[parserListeners.size()]);</span>
+
+<span class="nc bnc" id="L43" title="All 2 branches missed.">		for (int i = 0; i &lt; clone.length; i++)</span>
+		{
+<span class="nc" id="L45">			clone[i].statementAdded(statement);</span>
+		}
+
+<span class="nc" id="L48">	}</span>
+
+	public void addParserListener(ParserListener l)
+	{
+<span class="nc" id="L52">		parserListeners.add(l);</span>
+<span class="nc" id="L53">	}</span>
+
+	public void removeaddParserListener(ParserListener l)
+	{
+<span class="nc" id="L57">		parserListeners.remove(l);</span>
+<span class="nc" id="L58">	}</span>
+
+
+	public void addSQLSelectStatementListener(SQLSelectStatementListener l)
+	{
+<span class="nc" id="L63">		sqlSelectStatlisteners.add(l);</span>
+<span class="nc" id="L64">	}</span>
+
+	public void removeSQLSelectStatementListener(SQLSelectStatementListener l)
+	{
+<span class="nc" id="L68">		sqlSelectStatlisteners.remove(l);</span>
+<span class="nc" id="L69">	}</span>
+
+
+	private SQLStatementContext getContext()
+	{
+<span class="nc" id="L74">		return stack.peek();</span>
+	}
+
+	private void pushContext(SQLStatementContext context)
+	{
+<span class="nc" id="L79">		SQLStatementContext parent = stack.peek();</span>
+<span class="nc" id="L80">		parent.addContext(context);</span>
+<span class="nc" id="L81">		stack.push(context);</span>
+<span class="nc" id="L82">	}</span>
+
+	private SQLStatementContext popContext()
+	{
+<span class="nc" id="L86">		return stack.pop();</span>
+	}
+
+
+	void Error(int n)
+	{
+<span class="nc bnc" id="L92" title="All 2 branches missed.">		if (errDist &gt;= minErrDist) scanner.err.ParsErr(n, t.line, t.col);</span>
+<span class="nc" id="L93">		errDist = 0;</span>
+<span class="nc" id="L94">	}</span>
+
+	void SemError(int n)
+	{
+<span class="nc bnc" id="L98" title="All 2 branches missed.">		if (errDist &gt;= minErrDist) scanner.err.SemErr(n, token.line, token.col);</span>
+<span class="nc" id="L99">		errDist = 0;</span>
+<span class="nc" id="L100">	}</span>
+
+	boolean Successful()
+	{
+<span class="nc bnc" id="L104" title="All 2 branches missed.">		return scanner.err.count == 0;</span>
+	}
+
+	String LexString()
+	{
+<span class="nc" id="L109">		return token.str;</span>
+	}
+
+	String LexName()
+	{
+<span class="nc" id="L114">		return token.val;</span>
+	}
+
+	String LookAheadString()
+	{
+<span class="nc" id="L119">		return t.str;</span>
+	}
+
+	String LookAheadName()
+	{
+<span class="nc" id="L124">		return t.val;</span>
+	}
+
+	private void Get()
+	{
+		for (; ;)
+		{
+<span class="nc" id="L131">			token = t;</span>
+<span class="nc" id="L132">			t = scanner.Scan();</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">			if (t.kind &lt;= maxT)</span>
+			{
+<span class="nc" id="L135">				errDist++;</span>
+<span class="nc" id="L136">				return;</span>
+			}
+
+<span class="nc" id="L139">			t = token;</span>
+		}
+	}
+
+	private void Expect(int n)
+	{
+<span class="nc bnc" id="L145" title="All 2 branches missed.">		if (t.kind == n) Get(); else Error(n);</span>
+<span class="nc" id="L146">	}</span>
+
+	private boolean StartOf(int s)
+	{
+<span class="nc bnc" id="L150" title="All 8 branches missed.">      if(   0 &gt; s</span>
+         || 0  &gt; t.kind
+         || set.length &lt;= s
+         || set[0].length &lt;= t.kind)
+      {
+<span class="nc" id="L155">         return false;</span>
+      }
+
+<span class="nc" id="L158">      return set[s][t.kind];</span>
+	}
+
+	private void ExpectWeak(int n, int follow)
+	{
+<span class="nc bnc" id="L163" title="All 2 branches missed.">		if (t.kind == n)</span>
+<span class="nc" id="L164">			Get();</span>
+		else
+		{
+<span class="nc" id="L167">			Error(n);</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">			while (!StartOf(follow)) Get();</span>
+		}
+<span class="nc" id="L170">	}</span>
+
+	boolean WeakSeparator(int n, int syFol, int repFol)
+	{
+<span class="nc" id="L174">		boolean[] s = new boolean[maxT + 1];</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">		if (t.kind == n)</span>
+		{
+<span class="nc" id="L177">			Get();</span>
+<span class="nc" id="L178">			return true;</span>
+		}
+<span class="nc bnc" id="L180" title="All 2 branches missed.">		else if (StartOf(repFol))</span>
+<span class="nc" id="L181">			return false;</span>
+		else
+		{
+<span class="nc bnc" id="L184" title="All 2 branches missed.">			for (int i = 0; i &lt;= maxT; i++)</span>
+			{
+<span class="nc bnc" id="L186" title="All 6 branches missed.">				s[i] = set[syFol][i] || set[repFol][i] || set[0][i];</span>
+			}
+<span class="nc" id="L188">			Error(n);</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">			while (!s[t.kind]) Get();</span>
+<span class="nc" id="L190">			return StartOf(syFol);</span>
+		}
+	}
+
+	private final void IndexName()
+	{
+<span class="nc" id="L196">		Expect(1);</span>
+<span class="nc" id="L197">	}</span>
+
+	private final void IndexColumnList()
+	{
+<span class="nc" id="L201">		IndexColumn();</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">		while (t.kind == ParsingConstants.KIND_COMMA)</span>
+		{
+<span class="nc" id="L204">			ItemSeparator();</span>
+<span class="nc" id="L205">			IndexColumn();</span>
+		}
+<span class="nc" id="L207">	}</span>
+
+	private final void IndexColumn()
+	{
+<span class="nc" id="L211">		SimpleColumnName();</span>
+<span class="nc bnc" id="L212" title="All 4 branches missed.">		if (t.kind == ParsingConstants.KW_DESC || t.kind == ParsingConstants.KW_ASC)</span>
+		{
+<span class="nc bnc" id="L214" title="All 2 branches missed.">			if (t.kind == ParsingConstants.KW_ASC)</span>
+			{
+<span class="nc" id="L216">				Get();</span>
+			}
+			else
+			{
+<span class="nc" id="L220">				Get();</span>
+			}
+		}
+<span class="nc" id="L223">	}</span>
+
+	private final void DropPart()
+	{
+<span class="nc" id="L227">		Expect(ParsingConstants.KW_DROP);</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">		if (t.kind == 1)</span>
+		{
+<span class="nc" id="L230">			SimpleColumnName();</span>
+<span class="nc" id="L231">			CascadeRestrict();</span>
+		}
+<span class="nc bnc" id="L233" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_PRIMARY)</span>
+		{
+<span class="nc" id="L235">			Get();</span>
+<span class="nc" id="L236">			Expect(ParsingConstants.KW_KEY);</span>
+		}
+<span class="nc bnc" id="L238" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_FOREIGN)</span>
+		{
+<span class="nc" id="L240">			Get();</span>
+<span class="nc" id="L241">			Expect(ParsingConstants.KW_KEY);</span>
+<span class="nc" id="L242">			RelationName();</span>
+		}
+<span class="nc bnc" id="L244" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_CONSTRAINT)</span>
+		{
+<span class="nc" id="L246">			Get();</span>
+<span class="nc" id="L247">			ConstraintName();</span>
+<span class="nc" id="L248">			CascadeRestrict();</span>
+		}
+		else
+<span class="nc" id="L251">			Error(104);</span>
+<span class="nc" id="L252">	}</span>
+
+	private final void AlterPart()
+	{
+<span class="nc" id="L256">		Expect(ParsingConstants.KW_ALTER);</span>
+<span class="nc" id="L257">		SimpleColumnName();</span>
+<span class="nc bnc" id="L258" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_DROP)</span>
+		{
+<span class="nc" id="L260">			Get();</span>
+<span class="nc" id="L261">			Expect(ParsingConstants.KW_DEFAULT );</span>
+		}
+<span class="nc bnc" id="L263" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_SET)</span>
+		{
+<span class="nc" id="L265">			Get();</span>
+<span class="nc" id="L266">			ColumnDefault();</span>
+		}
+		else
+<span class="nc" id="L269">			Error(105);</span>
+<span class="nc" id="L270">	}</span>
+
+	private final void AddPart()
+	{
+<span class="nc" id="L274">		Expect(ParsingConstants.KW_ADD);</span>
+<span class="nc bnc" id="L275" title="All 2 branches missed.">		if (t.kind == 1)</span>
+		{
+<span class="nc" id="L277">			ColumnDefList();</span>
+		}
+<span class="nc bnc" id="L279" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_PRIMARY)</span>
+		{
+<span class="nc" id="L281">			PrimaryKey();</span>
+		}
+<span class="nc bnc" id="L283" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_CONSTRAINT)</span>
+		{
+<span class="nc" id="L285">			ForeignKeyAdd();</span>
+		}
+<span class="nc bnc" id="L287" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_UNIQUE)</span>
+		{
+<span class="nc" id="L289">			Unique();</span>
+		}
+<span class="nc bnc" id="L291" title="All 2 branches missed.">		else if (t.kind == 92)</span>
+		{
+<span class="nc" id="L293">			CheckConstraint();</span>
+		}
+		else
+<span class="nc" id="L296">			Error(106);</span>
+<span class="nc" id="L297">	}</span>
+
+	private final void IndexAndName()
+	{
+<span class="nc" id="L301">		Expect(ParsingConstants.KW_INDEX);</span>
+<span class="nc" id="L302">		IndexName();</span>
+<span class="nc" id="L303">	}</span>
+
+	private final void DropTable()
+	{
+<span class="nc" id="L307">		Expect(ParsingConstants.KW_TABLE);</span>
+<span class="nc" id="L308">		QualifiedTable();</span>
+<span class="nc bnc" id="L309" title="All 4 branches missed.">		if (t.kind == ParsingConstants.KW_CASCADE || t.kind == ParsingConstants.KW_RESTRICT)</span>
+		{
+<span class="nc" id="L311">			CascadeRestrict();</span>
+		}
+<span class="nc" id="L313">	}</span>
+
+	private final void CascadeRestrict()
+	{
+<span class="nc bnc" id="L317" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_CASCADE)</span>
+		{
+<span class="nc" id="L319">			Get();</span>
+		}
+<span class="nc bnc" id="L321" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_RESTRICT)</span>
+		{
+<span class="nc" id="L323">			Get();</span>
+		}
+		else
+<span class="nc" id="L326">			Error(107);</span>
+<span class="nc" id="L327">	}</span>
+
+	private final void CreateIndex()
+	{
+<span class="nc bnc" id="L331" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_UNIQUE)</span>
+		{
+<span class="nc" id="L333">			Get();</span>
+		}
+<span class="nc" id="L335">		IndexAndName();</span>
+<span class="nc" id="L336">		Expect(ParsingConstants.KW_ON);</span>
+<span class="nc" id="L337">		Table(null);</span>
+<span class="nc" id="L338">		Expect(ParsingConstants.KIND_OPENING_BRAKET);</span>
+<span class="nc" id="L339">		IndexColumnList();</span>
+<span class="nc" id="L340">		CloseParens();</span>
+<span class="nc" id="L341">	}</span>
+
+	private final void CreateTable()
+	{
+<span class="nc" id="L345">		Expect(ParsingConstants.KW_TABLE);</span>
+<span class="nc" id="L346">		Table(null);</span>
+<span class="nc" id="L347">		Expect(ParsingConstants.KIND_OPENING_BRAKET);</span>
+<span class="nc" id="L348">		CreatePart();</span>
+<span class="nc bnc" id="L349" title="All 2 branches missed.">		while (t.kind == ParsingConstants.KIND_COMMA)</span>
+		{
+<span class="nc" id="L351">			ItemSeparator();</span>
+<span class="nc" id="L352">			CreatePart();</span>
+		}
+<span class="nc" id="L354">		CloseParens();</span>
+<span class="nc" id="L355">	}</span>
+
+	private final void CreatePart()
+	{
+<span class="nc bnc" id="L359" title="All 2 branches missed.">		if (t.kind == 1)</span>
+		{
+<span class="nc" id="L361">			ColumnDef();</span>
+		}
+<span class="nc bnc" id="L363" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_PRIMARY)</span>
+		{
+<span class="nc" id="L365">			PrimaryKey();</span>
+		}
+<span class="nc bnc" id="L367" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_FOREIGN)</span>
+		{
+<span class="nc" id="L369">			ForeignKeyCreatePart();</span>
+		}
+<span class="nc bnc" id="L371" title="All 2 branches missed.">      else if (t.kind == ParsingConstants.KW_CONSTRAINT)</span>
+      {
+<span class="nc" id="L373">         Constraint();</span>
+      }
+<span class="nc bnc" id="L375" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_UNIQUE)</span>
+		{
+<span class="nc" id="L377">			Unique();</span>
+		}
+<span class="nc bnc" id="L379" title="All 2 branches missed.">		else if (t.kind == 92)</span>
+		{
+<span class="nc" id="L381">			CheckConstraint();</span>
+		}
+		else
+<span class="nc" id="L384">			Error(108);</span>
+<span class="nc" id="L385">	}</span>
+
+	private final void CheckConstraint()
+	{
+<span class="nc" id="L389">		Expect(92);</span>
+<span class="nc" id="L390">		Expect(ParsingConstants.KIND_OPENING_BRAKET);</span>
+<span class="nc" id="L391">		Expression();</span>
+<span class="nc" id="L392">		CloseParens();</span>
+<span class="nc" id="L393">	}</span>
+
+	private final void Unique()
+	{
+<span class="nc" id="L397">		Expect(ParsingConstants.KW_UNIQUE);</span>
+<span class="nc" id="L398">		SimpleColumnParam();</span>
+<span class="nc" id="L399">	}</span>
+
+   private final void Constraint()
+   {
+<span class="nc" id="L403">   }</span>
+
+   private final void ForeignKeyAdd()
+   {
+<span class="nc" id="L407">      Expect(ParsingConstants.KW_CONSTRAINT);</span>
+<span class="nc" id="L408">      RelationName();</span>
+
+<span class="nc bnc" id="L410" title="All 2 branches missed.">      if (t.kind == ParsingConstants.KW_FOREIGN)</span>
+      {
+<span class="nc" id="L412">         Get();</span>
+<span class="nc" id="L413">         Expect(ParsingConstants.KW_KEY);</span>
+<span class="nc" id="L414">         SimpleColumnParam();</span>
+<span class="nc" id="L415">         Expect(ParsingConstants.KW_REFERENCES);</span>
+<span class="nc" id="L416">         Table(null);</span>
+<span class="nc bnc" id="L417" title="All 2 branches missed.">         if (t.kind == ParsingConstants.KW_MATCH)</span>
+         {
+<span class="nc" id="L419">            Get();</span>
+<span class="nc bnc" id="L420" title="All 2 branches missed.">            if (t.kind == ParsingConstants.KW_FULL)</span>
+            {
+<span class="nc" id="L422">               Get();</span>
+            }
+<span class="nc bnc" id="L424" title="All 2 branches missed.">            else if (t.kind == ParsingConstants.KW_PARTIAL)</span>
+            {
+<span class="nc" id="L426">               Get();</span>
+            }
+            else
+<span class="nc" id="L429">               Error(109);</span>
+         }
+<span class="nc bnc" id="L431" title="All 4 branches missed.">         while (t.kind == ParsingConstants.KW_ON || t.kind == ParsingConstants.KW_NO)</span>
+         {
+<span class="nc bnc" id="L433" title="All 2 branches missed.">            if (t.kind == ParsingConstants.KW_ON)</span>
+            {
+<span class="nc" id="L435">               Get();</span>
+<span class="nc bnc" id="L436" title="All 2 branches missed.">               if (t.kind == ParsingConstants.KW_DELETE)</span>
+               {
+<span class="nc" id="L438">                  Get();</span>
+               }
+<span class="nc bnc" id="L440" title="All 2 branches missed.">               else if (t.kind == ParsingConstants.KW_UPDATE)</span>
+               {
+<span class="nc" id="L442">                  Get();</span>
+               }
+               else
+<span class="nc" id="L445">                  Error(110);</span>
+<span class="nc bnc" id="L446" title="All 2 branches missed.">               if (t.kind == ParsingConstants.KW_CASCADE)</span>
+               {
+<span class="nc" id="L448">                  Get();</span>
+               }
+<span class="nc bnc" id="L450" title="All 2 branches missed.">               else if (t.kind == ParsingConstants.KW_SET)</span>
+               {
+<span class="nc" id="L452">                  Get();</span>
+<span class="nc bnc" id="L453" title="All 2 branches missed.">                  if (t.kind == ParsingConstants.KW_NULL)</span>
+                  {
+<span class="nc" id="L455">                     Get();</span>
+                  }
+<span class="nc bnc" id="L457" title="All 2 branches missed.">                  else if (t.kind == ParsingConstants.KW_DEFAULT)</span>
+                  {
+<span class="nc" id="L459">                     Get();</span>
+                  }
+                  else
+<span class="nc" id="L462">                     Error(111);</span>
+               }
+               else
+<span class="nc" id="L465">                  Error(112);</span>
+            }
+            else
+            {
+<span class="nc" id="L469">               Get();</span>
+<span class="nc" id="L470">               Expect(ParsingConstants.KW_ACTION);</span>
+            }
+         }
+      }
+      else
+      {
+<span class="nc" id="L476">         Expect(ParsingConstants.KW_UNIQUE);</span>
+<span class="nc" id="L477">         SimpleColumnParam();</span>
+      }
+
+<span class="nc" id="L480">   }</span>
+
+
+   private final void ForeignKeyCreatePart()
+	{
+<span class="nc" id="L485">		Expect(ParsingConstants.KW_FOREIGN);</span>
+<span class="nc" id="L486">		Expect(ParsingConstants.KW_KEY);</span>
+<span class="nc" id="L487">		RelationName();</span>
+<span class="nc" id="L488">		SimpleColumnParam();</span>
+<span class="nc" id="L489">		Expect(ParsingConstants.KW_REFERENCES);</span>
+<span class="nc" id="L490">		Table(null);</span>
+<span class="nc bnc" id="L491" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_MATCH)</span>
+		{
+<span class="nc" id="L493">			Get();</span>
+<span class="nc bnc" id="L494" title="All 2 branches missed.">			if (t.kind == ParsingConstants.KW_FULL)</span>
+			{
+<span class="nc" id="L496">				Get();</span>
+			}
+<span class="nc bnc" id="L498" title="All 2 branches missed.">			else if (t.kind == ParsingConstants.KW_PARTIAL)</span>
+			{
+<span class="nc" id="L500">				Get();</span>
+			}
+			else
+<span class="nc" id="L503">				Error(109);</span>
+		}
+<span class="nc bnc" id="L505" title="All 4 branches missed.">		while (t.kind == ParsingConstants.KW_ON || t.kind == ParsingConstants.KW_NO)</span>
+		{
+<span class="nc bnc" id="L507" title="All 2 branches missed.">			if (t.kind == ParsingConstants.KW_ON)</span>
+			{
+<span class="nc" id="L509">				Get();</span>
+<span class="nc bnc" id="L510" title="All 2 branches missed.">				if (t.kind == ParsingConstants.KW_DELETE)</span>
+				{
+<span class="nc" id="L512">					Get();</span>
+				}
+<span class="nc bnc" id="L514" title="All 2 branches missed.">				else if (t.kind == ParsingConstants.KW_UPDATE)</span>
+				{
+<span class="nc" id="L516">					Get();</span>
+				}
+				else
+<span class="nc" id="L519">					Error(110);</span>
+<span class="nc bnc" id="L520" title="All 2 branches missed.">				if (t.kind == ParsingConstants.KW_CASCADE)</span>
+				{
+<span class="nc" id="L522">					Get();</span>
+				}
+<span class="nc bnc" id="L524" title="All 2 branches missed.">				else if (t.kind == ParsingConstants.KW_SET)</span>
+				{
+<span class="nc" id="L526">					Get();</span>
+<span class="nc bnc" id="L527" title="All 2 branches missed.">					if (t.kind == ParsingConstants.KW_NULL)</span>
+					{
+<span class="nc" id="L529">						Get();</span>
+					}
+<span class="nc bnc" id="L531" title="All 2 branches missed.">					else if (t.kind == ParsingConstants.KW_DEFAULT )</span>
+					{
+<span class="nc" id="L533">						Get();</span>
+					}
+					else
+<span class="nc" id="L536">						Error(111);</span>
+				}
+				else
+<span class="nc" id="L539">					Error(112);</span>
+			}
+			else
+			{
+<span class="nc" id="L543">				Get();</span>
+<span class="nc" id="L544">				Expect(ParsingConstants.KW_ACTION);</span>
+			}
+		}
+<span class="nc" id="L547">	}</span>
+
+	private final void ConstraintName()
+	{
+<span class="nc" id="L551">		Expect(1);</span>
+<span class="nc" id="L552">	}</span>
+
+	private final void RelationName()
+	{
+<span class="nc" id="L556">		Expect(1);</span>
+<span class="nc" id="L557">	}</span>
+
+	private final void PrimaryKey()
+	{
+<span class="nc" id="L561">		Expect(ParsingConstants.KW_PRIMARY);</span>
+<span class="nc" id="L562">		Expect(ParsingConstants.KW_KEY);</span>
+<span class="nc" id="L563">		SimpleColumnParam();</span>
+<span class="nc" id="L564">	}</span>
+
+	private final void ColumnDef()
+	{
+<span class="nc" id="L568">		SimpleColumnName();</span>
+<span class="nc" id="L569">		DataType();</span>
+<span class="nc bnc" id="L570" title="All 6 branches missed.">		while (t.kind == ParsingConstants.KW_NOT || t.kind == ParsingConstants.KW_DEFAULT || t.kind == ParsingConstants.KW_PRIMARY)</span>
+		{
+<span class="nc bnc" id="L572" title="All 2 branches missed.">			if (t.kind == ParsingConstants.KW_DEFAULT )</span>
+			{
+<span class="nc" id="L574">				ColumnDefault();</span>
+			}
+<span class="nc bnc" id="L576" title="All 2 branches missed.">			else if(t.kind == ParsingConstants.KW_NOT )</span>
+			{
+<span class="nc" id="L578">				NotOperator();</span>
+<span class="nc" id="L579">				Expect(ParsingConstants.KW_NULL);</span>
+			}
+         else
+         {
+<span class="nc" id="L583">            Expect(ParsingConstants.KW_PRIMARY);</span>
+<span class="nc" id="L584">            Expect(ParsingConstants.KW_KEY);</span>
+         }
+		}
+<span class="nc" id="L587">	}</span>
+
+	private final void ColumnDefList()
+	{
+<span class="nc" id="L591">		ColumnDef();</span>
+<span class="nc bnc" id="L592" title="All 2 branches missed.">		while (t.kind == ParsingConstants.KIND_COMMA)</span>
+		{
+<span class="nc" id="L594">			ItemSeparator();</span>
+<span class="nc" id="L595">			ColumnDef();</span>
+		}
+<span class="nc" id="L597">	}</span>
+
+	private final void ColumnDefault()
+	{
+<span class="nc" id="L601">		Expect(ParsingConstants.KW_DEFAULT );</span>
+<span class="nc bnc" id="L602" title="All 2 branches missed.">		if (t.kind == 4)</span>
+		{
+<span class="nc" id="L604">			Get();</span>
+		}
+<span class="nc bnc" id="L606" title="All 2 branches missed.">		else if (t.kind == 2)</span>
+		{
+<span class="nc" id="L608">			Get();</span>
+		}
+<span class="nc bnc" id="L610" title="All 2 branches missed.">		else if (t.kind == 3)</span>
+		{
+<span class="nc" id="L612">			Get();</span>
+		}
+		else
+<span class="nc" id="L615">			Error(113);</span>
+<span class="nc" id="L616">	}</span>
+
+	private final void DataType()
+	{
+<span class="nc bnc" id="L620" title="All 9 branches missed.">		switch (t.kind)</span>
+		{
+			case 72:
+			case 73:
+				{
+<span class="nc bnc" id="L625" title="All 2 branches missed.">					if (t.kind == ParsingConstants.KW_CHAR)</span>
+					{
+<span class="nc" id="L627">						Get();</span>
+					}
+					else
+					{
+<span class="nc" id="L631">						Get();</span>
+					}
+<span class="nc" id="L633">					lenParam();</span>
+<span class="nc" id="L634">					break;</span>
+				}
+			case ParsingConstants.KW_VARCHAR:
+				{
+<span class="nc" id="L638">					Get();</span>
+<span class="nc" id="L639">					lenParam();</span>
+<span class="nc" id="L640">					break;</span>
+				}
+			case ParsingConstants.KW_INTEGER:
+			case ParsingConstants.KW_INT:
+				{
+<span class="nc bnc" id="L645" title="All 2 branches missed.">					if (t.kind == ParsingConstants.KW_INTEGER)</span>
+					{
+<span class="nc" id="L647">						Get();</span>
+					}
+					else
+					{
+<span class="nc" id="L651">						Get();</span>
+					}
+<span class="nc" id="L653">					break;</span>
+				}
+			case ParsingConstants.KW_SMALLINT:
+				{
+<span class="nc" id="L657">					Get();</span>
+<span class="nc" id="L658">					break;</span>
+				}
+			case ParsingConstants.KW_NUMERIC:
+				{
+<span class="nc" id="L662">					Get();</span>
+<span class="nc" id="L663">					Expect(ParsingConstants.KIND_OPENING_BRAKET);</span>
+<span class="nc" id="L664">					precision();</span>
+<span class="nc" id="L665">					CloseParens();</span>
+<span class="nc" id="L666">					break;</span>
+				}
+			case ParsingConstants.KW_DATE:
+				{
+<span class="nc" id="L670">					Get();</span>
+<span class="nc" id="L671">					break;</span>
+				}
+			case ParsingConstants.KW_TIME:
+				{
+<span class="nc" id="L675">					Get();</span>
+<span class="nc" id="L676">					lenParam();</span>
+<span class="nc" id="L677">					break;</span>
+				}
+			case ParsingConstants.KW_TIMESTAMP:
+				{
+<span class="nc" id="L681">					Get();</span>
+<span class="nc" id="L682">					lenParam();</span>
+<span class="nc" id="L683">					break;</span>
+				}
+			default:
+<span class="nc" id="L686">				Error(114);</span>
+		}
+<span class="nc" id="L688">	}</span>
+
+	private final void precision()
+	{
+<span class="nc" id="L692">		Expect(2);</span>
+<span class="nc" id="L693">		ItemSeparator();</span>
+<span class="nc" id="L694">		Expect(2);</span>
+<span class="nc" id="L695">	}</span>
+
+	private final void lenParam()
+	{
+<span class="nc" id="L699">		Expect(ParsingConstants.KIND_OPENING_BRAKET);</span>
+<span class="nc" id="L700">		len();</span>
+<span class="nc" id="L701">		CloseParens();</span>
+<span class="nc" id="L702">	}</span>
+
+	private final void len()
+	{
+<span class="nc" id="L706">		Expect(2);</span>
+<span class="nc" id="L707">	}</span>
+
+	private final void BetweenExpr()
+	{
+<span class="nc" id="L711">		Expect(ParsingConstants.KW_BETWEEN);</span>
+<span class="nc" id="L712">		Field();</span>
+<span class="nc" id="L713">		Expect(ParsingConstants.KW_AND);</span>
+<span class="nc" id="L714">		Field();</span>
+<span class="nc" id="L715">	}</span>
+
+	private final void InSetExpr()
+	{
+<span class="nc" id="L719">		Expect(ParsingConstants.KW_IN);</span>
+<span class="nc" id="L720">		Expect(ParsingConstants.KIND_OPENING_BRAKET);</span>
+<span class="nc bnc" id="L721" title="All 2 branches missed.">		if (StartOf(1))</span>
+		{
+<span class="nc" id="L723">			FieldList();</span>
+		}
+<span class="nc bnc" id="L725" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_SELECT)</span>
+		{
+<span class="nc" id="L727">			SelectStmt();</span>
+		}
+		else
+<span class="nc" id="L730">			Error(ParsingConstants.KW_INSET);</span>
+<span class="nc" id="L731">		CloseParens();</span>
+<span class="nc" id="L732">	}</span>
+
+	private final void NullTest()
+	{
+<span class="nc" id="L736">		Expect(ParsingConstants.KW_IS);</span>
+<span class="nc bnc" id="L737" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_NOT)</span>
+		{
+<span class="nc" id="L739">			NotOperator();</span>
+		}
+<span class="nc" id="L741">		Expect(ParsingConstants.KW_NULL);</span>
+<span class="nc" id="L742">	}</span>
+
+	private final void LikeTest()
+	{
+<span class="nc" id="L746">		Expect(ParsingConstants.KW_LIKE);</span>
+<span class="nc bnc" id="L747" title="All 2 branches missed.">		if (t.kind == 4)</span>
+		{
+<span class="nc" id="L749">			Get();</span>
+		}
+<span class="nc bnc" id="L751" title="All 2 branches missed.">		else if (t.kind == 53)</span>
+		{
+<span class="nc" id="L753">			Param();</span>
+		}
+		else
+<span class="nc" id="L756">			Error(116);</span>
+<span class="nc bnc" id="L757" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_ESCAPE)</span>
+		{
+<span class="nc" id="L759">			Get();</span>
+<span class="nc" id="L760">			Expect(4);</span>
+		}
+<span class="nc" id="L762">	}</span>
+
+	private final void WordOperator()
+	{
+<span class="nc bnc" id="L766" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_AND)</span>
+		{
+<span class="nc" id="L768">			Get();</span>
+		}
+<span class="nc bnc" id="L770" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_OR)</span>
+		{
+<span class="nc" id="L772">			Get();</span>
+		}
+		else
+<span class="nc" id="L775">			Error(117);</span>
+<span class="nc" id="L776">	}</span>
+
+	private final void MathOperator()
+	{
+<span class="nc bnc" id="L780" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KIND_ASTERISK)</span>
+		{
+<span class="nc" id="L782">			Get();</span>
+		}
+<span class="nc bnc" id="L784" title="All 2 branches missed.">		else if (t.kind == 55)</span>
+		{
+<span class="nc" id="L786">			Get();</span>
+		}
+<span class="nc bnc" id="L788" title="All 2 branches missed.">		else if (t.kind == 56)</span>
+		{
+<span class="nc" id="L790">			Get();</span>
+		}
+<span class="nc bnc" id="L792" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_MINUS_SIGN)</span>
+		{
+<span class="nc" id="L794">			Get();</span>
+		}
+		else
+<span class="nc" id="L797">			Error(118);</span>
+<span class="nc" id="L798">	}</span>
+
+	private final void TestExpr()
+	{
+<span class="nc bnc" id="L802" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_IS)</span>
+		{
+<span class="nc" id="L804">			NullTest();</span>
+		}
+<span class="nc bnc" id="L806" title="All 2 branches missed.">		else if (StartOf(2))</span>
+		{
+<span class="nc bnc" id="L808" title="All 2 branches missed.">			if (t.kind == ParsingConstants.KW_NOT)</span>
+			{
+<span class="nc" id="L810">				NotOperator();</span>
+			}
+<span class="nc bnc" id="L812" title="All 2 branches missed.">			if (t.kind == ParsingConstants.KW_IN)</span>
+			{
+<span class="nc" id="L814">				InSetExpr();</span>
+			}
+<span class="nc bnc" id="L816" title="All 2 branches missed.">			else if (t.kind == ParsingConstants.KW_BETWEEN)</span>
+			{
+<span class="nc" id="L818">				BetweenExpr();</span>
+			}
+<span class="nc bnc" id="L820" title="All 2 branches missed.">			else if (t.kind == ParsingConstants.KW_LIKE)</span>
+			{
+<span class="nc" id="L822">				LikeTest();</span>
+			}
+			else
+<span class="nc" id="L825">				Error(119);</span>
+		}
+		else
+<span class="nc" id="L828">			Error(120);</span>
+<span class="nc" id="L829">	}</span>
+
+	private final void Operator()
+	{
+<span class="nc bnc" id="L833" title="All 2 branches missed.">		if (StartOf(3))</span>
+		{
+<span class="nc" id="L835">			MathOperator();</span>
+		}
+<span class="nc bnc" id="L837" title="All 4 branches missed.">		else if (t.kind == ParsingConstants.KW_AND || t.kind == ParsingConstants.KW_OR)</span>
+		{
+<span class="nc" id="L839">			WordOperator();</span>
+		}
+		else
+<span class="nc" id="L842">			Error(121);</span>
+<span class="nc" id="L843">	}</span>
+
+	private final void Term()
+	{
+<span class="nc bnc" id="L847" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_MINUS_SIGN)</span>
+		{
+<span class="nc" id="L849">			Get();</span>
+		}
+<span class="nc bnc" id="L851" title="All 2 branches missed.">		if (StartOf(1))</span>
+		{
+<span class="nc" id="L853">			Field();</span>
+<span class="nc bnc" id="L854" title="All 2 branches missed.">			if (StartOf(4))</span>
+			{
+<span class="nc" id="L856">				TestExpr();</span>
+			}
+		}
+<span class="nc bnc" id="L859" title="All 2 branches missed.">		else if (StartOf(ParsingConstants.KIND_OPENING_BRAKET))</span>
+		{
+<span class="nc" id="L861">			ColumnFunction();</span>
+		}
+<span class="nc bnc" id="L863" title="All 2 branches missed.">		else if (StartOf(6))</span>
+		{
+<span class="nc" id="L865">			FunctionExpr();</span>
+		}
+<span class="nc bnc" id="L867" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KIND_OPENING_BRAKET)</span>
+		{
+<span class="nc" id="L869">			Get();</span>
+<span class="nc bnc" id="L870" title="All 2 branches missed.">			if (StartOf(ParsingConstants.KW_UNION))</span>
+			{
+<span class="nc" id="L872">				Expression();</span>
+			}
+<span class="nc bnc" id="L874" title="All 2 branches missed.">			else if (t.kind == ParsingConstants.KW_SELECT)</span>
+			{
+<span class="nc" id="L876">				SelectStmt();</span>
+			}
+<span class="nc bnc" id="L878" title="All 2 branches missed.">         else if (t.kind == ParsingConstants.KW_CASE)</span>
+         {
+<span class="nc" id="L880">            CaseStatment();</span>
+         }
+         else
+<span class="nc" id="L883">				Error(122);</span>
+<span class="nc" id="L884">			CloseParens();</span>
+		}
+		else
+<span class="nc" id="L887">			Error(123);</span>
+<span class="nc" id="L888">	}</span>
+
+	private final void NotOperator()
+	{
+<span class="nc" id="L892">		Expect(ParsingConstants.KW_NOT);</span>
+<span class="nc" id="L893">	}</span>
+
+	private final void Relation()
+	{
+<span class="nc bnc" id="L897" title="All 7 branches missed.">		switch (t.kind)</span>
+		{
+			case ParsingConstants.KIND_EQUALS:
+				{
+<span class="nc" id="L901">					Get();</span>
+<span class="nc" id="L902">					break;</span>
+				}
+			case 62:
+				{
+<span class="nc" id="L906">					Get();</span>
+<span class="nc" id="L907">					break;</span>
+				}
+			case 63:
+				{
+<span class="nc" id="L911">					Get();</span>
+<span class="nc" id="L912">					break;</span>
+				}
+			case 64:
+				{
+<span class="nc" id="L916">					Get();</span>
+<span class="nc" id="L917">					break;</span>
+				}
+			case 65:
+				{
+<span class="nc" id="L921">					Get();</span>
+<span class="nc" id="L922">					break;</span>
+				}
+			case 66:
+				{
+<span class="nc" id="L926">					Get();</span>
+<span class="nc" id="L927">					break;</span>
+				}
+			default:
+<span class="nc" id="L930">				Error(124);</span>
+		}
+<span class="nc" id="L932">	}</span>
+
+	private final void SimpleExpression()
+	{
+<span class="nc bnc" id="L936" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_NOT)</span>
+		{
+<span class="nc" id="L938">			NotOperator();</span>
+		}
+<span class="nc" id="L940">		Term();</span>
+<span class="nc bnc" id="L941" title="All 2 branches missed.">		while (StartOf(ParsingConstants.KW_EXCEPT))</span>
+		{
+<span class="nc" id="L943">			Operator();</span>
+<span class="nc bnc" id="L944" title="All 2 branches missed.">			if (t.kind == ParsingConstants.KW_NOT)</span>
+			{
+<span class="nc" id="L946">				NotOperator();</span>
+			}
+<span class="nc" id="L948">			Term();</span>
+		}
+<span class="nc" id="L950">	}</span>
+
+	private final void OrderByField()
+	{
+<span class="nc bnc" id="L954" title="All 2 branches missed.">		if (t.kind == 1)</span>
+		{
+<span class="nc" id="L956">			ColumnName();</span>
+		}
+<span class="nc bnc" id="L958" title="All 2 branches missed.">		else if (t.kind == 2)</span>
+		{
+<span class="nc" id="L960">			Get();</span>
+		}
+		else
+<span class="nc" id="L963">			Error(125);</span>
+<span class="nc bnc" id="L964" title="All 4 branches missed.">		if (t.kind == ParsingConstants.KW_DESC || t.kind == ParsingConstants.KW_ASC)</span>
+		{
+<span class="nc bnc" id="L966" title="All 2 branches missed.">			if (t.kind == ParsingConstants.KW_DESC)</span>
+			{
+<span class="nc" id="L968">				Get();</span>
+			}
+			else
+			{
+<span class="nc" id="L972">				Get();</span>
+			}
+		}
+<span class="nc" id="L975">	}</span>
+
+	private final void Param()
+	{
+<span class="nc" id="L979">		Expect(53);</span>
+<span class="nc" id="L980">		Expect(1);</span>
+<span class="nc" id="L981">	}</span>
+
+	private final void Field()
+	{
+<span class="nc bnc" id="L985" title="All 8 branches missed.">		switch (t.kind)</span>
+		{
+			case 1:
+				{
+<span class="nc" id="L989">					ColumnName();</span>
+<span class="nc" id="L990">					break;</span>
+				}
+			case ParsingConstants.KW_NULL:
+				{
+<span class="nc" id="L994">					Get();</span>
+<span class="nc" id="L995">					break;</span>
+				}
+			case 3:
+				{
+<span class="nc" id="L999">					Get();</span>
+<span class="nc" id="L1000">					break;</span>
+				}
+			case 2:
+				{
+<span class="nc" id="L1004">					Get();</span>
+<span class="nc" id="L1005">					break;</span>
+				}
+			case 4:
+				{
+<span class="nc" id="L1009">					Get();</span>
+<span class="nc" id="L1010">					break;</span>
+				}
+			case ParsingConstants.KW_MINUS_SIGN:
+				{
+<span class="nc" id="L1014">					Get();</span>
+<span class="nc" id="L1015">					Get();</span>
+<span class="nc" id="L1016">					break;</span>
+				}
+			case 53:
+				{
+<span class="nc" id="L1020">					Param();</span>
+<span class="nc" id="L1021">					break;</span>
+				}
+			default:
+<span class="nc" id="L1024">				Error(126);</span>
+		}
+<span class="nc" id="L1026">	}</span>
+
+	private final void SimpleColumnParam()
+	{
+<span class="nc" id="L1030">		Expect(ParsingConstants.KIND_OPENING_BRAKET);</span>
+<span class="nc" id="L1031">		SimpleColumnList();</span>
+<span class="nc" id="L1032">		CloseParens();</span>
+<span class="nc" id="L1033">	}</span>
+
+	private final void SimpleColumnList()
+	{
+<span class="nc" id="L1037">		SimpleColumnName();</span>
+<span class="nc bnc" id="L1038" title="All 2 branches missed.">		while (t.kind == ParsingConstants.KIND_COMMA)</span>
+		{
+<span class="nc" id="L1040">			ItemSeparator();</span>
+<span class="nc" id="L1041">			SimpleColumnName();</span>
+		}
+<span class="nc" id="L1043">	}</span>
+
+	private final void SimpleColumnName()
+	{
+<span class="nc" id="L1047">		Expect(1);</span>
+<span class="nc" id="L1048">	}</span>
+
+	private final void ColumnFunction()
+	{
+<span class="nc bnc" id="L1052" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_COUNT)</span>
+		{
+<span class="nc" id="L1054">			Get();</span>
+		}
+<span class="nc bnc" id="L1056" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_SUM)</span>
+		{
+<span class="nc" id="L1058">			Get();</span>
+		}
+<span class="nc bnc" id="L1060" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_MAX)</span>
+		{
+<span class="nc" id="L1062">			Get();</span>
+		}
+<span class="nc bnc" id="L1064" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_MIN)</span>
+		{
+<span class="nc" id="L1066">			Get();</span>
+		}
+<span class="nc bnc" id="L1068" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_AVG)</span>
+		{
+<span class="nc" id="L1070">			Get();</span>
+		}
+		else
+<span class="nc" id="L1073">			Error(127);</span>
+<span class="nc" id="L1074">		Expect(ParsingConstants.KIND_OPENING_BRAKET);</span>
+<span class="nc bnc" id="L1075" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KIND_ASTERISK)</span>
+		{
+<span class="nc" id="L1077">			Get();</span>
+		}
+<span class="nc bnc" id="L1079" title="All 2 branches missed.">		else if (StartOf(ParsingConstants.KW_INTERSECT))</span>
+		{
+<span class="nc bnc" id="L1081" title="All 2 branches missed.">			if (t.kind == ParsingConstants.KW_DISTINCT)</span>
+			{
+<span class="nc" id="L1083">				Get();</span>
+			}
+<span class="nc" id="L1085">			Expression();</span>
+		}
+		else
+<span class="nc" id="L1088">			Error(128);</span>
+<span class="nc" id="L1089">		CloseParens();</span>
+<span class="nc" id="L1090">	}</span>
+
+	private final void FunctionExpr()
+	{
+<span class="nc bnc" id="L1094" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_TIMESTAMP)</span>
+		{
+<span class="nc" id="L1096">			Get();</span>
+		}
+<span class="nc bnc" id="L1098" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_UPPER)</span>
+		{
+<span class="nc" id="L1100">			Get();</span>
+		}
+<span class="nc bnc" id="L1102" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_MONTH)</span>
+		{
+<span class="nc" id="L1104">			Get();</span>
+		}
+<span class="nc bnc" id="L1106" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_YEAR)</span>
+		{
+<span class="nc" id="L1108">			Get();</span>
+		}
+		else
+<span class="nc" id="L1111">			Error(129);</span>
+<span class="nc" id="L1112">		Expect(ParsingConstants.KIND_OPENING_BRAKET);</span>
+<span class="nc" id="L1113">		Expression();</span>
+<span class="nc bnc" id="L1114" title="All 2 branches missed.">		while (t.kind == ParsingConstants.KIND_COMMA)</span>
+		{
+<span class="nc" id="L1116">			ItemSeparator();</span>
+<span class="nc" id="L1117">			Expression();</span>
+		}
+<span class="nc" id="L1119">		CloseParens();</span>
+<span class="nc" id="L1120">	}</span>
+
+	private final void SelectField()
+	{
+<span class="nc bnc" id="L1124" title="All 2 branches missed.">		if (StartOf(ParsingConstants.KW_UNION))</span>
+		{
+<span class="nc" id="L1126">			Expression();</span>
+<span class="nc bnc" id="L1127" title="All 2 branches missed.">			if (t.kind == ParsingConstants.KW_AS)</span>
+			{
+<span class="nc" id="L1129">				Get();</span>
+<span class="nc" id="L1130">				Alias();</span>
+			}
+		}
+<span class="nc bnc" id="L1133" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KIND_ASTERISK)</span>
+		{
+<span class="nc" id="L1135">			Get();</span>
+		}
+<span class="nc bnc" id="L1137" title="All 2 branches missed.">      else if (t.kind == ParsingConstants.KW_CASE)</span>
+      {
+<span class="nc" id="L1139">         CaseStatment();</span>
+      }
+      else
+<span class="nc" id="L1142">			Error(130);</span>
+<span class="nc" id="L1143">	}</span>
+
+   private void CaseStatment()
+   {
+<span class="nc" id="L1147">      Expect(ParsingConstants.KW_CASE);</span>
+<span class="nc bnc" id="L1148" title="All 2 branches missed.">      if(t.kind == ParsingConstants.KW_WHEN)</span>
+      {
+<span class="nc" id="L1150">         Expect(ParsingConstants.KW_WHEN);</span>
+<span class="nc" id="L1151">         Expression();</span>
+<span class="nc" id="L1152">         Expect(ParsingConstants.KW_THEN);</span>
+<span class="nc" id="L1153">         Expression();</span>
+
+<span class="nc bnc" id="L1155" title="All 2 branches missed.">         while(t.kind == ParsingConstants.KW_WHEN)</span>
+         {
+<span class="nc" id="L1157">            Get();</span>
+<span class="nc" id="L1158">            Expression();</span>
+<span class="nc" id="L1159">            Expect(ParsingConstants.KW_THEN);</span>
+<span class="nc" id="L1160">            Expression();</span>
+         }
+
+<span class="nc" id="L1163">         Expect(ParsingConstants.KW_ELSE);</span>
+<span class="nc" id="L1164">         Expression();</span>
+<span class="nc" id="L1165">         Expect(ParsingConstants.KW_END);</span>
+
+<span class="nc bnc" id="L1167" title="All 2 branches missed.">         if (t.kind == ParsingConstants.KW_AS)</span>
+         {
+<span class="nc" id="L1169">            Get();</span>
+<span class="nc" id="L1170">            Alias();</span>
+         }
+
+      }
+      else
+      {
+<span class="nc" id="L1176">         ColumnName();</span>
+<span class="nc" id="L1177">         Expect(ParsingConstants.KW_WHEN);</span>
+<span class="nc" id="L1178">         Expression();</span>
+<span class="nc" id="L1179">         Expect(ParsingConstants.KW_THEN);</span>
+<span class="nc" id="L1180">         Expression();</span>
+
+<span class="nc bnc" id="L1182" title="All 2 branches missed.">         while(t.kind == ParsingConstants.KW_WHEN)</span>
+         {
+<span class="nc" id="L1184">            Get();</span>
+<span class="nc" id="L1185">            Expression();</span>
+<span class="nc" id="L1186">            Expect(ParsingConstants.KW_THEN);</span>
+<span class="nc" id="L1187">            Expression();</span>
+         }
+
+<span class="nc" id="L1190">         Expect(ParsingConstants.KW_ELSE);</span>
+<span class="nc" id="L1191">         Expression();</span>
+<span class="nc" id="L1192">         Expect(ParsingConstants.KW_END);</span>
+
+<span class="nc bnc" id="L1194" title="All 2 branches missed.">         if (t.kind == ParsingConstants.KW_AS)</span>
+         {
+<span class="nc" id="L1196">            Get();</span>
+<span class="nc" id="L1197">            Alias();</span>
+         }
+      }
+<span class="nc" id="L1200">   }</span>
+
+   private final void OrderByFldList()
+   {
+<span class="nc" id="L1204">      OrderByField();</span>
+<span class="nc bnc" id="L1205" title="All 2 branches missed.">      while (t.kind == ParsingConstants.KIND_COMMA)</span>
+      {
+<span class="nc" id="L1207">         ItemSeparator();</span>
+<span class="nc" id="L1208">         OrderByField();</span>
+      }
+<span class="nc" id="L1210">   }</span>
+
+	private final void SearchCondition()
+	{
+<span class="nc" id="L1214">		Expression();</span>
+<span class="nc" id="L1215">	}</span>
+
+	private final void JoinExpr()
+	{
+<span class="nc bnc" id="L1219" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_ON)</span>
+		{
+<span class="nc" id="L1221">			Get();</span>
+<span class="nc" id="L1222">			Expression();</span>
+		}
+<span class="nc bnc" id="L1224" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_USING)</span>
+		{
+<span class="nc" id="L1226">			Get();</span>
+<span class="nc" id="L1227">			Expect(ParsingConstants.KIND_OPENING_BRAKET);</span>
+<span class="nc" id="L1228">			ColumnList();</span>
+<span class="nc" id="L1229">			CloseParens();</span>
+		}
+		else
+<span class="nc" id="L1232">			Error(131);</span>
+<span class="nc" id="L1233">	}</span>
+
+	private final void JoinType()
+	{
+<span class="nc bnc" id="L1237" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_NATURAL)</span>
+		{
+<span class="nc" id="L1239">			Get();</span>
+		}
+<span class="nc bnc" id="L1241" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_INNER)</span>
+		{
+<span class="nc" id="L1243">			Get();</span>
+		}
+<span class="nc bnc" id="L1245" title="All 6 branches missed.">		else if (t.kind == ParsingConstants.KW_FULL || t.kind == ParsingConstants.KW_LEFT || t.kind == ParsingConstants.KW_RIGHT)</span>
+		{
+<span class="nc bnc" id="L1247" title="All 2 branches missed.">			if (t.kind == ParsingConstants.KW_FULL)</span>
+			{
+<span class="nc" id="L1249">				Get();</span>
+			}
+<span class="nc bnc" id="L1251" title="All 2 branches missed.">			else if (t.kind == ParsingConstants.KW_LEFT)</span>
+			{
+<span class="nc" id="L1253">				Get();</span>
+			}
+			else
+			{
+<span class="nc" id="L1257">				Get();</span>
+			}
+<span class="nc bnc" id="L1259" title="All 2 branches missed.">			if (t.kind == ParsingConstants.KW_OUTER)</span>
+			{
+<span class="nc" id="L1261">				Get();</span>
+			}
+		}
+		else
+<span class="nc" id="L1265">			Error(132);</span>
+<span class="nc" id="L1266">	}</span>
+
+	private final void CrossJoin()
+	{
+<span class="nc" id="L1270">		Expect(ParsingConstants.KW_CROSS);</span>
+<span class="nc" id="L1271">		Expect(ParsingConstants.KW_JOIN);</span>
+<span class="nc" id="L1272">		QualifiedTable();</span>
+<span class="nc" id="L1273">	}</span>
+
+	private final void Alias()
+	{
+<span class="nc" id="L1277">		Expect(1);</span>
+<span class="nc" id="L1278">	}</span>
+
+	private final void JoinStmt()
+	{
+<span class="nc bnc" id="L1282" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_CROSS)</span>
+		{
+<span class="nc" id="L1284">			CrossJoin();</span>
+		}
+<span class="nc bnc" id="L1286" title="All 2 branches missed.">		else if (StartOf(ParsingConstants.KW_MINUS))</span>
+		{
+<span class="nc bnc" id="L1288" title="All 2 branches missed.">			if (StartOf(ParsingConstants.KW_ALL))</span>
+			{
+<span class="nc" id="L1290">				JoinType();</span>
+			}
+<span class="nc" id="L1292">			Expect(ParsingConstants.KW_JOIN);</span>
+<span class="nc" id="L1293">			QualifiedTable();</span>
+<span class="nc bnc" id="L1294" title="All 4 branches missed.">			if (t.kind == ParsingConstants.KW_ON || t.kind == ParsingConstants.KW_USING)</span>
+			{
+<span class="nc" id="L1296">				JoinExpr();</span>
+			}
+		}
+		else
+<span class="nc" id="L1300">			Error(133);</span>
+<span class="nc" id="L1301">	}</span>
+
+	private final void QualifiedTable()
+	{
+      // Fix for Bug #982127
+		//SQLSelectStatement statement = (SQLSelectStatement) getContext();
+<span class="nc" id="L1307">      SQLStatement statement = (SQLStatement) getContext();</span>
+
+<span class="nc" id="L1309">		SQLTable table = new SQLTable(statement, t.pos);</span>
+<span class="nc" id="L1310">		statement.addTable(table);</span>
+<span class="nc" id="L1311">		boolean wasSet = false;</span>
+
+<span class="nc" id="L1313">		Expect(1);</span>
+<span class="nc bnc" id="L1314" title="All 2 branches missed.">		if (t.val.equals(&quot;.&quot;))</span>
+<span class="nc" id="L1315">			table.setSchema(token.str, token.pos);</span>
+		else
+<span class="nc" id="L1317">			table.setName(token.str, token.pos);</span>
+
+<span class="nc bnc" id="L1319" title="All 2 branches missed.">		if (t.kind == 22)</span>
+		{
+<span class="nc" id="L1321">			Get();</span>
+<span class="nc" id="L1322">			Expect(1);</span>
+<span class="nc" id="L1323">			table.setName(token.str, token.pos);</span>
+		}
+<span class="nc bnc" id="L1325" title="All 4 branches missed.">		if (t.kind == 1 || t.kind == ParsingConstants.KW_AS)</span>
+		{
+<span class="nc bnc" id="L1327" title="All 2 branches missed.">			if (t.kind == ParsingConstants.KW_AS)</span>
+			{
+<span class="nc" id="L1329">				Get();</span>
+			}
+<span class="nc" id="L1331">			table.setAlias(t.str, t.pos);</span>
+<span class="nc" id="L1332">			wasSet = true;</span>
+<span class="nc bnc" id="L1333" title="All 2 branches missed.">			if (statement.setTable(table) == false)</span>
+<span class="nc" id="L1334">				SemError(ParsingConstants.KW_MINUS);</span>
+
+<span class="nc" id="L1336">			Alias();</span>
+		}
+<span class="nc bnc" id="L1338" title="All 4 branches missed.">		if (!wasSet &amp;&amp; statement.setTable(table) == false)</span>
+<span class="nc" id="L1339">			SemError(ParsingConstants.KW_MINUS);</span>
+
+<span class="nc" id="L1341">	}</span>
+
+	private final void FromTableList()
+	{
+<span class="nc" id="L1345">		QualifiedTable();</span>
+<span class="nc bnc" id="L1346" title="All 2 branches missed.">		while (StartOf(ParsingConstants.KW_UPDATE))</span>
+		{
+<span class="nc bnc" id="L1348" title="All 2 branches missed.">			if (t.kind == ParsingConstants.KIND_COMMA)</span>
+			{
+<span class="nc" id="L1350">				ItemSeparator();</span>
+<span class="nc" id="L1351">				QualifiedTable();</span>
+			}
+			else
+			{
+<span class="nc" id="L1355">				JoinStmt();</span>
+			}
+		}
+<span class="nc" id="L1358">	}</span>
+
+	private final void SelectFieldList()
+	{
+<span class="nc" id="L1362">		SelectField();</span>
+<span class="nc bnc" id="L1363" title="All 2 branches missed.">		while (t.kind == ParsingConstants.KIND_COMMA)</span>
+		{
+<span class="nc" id="L1365">			ItemSeparator();</span>
+<span class="nc" id="L1366">			SelectField();</span>
+		}
+<span class="nc" id="L1368">	}</span>
+
+	private final void OrderByClause()
+	{
+<span class="nc" id="L1372">		SQLSelectStatement statement = (SQLSelectStatement) getContext();</span>
+<span class="nc" id="L1373">		statement.setOrderByStart(scanner.pos);</span>
+
+<span class="nc bnc" id="L1375" title="All 4 branches missed.">		while (!(t.kind == 0 || t.kind == ParsingConstants.KW_ORDER))</span>
+		{
+<span class="nc" id="L1377">			Error(134);</span>
+<span class="nc" id="L1378">			Get();</span>
+		}
+<span class="nc" id="L1380">		Expect(ParsingConstants.KW_ORDER);</span>
+<span class="nc" id="L1381">		Expect(ParsingConstants.KW_BY);</span>
+<span class="nc" id="L1382">		OrderByFldList();</span>
+<span class="nc" id="L1383">		statement.setOrderByEnd(t.pos);</span>
+<span class="nc" id="L1384">	}</span>
+
+	private final void HavingClause()
+	{
+<span class="nc" id="L1388">		SQLSelectStatement statement = (SQLSelectStatement) getContext();</span>
+<span class="nc" id="L1389">		statement.setHavingStart(scanner.pos);</span>
+
+<span class="nc bnc" id="L1391" title="All 4 branches missed.">		while (!(t.kind == 0 || t.kind == ParsingConstants.KW_HAVING))</span>
+		{
+<span class="nc" id="L1393">			Error(135);</span>
+<span class="nc" id="L1394">			Get();</span>
+		}
+<span class="nc" id="L1396">		Expect(ParsingConstants.KW_HAVING);</span>
+<span class="nc" id="L1397">		SearchCondition();</span>
+<span class="nc" id="L1398">		statement.setHavingEnd(t.pos);</span>
+<span class="nc" id="L1399">	}</span>
+
+	private final void GroupByClause()
+	{
+<span class="nc" id="L1403">		SQLSelectStatement statement = (SQLSelectStatement) getContext();</span>
+<span class="nc" id="L1404">		statement.setGroupByStart(scanner.pos);</span>
+
+<span class="nc bnc" id="L1406" title="All 4 branches missed.">		while (!(t.kind == 0 || t.kind == ParsingConstants.KW_GROUP))</span>
+		{
+<span class="nc" id="L1408">			Error(136);</span>
+<span class="nc" id="L1409">			Get();</span>
+		}
+<span class="nc" id="L1411">		Expect(ParsingConstants.KW_GROUP);</span>
+<span class="nc" id="L1412">		Expect(ParsingConstants.KW_BY);</span>
+<span class="nc" id="L1413">		FieldList();</span>
+<span class="nc" id="L1414">		statement.setGroupByEnd(t.pos);</span>
+<span class="nc" id="L1415">	}</span>
+
+	private final void FromClause()
+	{
+<span class="nc" id="L1419">		SQLSelectStatement statement = (SQLSelectStatement) getContext();</span>
+<span class="nc" id="L1420">		statement.setFromStart(scanner.pos);</span>
+
+<span class="nc bnc" id="L1422" title="All 4 branches missed.">		while (!(t.kind == 0 || t.kind == ParsingConstants.KW_FROM))</span>
+		{
+<span class="nc" id="L1424">			Error(137);</span>
+<span class="nc" id="L1425">			Get();</span>
+		}
+<span class="nc" id="L1427">		Expect(ParsingConstants.KW_FROM);</span>
+<span class="nc" id="L1428">		FromTableList();</span>
+<span class="nc" id="L1429">		statement.setFromEnd(t.pos);</span>
+<span class="nc" id="L1430">	}</span>
+
+	private final void SelectClause()
+	{
+<span class="nc" id="L1434">		SQLSelectStatement statement = (SQLSelectStatement) getContext();</span>
+<span class="nc" id="L1435">		statement.setSelectListStart(scanner.pos);</span>
+
+<span class="nc bnc" id="L1437" title="All 4 branches missed.">		while (!(t.kind == 0 || t.kind == ParsingConstants.KW_SELECT))</span>
+		{
+<span class="nc" id="L1439">			Error(138);</span>
+<span class="nc" id="L1440">			Get();</span>
+		}
+<span class="nc" id="L1442">		Expect(ParsingConstants.KW_SELECT);</span>
+<span class="nc bnc" id="L1443" title="All 4 branches missed.">		if (t.kind == ParsingConstants.KW_ALL || t.kind == ParsingConstants.KW_DISTINCT)</span>
+		{
+<span class="nc bnc" id="L1445" title="All 2 branches missed.">			if (t.kind == ParsingConstants.KW_DISTINCT)</span>
+			{
+<span class="nc" id="L1447">				Get();</span>
+			}
+			else
+			{
+<span class="nc" id="L1451">				Get();</span>
+			}
+		}
+<span class="nc" id="L1454">		SelectFieldList();</span>
+<span class="nc" id="L1455">		statement.setSelectListEnd(t.pos);</span>
+<span class="nc" id="L1456">	}</span>
+
+	private final void FieldList()
+	{
+<span class="nc" id="L1460">		Field();</span>
+<span class="nc bnc" id="L1461" title="All 2 branches missed.">		while (t.kind == ParsingConstants.KIND_COMMA)</span>
+		{
+<span class="nc" id="L1463">			ItemSeparator();</span>
+<span class="nc" id="L1464">			Field();</span>
+		}
+<span class="nc" id="L1466">	}</span>
+
+	private final void CloseParens()
+	{
+<span class="nc" id="L1470">		ExpectWeak(ParsingConstants.KIND_CLOSING_BRAKET, ParsingConstants.KW_SET);</span>
+<span class="nc" id="L1471">	}</span>
+
+	private final void ColumnList()
+	{
+<span class="nc" id="L1475">		ColumnName();</span>
+<span class="nc bnc" id="L1476" title="All 2 branches missed.">		while (t.kind == ParsingConstants.KIND_COMMA)</span>
+		{
+<span class="nc" id="L1478">			ItemSeparator();</span>
+<span class="nc" id="L1479">			ColumnName();</span>
+		}
+<span class="nc" id="L1481">	}</span>
+
+	private final void Expression()
+	{
+<span class="nc" id="L1485">		SimpleExpression();</span>
+<span class="nc bnc" id="L1486" title="All 2 branches missed.">		while (StartOf(ParsingConstants.KIND_EQUALS))</span>
+		{
+<span class="nc" id="L1488">			Relation();</span>
+<span class="nc" id="L1489">			SimpleExpression();</span>
+		}
+<span class="nc" id="L1491">	}</span>
+
+	private final void ColumnName()
+	{
+<span class="nc" id="L1495">		SQLStatementContext context = getContext();</span>
+<span class="nc" id="L1496">		SQLColumn column = new SQLColumn(context, t.pos);</span>
+<span class="nc" id="L1497">		context.addColumn(column);</span>
+<span class="nc bnc" id="L1498" title="All 2 branches missed.">		if (scanner.ch == '.')</span>
+<span class="nc" id="L1499">			column.setQualifier(t.str, t.pos);</span>
+		else
+<span class="nc" id="L1501">			column.setColumn(t.str, t.pos);</span>
+
+<span class="nc" id="L1503">		Expect(1);</span>
+<span class="nc bnc" id="L1504" title="All 2 branches missed.">		if (t.kind == 22)</span>
+		{
+<span class="nc" id="L1506">			Get();</span>
+<span class="nc bnc" id="L1507" title="All 2 branches missed.">			if (t.kind == 1)</span>
+			{
+<span class="nc" id="L1509">				Get();</span>
+<span class="nc" id="L1510">				column.setColumn(token.str, token.pos);</span>
+			}
+<span class="nc bnc" id="L1512" title="All 2 branches missed.">			else if (t.kind == ParsingConstants.KIND_ASTERISK)</span>
+			{
+<span class="nc" id="L1514">				Get();</span>
+			}
+			else
+<span class="nc" id="L1517">				Error(139);</span>
+		}
+<span class="nc" id="L1519">	}</span>
+
+	private final void ItemSeparator()
+	{
+<span class="nc" id="L1523">		ExpectWeak(ParsingConstants.KIND_COMMA, ParsingConstants.KW_INSERT);</span>
+<span class="nc" id="L1524">	}</span>
+
+	private final void UpdateField()
+	{
+<span class="nc" id="L1528">		ColumnName();</span>
+<span class="nc" id="L1529">		Expect(ParsingConstants.KIND_EQUALS);</span>
+<span class="nc" id="L1530">		Expression();</span>
+<span class="nc" id="L1531">	}</span>
+
+	private final void WhereClause()
+	{
+<span class="nc" id="L1535">		SQLStatement statement = (SQLStatement) getContext();</span>
+<span class="nc" id="L1536">		SQLWhere where = new SQLWhere(statement, t.pos);</span>
+<span class="nc" id="L1537">		pushContext(where);</span>
+
+<span class="nc bnc" id="L1539" title="All 4 branches missed.">		while (!(t.kind == 0 || t.kind == ParsingConstants.KW_WHERE))</span>
+		{
+<span class="nc" id="L1541">			Error(140);</span>
+<span class="nc" id="L1542">			Get();</span>
+		}
+<span class="nc" id="L1544">		Expect(ParsingConstants.KW_WHERE);</span>
+<span class="nc" id="L1545">		SearchCondition();</span>
+<span class="nc" id="L1546">		where.setEndPosition(t.pos);</span>
+<span class="nc" id="L1547">		popContext();</span>
+
+<span class="nc" id="L1549">	}</span>
+
+	private final void UpdateFieldList()
+	{
+<span class="nc" id="L1553">		UpdateField();</span>
+<span class="nc bnc" id="L1554" title="All 2 branches missed.">		while (t.kind == ParsingConstants.KIND_COMMA)</span>
+		{
+<span class="nc" id="L1556">			ItemSeparator();</span>
+<span class="nc" id="L1557">			UpdateField();</span>
+		}
+<span class="nc" id="L1559">	}</span>
+
+	private final void Table(SQLTable table)
+	{
+<span class="nc bnc" id="L1563" title="All 2 branches missed.">		if (table != null)</span>
+<span class="nc" id="L1564">			table.setName(t.str, t.pos);</span>
+
+<span class="nc" id="L1566">		Expect(1);</span>
+<span class="nc" id="L1567">	}</span>
+
+	private final void SetOperator()
+	{
+<span class="nc bnc" id="L1571" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_UNION)</span>
+		{
+<span class="nc" id="L1573">			Get();</span>
+		}
+<span class="nc bnc" id="L1575" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_EXCEPT)</span>
+		{
+<span class="nc" id="L1577">			Get();</span>
+		}
+<span class="nc bnc" id="L1579" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_INTERSECT)</span>
+		{
+<span class="nc" id="L1581">			Get();</span>
+		}
+<span class="nc bnc" id="L1583" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_MINUS)</span>
+		{
+<span class="nc" id="L1585">			Get();</span>
+		}
+		else
+<span class="nc" id="L1588">			Error(141);</span>
+<span class="nc bnc" id="L1589" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_ALL)</span>
+		{
+<span class="nc" id="L1591">			Get();</span>
+		}
+<span class="nc" id="L1593">	}</span>
+
+	private final void SimpleSelect()
+	{
+<span class="nc" id="L1597">		SQLSelectStatement statement = new SQLSelectStatement(t.pos);</span>
+
+<span class="nc" id="L1599">		SQLSelectStatementListener[] clone = sqlSelectStatlisteners.toArray(new SQLSelectStatementListener[sqlSelectStatlisteners.size()]);</span>
+
+<span class="nc bnc" id="L1601" title="All 2 branches missed.">		for (int i = 0; i &lt; clone.length; i++)</span>
+		{
+<span class="nc" id="L1603">			statement.addListener(clone[i]);</span>
+		}
+
+<span class="nc" id="L1606">		pushContext(statement);</span>
+
+<span class="nc" id="L1608">		SelectClause();</span>
+<span class="nc" id="L1609">		FromClause();</span>
+<span class="nc bnc" id="L1610" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_WHERE)</span>
+		{
+<span class="nc" id="L1612">			WhereClause();</span>
+		}
+<span class="nc bnc" id="L1614" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_GROUP)</span>
+		{
+<span class="nc" id="L1616">			GroupByClause();</span>
+		}
+<span class="nc bnc" id="L1618" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_HAVING)</span>
+		{
+<span class="nc" id="L1620">			HavingClause();</span>
+		}
+<span class="nc bnc" id="L1622" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_ORDER)</span>
+		{
+<span class="nc" id="L1624">			OrderByClause();</span>
+		}
+<span class="nc" id="L1626">		popContext();</span>
+<span class="nc" id="L1627">	}</span>
+
+	private final void Transaction()
+	{
+<span class="nc bnc" id="L1631" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_COMMIT)</span>
+		{
+<span class="nc" id="L1633">			Get();</span>
+		}
+<span class="nc bnc" id="L1635" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_ROLLBACK)</span>
+		{
+<span class="nc" id="L1637">			Get();</span>
+		}
+		else
+<span class="nc" id="L1640">			Error(142);</span>
+<span class="nc bnc" id="L1641" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_WORK)</span>
+		{
+<span class="nc" id="L1643">			Get();</span>
+		}
+<span class="nc" id="L1645">	}</span>
+
+	private final void AlterTable()
+	{
+<span class="nc" id="L1649">		Expect(ParsingConstants.KW_ALTER);</span>
+<span class="nc" id="L1650">		Expect(ParsingConstants.KW_TABLE);</span>
+<span class="nc" id="L1651">		QualifiedTable();</span>
+<span class="nc bnc" id="L1652" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_ADD)</span>
+		{
+<span class="nc" id="L1654">			AddPart();</span>
+		}
+<span class="nc bnc" id="L1656" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_ALTER)</span>
+		{
+<span class="nc" id="L1658">			AlterPart();</span>
+		}
+<span class="nc bnc" id="L1660" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_DROP)</span>
+		{
+<span class="nc" id="L1662">			DropPart();</span>
+		}
+		else
+<span class="nc" id="L1665">			Error(143);</span>
+<span class="nc" id="L1666">	}</span>
+
+	private final void Drop()
+	{
+<span class="nc" id="L1670">		Expect(ParsingConstants.KW_DROP);</span>
+<span class="nc bnc" id="L1671" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_TABLE)</span>
+		{
+<span class="nc" id="L1673">			DropTable();</span>
+		}
+<span class="nc bnc" id="L1675" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_INDEX)</span>
+		{
+<span class="nc" id="L1677">			IndexAndName();</span>
+		}
+		else
+<span class="nc" id="L1680">			Error(144);</span>
+<span class="nc" id="L1681">	}</span>
+
+	private final void CreateStmt()
+	{
+<span class="nc" id="L1685">		Expect(ParsingConstants.KW_CREATE);</span>
+<span class="nc bnc" id="L1686" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_TABLE)</span>
+		{
+<span class="nc" id="L1688">			CreateTable();</span>
+		}
+<span class="nc bnc" id="L1690" title="All 4 branches missed.">		else if (t.kind == ParsingConstants.KW_UNIQUE || t.kind == ParsingConstants.KW_INDEX)</span>
+		{
+<span class="nc" id="L1692">			CreateIndex();</span>
+		}
+<span class="nc bnc" id="L1694" title="All 2 branches missed.">      else if (t.kind == ParsingConstants.KW_VIEW)</span>
+      {
+<span class="nc" id="L1696">         CreateView();</span>
+      }
+		else
+<span class="nc" id="L1699">			Error(145);</span>
+<span class="nc" id="L1700">	}</span>
+
+   private void CreateView()
+   {
+<span class="nc" id="L1704">      Expect(ParsingConstants.KW_VIEW);</span>
+<span class="nc" id="L1705">      Table(null);</span>
+<span class="nc" id="L1706">      Expect(ParsingConstants.KW_AS);</span>
+<span class="nc" id="L1707">      SelectStmt();</span>
+<span class="nc" id="L1708">   }</span>
+
+   private final void DeleteStmt()
+   {
+<span class="nc" id="L1712">      SQLModifyingStatement statement = new SQLModifyingStatement(t.pos);</span>
+<span class="nc" id="L1713">      pushContext(statement);</span>
+
+<span class="nc" id="L1715">      Expect(ParsingConstants.KW_DELETE);</span>
+<span class="nc" id="L1716">      SQLTable table = new SQLTable(statement, scanner.pos + 1);</span>
+<span class="nc" id="L1717">      statement.addTable(table);</span>
+
+<span class="nc" id="L1719">      Expect(ParsingConstants.KW_FROM);</span>
+<span class="nc" id="L1720">      table.setName(t.str, t.pos);</span>
+<span class="nc" id="L1721">      Table(table);</span>
+<span class="nc bnc" id="L1722" title="All 2 branches missed.">      if (t.kind == ParsingConstants.KW_WHERE)</span>
+      {
+<span class="nc" id="L1724">         WhereClause();</span>
+      }
+<span class="nc" id="L1726">      statement.setEndPosition(token.pos);</span>
+<span class="nc" id="L1727">      popContext();</span>
+
+<span class="nc" id="L1729">   }</span>
+
+	private final void UpdateStmt()
+	{
+<span class="nc" id="L1733">		SQLModifyingStatement statement = new SQLModifyingStatement(t.pos);</span>
+<span class="nc" id="L1734">		SQLTable table = new SQLTable(statement, scanner.pos + 1);</span>
+<span class="nc" id="L1735">		statement.addTable(table);</span>
+<span class="nc" id="L1736">		pushContext(statement);</span>
+
+<span class="nc" id="L1738">		Expect(ParsingConstants.KW_UPDATE);</span>
+<span class="nc" id="L1739">		table.setName(t.str, t.pos);</span>
+<span class="nc" id="L1740">		Table(null);</span>
+<span class="nc" id="L1741">		statement.setUpdateListStart(t.pos + 4);</span>
+<span class="nc" id="L1742">		Expect(ParsingConstants.KW_SET);</span>
+<span class="nc" id="L1743">		UpdateFieldList();</span>
+<span class="nc" id="L1744">		statement.setUpdateListEnd(token.pos);</span>
+<span class="nc bnc" id="L1745" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_WHERE)</span>
+		{
+<span class="nc" id="L1747">			WhereClause();</span>
+		}
+<span class="nc" id="L1749">		statement.setEndPosition(token.pos);</span>
+<span class="nc" id="L1750">		popContext();</span>
+
+<span class="nc" id="L1752">	}</span>
+
+	private final void InsertStmt()
+	{
+<span class="nc" id="L1756">		SQLModifyingStatement statement = new SQLModifyingStatement(t.pos);</span>
+<span class="nc" id="L1757">		pushContext(statement);</span>
+
+<span class="nc" id="L1759">		Expect(ParsingConstants.KW_INSERT);</span>
+<span class="nc" id="L1760">		SQLTable table = new SQLTable(statement, scanner.pos + 1);</span>
+<span class="nc" id="L1761">		statement.addTable(table);</span>
+
+<span class="nc" id="L1763">		Expect(ParsingConstants.KW_INTO);</span>
+<span class="nc" id="L1764">		SQLColumn column = new SQLColumn(statement, scanner.pos + 2);</span>
+<span class="nc" id="L1765">		table.setName(t.str, t.pos);</span>
+<span class="nc" id="L1766">		column.setRepeatable(true);</span>
+<span class="nc" id="L1767">		statement.addColumn(column);</span>
+
+<span class="nc" id="L1769">		Table(table);</span>
+<span class="nc bnc" id="L1770" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KIND_OPENING_BRAKET)</span>
+		{
+<span class="nc" id="L1772">			Get();</span>
+<span class="nc" id="L1773">			ColumnList();</span>
+<span class="nc" id="L1774">			CloseParens();</span>
+		}
+<span class="nc" id="L1776">		column.setEndPosition(token.pos);</span>
+<span class="nc bnc" id="L1777" title="All 2 branches missed.">		if (t.kind == ParsingConstants.KW_VALUES)</span>
+		{
+<span class="nc" id="L1779">			Get();</span>
+<span class="nc" id="L1780">			Expect(ParsingConstants.KIND_OPENING_BRAKET);</span>
+<span class="nc" id="L1781">			FieldList();</span>
+<span class="nc" id="L1782">			CloseParens();</span>
+		}
+<span class="nc bnc" id="L1784" title="All 2 branches missed.">		else if (t.kind == ParsingConstants.KW_SELECT)</span>
+		{
+<span class="nc" id="L1786">			SelectStmt();</span>
+		}
+		else
+<span class="nc" id="L1789">			Error(146);</span>
+<span class="nc" id="L1790">		statement.setEndPosition(token.pos);</span>
+<span class="nc" id="L1791">		popContext();</span>
+
+<span class="nc" id="L1793">	}</span>
+
+	private final void SelectStmt()
+	{
+<span class="nc" id="L1797">		pushContext(new SQLStatement(token.pos));</span>
+<span class="nc" id="L1798">		SimpleSelect();</span>
+<span class="nc bnc" id="L1799" title="All 2 branches missed.">		while (StartOf(ParsingConstants.KW_INTO))</span>
+		{
+<span class="nc" id="L1801">			SetOperator();</span>
+<span class="nc" id="L1802">			SimpleSelect();</span>
+		}
+<span class="nc" id="L1804">		popContext();</span>
+<span class="nc" id="L1805">	}</span>
+
+	private final void SQLStatement()
+	{
+<span class="nc" id="L1809">		addRootStatement(new SQLStatement(token.pos));</span>
+<span class="nc bnc" id="L1810" title="All 9 branches missed.">		switch (t.kind)</span>
+		{
+			case ParsingConstants.KW_SELECT:
+				{
+<span class="nc" id="L1814">					SelectStmt();</span>
+<span class="nc" id="L1815">					break;</span>
+				}
+			case ParsingConstants.KW_INSERT:
+				{
+<span class="nc" id="L1819">					InsertStmt();</span>
+<span class="nc" id="L1820">					break;</span>
+				}
+			case ParsingConstants.KW_UPDATE:
+				{
+<span class="nc" id="L1824">					UpdateStmt();</span>
+<span class="nc" id="L1825">					break;</span>
+				}
+			case ParsingConstants.KW_DELETE:
+				{
+<span class="nc" id="L1829">					DeleteStmt();</span>
+<span class="nc" id="L1830">					break;</span>
+				}
+			case ParsingConstants.KW_CREATE:
+				{
+<span class="nc" id="L1834">					CreateStmt();</span>
+<span class="nc" id="L1835">					break;</span>
+				}
+			case ParsingConstants.KW_DROP:
+				{
+<span class="nc" id="L1839">					Drop();</span>
+<span class="nc" id="L1840">					break;</span>
+				}
+			case ParsingConstants.KW_ALTER:
+				{
+<span class="nc" id="L1844">					AlterTable();</span>
+<span class="nc" id="L1845">					break;</span>
+				}
+			case ParsingConstants.KW_COMMIT:
+			case ParsingConstants.KW_ROLLBACK:
+				{
+<span class="nc" id="L1850">					Transaction();</span>
+<span class="nc" id="L1851">					break;</span>
+				}
+			default:
+<span class="nc" id="L1854">				Error(147);</span>
+		}
+<span class="nc bnc" id="L1856" title="All 2 branches missed.">		if (t.kind == 6)</span>
+		{
+<span class="nc" id="L1858">			Get();</span>
+		}
+<span class="nc" id="L1860">	}</span>
+
+	private final void squirrelSQL()
+	{
+<span class="nc" id="L1864">		SQLStatement();</span>
+<span class="nc bnc" id="L1865" title="All 2 branches missed.">		while (StartOf(ParsingConstants.KW_VALUES))</span>
+		{
+<span class="nc" id="L1867">			SQLStatement();</span>
+		}
+<span class="nc" id="L1869">		Expect(0);</span>
+<span class="nc" id="L1870">	}</span>
+
+
+	public Parser(Scanner _scanner, SQLSchema schema)
+<span class="nc" id="L1874">	{</span>
+<span class="nc" id="L1875">		scanner = _scanner;</span>
+<span class="nc" id="L1876">		t = new Token();</span>
+<span class="nc" id="L1877">      rootSchema = schema;</span>
+<span class="nc" id="L1878">	}</span>
+
+	public void parse()
+	{
+<span class="nc" id="L1882">		Get();</span>
+<span class="nc" id="L1883">		squirrelSQL();</span>
+
+<span class="nc" id="L1885">	}</span>
+
+<span class="nc" id="L1887">	private static boolean[][] set = {</span>
+		{T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, T, T, x, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x},
+		{x, T, T, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, x, x, G, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x},
+		{x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, x, x, x, x, T, x, x, x, x, x, x, x, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x},
+		{x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, x, x, x, x, x, x, x, x, x, x, x, x, T, x, x, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x},
+		{x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, x, x, x, x, T, x, T, x, x, x, x, x, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x},
+		{x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, T, T, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x},
+		{x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, T, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x},
+		{x, T, T, T, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, T, T, T, T, T, T, T, T, T, x, x, T, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x},
+		{x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, x, x, x, x, x, x, x, x, x, x, x, x, T, x, x, T, T, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x},
+		{x, T, T, T, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, T, T, T, T, T, T, T, T, T, x, x, T, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x},
+		{x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, x, T, T, T, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x},
+		{x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, T, T, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x},
+		{x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, T, T, T, T, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, x, x, x},
+		{T, x, x, x, x, x, T, T, T, T, T, x, T, x, T, T, x, T, T, T, T, x, x, T, T, T, T, T, T, T, T, x, x, x, T, T, x, T, T, T, x, x, x, x, x, x, x, x, x, x, x, x, T, x, T, T, T, T, T, x, x, x, T, T, T, T, T, x, x, T, T, x, x, x, x, x, x, x, x, x, x, T, x, x, x, T, x, x, x, x, x, x, x, T, x, x, T, x, T, x, x, T, T, x, x},
+		{x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, T, T, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x},
+		{T, T, T, T, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, T, T, x, T, T, T, T, T, T, T, T, T, T, T, T, T, x, x, T, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, x, T, x, x, x, x, x, x, T, T, x, x, x, x, x, x, x, x, x, x, x, x},
+		{x, x, x, x, x, x, x, T, T, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x},
+		{x, x, x, x, x, x, x, x, x, x, x, x, T, x, x, T, x, x, T, x, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, T, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, T, x, x, T, x, T, x, x, x, x, x, x}
+
+	};
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

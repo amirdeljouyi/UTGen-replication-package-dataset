@@ -1,0 +1,956 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DataSetUpdateableTableModelImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.session</a> &gt; <span class="el_source">DataSetUpdateableTableModelImpl.java</span></div><h1>DataSetUpdateableTableModelImpl.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.session;
+
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Vector;
+
+import javax.swing.JOptionPane;
+
+import net.sourceforge.squirrel_sql.client.session.properties.EditWhereCols;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.ColumnDisplayDefinition;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.DataSetUpdateableTableModelListener;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.IDataModelImplementationDetails;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.IDataSetUpdateableTableModel;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.CellComponentFactory;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.whereClause.IWhereClausePart;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.whereClause.IWhereClausePartUtil;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.whereClause.WhereClausePartUtil;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLConnection;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData;
+import net.sourceforge.squirrel_sql.fw.sql.ITableInfo;
+import net.sourceforge.squirrel_sql.fw.sql.SQLDatabaseMetaData;
+import net.sourceforge.squirrel_sql.fw.sql.SQLUtilities;
+import net.sourceforge.squirrel_sql.fw.sql.TableColumnInfo;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+
+<span class="nc" id="L34">public class DataSetUpdateableTableModelImpl implements IDataSetUpdateableTableModel</span>
+{
+
+    /** Internationalized strings for this class. */
+<span class="nc" id="L38">    private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L39">        StringManagerFactory.getStringManager(DataSetUpdateableTableModelImpl.class);       </span>
+    
+   /** string to be passed to user when table name is not found or is ambiguous */
+   // i18n[DataSetUpdateableTableModelImpl.error.tablenotfound=Cannot edit table because table cannot be found\nor table name is not unique in DB.]
+<span class="nc" id="L43">   private final String TI_ERROR_MESSAGE = s_stringMgr.getString(&quot;DataSetUpdateableTableModelImpl.error.tablenotfound&quot;);</span>
+
+   /** Logger for this class. */
+<span class="nc" id="L46">   private static final ILogger s_log = LoggerController.createLogger(DataSetUpdateableTableModelImpl.class);</span>
+
+
+   /**
+    * This is the long name of the current table including everything that might be able to distinguish it
+    * from another table of the same name in a different DB.
+    */
+<span class="nc" id="L53">   private String fullTableName = null;</span>
+   private ITableInfo ti;
+   private ISession _session;
+
+   /**
+    * Remember whether or not the user has forced us into editing mode
+    * when the SessionProperties says to use read-only mode.
+    */
+<span class="nc" id="L61">   private boolean editModeForced = false;</span>
+
+
+   /**
+    * We need to save the name of the SessionProperties display class at the time
+    * that the table was forced into edit mode so that if the properties get changed
+    * while we are in forced edit mode, we will change back to match the new
+    * Session Properties.
+    */
+<span class="nc" id="L70">   String sqlOutputClassNameAtTimeOfForcedEdit = &quot;&quot;;</span>
+
+<span class="nc" id="L72">   private Vector&lt;DataSetUpdateableTableModelListener&gt; _dataSetUpdateableTableModelListener = </span>
+       new Vector&lt;DataSetUpdateableTableModelListener&gt;();
+
+   /**
+    * Remember which column contains the rowID; if no rowID, this is -1
+    * which does not match any legal column index.
+    * Note that for this class, since the list of columns to include is given
+    * by the user, we never include any pseudo-column automatically in the
+    * ResultSet, and thus we never have any legal column index here.
+    */
+<span class="nc" id="L82">   int _rowIDcol = -1;</span>
+   
+   /**
+    * A util for handling parts of an where clause.
+    */
+<span class="nc" id="L87">   private IWhereClausePartUtil whereClausePartUtil = new WhereClausePartUtil();</span>
+
+   public void setTableInfo(ITableInfo ti)
+   {
+<span class="nc" id="L91">      this.ti = ti;</span>
+      // re-calculate fullTablename the next time it's requested.
+<span class="nc" id="L93">      fullTableName = null;</span>
+<span class="nc" id="L94">   }</span>
+
+   public void setSession(ISession session)
+   {
+<span class="nc" id="L98">      this._session = session;</span>
+<span class="nc" id="L99">   }</span>
+
+
+   /**
+    * return the name of the table that is unambiguous across DB accesses,
+    * including the same DB on different machines.
+    * This function is static because it is used elsewhere to generate the same
+    * name as is used within instances of this class.
+    *
+    * @return the name of the table that is unique for this DB access
+    */
+   public static String getUnambiguousTableName(ISession session, String name) {
+<span class="nc" id="L111">      return session.getAlias().getUrl()+&quot;:&quot;+name;</span>
+   }
+
+   /**
+    * Get the full name of this table, creating that name the first time we are called
+    */
+   public String getFullTableName() {
+<span class="nc bnc" id="L118" title="All 2 branches missed.">      if (fullTableName == null) {</span>
+         try {
+<span class="nc" id="L120">            final String name = ti.getQualifiedName();</span>
+<span class="nc" id="L121">            fullTableName = getUnambiguousTableName(_session, name);</span>
+         }
+<span class="nc" id="L123">         catch (Exception e) {</span>
+<span class="nc" id="L124">            s_log.error(</span>
+<span class="nc" id="L125">                &quot;getFullTableName: Unexpected exception - &quot;+e.getMessage(), e);</span>
+<span class="nc" id="L126">         }</span>
+      }
+<span class="nc" id="L128">      return fullTableName;</span>
+   }
+
+   /**
+    * If the user forces us into edit mode, remember that they did so for this table.
+    */
+   public void forceEditMode(boolean mode)
+   {
+<span class="nc" id="L136">      editModeForced = mode;</span>
+<span class="nc" id="L137">      sqlOutputClassNameAtTimeOfForcedEdit =</span>
+<span class="nc" id="L138">         _session.getProperties().getTableContentsOutputClassName();</span>
+
+<span class="nc" id="L140">      DataSetUpdateableTableModelListener[] listeners =</span>
+<span class="nc" id="L141">         _dataSetUpdateableTableModelListener.toArray(new DataSetUpdateableTableModelListener[0]);</span>
+
+<span class="nc bnc" id="L143" title="All 2 branches missed.">      for (int i = 0; i &lt; listeners.length; i++)</span>
+      {
+<span class="nc" id="L145">         listeners[i].forceEditMode(mode);</span>
+      }
+
+
+      /**
+       * Tell the GUI to rebuild itself.
+       * This is not a clean way to do that, since we are telling the
+       * SessionProperties listeners that a property has changed when
+       * in reality none of them have done so, but this does cause the
+       * GUI to be rebuilt.
+       */
+//		_session.getProperties().forceTableContentsOutputClassNameChange();
+<span class="nc" id="L157">   }</span>
+
+   /**
+    * The fw needs to know whether we are in forced edit mode or not
+    * so it can decide whether or not to let the user undo that mode.
+    */
+   public boolean editModeIsForced()
+   {
+<span class="nc" id="L165">      return editModeForced;</span>
+   }
+
+
+
+   /**
+    * If the user has forced us into editing mode, use the EDITABLE_TABLE form, but
+    * otherwise use whatever form the user specified in the Session Preferences.
+    */
+   public String getDestinationClassName()
+   {
+<span class="nc bnc" id="L176" title="All 2 branches missed.">      if (editModeForced)</span>
+      {
+<span class="nc bnc" id="L178" title="All 2 branches missed.">         if (_session.getProperties().getTableContentsOutputClassName().equals(</span>
+            sqlOutputClassNameAtTimeOfForcedEdit))
+         {
+<span class="nc" id="L181">            return _session.getProperties().getEditableTableOutputClassName();</span>
+         }
+         // forced edit mode ended because user changed the Session Properties
+<span class="nc" id="L184">         editModeForced = false;</span>
+      }
+
+      // if the user selected Editable Table in the Session Properties,
+      // then the display will be an editable table; otherwise the display is read-only
+<span class="nc" id="L189">      return _session.getProperties().getTableContentsOutputClassName();</span>
+   }
+
+   /**
+    * Link from fw to check on whether there are any unusual conditions
+    * in the current data that the user needs to be aware of before updating.
+    */
+   public String getWarningOnCurrentData(
+      Object[] values,
+      ColumnDisplayDefinition[] colDefs,
+      int col,
+      Object oldValue)
+   {
+
+      // if we could not identify which table to edit, tell user
+<span class="nc bnc" id="L204" title="All 2 branches missed.">      if (ti == null)</span>
+<span class="nc" id="L205">         return TI_ERROR_MESSAGE;</span>
+
+<span class="nc" id="L207">      List&lt;IWhereClausePart&gt; whereClauseParts = getWhereClause(values, colDefs, col, oldValue);</span>
+
+      
+      // It is possible for a table to contain only columns of types that
+      // we cannot process or do selects on, so check for that.
+      // Since this check is on the structure of the table rather than the contents,
+      // we only need to do it once (ie: it is not needed in getWarningOnProjectedUpdate)
+<span class="nc bnc" id="L214" title="All 2 branches missed.">      if (whereClausePartUtil.hasUsableWhereClause(whereClauseParts) == false){</span>
+         // i18n[DataSetUpdateableTableModelImpl.confirmupdateallrows=The table has no columns that can be SELECTed on.\nAll rows will be updated.\nDo you wish to proceed?]
+<span class="nc" id="L216">         return s_stringMgr.getString(&quot;DataSetUpdateableTableModelImpl.confirmupdateallrows&quot;);</span>
+      }
+
+<span class="nc" id="L219">      final ISession session = _session;</span>
+<span class="nc" id="L220">      final ISQLConnection conn = session.getSQLConnection();</span>
+
+<span class="nc" id="L222">      int count = -1;	// start with illegal number of rows matching query</span>
+
+      try
+      {
+<span class="nc" id="L226">         count = count(whereClauseParts, conn);</span>
+      }
+<span class="nc" id="L228">      catch (SQLException ex)</span>
+      {
+          //i18n[DataSetUpdateableTableModelImpl.error.exceptionduringcheck=Exception 
+          //seen during check on DB.  Exception was:\n{0}\nUpdate is probably not 
+          //safe to do.\nDo you wish to proceed?]
+<span class="nc" id="L233">          String msg = </span>
+<span class="nc" id="L234">              s_stringMgr.getString(&quot;DataSetUpdateableTableModelImpl.error.exceptionduringcheck&quot;, ex.getMessage());</span>
+<span class="nc" id="L235">          s_log.error(msg, ex);</span>
+<span class="nc" id="L236">          return msg;</span>
+<span class="nc" id="L237">      }</span>
+
+<span class="nc bnc" id="L239" title="All 2 branches missed.">      if (count == -1) {</span>
+          // i18n[DataSetUpdateableTableModelImpl.error.unknownerror=Unknown error during check on DB.  Update is probably not safe.\nDo you wish to proceed?]
+<span class="nc" id="L241">         return s_stringMgr.getString(&quot;DataSetUpdateableTableModelImpl.error.unknownerror&quot;);</span>
+      }
+<span class="nc bnc" id="L243" title="All 2 branches missed.">      if (count == 0) {</span>
+          // i18n[DataSetUpdateableTableModelImpl.error.staleupdaterow=This row in the Database has been changed since you refreshed the data.\nNo rows will be updated by this operation.\nDo you wish to proceed?]
+<span class="nc" id="L245">         return s_stringMgr.getString(&quot;DataSetUpdateableTableModelImpl.error.staleupdaterow&quot;);</span>
+      }
+<span class="nc bnc" id="L247" title="All 2 branches missed.">      if (count &gt; 1) {</span>
+          // i18n[DataSetUpdateableTableModelImpl.info.updateidenticalrows=This operation will update {0} identical rows.\nDo you wish to proceed?]
+<span class="nc" id="L249">          return s_stringMgr.getString(&quot;DataSetUpdateableTableModelImpl.info.updateidenticalrows&quot;,</span>
+<span class="nc" id="L250">                                       Long.valueOf(count));</span>
+      }
+      // no problems found, so do not return a warning message.
+<span class="nc" id="L253">      return null;	// nothing for user to worry about</span>
+   }
+
+   /**
+    * Counts the number of affected rows, using this where clause.
+    * @param whereClauseParts where clause to use
+    * @param conn connection to use
+    * @return number of rows in the database, which will be selected by the given whereClauseParts
+    * @throws SQLException if an SQLExcetpion occurs.
+    */
+   private int count(List&lt;IWhereClausePart&gt; whereClauseParts,
+		   final ISQLConnection conn) throws SQLException {
+	   int count;
+<span class="nc" id="L266">	   PreparedStatement pstmt = null;</span>
+<span class="nc" id="L267">	   ResultSet rs = null;</span>
+	   try
+	   {
+<span class="nc" id="L270">		   String whereClause = whereClausePartUtil.createWhereClause(whereClauseParts);</span>
+<span class="nc" id="L271">		   String countSql = &quot;select count(*) from &quot; + ti.getQualifiedName() + whereClause;</span>
+<span class="nc" id="L272">		   pstmt = conn.prepareStatement(countSql);</span>
+<span class="nc" id="L273">		   whereClausePartUtil.setParameters(pstmt, whereClauseParts, 1);</span>
+
+<span class="nc" id="L275">		   rs = pstmt.executeQuery();</span>
+<span class="nc" id="L276">		   rs.next();</span>
+<span class="nc" id="L277">		   count = rs.getInt(1);</span>
+	   }
+	   finally
+	   {
+		   // We don't care if these throw an SQLException.  Just squelch them
+		   // and report to the user what the outcome of the previous statements
+		   // were.
+<span class="nc" id="L284">		   SQLUtilities.closeResultSet(rs);</span>
+<span class="nc" id="L285">		   SQLUtilities.closeStatement(pstmt);</span>
+	   }
+<span class="nc" id="L287">	   return count;</span>
+   }
+
+
+
+/**
+    * Link from fw to check on whether there are any unusual conditions
+    * that will occur after the update has been done.
+    */
+   public String getWarningOnProjectedUpdate(
+      Object[] values,
+      ColumnDisplayDefinition[] colDefs,
+      int col,
+      Object newValue)
+   {
+      try
+      {
+         // if we could not identify which table to edit, tell user
+<span class="nc bnc" id="L305" title="All 2 branches missed.">         if (ti == null)</span>
+<span class="nc" id="L306">            return TI_ERROR_MESSAGE;</span>
+
+<span class="nc" id="L308">         List&lt;IWhereClausePart&gt; whereClauseParts = getWhereClause(values, colDefs, col, newValue);</span>
+         
+<span class="nc" id="L310">         final ISession session = _session;</span>
+<span class="nc" id="L311">         final ISQLConnection conn = session.getSQLConnection();</span>
+
+<span class="nc" id="L313">         int count = -1;	// start with illegal number of rows matching query</span>
+
+         try
+         {
+<span class="nc" id="L317">        	count = count(whereClauseParts, conn);</span>
+        	
+         }
+<span class="nc" id="L320">         catch (SQLException ex)</span>
+         {
+             // i18n[DataSetUpdateableTableModelImpl.error.exceptionduringcheck=Exception seen during check on DB.  Exception was:\n{0}\nUpdate is probably not safe to do.\nDo you wish to proceed?]
+<span class="nc" id="L323">             s_stringMgr.getString(&quot;DataSetUpdateableTableModelImpl.error.exceptionduringcheck&quot;, ex.getMessage());</span>
+<span class="nc" id="L324">         }</span>
+
+<span class="nc bnc" id="L326" title="All 2 branches missed.">         if (count == -1) {</span>
+             // i18n[DataSetUpdateableTableModelImpl.error.unknownerror=Unknown error during check on DB.  Update is probably not safe.\nDo you wish to proceed?]
+<span class="nc" id="L328">            return s_stringMgr.getString(&quot;DataSetUpdateableTableModelImpl.error.unknownerror&quot;);</span>
+         }
+         // There are some fields that cannot be used in a WHERE clause, either
+         // because there cannot be an exact match (e.g. REAL, FLOAT), or
+         // because we may not have the actual data in hand (BLOB/CLOB), or
+         // because the data cannot be expressed in a string form (e.g. BINARY).
+         // An update to one of those fields
+         // will look like we are replacing one row with an identical row (because
+         // we can only &quot;see&quot; the fields that we know how to do WHEREs on).  Therefore,
+         // when we are updating them, there should be exactly one row that matches
+         // all of our other fields, and when we are not updating one of these
+         // special types of fields, there should be
+         // no rows that exactly match our criteria (we hope).
+         //
+         // We determine whether this field is one that cannot be used in the WHERE
+         // clause by checking the value returned for that field to use in the
+         // WHERE clause.  Any field that can be used there will return something
+         // of the form &quot;&lt;fieldName&gt; = &lt;value&gt;&quot;, and a field that cannot be
+         // used will return a null or zero-length string.
+         
+<span class="nc bnc" id="L348" title="All 2 branches missed.">         if (count &gt; 1) {</span>
+             // i18n[DataSetUpdateableTableModelImpl.info.identicalrows=This 
+             //operation will result in {0} identical rows.\nDo you wish 
+             //to proceed?]
+<span class="nc" id="L352">             return s_stringMgr.getString(&quot;DataSetUpdateableTableModelImpl.info.identicalrows&quot;,</span>
+<span class="nc" id="L353">                                          Long.valueOf(count));</span>
+         }
+         
+         // no problems found, so do not return a warning message.
+<span class="nc" id="L357">         return null;	// nothing for user to worry about</span>
+      }
+<span class="nc" id="L359">      catch (Exception e)</span>
+      {
+<span class="nc" id="L361">         throw new  RuntimeException(e);</span>
+      }
+
+   }
+
+   /**
+    * Re-read the value for a single cell in the table, if possible.
+    * If there is a problem, the message has a non-zero length when this returns.
+    */
+   public Object reReadDatum(
+      Object[] values,
+      ColumnDisplayDefinition[] colDefs,
+      int col,
+      StringBuffer message) {
+
+      // if we could not identify which table to edit, tell user
+<span class="nc bnc" id="L377" title="All 2 branches missed.">      if (ti == null)</span>
+<span class="nc" id="L378">         return TI_ERROR_MESSAGE;</span>
+
+      // get WHERE clause
+      // The -1 says to ignore the last arg and use the contents of the values array
+      // for the column that we care about.  However, since the data in
+      // that column has been limited, when getWhereClause calls that
+      // DataType with that value, the DataType will see that the data has
+      // been limited and therefore cannnot be used in the WHERE clause.
+      // In some cases it may be possible for the DataType to use the
+      // partial data, such as &quot;matches &lt;data&gt;*&quot;, but that may not be
+      // standard accross all Databases and thus may be risky.
+      
+      
+<span class="nc" id="L391">      List&lt;IWhereClausePart&gt; whereClauseParts = getWhereClause(values, colDefs, -1, null);</span>
+<span class="nc" id="L392">      String whereClause = whereClausePartUtil.createWhereClause(whereClauseParts); </span>
+<span class="nc" id="L393">      final ISession session = _session;</span>
+<span class="nc" id="L394">      final ISQLConnection conn = session.getSQLConnection();</span>
+
+<span class="nc" id="L396">      Object wholeDatum = null;</span>
+
+      try
+      {
+<span class="nc" id="L400">    	  final String queryString =</span>
+<span class="nc" id="L401">              &quot;SELECT &quot; + colDefs[col].getColumnName() +&quot; FROM &quot;+ti.getQualifiedName() +</span>
+              whereClause;
+    	  
+<span class="nc" id="L404">         final PreparedStatement pstmt = conn.prepareStatement(queryString);</span>
+<span class="nc" id="L405">         whereClausePartUtil.setParameters(pstmt, whereClauseParts, 1);</span>
+         
+
+         try
+         {
+<span class="nc" id="L410">            ResultSet rs = pstmt.executeQuery(queryString);</span>
+
+            // There should be one row in the data, so try to move to it
+<span class="nc bnc" id="L413" title="All 2 branches missed.">            if (rs.next() == false) {</span>
+               // no first row, so we cannot retrieve the data
+               // i18n[DataSetUpdateableTableModelImpl.error.nomatchingrow=Could not find any row in DB matching current row in table]
+<span class="nc" id="L416">               throw new SQLException(s_stringMgr.getString(&quot;DataSetUpdateableTableModelImpl.error.nomatchingrow&quot;));</span>
+            }
+
+            // we have at least one row, so try to retrieve the object
+            // Do Not limit the read of this data
+<span class="nc" id="L421">            wholeDatum = CellComponentFactory.readResultSet(colDefs[col], rs, 1, false);</span>
+
+            //  There should not be more than one row in the DB that matches
+            // the table, and if there is we cannot determine which one to read,
+            // so check that there are no more
+<span class="nc bnc" id="L426" title="All 2 branches missed.">            if (rs.next() == true) {</span>
+               // multiple rows - not good
+<span class="nc" id="L428">               wholeDatum = null;</span>
+               // i18n[DataSetUpdateableTableModelImpl.error.multimatchingrows=Muliple rows in DB match current row in table - cannot re-read data.]
+<span class="nc" id="L430">               throw new SQLException(s_stringMgr.getString(&quot;DataSetUpdateableTableModelImpl.error.multimatchingrows&quot;));</span>
+            }
+         }
+         finally
+         {
+<span class="nc" id="L435">            pstmt.close();</span>
+         }
+      }
+<span class="nc" id="L438">      catch (Exception ex)</span>
+      {
+          // i18n[DataSetUpdateableTableModelImpl.error.rereadingdb=There was a problem reported while re-reading the DB.  The DB message was:\n{0}]
+<span class="nc" id="L441">          message.append(</span>
+<span class="nc" id="L442">              s_stringMgr.getString(</span>
+                          &quot;DataSetUpdateableTableModelImpl.error.rereadingdb&quot;, 
+<span class="nc" id="L444">                          ex.getMessage()));</span>
+
+         // It would be nice to tell the user what happened, but if we try to
+         // put up a dialog box at this point, we run into trouble in some
+         // cases where the field continually tries to re-read after the dialog
+         // closes (because it is being re-painted).
+<span class="nc" id="L450">      }</span>
+
+
+      // return the whole contents of this column in the DB
+<span class="nc" id="L454">      return wholeDatum;</span>
+   };
+
+   /**
+    * link from fw to this for updating data
+    */
+   public String updateTableComponent(
+      Object[] values,
+      ColumnDisplayDefinition[] colDefs,
+      int col,
+      Object oldValue,
+      Object newValue)
+   {
+      // if we could not identify which table to edit, tell user
+<span class="nc bnc" id="L468" title="All 2 branches missed.">      if (ti == null)</span>
+<span class="nc" id="L469">         return TI_ERROR_MESSAGE;</span>
+
+      // get WHERE clause using original value
+<span class="nc" id="L472">       List&lt;IWhereClausePart&gt; whereClauseParts = getWhereClause(values, colDefs, col, oldValue);</span>
+<span class="nc" id="L473">       String whereClause = whereClausePartUtil.createWhereClause(whereClauseParts);</span>
+<span class="nc bnc" id="L474" title="All 2 branches missed.">      if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L475">          s_log.debug(&quot;updateTableComponent: whereClause = &quot;+whereClause);</span>
+      }
+      
+<span class="nc" id="L478">      final ISession session = _session;</span>
+<span class="nc" id="L479">      final ISQLConnection conn = session.getSQLConnection();</span>
+
+<span class="nc" id="L481">      int count = -1;</span>
+
+<span class="nc" id="L483">      final String sql = constructUpdateSql(</span>
+<span class="nc" id="L484">            ti.getQualifiedName(), colDefs[col].getColumnName(), whereClause);</span>
+      
+<span class="nc bnc" id="L486" title="All 2 branches missed.">      if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L487">          s_log.debug(&quot;updateTableComponent: executing SQL - &quot;+sql);</span>
+      }
+<span class="nc" id="L489">      PreparedStatement pstmt = null;</span>
+      try
+      {
+<span class="nc" id="L492">         pstmt = conn.prepareStatement(sql);</span>
+
+         /* 
+          * have the DataType object fill in the appropriate kind of value of the changed data
+          * into the first variable position in the prepared stmt
+          */
+<span class="nc" id="L498">         CellComponentFactory.setPreparedStatementValue(</span>
+                colDefs[col], pstmt, newValue, 1);
+         
+         // Fill the parameters of the where clause - start at position 2 because the data which is updated is at position 1
+<span class="nc" id="L502">         whereClausePartUtil.setParameters(pstmt, whereClauseParts, 2);</span>
+<span class="nc" id="L503">         count = pstmt.executeUpdate();</span>
+      }
+<span class="nc" id="L505">      catch (SQLException ex)</span>
+      {
+          //i18n[DataSetUpdateableTableModelImpl.error.updateproblem=There 
+          //was a problem reported during the update.  
+          //The DB message was:\n{0}\nThis may or may not be serious depending 
+          //on the above message.\nThe data was probably not changed in the 
+          //database.\nYou may need to refresh the table to get an accurate 
+          //view of the current data.]
+<span class="nc" id="L513">          String errMsg = s_stringMgr.getString(</span>
+                &quot;DataSetUpdateableTableModelImpl.error.updateproblem&quot;,
+<span class="nc" id="L515">                ex.getMessage());</span>
+<span class="nc" id="L516">          s_log.error(&quot;updateTableComponent: unexpected exception - &quot;+</span>
+<span class="nc" id="L517">                      ex.getMessage()+&quot; while executing SQL: &quot;+sql);</span>
+          
+          
+<span class="nc" id="L520">         return errMsg;           </span>
+      } finally {
+<span class="nc" id="L522">          SQLUtilities.closeStatement(pstmt);</span>
+      }
+
+<span class="nc bnc" id="L525" title="All 2 branches missed.">      if (count == -1) {</span>
+          // i18n[DataSetUpdateableTableModelImpl.error.unknownupdateerror=Unknown problem during update.\nNo count of updated rows was returned.\nDatabase may be corrupted!]
+<span class="nc" id="L527">         return s_stringMgr.getString(&quot;DataSetUpdateableTableModelImpl.error.unknownupdateerror&quot;);</span>
+      }
+<span class="nc bnc" id="L529" title="All 2 branches missed.">      if (count == 0) {</span>
+          // i18n[DataSetUpdateableTableModelImpl.info.norowsupdated=No rows updated.]
+<span class="nc" id="L531">         return s_stringMgr.getString(&quot;DataSetUpdateableTableModelImpl.info.norowsupdated&quot;);</span>
+      }
+      // everything seems to have worked ok
+<span class="nc" id="L534">      return null;</span>
+   }
+
+   
+   /**
+    * Build the update SQL from the specified components.
+    *  
+    * @param table the fully qualified name of the table
+    * @param column the name of the column to update
+    * @param whereClause the where clause that restricts the update to one row.
+    * 
+    * @return the SQL to execute
+    */
+   private String constructUpdateSql(String table, String column,
+           String whereClause) {
+<span class="nc" id="L549">       StringBuilder result = new StringBuilder();</span>
+<span class="nc" id="L550">       result.append(&quot;UPDATE &quot;);</span>
+<span class="nc" id="L551">       result.append(table);</span>
+<span class="nc" id="L552">       result.append(&quot; SET &quot;);</span>
+<span class="nc" id="L553">       result.append(column);</span>
+<span class="nc" id="L554">       result.append(&quot; = ? &quot;);</span>
+<span class="nc" id="L555">       result.append(whereClause);</span>
+<span class="nc" id="L556">       return result.toString();</span>
+   }
+   
+   /**
+    * Let fw get the rowIDcol
+    */
+   public int getRowidCol()
+   {
+<span class="nc" id="L564">      return _rowIDcol;</span>
+   }
+
+
+   /**
+    * helper function to create a WHERE clause to search the DB for matching rows.
+    * If the col number is &lt; 0, then the colValue is ignored
+    * and the WHERE clause is constructed using only the values[].
+    */
+   private List&lt;IWhereClausePart&gt; getWhereClause(
+      Object[] values,
+      ColumnDisplayDefinition[] colDefs,
+      int col,
+      Object colValue)
+   {
+      try
+      {
+
+         // For tables that have a lot of columns, the user may have limited the set of columns
+         // to use in the where clause, so see if there is a table of col names
+<span class="nc" id="L584">         HashMap&lt;String, String&gt; colNames = (EditWhereCols.get(getFullTableName()));</span>
+
+         
+<span class="nc" id="L587">         ColumnDisplayDefinition editedCol = null;</span>
+<span class="nc bnc" id="L588" title="All 2 branches missed.">			if(-1 != col)</span>
+			{
+<span class="nc" id="L590">				editedCol = colDefs[col];</span>
+			}
+
+<span class="nc" id="L593">			List&lt;IWhereClausePart&gt; clauseParts = new ArrayList&lt;IWhereClausePart&gt;();</span>
+			
+<span class="nc bnc" id="L595" title="All 2 branches missed.">			for (int i=0; i&lt; colDefs.length; i++) {</span>
+
+<span class="nc bnc" id="L597" title="All 4 branches missed.">            if(i != col &amp;&amp;</span>
+					null != editedCol &amp;&amp;
+<span class="nc bnc" id="L599" title="All 2 branches missed.">					colDefs[i].getFullTableColumnName().equalsIgnoreCase(editedCol.getFullTableColumnName()))</span>
+            {
+               // The edited column is in the resultset twice (example: SELECT MyName,* FROM MyTable).
+               // We won't add the this col to the where clause.
+<span class="nc" id="L603">               continue;</span>
+            }
+
+            // if the user has said to not use this column, then skip it
+<span class="nc bnc" id="L607" title="All 2 branches missed.">            if (colNames != null) {</span>
+               // the user has restricted the set of columns to use.
+               // If this name is NOT in the list, then skip it; otherwise we fall through
+               // and use the column in the WHERE clause
+<span class="nc bnc" id="L611" title="All 2 branches missed.">               if (colNames.get(colDefs[i].getColumnName()) == null)</span>
+<span class="nc" id="L612">                  continue;	// go on to the next item</span>
+            }
+
+            // for the column that is being changed, use the value
+            // passed in by the caller (which may be either the
+            // current value or the new replacement value)
+<span class="nc" id="L618">            Object value = values[i];</span>
+<span class="nc bnc" id="L619" title="All 2 branches missed.">            if (i == col)</span>
+<span class="nc" id="L620">               value = colValue;</span>
+
+            // convert user representation of null into an actual null
+<span class="nc bnc" id="L623" title="All 4 branches missed.">            if (value != null &amp;&amp; value.toString().equals(&quot;&lt;null&gt;&quot;))</span>
+<span class="nc" id="L624">               value = null;</span>
+
+            // do different things depending on data type
+<span class="nc" id="L627">            ISQLDatabaseMetaData md = _session.getMetaData();</span>
+<span class="nc" id="L628">            IWhereClausePart clausePart = CellComponentFactory.getWhereClauseValue(colDefs[i], value, md);</span>
+
+            
+<span class="nc bnc" id="L631" title="All 2 branches missed.">            if (clausePart.shouldBeUsed())</span>
+            	// Now we know that the part should not we ignoredshould
+<span class="nc" id="L633">            	clauseParts.add(clausePart);</span>
+         }
+			
+<span class="nc" id="L636">			return clauseParts;</span>
+
+      }
+<span class="nc" id="L639">      catch (Exception e)</span>
+      {
+<span class="nc" id="L641">         throw new RuntimeException(e);</span>
+      }
+   }
+
+
+   /**
+    * Delete a set of rows from the DB.
+    * If the delete succeeded this returns a null string.
+    * The deletes are done within a transaction
+    * so they are either all done or all not done.
+    */
+   public String deleteRows(Object[][] rowData, ColumnDisplayDefinition[] colDefs) {
+
+      // if we could not identify which table to edit, tell user
+<span class="nc bnc" id="L655" title="All 2 branches missed.">      if (ti == null)</span>
+<span class="nc" id="L656">         return TI_ERROR_MESSAGE;</span>
+
+      // get the SQL session
+<span class="nc" id="L659">      final ISession session = _session;</span>
+<span class="nc" id="L660">      final ISQLConnection conn = session.getSQLConnection();</span>
+
+      // string used as error indicator and description of problems seen
+      // when checking for 0 or mulitple matches in DB
+<span class="nc" id="L664">      String rowCountErrorMessage = &quot;&quot;;</span>
+
+      // for each row in table, count how many rows match where clause
+      // if not exactly one, generate message describing situation
+<span class="nc bnc" id="L668" title="All 2 branches missed.">      for (int i = 0; i &lt; rowData.length; i++) {</span>
+         // get WHERE clause for the selected row
+         // the -1 says to just use the contents of the values without
+         // any substitutions
+<span class="nc" id="L672">         List&lt;IWhereClausePart&gt; whereClauseParts = getWhereClause(rowData[i], colDefs, -1, null);</span>
+         
+         // count how many rows this WHERE matches
+         try {
+        	 
+<span class="nc" id="L677">        	 int count = count(whereClauseParts, conn);</span>
+<span class="nc bnc" id="L678" title="All 2 branches missed.">               if (count != 1) {</span>
+<span class="nc bnc" id="L679" title="All 2 branches missed.">                  if (count == 0) {</span>
+                      // i18n[DataSetUpdateableTableModelImpl.error.rownotmatch=\n   Row {0}  did not match any row in DB]
+<span class="nc" id="L681">                     rowCountErrorMessage += </span>
+<span class="nc" id="L682">                         s_stringMgr.getString(</span>
+                                 &quot;DataSetUpdateableTableModelImpl.error.rownotmatch&quot;,
+<span class="nc" id="L684">                                 Integer.valueOf(i+1));</span>
+                  } else {
+                      //i18n[DataSetUpdateableTableModelImpl.error.rowmatched=\n   Row {0} matched {1} rows in DB]
+<span class="nc" id="L687">                      rowCountErrorMessage += </span>
+<span class="nc" id="L688">                          s_stringMgr.getString(</span>
+                                  &quot;DataSetUpdateableTableModelImpl.error.rowmatched&quot;, 
+<span class="nc" id="L690">                                  new Object[] { Integer.valueOf(i+1), Integer.valueOf(count) });</span>
+                  }
+               }
+         }
+<span class="nc" id="L694">         catch (Exception e) {</span>
+            // some kind of problem - tell user
+             // i18n[DataSetUpdateableTableModelImpl.error.preparingdelete=While preparing for delete, saw exception:\n{0}]
+<span class="nc" id="L697">             return </span>
+<span class="nc" id="L698">                 s_stringMgr.getString(</span>
+                         &quot;DataSetUpdateableTableModelImpl.error.preparingdelete&quot;,
+                         e);
+<span class="nc" id="L701">         }</span>
+      }
+
+      // if the rows do not match 1-for-1 to DB, ask user if they
+      // really want to do delete
+<span class="nc bnc" id="L706" title="All 2 branches missed.">      if (rowCountErrorMessage.length() &gt; 0) {</span>
+          // i18n[DataSetUpdateableTableModelImpl.error.tabledbmismatch=There may be a mismatch between the table and the DB:\n{0}\nDo you wish to proceed with the deletes anyway?]
+<span class="nc" id="L708">          String msg = </span>
+<span class="nc" id="L709">              s_stringMgr.getString(&quot;DataSetUpdateableTableModelImpl.error.tabledbmismatch&quot;,</span>
+                                    rowCountErrorMessage);
+         
+<span class="nc" id="L712">         int option = </span>
+<span class="nc" id="L713">             JOptionPane.showConfirmDialog(null, msg, &quot;Warning&quot;, </span>
+                                           JOptionPane.YES_NO_OPTION, 
+                                           JOptionPane.WARNING_MESSAGE);
+         
+<span class="nc bnc" id="L717" title="All 2 branches missed.">         if ( option != JOptionPane.YES_OPTION) {</span>
+             // i18n[DataSetUpdateableTableModelImpl.info.deletecancelled=Delete canceled at user request.]
+<span class="nc" id="L719">            return s_stringMgr.getString(&quot;DataSetUpdateableTableModelImpl.info.deletecancelled&quot;);</span>
+         }
+      }
+
+      // for each row in table, do delete and add to number of rows deleted from DB
+<span class="nc bnc" id="L724" title="All 2 branches missed.">      for (int i = 0; i &lt; rowData.length; i++) {</span>
+         // get WHERE clause for the selected row
+         // the -1 says to just use the contents of the values without
+         // any substitutions
+<span class="nc" id="L728">          List&lt;IWhereClausePart&gt; whereClauseParts = getWhereClause(rowData[i], colDefs, -1, null);</span>
+<span class="nc" id="L729">          String whereClause = whereClausePartUtil.createWhereClause(whereClauseParts);</span>
+         // try to delete
+         try {
+            // do the delete and add the number of rows deleted to the count
+<span class="nc" id="L733">        	 String sql = &quot;DELETE FROM &quot; +</span>
+<span class="nc" id="L734">		      ti.getQualifiedName() + whereClause;</span>
+<span class="nc" id="L735">        	 final PreparedStatement pstmt = conn.prepareStatement(sql);</span>
+<span class="nc" id="L736">        	 whereClausePartUtil.setParameters(pstmt, whereClauseParts, 1);</span>
+            try
+            {
+<span class="nc" id="L739">            	pstmt.executeUpdate();</span>
+            }
+            finally
+            {
+<span class="nc" id="L743">               pstmt.close();</span>
+            }
+         }
+<span class="nc" id="L746">         catch (Exception e) {</span>
+            // some kind of problem - tell user
+             // i18n[DataSetUpdateableTableModelImpl.error.deleteFailed=One of the delete operations failed with exception:\n{0}\nDatabase is in an unknown state and may be corrupted.]
+<span class="nc" id="L749">             return s_stringMgr.getString(&quot;DataSetUpdateableTableModelImpl.error.deleteFailed&quot;, e);</span>
+<span class="nc" id="L750">         }</span>
+      }
+
+<span class="nc" id="L753">      return null;	// hear no evil, see no evil</span>
+   }
+
+   /**
+    * Let fw get the list of default values for the columns
+    * to be used when creating a new row
+    */
+   public String[] getDefaultValues(ColumnDisplayDefinition[] colDefs) {
+
+      // we return something valid even if there is a DB error
+<span class="nc" id="L763">      final String[] defaultValues = new String[colDefs.length];</span>
+
+      // if we could not identify which table to edit, just return
+<span class="nc bnc" id="L766" title="All 2 branches missed.">      if (ti == null)</span>
+      {
+<span class="nc" id="L768">         return defaultValues;</span>
+      }
+
+<span class="nc" id="L771">      final ISession session = _session;</span>
+<span class="nc" id="L772">      final ISQLConnection conn = session.getSQLConnection();</span>
+
+      try
+      {
+<span class="nc" id="L776">         SQLDatabaseMetaData md = conn.getSQLMetaData();</span>
+<span class="nc" id="L777">         TableColumnInfo[] infos = md.getColumnInfo(ti);</span>
+         
+         // read the DB MetaData info and fill in the value, if any
+         // Note that the ResultSet info and the colDefs should be
+         // in the same order, but we cannot guarantee that.
+<span class="nc" id="L782">         int expectedColDefIndex = 0;</span>
+         
+<span class="nc bnc" id="L784" title="All 2 branches missed.">         for (int idx = 0; idx &lt; infos.length; idx++) {</span>
+<span class="nc" id="L785">             String colName = infos[idx].getColumnName();</span>
+<span class="nc" id="L786">             String defValue = infos[idx].getDefaultValue();</span>
+             
+             // if value was null, we do not need to do
+             // anything else with this column.
+             // Also assume that a value of &quot;&quot; is equivilent to null
+<span class="nc bnc" id="L791" title="All 4 branches missed.">             if (defValue != null &amp;&amp;  defValue.length() &gt; 0) {</span>
+                // find the entry in colDefs matching this column
+<span class="nc bnc" id="L793" title="All 2 branches missed.">                if (colDefs[expectedColDefIndex].getColumnName().equals(colName)) {</span>
+                   // DB cols are in same order as colDefs
+<span class="nc" id="L795">                   defaultValues[expectedColDefIndex] = defValue;</span>
+                }
+                else {
+                   // colDefs not in same order as DB, so search for
+                   // matching colDef entry
+                   // Note: linear search here will NORMALLY be not too bad
+                   // because most tables do not have huge numbers of columns.
+<span class="nc bnc" id="L802" title="All 2 branches missed.">                   for (int i=0; i&lt;colDefs.length; i++) {</span>
+<span class="nc bnc" id="L803" title="All 2 branches missed.">                      if (colDefs[i].getColumnName().equals(colName)) {</span>
+<span class="nc" id="L804">                         defaultValues[i] = defValue;</span>
+<span class="nc" id="L805">                         break;</span>
+                      }
+                   }
+                }
+             }
+
+             // assuming that the columns in table match colDefs,
+             // bump the index to point to the next colDef entry
+<span class="nc" id="L813">             expectedColDefIndex++;</span>
+             
+         }
+      }
+<span class="nc" id="L817">      catch (Exception ex)</span>
+      {
+          // i18n[DataSetUpdateableTableModelImpl.error.retrievingdefaultvalues=Error retrieving default column values]
+<span class="nc" id="L820">          s_log.error(s_stringMgr.getString(&quot;DataSetUpdateableTableModelImpl.error.retrievingdefaultvalues&quot;), ex);</span>
+<span class="nc" id="L821">      }</span>
+
+<span class="nc" id="L823">      return defaultValues;</span>
+   }
+
+
+   /**
+    * Insert a row into the DB.
+    * If the insert succeeds this returns a null string.
+    */
+   public String insertRow(Object[] values, ColumnDisplayDefinition[] colDefs) {
+
+      // if we could not identify which table to edit, tell user
+<span class="nc bnc" id="L834" title="All 2 branches missed.">      if (ti == null) {</span>
+<span class="nc" id="L835">         return TI_ERROR_MESSAGE;</span>
+      }
+      
+<span class="nc" id="L838">      final ISession session = _session;</span>
+<span class="nc" id="L839">      final ISQLConnection conn = session.getSQLConnection();</span>
+      
+<span class="nc" id="L841">      int count = -1;</span>
+      
+      try
+      {
+         // start the string for use in the prepared statment
+<span class="nc" id="L846">         StringBuilder buf = new StringBuilder(&quot;INSERT INTO &quot;);</span>
+<span class="nc" id="L847">         buf.append(ti.getQualifiedName());</span>
+
+         // Add the list of column names we will be inserting into - be sure
+         // to skip the rowId column and any auto increment columns.
+<span class="nc" id="L851">         buf.append(&quot; ( &quot;);</span>
+<span class="nc bnc" id="L852" title="All 2 branches missed.">         for (int i=0; i&lt;colDefs.length; i++) {</span>
+<span class="nc bnc" id="L853" title="All 2 branches missed.">             if (i == _rowIDcol) {</span>
+<span class="nc" id="L854">                 continue;</span>
+             }
+<span class="nc bnc" id="L856" title="All 2 branches missed.">             if (colDefs[i].isAutoIncrement()) {</span>
+<span class="nc bnc" id="L857" title="All 2 branches missed.">                 if (s_log.isInfoEnabled()) {</span>
+<span class="nc" id="L858">                     s_log.info(&quot;insertRow: skipping auto-increment column &quot;+</span>
+<span class="nc" id="L859">                                colDefs[i].getColumnName());</span>
+                 }
+                 continue;
+             } 
+<span class="nc" id="L863">             buf.append(colDefs[i].getColumnName());</span>
+<span class="nc" id="L864">             buf.append(&quot;,&quot;);</span>
+         }
+<span class="nc" id="L866">         buf.setCharAt(buf.length()-1, ')');</span>
+<span class="nc" id="L867">         buf.append(&quot; VALUES (&quot;);</span>
+         
+         // add a variable position for each of the columns
+<span class="nc bnc" id="L870" title="All 2 branches missed.">         for (int i=0; i&lt;colDefs.length; i++) {</span>
+<span class="nc bnc" id="L871" title="All 4 branches missed.">            if (i != _rowIDcol &amp;&amp; !colDefs[i].isAutoIncrement() )</span>
+                
+<span class="nc" id="L873">               buf.append(&quot; ?,&quot;);</span>
+         }
+
+         // replace the last &quot;,&quot; with &quot;)&quot;
+<span class="nc" id="L877">         buf.setCharAt(buf.length()-1, ')');</span>
+
+<span class="nc" id="L879">         String pstmtSQL = buf.toString();</span>
+<span class="nc bnc" id="L880" title="All 2 branches missed.">         if (s_log.isInfoEnabled()) {</span>
+<span class="nc" id="L881">             s_log.info(&quot;insertRow: pstmt sql = &quot;+pstmtSQL);</span>
+         }
+<span class="nc" id="L883">         final PreparedStatement pstmt = conn.prepareStatement(pstmtSQL);</span>
+
+         try
+         {
+            // We need to keep track of the bind var index separately, since 
+            // the number of column defs may not be the number of bind vars
+            // (For example: auto-increment columns are excluded)
+<span class="nc" id="L890">            int bindVarIdx = 1;</span>
+             
+            // have the DataType object fill in the appropriate kind of value
+            // into the appropriate variable position in the prepared stmt
+<span class="nc bnc" id="L894" title="All 2 branches missed.">            for (int i=0; i&lt;colDefs.length; i++) {</span>
+<span class="nc bnc" id="L895" title="All 4 branches missed.">               if (i != _rowIDcol &amp;&amp; !colDefs[i].isAutoIncrement()) {</span>
+<span class="nc" id="L896">                   CellComponentFactory.setPreparedStatementValue(</span>
+                           colDefs[i], pstmt, values[i], bindVarIdx);
+<span class="nc" id="L898">                   bindVarIdx++;</span>
+               }
+            }
+<span class="nc" id="L901">            count = pstmt.executeUpdate();</span>
+         }
+         finally
+         {
+<span class="nc" id="L905">            pstmt.close();</span>
+         }
+      }
+<span class="nc" id="L908">      catch (SQLException ex)</span>
+      {
+          // i18n[DataSetUpdateableTableModelImpl.error.duringInsert=Exception seen during check on DB.  Exception was:\n{0}\nInsert was probably not completed correctly.  DB may be corrupted!]
+<span class="nc" id="L911">          return s_stringMgr.getString(</span>
+                  &quot;DataSetUpdateableTableModelImpl.error.duringInsert&quot;, 
+<span class="nc" id="L913">                  ex.getMessage());</span>
+<span class="nc" id="L914">      }</span>
+
+<span class="nc bnc" id="L916" title="All 2 branches missed.">      if (count != 1)</span>
+          // i18n[DataSetUpdateableTableModelImpl.error.unknownerrorupdate=Unknown problem during update.\nNo count of inserted rows was returned.\nDatabase may be corrupted!]
+<span class="nc" id="L918">         return s_stringMgr.getString(&quot;DataSetUpdateableTableModelImpl.error.unknownerrorupdate&quot;);</span>
+
+      // insert succeeded
+      try {
+<span class="nc" id="L922">          IObjectTreeAPI api = _session.getObjectTreeAPIOfActiveSessionWindow();</span>
+<span class="nc" id="L923">          api.refreshSelectedTab();</span>
+<span class="nc" id="L924">      } catch (Exception e) {</span>
+<span class="nc" id="L925">          e.printStackTrace();</span>
+<span class="nc" id="L926">      }</span>
+
+<span class="nc" id="L928">      return null;</span>
+   }
+
+   public void addListener(DataSetUpdateableTableModelListener l)
+   {
+<span class="nc" id="L933">      _dataSetUpdateableTableModelListener.add(l);</span>
+<span class="nc" id="L934">   }</span>
+
+   public void removeListener(DataSetUpdateableTableModelListener l)
+   {
+<span class="nc" id="L938">      _dataSetUpdateableTableModelListener.remove(l);</span>
+<span class="nc" id="L939">   }</span>
+
+
+   public void setEditModeForced(boolean b)
+   {
+<span class="nc" id="L944">      editModeForced = b;</span>
+<span class="nc" id="L945">   }</span>
+
+   public void setRowIDCol(int rowIDCol)
+   {
+<span class="nc" id="L949">      _rowIDcol = rowIDCol;</span>
+<span class="nc" id="L950">   }</span>
+
+   public void setWhereClausePartUtil(IWhereClausePartUtil whereClausePartUtil) {
+<span class="nc" id="L953">	   this.whereClausePartUtil = whereClausePartUtil;</span>
+<span class="nc" id="L954">   }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

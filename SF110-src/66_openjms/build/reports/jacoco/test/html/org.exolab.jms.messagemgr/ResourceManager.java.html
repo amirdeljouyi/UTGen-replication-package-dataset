@@ -1,0 +1,1362 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ResourceManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.messagemgr</a> &gt; <span class="el_source">ResourceManager.java</span></div><h1>ResourceManager.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2000-2004 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: ResourceManager.java,v 1.3 2005/08/30 07:26:49 tanderson Exp $
+ */
+package org.exolab.jms.messagemgr;
+
+import java.io.File;
+import java.io.FilenameFilter;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.TreeSet;
+import java.util.Vector;
+import javax.jms.JMSException;
+import javax.transaction.xa.XAException;
+import javax.transaction.xa.XAResource;
+import javax.transaction.xa.Xid;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import org.exolab.jms.client.JmsDestination;
+import org.exolab.jms.common.uuid.UUID;
+import org.exolab.jms.message.MessageImpl;
+import org.exolab.jms.persistence.DatabaseService;
+import org.exolab.jms.persistence.PersistenceException;
+import org.exolab.jms.service.Service;
+import org.exolab.jms.tranlog.DataTransactionLogEntry;
+import org.exolab.jms.tranlog.ExternalXid;
+import org.exolab.jms.tranlog.StateTransactionLogEntry;
+import org.exolab.jms.tranlog.TransactionLog;
+import org.exolab.jms.tranlog.TransactionLogException;
+import org.exolab.jms.tranlog.TransactionState;
+
+
+/**
+ * The resource manager provides XA support for the JMS Server.
+ * &lt;p/&gt;
+ * The resource manager is responsible for managing the various transaction
+ * identifiers and managing the association between transaction ids and
+ * connections.
+ * &lt;p/&gt;
+ * The resource manager will store the global XID's and their state in the
+ * database for recovery purposes.
+ * &lt;p/&gt;
+ * Messages that arrive, and are associated with an XID are not processed
+ * through the {@link MessageMgr}. Instead they are routed to this resource
+ * managers where they are cached until the associated XID is committed or
+ * rolled back. If the transaction is successfully committed, through the 2PC
+ * protocol the messages will pass through the system.
+ * &lt;p/&gt;
+ * Similarly, messages that are sent to consumers, either synchronously or
+ * asynchronously are also cached by the resource manager until the global
+ * transaction completes.
+ * &lt;p/&gt;
+ * On startup the resource manager will read all incomplete transactions, which
+ * are incompleted into memory. It will then process trnasactions that have
+ * timed out.
+ * &lt;p/&gt;
+ * The transaction manager will call the {@link #recover} method  and obtain a
+ * list of incomplete transaction for the purpose of completing them where
+ * possible.
+ *
+ * @author &lt;a href=&quot;mailto:jima@intalio.com&quot;&gt;Jim Alateras&lt;/a&gt;
+ * @version $Revision: 1.3 $ $Date: 2005/08/30 07:26:49 $
+ */
+public class ResourceManager extends Service {
+
+    /**
+     * The extension for all transaction log files
+     */
+    public final static String RM_LOGFILE_EXTENSION = &quot;.log&quot;;
+
+    /**
+     * This is used to indicate the garbage collection has been disabled and
+     * that the client will take responsibility for all aspects of log file
+     * management. This is useful in situations where the client wants to
+     * archive the transaction log files
+     * &lt;p/&gt;
+     * This is the default mode for GC.
+     */
+    public static final int GC_DISABLED = 0;
+
+    /**
+     * Synchronous gabrage collection is used to remove processed log files when
+     * the last trnasaction, in that log file, has been successfully processed.
+     * This is more efficient means since the log files does not need to be
+     * scanned asynchronously to determine whether all the transactions have
+     * been processed.
+     */
+    public static final int GC_SYNCHRONOUS = 1;
+
+    /**
+     * Asynchronous garbage collection is used to remove processed log files
+     * asynchronous (i.e in a different thread context). This is rather
+     * expensive since it must manually scan each log file and determine whether
+     * all transactions, in that file, have been closed. If this is the case
+     * then it will remove the log file.
+     */
+    public static final int GC_ASYNCHRONOUS = 2;
+
+    /**
+     * The message manager.
+     */
+    private final MessageManager _messages;
+
+    /**
+     * The destination manager.
+     */
+    private final DestinationManager _destinations;
+
+    /**
+     * This is the maximum size, in bytes, of each transaction log file. The
+     * value can be overriden by the user
+     */
+<span class="nc" id="L157">    private int _logFileSize = 1000000;</span>
+
+    /**
+     * Maintains a collection of transaction log files currently in use by this
+     * resource manager
+     */
+<span class="nc" id="L163">    private TreeSet _logs = new TreeSet(new TranLogFileComparator());</span>
+
+    /**
+     * Maintain a mapping between the TRID (transaction id and the log file it
+     * is associated with.
+     */
+<span class="nc" id="L169">    private HashMap _tridToLogCache = new HashMap();</span>
+
+    /**
+     * Maintain a list of open TRIDs for a particular  {@link TransactionLog}
+     */
+<span class="nc" id="L174">    private HashMap _logToTridCache = new HashMap();</span>
+
+    /**
+     * This attribute is used to synchronize the modifications to the _tridToLog
+     * _logToTrid attributes
+     */
+<span class="nc" id="L180">    private final Object _cacheLock = new Object();</span>
+
+    /**
+     * This maintains a cache of all open transactions and the corresponding
+     * data. The key is the transaction identifier and the object is a
+     * LinkedList transaction entries, which includes both state and data
+     */
+<span class="nc" id="L187">    private HashMap _activeTransactions = new HashMap();</span>
+
+    /**
+     * The directory where the log files are stored. This can be set by the
+     * client
+     */
+<span class="nc" id="L193">    private String _logDirectory = &quot;.&quot;;</span>
+
+    /**
+     * This is the number of the last log file created by the ResourceManager
+     */
+<span class="nc" id="L198">    private long _lastLogNumber = 0;</span>
+
+    /**
+     * The expiry time for transaction associated with this resource manager.
+     * This will either be configured or passed in with the transaction context
+     * The value is specified in seconds.
+     */
+<span class="nc" id="L205">    private int _txExpiryTime = 120;</span>
+
+    /**
+     * This attribute caches the garbage collection mode for the resouce
+     * managers. Valid values are specified by the GC_* constants.
+     * &lt;p/&gt;
+     * By default garbage collection is disabled.
+     */
+<span class="nc" id="L213">    private int _gcMode = GC_SYNCHRONOUS;</span>
+
+    /**
+     * This is the id associated with this resource...need to work out who or
+     * what sets this.
+     */
+<span class="nc" id="L219">    private String _rid = UUID.next();</span>
+
+    /**
+     * The name of the service
+     */
+    private final static String RM_SERVICE_NAME = &quot;XAResourceManager&quot;;
+
+    /**
+     * The prefix used for all transaction log files, which are created and
+     * managed by the {@link TransactionLog}
+     */
+    private final static String RM_LOGFILE_PREFIX = &quot;ojmsrm&quot;;
+
+    /**
+     * The logger
+     */
+<span class="nc" id="L235">    private static final Log _log = LogFactory.getLog(ResourceManager.class);</span>
+
+
+    /**
+     * Construct a resource manager using the default directory for its log
+     * files.
+     * &lt;p/&gt;
+     * If the directory does not exist or there is no permisssion to access it,
+     * then throw a ResourceManagerException.
+     *
+     * @param messages     the message manager
+     * @param destinations the destination manager
+     * @param database     the database service
+     * @throws ResourceManagerException
+     */
+    public ResourceManager(MessageManager messages,
+                           DestinationManager destinations,
+                           DatabaseService database)
+            throws ResourceManagerException {
+<span class="nc" id="L254">        super(RM_SERVICE_NAME);</span>
+
+<span class="nc" id="L256">        _messages = messages;</span>
+<span class="nc" id="L257">        _destinations = destinations;</span>
+        /*
+
+        final String dir = &quot;./logs&quot;;
+        _logDirectory = dir;
+        File file = new File(dir);
+        if ((!file.exists()) ||
+                (!file.isDirectory())) {
+            throw new ResourceManagerException(dir
+                                               +
+                                               &quot; does not exist or is not a directory&quot;);
+        }
+
+        // build the list of existing log files.
+        buildLogFileList();
+
+        // recover te list of log files
+        recover();
+        */
+<span class="nc" id="L276">    }</span>
+
+    /**
+     * Check whether garbage collection has been disabled
+     *
+     * @return boolean - true if gc is disabled
+     */
+    public boolean gcDisabled() {
+<span class="nc bnc" id="L284" title="All 2 branches missed.">        return (_gcMode == GC_DISABLED) ? true : false;</span>
+    }
+
+    /**
+     * Log this published message so that it can be passed through the system
+     * when the associated global transaction commits.
+     *
+     * @param xid     - the global transaction identity
+     * @param message - the message published
+     * @throws TransactionLogException  - error adding the entry
+     * @throws ResourceManagerException - error getting the trnasaction log
+     * @throws JMSException             - if there is an issue with prep'ing the
+     *                                  message
+     */
+    public synchronized void logPublishedMessage(Xid xid, MessageImpl message)
+            throws TransactionLogException, ResourceManagerException,
+            JMSException {
+<span class="nc" id="L301">        _messages.prepare(message);</span>
+<span class="nc" id="L302">        logTransactionData(new ExternalXid(xid), _rid,</span>
+<span class="nc" id="L303">                           createPublishedMessageWrapper(message));</span>
+<span class="nc" id="L304">    }</span>
+
+    /**
+     * Log that this message handle was sent to the consumer within the
+     * specified global transaction identity. The message will be acknowledged
+     * when the global transaction commits. Alternatively, if the global
+     * transaction is rolled back the message handle will be returned to the
+     * destination
+     *
+     * @param xid    the global transaction identity
+     * @param id     the consumer receiving this message
+     * @param handle - the handle of the message received
+     * @throws TransactionLogException  - error adding the entry
+     * @throws ResourceManagerException - error getting the transaction log
+     */
+    public synchronized void logReceivedMessage(Xid xid, long id,
+                                                MessageHandle handle)
+            throws TransactionLogException, ResourceManagerException {
+<span class="nc" id="L322">        logTransactionData(new ExternalXid(xid), _rid,</span>
+<span class="nc" id="L323">                           createReceivedMessageWrapper(id, handle));</span>
+<span class="nc" id="L324">    }</span>
+
+    /**
+     * Add an {@link StateTransactionLogEntry} using the specified txid, rid and
+     * state
+     *
+     * @param xid   - the transaction identifier
+     * @param state - the transaction log state
+     * @throws TransactionLogException  - error adding the entry
+     * @throws ResourceManagerException - error getting the trnasaction log
+     */
+    public synchronized void logTransactionState(Xid xid,
+                                                 TransactionState state)
+            throws TransactionLogException, ResourceManagerException {
+<span class="nc" id="L338">        ExternalXid txid = new ExternalXid(xid);</span>
+<span class="nc bnc" id="L339" title="All 4 branches missed.">        switch (state.getOrd()) {</span>
+            case TransactionState.OPENED_ORD:
+                {
+<span class="nc" id="L342">                    TransactionLog log = getCurrentTransactionLog();</span>
+<span class="nc" id="L343">                    addTridLogEntry(txid, log);</span>
+<span class="nc" id="L344">                    log.logTransactionState(txid, _txExpiryTime * 1000, _rid,</span>
+                                            state);
+
+                    // cache the transaction state
+<span class="nc" id="L348">                    _activeTransactions.put(txid, new LinkedList());</span>
+                }
+<span class="nc" id="L350">                break;</span>
+
+            case TransactionState.PREPARED_ORD:
+                // cache the transaction state
+<span class="nc" id="L354">                LinkedList list = (LinkedList) _activeTransactions.get(txid);</span>
+<span class="nc bnc" id="L355" title="All 2 branches missed.">                if (list != null) {</span>
+<span class="nc" id="L356">                    list.add(state);</span>
+                } else {
+<span class="nc" id="L358">                    throw new ResourceManagerException(&quot;Trasaction &quot; + txid +</span>
+                                                       &quot; is not active.&quot;);
+                }
+                break;
+
+            case TransactionState.CLOSED_ORD:
+                {
+<span class="nc" id="L365">                    TransactionLog log = getTransactionLog(txid);</span>
+<span class="nc" id="L366">                    log.logTransactionState(txid, _txExpiryTime * 1000, _rid,</span>
+                                            state);
+<span class="nc" id="L368">                    removeTridLogEntry(txid, log);</span>
+
+                    // check whether this log has anymore open transactions
+<span class="nc" id="L371">                    synchronized (_cacheLock) {</span>
+<span class="nc bnc" id="L372" title="All 2 branches missed.">                        if ((_logToTridCache.get(log) == null) &amp;&amp;</span>
+<span class="nc bnc" id="L373" title="All 2 branches missed.">                                (!isCurrentTransactionLog(log))) {</span>
+<span class="nc" id="L374">                            log.close();</span>
+
+                            // now check if gc mode is GC_SYNCHRONOUS. If it is
+                            // remove the log file
+<span class="nc bnc" id="L378" title="All 2 branches missed.">                            if (_gcMode == GC_SYNCHRONOUS) {</span>
+                                try {
+<span class="nc" id="L380">                                    log.destroy();</span>
+<span class="nc" id="L381">                                } catch (TransactionLogException exception) {</span>
+<span class="nc" id="L382">                                    exception.printStackTrace();</span>
+<span class="nc" id="L383">                                }</span>
+                            }
+                        }
+<span class="nc" id="L386">                    }</span>
+
+                    // we also want to remove this entry from the list
+                    // of active transactions
+<span class="nc" id="L390">                    _activeTransactions.remove(txid);</span>
+                }
+<span class="nc" id="L392">                break;</span>
+
+            default:
+<span class="nc" id="L395">                throw new ResourceManagerException(&quot;Cannot process tx state &quot; +</span>
+                                                   state);
+        }
+<span class="nc" id="L398">    }</span>
+
+    /**
+     * Add an {@link DataTransactionLogEntry} using the specified txid, rid and
+     * data
+     *
+     * @param txid - the transaction identifier
+     * @param rid  - the resource identifier
+     * @throws TransactionLogException  - error adding the entry
+     * @throws ResourceManagerException - error getting the trnasaction log
+     */
+    synchronized void logTransactionData(ExternalXid txid, String rid,
+                                         Object data)
+            throws ResourceManagerException, TransactionLogException {
+<span class="nc" id="L412">        getTransactionLog(txid).logTransactionData(txid, _txExpiryTime * 1000,</span>
+                                                   rid, data);
+
+        // we also want to add this to the transaction data for that
+        // txid
+<span class="nc" id="L417">        LinkedList list = (LinkedList) _activeTransactions.get(txid);</span>
+<span class="nc bnc" id="L418" title="All 2 branches missed.">        if (list != null) {</span>
+<span class="nc" id="L419">            list.add(data);</span>
+        } else {
+<span class="nc" id="L421">            throw new ResourceManagerException(&quot;Trasaction &quot; + txid +</span>
+                                               &quot; is not active.&quot;);
+        }
+<span class="nc" id="L424">    }</span>
+
+    /**
+     * This is the entry point for the garbage collection callback. It scans
+     * through the each transaction log file and determines whether it can be
+     * garbage collected. If it can then it simply destroys the corresponding
+     * TransactionLog.
+     */
+    public void garbageCollect() {
+        try {
+<span class="nc" id="L434">            int gcfiles = 0;</span>
+
+            // if there are no transaction log files then return
+<span class="nc bnc" id="L437" title="All 2 branches missed.">            if (_logs.size() == 0) {</span>
+<span class="nc" id="L438">                return;</span>
+            }
+
+<span class="nc" id="L441">            TreeSet copy = null;</span>
+<span class="nc" id="L442">            synchronized (_logs) {</span>
+<span class="nc" id="L443">                copy = new TreeSet(_logs);</span>
+<span class="nc" id="L444">            }</span>
+
+            // remove the current log file, since this is likely to be the
+            // current log file
+<span class="nc" id="L448">            copy.remove(_logs.last());</span>
+
+            // process each of the remaining log files
+<span class="nc bnc" id="L451" title="All 2 branches missed.">            while (copy.size() &gt; 0) {</span>
+<span class="nc" id="L452">                TransactionLog log = (TransactionLog) copy.first();</span>
+<span class="nc" id="L453">                copy.remove(log);</span>
+<span class="nc bnc" id="L454" title="All 2 branches missed.">                if (log.canGarbageCollect()) {</span>
+                    // destroy the log
+<span class="nc" id="L456">                    log.destroy();</span>
+
+                    // remove it from the log cache
+<span class="nc" id="L459">                    synchronized (_logs) {</span>
+<span class="nc" id="L460">                        _logs.remove(log);</span>
+<span class="nc" id="L461">                    }</span>
+
+                    // increment the number of garbafe collected files
+<span class="nc" id="L464">                    ++gcfiles;</span>
+                }
+<span class="nc" id="L466">            }</span>
+
+            // print an informative message
+<span class="nc" id="L469">            _log.info(&quot;[RMGC] Collected &quot; + gcfiles + &quot; files.&quot;);</span>
+<span class="nc" id="L470">        } catch (Exception exception) {</span>
+<span class="nc" id="L471">            exception.printStackTrace();</span>
+<span class="nc" id="L472">        }</span>
+<span class="nc" id="L473">    }</span>
+
+    /**
+     * Ensure that a transaction with the specified xid is currently active. If
+     * this is the case then commit the transaction based onb the value of the
+     * onePhase flag.
+     * &lt;p/&gt;
+     * This will have the effect of passing all messages through
+     *
+     * @param id       - the xa transaction identity
+     * @param onePhase - treu if it is a one phase commit
+     * @throws XAException - if there is a problem completing the call
+     */
+    public synchronized void commit(Xid id, boolean onePhase)
+            throws XAException {
+        // check that the xid is not null
+<span class="nc bnc" id="L489" title="All 2 branches missed.">        if (id == null) {</span>
+<span class="nc" id="L490">            throw new XAException(XAException.XAER_NOTA);</span>
+        }
+
+        // covert to our internal representation of an xid
+<span class="nc" id="L494">        ExternalXid xid = new ExternalXid(id);</span>
+
+        // check to see that the transaction is active and open. We should
+        // not be allowed to commit a committed transaction.
+<span class="nc bnc" id="L498" title="All 2 branches missed.">        if (!isTransactionActive(xid)) {</span>
+<span class="nc" id="L499">            throw new XAException(XAException.XAER_PROTO);</span>
+        }
+
+        // process all the messages associated with this global transaction
+        // If a message has been  published then sent it to the message mgr
+        // for processing. If a message has been consumed then remove it
+        // from the list of unconsumed messages.
+        try {
+            // retrieve a list of recrods for the specified global transaction
+            // and process them. Ignore the state records and only process the
+            // data records, which are of type TransacitonalObjectWrapper.
+<span class="nc" id="L510">            Object[] records = getTransactionRecords(xid, _rid);</span>
+<span class="nc bnc" id="L511" title="All 2 branches missed.">            for (int index = 0; index &lt; records.length; index++) {</span>
+<span class="nc bnc" id="L512" title="All 2 branches missed.">                if (records[index] instanceof TransactionalObjectWrapper) {</span>
+<span class="nc" id="L513">                    TransactionalObjectWrapper wrapper =</span>
+                            (TransactionalObjectWrapper) records[index];
+<span class="nc bnc" id="L515" title="All 2 branches missed.">                    if (wrapper.isPublishedMessage()) {</span>
+                        // send the published message to the message manager
+<span class="nc" id="L517">                        MessageImpl message = (MessageImpl) wrapper.getObject();</span>
+<span class="nc" id="L518">                        _messages.add(message);</span>
+
+<span class="nc bnc" id="L520" title="All 2 branches missed.">                    } else if (wrapper.isReceivedMessage()) {</span>
+                        // if it is a received message handle then simply
+                        // delete it and mark it as acknowledged
+<span class="nc" id="L523">                        MessageHandle handle = ((ReceivedMessageWrapper) (wrapper)).getMessageHandle();</span>
+<span class="nc" id="L524">                        handle.destroy();</span>
+                    }
+                } else {
+                    // ignore since it is a state records.
+                }
+            }
+<span class="nc" id="L530">        } catch (Exception exception) {</span>
+<span class="nc" id="L531">            _log.error(exception, exception);</span>
+<span class="nc" id="L532">            throw new XAException(&quot;Failed in ResourceManager.commit : &quot; +</span>
+<span class="nc" id="L533">                                  exception.toString());</span>
+        } finally {
+            // and now mark the transaction as closed
+            try {
+<span class="nc" id="L537">                logTransactionState(xid, TransactionState.CLOSED);</span>
+<span class="nc" id="L538">            } catch (Exception exception) {</span>
+<span class="nc" id="L539">                throw new XAException(&quot;Error processing commit : &quot; + exception);</span>
+<span class="nc" id="L540">            }</span>
+        }
+<span class="nc" id="L542">    }</span>
+
+    /**
+     * Ends the work performed on behalf of a transaction branch. The resource
+     * manager disassociates the XA resource from the transaction branch
+     * specified and let the transaction be completedCommits an XA transaction
+     * that is in progress.
+     *
+     * @param id    - the xa transaction identity
+     * @param flags - one of TMSUCCESS, TMFAIL, or TMSUSPEND
+     * @throws XAException - if there is a problem completing the call
+     */
+    public synchronized void end(Xid id, int flags)
+            throws XAException {
+        //check the xid is not null
+<span class="nc bnc" id="L557" title="All 2 branches missed.">        if (id == null) {</span>
+<span class="nc" id="L558">            throw new XAException(XAException.XAER_NOTA);</span>
+        }
+
+        // covert to our internal representation of an xid
+<span class="nc" id="L562">        ExternalXid xid = new ExternalXid(id);</span>
+
+        // check that the flags are valid for this method
+<span class="nc bnc" id="L565" title="All 6 branches missed.">        if ((flags != XAResource.TMSUSPEND) ||</span>
+                (flags != XAResource.TMSUCCESS) ||
+                (flags != XAResource.TMFAIL)) {
+<span class="nc" id="L568">            throw new XAException(XAException.XAER_PROTO);</span>
+        }
+
+<span class="nc bnc" id="L571" title="All 4 branches missed.">        switch (flags) {</span>
+            case XAResource.TMFAIL:
+                // check that the transaction exists
+<span class="nc bnc" id="L574" title="All 2 branches missed.">                if (!isTransactionActive(xid)) {</span>
+<span class="nc" id="L575">                    throw new XAException(XAException.XAER_PROTO);</span>
+                }
+
+                // do not process that associated data, simply rollback
+<span class="nc" id="L579">                rollback(xid);</span>
+<span class="nc" id="L580">                break;</span>
+
+            case XAResource.TMSUSPEND:
+                // check that the transaction is opened
+<span class="nc bnc" id="L584" title="All 2 branches missed.">                if (!isTransactionActive(xid)) {</span>
+<span class="nc" id="L585">                    throw new XAException(XAException.XAER_PROTO);</span>
+                }
+                break;
+
+            case XAResource.TMSUCCESS:
+                // nothing to do here but check that the resource manager is
+                // in a consistent state wrt to this xid. The xid should not
+                // be active if it received the commit, forget etc.
+<span class="nc bnc" id="L593" title="All 2 branches missed.">                if (isTransactionActive(xid)) {</span>
+<span class="nc" id="L594">                    throw new XAException(XAException.XAER_PROTO);</span>
+                }
+                break;
+        }
+<span class="nc" id="L598">    }</span>
+
+    /**
+     * Tell the resource manager to forget about a heuristically completed
+     * transaction branch.
+     *
+     * @param id - the xa transaction identity
+     * @throws XAException - if there is a problem completing the call
+     */
+    public synchronized void forget(Xid id)
+            throws XAException {
+        //check the xid is not null
+<span class="nc bnc" id="L610" title="All 2 branches missed.">        if (id == null) {</span>
+<span class="nc" id="L611">            throw new XAException(XAException.XAER_NOTA);</span>
+        }
+
+        // covert to our internal representation of an xid
+<span class="nc" id="L615">        ExternalXid xid = new ExternalXid(id);</span>
+
+        // check to see that the xid actually exists
+<span class="nc bnc" id="L618" title="All 2 branches missed.">        if (!isTransactionActive(xid)) {</span>
+<span class="nc" id="L619">            throw new XAException(XAException.XAER_PROTO);</span>
+        }
+
+        // call rollback to complete the work
+<span class="nc" id="L623">        rollback(id);</span>
+<span class="nc" id="L624">    }</span>
+
+    /**
+     * Return the transaction timeout for this instance of the resource
+     * manager.
+     *
+     * @return int - the timeout in seconds
+     * @throws XAException - if there is a problem completing the call
+     */
+    public synchronized int getTransactionTimeout()
+            throws XAException {
+<span class="nc" id="L635">        return _txExpiryTime;</span>
+    }
+
+    /**
+     * Ask the resource manager to prepare for a transaction commit of the
+     * transaction specified in xid
+     *
+     * @param xares
+     * @return int - XA_RDONLY or XA_OK
+     * @throws XAException - if there is a problem completing the call
+     */
+    public synchronized boolean isSameRM(XAResource xares)
+            throws XAException {
+<span class="nc" id="L648">        boolean result = false;</span>
+
+<span class="nc bnc" id="L650" title="All 4 branches missed.">        if ((xares == this) ||</span>
+                ((xares instanceof ResourceManager) &amp;&amp;
+<span class="nc bnc" id="L652" title="All 2 branches missed.">                (((ResourceManager) xares)._rid.equals(_rid)))) {</span>
+<span class="nc" id="L653">            result = true;</span>
+        }
+
+<span class="nc" id="L656">        return result;</span>
+    }
+
+    /**
+     * Obtain a list of prepared transaction branches from a resource manager.
+     * The transaction manager calls this method during recovery to obtain the
+     * list of transaction branches that are currently in prepared or
+     * heuristically completed states.
+     *
+     * @throws XAException - if there is a problem completing the call
+     */
+    public synchronized int prepare(Xid id)
+            throws XAException {
+        //check the xid is not null
+<span class="nc bnc" id="L670" title="All 2 branches missed.">        if (id == null) {</span>
+<span class="nc" id="L671">            throw new XAException(XAException.XAER_NOTA);</span>
+        }
+
+        // covert to our internal representation of an xid
+<span class="nc" id="L675">        ExternalXid xid = new ExternalXid(id);</span>
+
+        // check to see that the xid actually exists
+<span class="nc bnc" id="L678" title="All 2 branches missed.">        if (!isTransactionActive(xid)) {</span>
+<span class="nc" id="L679">            throw new XAException(XAException.XAER_PROTO);</span>
+        }
+
+        // can a prepare for the same resource occur multiple times
+        // ????
+
+        try {
+<span class="nc" id="L686">            logTransactionState(xid, TransactionState.PREPARED);</span>
+<span class="nc" id="L687">        } catch (Exception exception) {</span>
+<span class="nc" id="L688">            throw new XAException(&quot;Error processing prepare : &quot; + exception);</span>
+<span class="nc" id="L689">        }</span>
+
+<span class="nc" id="L691">        return XAResource.XA_OK;</span>
+    }
+
+    /**
+     * Inform the resource manager to roll back work done on behalf of a
+     * transaction branch
+     *
+     * @throws XAException - if there is a problem completing the call
+     */
+    public synchronized Xid[] recover(int flag)
+            throws XAException {
+
+<span class="nc" id="L703">        Xid[] result = new Xid[0];</span>
+
+<span class="nc bnc" id="L705" title="All 6 branches missed.">        if ((flag == XAResource.TMNOFLAGS) ||</span>
+                (flag == XAResource.TMSTARTRSCAN) ||
+                (flag == XAResource.TMENDRSCAN)) {
+<span class="nc" id="L708">            LinkedList xids = new LinkedList();</span>
+<span class="nc" id="L709">            Iterator iter = _activeTransactions.keySet().iterator();</span>
+<span class="nc bnc" id="L710" title="All 2 branches missed.">            while (iter.hasNext()) {</span>
+<span class="nc" id="L711">                Xid xid = (Xid) iter.next();</span>
+<span class="nc" id="L712">                LinkedList list = (LinkedList) _activeTransactions.get(xid);</span>
+<span class="nc bnc" id="L713" title="All 2 branches missed.">                if (list.size() &gt; 1) {</span>
+                    // need at least a start in the chain.
+<span class="nc" id="L715">                    Object last = list.getLast();</span>
+<span class="nc bnc" id="L716" title="All 2 branches missed.">                    if ((last instanceof StateTransactionLogEntry)</span>
+                            &amp;&amp;
+<span class="nc" id="L718">                            (((StateTransactionLogEntry) last).getState()</span>
+<span class="nc bnc" id="L719" title="All 2 branches missed.">                            .isPrepared())) {</span>
+<span class="nc" id="L720">                        xids.add(xid);</span>
+                    }
+                }
+
+<span class="nc" id="L724">            }</span>
+<span class="nc" id="L725">            result = (Xid[]) xids.toArray();</span>
+        }
+
+<span class="nc" id="L728">        return result;</span>
+    }
+
+    /**
+     * Set the current transaction timeout value for this XAResource instance.
+     *
+     * @throws XAException - if there is a problem completing the call
+     */
+    public synchronized void rollback(Xid id)
+            throws XAException {
+        //check the xid is not null
+<span class="nc bnc" id="L739" title="All 2 branches missed.">        if (id == null) {</span>
+<span class="nc" id="L740">            throw new XAException(XAException.XAER_NOTA);</span>
+        }
+
+        // covert to our internal representation of an xid
+<span class="nc" id="L744">        ExternalXid xid = new ExternalXid(id);</span>
+
+        // check to see that the xid actually exists
+<span class="nc bnc" id="L747" title="All 2 branches missed.">        if (!isTransactionActive(xid)) {</span>
+<span class="nc" id="L748">            throw new XAException(XAException.XAER_PROTO);</span>
+        }
+
+        // process the data in that transaction. If it was a published message
+        // then drop it. If it was a consumed message then return it back to
+        // the destination.
+        try {
+            // retrieve a list of recrods for the specified global transaction
+            // and process them. Ignore the state records and only process the
+            // data records, which are of type TransacitonalObjectWrapper.
+<span class="nc" id="L758">            Object[] records = getTransactionRecords(xid, _rid);</span>
+<span class="nc bnc" id="L759" title="All 2 branches missed.">            for (int index = 0; index &lt; records.length; index++) {</span>
+<span class="nc bnc" id="L760" title="All 2 branches missed.">                if (records[index] instanceof TransactionalObjectWrapper) {</span>
+<span class="nc" id="L761">                    TransactionalObjectWrapper wrapper =</span>
+                            (TransactionalObjectWrapper) records[index];
+<span class="nc bnc" id="L763" title="All 2 branches missed.">                    if (wrapper.isPublishedMessage()) {</span>
+                        // we don't need to process these messages since the
+                        // global transaction has been rolled back.
+<span class="nc bnc" id="L766" title="All 2 branches missed.">                    } else if (wrapper.isReceivedMessage()) {</span>
+<span class="nc" id="L767">                        ReceivedMessageWrapper rmsg_wrapper =</span>
+                                (ReceivedMessageWrapper) wrapper;
+<span class="nc" id="L769">                        MessageHandle handle =</span>
+<span class="nc" id="L770">                                (MessageHandle) rmsg_wrapper.getObject();</span>
+<span class="nc" id="L771">                        JmsDestination dest = handle.getDestination();</span>
+<span class="nc" id="L772">                        DestinationCache cache =</span>
+<span class="nc" id="L773">                                _destinations.getDestinationCache(dest);</span>
+<span class="nc" id="L774">                        cache.returnMessageHandle(handle);</span>
+                    }
+                } else {
+                    // ignore since it is a state records.
+                }
+            }
+<span class="nc" id="L780">        } catch (Exception exception) {</span>
+<span class="nc" id="L781">            throw new XAException(&quot;Failed in ResourceManager.rollback : &quot; +</span>
+<span class="nc" id="L782">                                  exception.toString());</span>
+        } finally {
+            // and now mark the transaction as closed
+            try {
+<span class="nc" id="L786">                logTransactionState(xid, TransactionState.CLOSED);</span>
+<span class="nc" id="L787">            } catch (Exception exception) {</span>
+<span class="nc" id="L788">                throw new XAException(</span>
+                        &quot;Error processing rollback : &quot; + exception);
+<span class="nc" id="L790">            }</span>
+        }
+<span class="nc" id="L792">    }</span>
+
+    /**
+     * Start work on behalf of a transaction branch specified in xid If TMJOIN
+     * is specified, the start is for joining a transaction previously seen by
+     * the resource manager
+     *
+     * @throws XAException - if there is a problem completing the call
+     */
+    public synchronized boolean setTransactionTimeout(int seconds)
+            throws XAException {
+<span class="nc" id="L803">        _txExpiryTime = seconds;</span>
+<span class="nc" id="L804">        return true;</span>
+    }
+
+    // implementation of XAResource.start
+    public synchronized void start(Xid id, int flags)
+            throws XAException {
+
+        //check the xid is not null
+<span class="nc bnc" id="L812" title="All 2 branches missed.">        if (id == null) {</span>
+<span class="nc" id="L813">            throw new XAException(XAException.XAER_NOTA);</span>
+        }
+
+        // covert to our internal representation of an xid
+<span class="nc" id="L817">        ExternalXid xid = new ExternalXid(id);</span>
+
+        // check that the flags are valid for this method
+<span class="nc bnc" id="L820" title="All 6 branches missed.">        if ((flags != XAResource.TMNOFLAGS) ||</span>
+                (flags != XAResource.TMJOIN) ||
+                (flags != XAResource.TMRESUME)) {
+<span class="nc" id="L823">            throw new XAException(XAException.XAER_PROTO);</span>
+        }
+
+<span class="nc bnc" id="L826" title="All 3 branches missed.">        switch (flags) {</span>
+            case XAResource.TMNOFLAGS:
+                // check to see that the xid does not already exist
+<span class="nc bnc" id="L829" title="All 2 branches missed.">                if (isTransactionActive(xid)) {</span>
+<span class="nc" id="L830">                    throw new XAException(XAException.XAER_DUPID);</span>
+                }
+
+                // otherwise log the start of the transaction
+                try {
+<span class="nc" id="L835">                    logTransactionState(xid, TransactionState.OPENED);</span>
+<span class="nc" id="L836">                } catch (Exception exception) {</span>
+<span class="nc" id="L837">                    throw new XAException(</span>
+                            &quot;Error processing start : &quot; + exception);
+<span class="nc" id="L839">                }</span>
+                break;
+
+            case XAResource.TMJOIN:
+            case XAResource.TMRESUME:
+                // joining a transaction previously seen by the resource
+                // manager
+<span class="nc bnc" id="L846" title="All 2 branches missed.">                if (!isTransactionActive(xid)) {</span>
+<span class="nc" id="L847">                    throw new XAException(XAException.XAER_PROTO);</span>
+                }
+                break;
+        }
+<span class="nc" id="L851">    }</span>
+
+    /**
+     * Return the resource manager identity
+     *
+     * @return the resource manager identity
+     */
+    public String getResourceManagerId() {
+<span class="nc" id="L859">        return _rid;</span>
+    }
+
+    /**
+     * Create the next {@link TransactionLog} and add it to the list of managed
+     * transaction logs.
+     * &lt;p/&gt;
+     * The method will throw ResourceManagerException if there is a problem
+     * completing the request.
+     *
+     * @throws ResourceManagerException
+     */
+    protected TransactionLog createNextTransactionLog()
+            throws ResourceManagerException {
+<span class="nc" id="L873">        TransactionLog newlog = null;</span>
+
+<span class="nc" id="L875">        synchronized (_logs) {</span>
+            try {
+                // get the last log number
+<span class="nc" id="L878">                long last = 1;</span>
+<span class="nc bnc" id="L879" title="All 2 branches missed.">                if (!_logs.isEmpty()) {</span>
+<span class="nc" id="L880">                    last</span>
+<span class="nc" id="L881">                            = getSequenceNumber(</span>
+<span class="nc" id="L882">                                    ((TransactionLog) _logs.last()).getName());</span>
+                }
+
+                // now that we have the last log number, increment it and use
+                // it to build the name of the next log file.
+<span class="nc" id="L887">                String name = _logDirectory</span>
+<span class="nc" id="L888">                        + System.getProperty(&quot;file.separator&quot;) +</span>
+<span class="nc" id="L889">                        RM_LOGFILE_PREFIX + Long.toString(++last)</span>
+                        + RM_LOGFILE_EXTENSION;
+
+                // create a transaction log and add it to the collection
+<span class="nc" id="L893">                newlog = new TransactionLog(name, true);</span>
+<span class="nc" id="L894">                _logs.add(newlog);</span>
+<span class="nc" id="L895">            } catch (TransactionLogException exception) {</span>
+<span class="nc" id="L896">                throw new ResourceManagerException(</span>
+                        &quot;Error in createNextTransactionLog &quot; + exception);
+<span class="nc" id="L898">            }</span>
+<span class="nc" id="L899">        }</span>
+
+<span class="nc" id="L901">        return newlog;</span>
+    }
+
+    /**
+     * Build a list of all log files in the specified log directory
+     *
+     * @throws IllegalArgumentException - if the directory does not exist.
+     */
+    protected void buildLogFileList() {
+<span class="nc" id="L910">        File dir = new File(_logDirectory);</span>
+<span class="nc bnc" id="L911" title="All 2 branches missed.">        if ((!dir.exists()) ||</span>
+<span class="nc bnc" id="L912" title="All 2 branches missed.">                (!dir.isDirectory())) {</span>
+<span class="nc" id="L913">            throw new IllegalArgumentException(_logDirectory +</span>
+                                               &quot; is not a directory&quot;);
+        }
+
+        try {
+<span class="nc" id="L918">            File[] list = dir.listFiles(new FilenameFilter() {</span>
+
+                // implementation of FilenameFilter.accept
+                public boolean accept(File dir, String name) {
+<span class="nc" id="L922">                    boolean result = false;</span>
+
+<span class="nc bnc" id="L924" title="All 2 branches missed.">                    if ((name.startsWith(RM_LOGFILE_PREFIX)) &amp;&amp;</span>
+<span class="nc bnc" id="L925" title="All 2 branches missed.">                            (name.endsWith(RM_LOGFILE_EXTENSION))) {</span>
+<span class="nc" id="L926">                        result = true;</span>
+                    }
+
+<span class="nc" id="L929">                    return result;</span>
+                }
+            });
+
+            // add the files to the list
+<span class="nc" id="L934">            synchronized (_logs) {</span>
+<span class="nc bnc" id="L935" title="All 2 branches missed.">                for (int index = 0; index &lt; list.length; index++) {</span>
+<span class="nc" id="L936">                    _logs.add(new TransactionLog(list[index].getPath(), false));</span>
+                }
+<span class="nc" id="L938">            }</span>
+<span class="nc" id="L939">        } catch (Exception exception) {</span>
+            // replace this with the exception strategy
+<span class="nc" id="L941">            exception.printStackTrace();</span>
+<span class="nc" id="L942">        }</span>
+
+<span class="nc" id="L944">    }</span>
+
+    /**
+     * This method will process all the transaction logs, in the log diretory
+     * and call recover on each of them.
+     *
+     * @throws ResourceManagerException - if there is a problem recovering
+     */
+    private synchronized void recover()
+            throws ResourceManagerException {
+        try {
+<span class="nc bnc" id="L955" title="All 2 branches missed.">            if (!_logs.isEmpty()) {</span>
+<span class="nc" id="L956">                Iterator iter = _logs.iterator();</span>
+<span class="nc bnc" id="L957" title="All 2 branches missed.">                while (iter.hasNext()) {</span>
+<span class="nc" id="L958">                    TransactionLog log = (TransactionLog) iter.next();</span>
+<span class="nc" id="L959">                    HashMap records = log.recover();</span>
+<span class="nc" id="L960">                }</span>
+            }
+<span class="nc" id="L962">        } catch (Exception exception) {</span>
+<span class="nc" id="L963">            throw new ResourceManagerException(&quot;Error in recover &quot; +</span>
+<span class="nc" id="L964">                                               exception.toString());</span>
+<span class="nc" id="L965">        }</span>
+<span class="nc" id="L966">    }</span>
+
+    /**
+     * Retrieve the transaction log for the specified transaction id
+     *
+     * @param txid - the transaction identity
+     * @return TransactionLog
+     * @throws TransactionLogException  - if there is tx log exception
+     * @throws ResourceManagerException - if there is a resource problem.
+     */
+    private TransactionLog getTransactionLog(ExternalXid txid)
+            throws TransactionLogException, ResourceManagerException {
+<span class="nc" id="L978">        TransactionLog log = (TransactionLog) _tridToLogCache.get(txid);</span>
+<span class="nc bnc" id="L979" title="All 2 branches missed.">        if (log == null) {</span>
+<span class="nc" id="L980">            log = getCurrentTransactionLog();</span>
+<span class="nc" id="L981">            addTridLogEntry(txid, log);</span>
+        }
+
+<span class="nc" id="L984">        return log;</span>
+    }
+
+    /**
+     * Get the current transaction log. It will check the last transaction log
+     * opened by the resource manager and determine whether there is space
+     * enough to process another transaction.
+     * &lt;p/&gt;
+     * If there is space enough then it will return that transaction, otherwise
+     * it will create a new transaction log for the resource
+     *
+     * @return TransactionLog - the transaction log to use
+     * @throws ResourceManagerException
+     * @throws TransactionLogException
+     */
+    private TransactionLog getCurrentTransactionLog()
+            throws TransactionLogException, ResourceManagerException {
+<span class="nc" id="L1001">        TransactionLog log = null;</span>
+
+<span class="nc" id="L1003">        synchronized (_logs) {</span>
+<span class="nc bnc" id="L1004" title="All 2 branches missed.">            if (_logs.size() &gt; 0) {</span>
+<span class="nc" id="L1005">                log = (TransactionLog) _logs.last();</span>
+            }
+
+<span class="nc bnc" id="L1008" title="All 2 branches missed.">            if ((log == null) ||</span>
+<span class="nc bnc" id="L1009" title="All 2 branches missed.">                    (log.size() &gt; _logFileSize)) {</span>
+<span class="nc" id="L1010">                log = createNextTransactionLog();</span>
+            }
+<span class="nc" id="L1012">        }</span>
+
+<span class="nc" id="L1014">        return log;</span>
+    }
+
+    /**
+     * Add an entry to the trid log cache table for the specified trid and
+     * transaction log mapping.
+     *
+     * @param trid - the transaction identifier
+     * @param log  - the transaction log
+     */
+    private void addTridLogEntry(ExternalXid trid, TransactionLog log) {
+<span class="nc" id="L1025">        synchronized (_cacheLock) {</span>
+            // one to one relationship
+<span class="nc" id="L1027">            _tridToLogCache.put(trid, log);</span>
+
+            // one to many relationship
+<span class="nc" id="L1030">            Vector trids = (Vector) _logToTridCache.get(log);</span>
+<span class="nc bnc" id="L1031" title="All 2 branches missed.">            if (trids == null) {</span>
+<span class="nc" id="L1032">                trids = new Vector();</span>
+<span class="nc" id="L1033">                _logToTridCache.put(log, trids);</span>
+            }
+<span class="nc" id="L1035">            trids.addElement(trid);</span>
+<span class="nc" id="L1036">        }</span>
+<span class="nc" id="L1037">    }</span>
+
+    /**
+     * Check whether the specified log is also the current log
+     *
+     * @param log - the log to check
+     * @return boolean - true if it is
+     */
+    private boolean isCurrentTransactionLog(TransactionLog log) {
+<span class="nc" id="L1046">        boolean result = false;</span>
+
+<span class="nc bnc" id="L1048" title="All 2 branches missed.">        if (_logs.size() &gt; 0) {</span>
+<span class="nc" id="L1049">            result = log.equals(_logs.last());</span>
+        }
+
+<span class="nc" id="L1052">        return result;</span>
+    }
+
+    /**
+     * Remove an entry to the trid log cache table for the specified trid and
+     * transaction log mapping.
+     *
+     * @param trid - the transaction identifier
+     * @param log  - the transaction log
+     */
+    private void removeTridLogEntry(ExternalXid trid, TransactionLog log) {
+<span class="nc" id="L1063">        synchronized (_cacheLock) {</span>
+
+            // one to one relationship
+<span class="nc" id="L1066">            _tridToLogCache.remove(trid);</span>
+
+            // one to many relationship
+<span class="nc" id="L1069">            Vector trids = (Vector) _logToTridCache.get(log);</span>
+<span class="nc bnc" id="L1070" title="All 2 branches missed.">            if (trids != null) {</span>
+<span class="nc" id="L1071">                trids.remove(trid);</span>
+<span class="nc bnc" id="L1072" title="All 2 branches missed.">                if (trids.size() == 0) {</span>
+<span class="nc" id="L1073">                    _logToTridCache.remove(log);</span>
+                }
+            }
+<span class="nc" id="L1076">        }</span>
+<span class="nc" id="L1077">    }</span>
+
+    /**
+     * Return an arrya of records, both state and date, for the specified global
+     * transaction
+     *
+     * @param xid - the global transaction id
+     * @param rid - the resource id
+     * @return Object[] - array of records
+     */
+    protected Object[] getTransactionRecords(ExternalXid xid, String rid) {
+        Object[] records;
+
+        // we also want to add this to the transaction data for that
+        // txid
+<span class="nc" id="L1092">        LinkedList list = (LinkedList) _activeTransactions.get(xid);</span>
+<span class="nc bnc" id="L1093" title="All 2 branches missed.">        if (list != null) {</span>
+<span class="nc" id="L1094">            records = list.toArray();</span>
+        } else {
+<span class="nc" id="L1096">            records = new Object[0];</span>
+        }
+
+<span class="nc" id="L1099">        return records;</span>
+    }
+
+
+    /**
+     * Return the sequence number of the file files are associated with a unique
+     * number
+     *
+     * @param name - the file name to investigate
+     * @return long - the transaction log number
+     * @throws ResourceManagerException
+     */
+    protected long getSequenceNumber(String name)
+            throws ResourceManagerException {
+<span class="nc" id="L1113">        int start = name.indexOf(RM_LOGFILE_PREFIX) +</span>
+<span class="nc" id="L1114">                RM_LOGFILE_PREFIX.length();</span>
+<span class="nc" id="L1115">        int end = name.indexOf(RM_LOGFILE_EXTENSION);</span>
+
+        // the number must be between the start and end positions
+        try {
+<span class="nc" id="L1119">            return Long.parseLong(name.substring(start, end));</span>
+<span class="nc" id="L1120">        } catch (NumberFormatException exception) {</span>
+<span class="nc" id="L1121">            throw new ResourceManagerException(</span>
+                    &quot;Invalid name assigned to resource manager file &quot; + name);
+        }
+    }
+
+    /**
+     * Return true if the specified transaction is active
+     *
+     * @param xid - the gobal transaction identifier
+     */
+    private synchronized boolean isTransactionActive(ExternalXid xid) {
+<span class="nc" id="L1132">        return _activeTransactions.containsKey(xid);</span>
+    }
+
+    /**
+     * Dump the specified records to the screen
+     */
+    private void dumpRecovered(HashMap records) {
+<span class="nc" id="L1139">        Iterator iter = records.keySet().iterator();</span>
+<span class="nc bnc" id="L1140" title="All 2 branches missed.">        while (iter.hasNext()) {</span>
+<span class="nc" id="L1141">            ExternalXid txid = (ExternalXid) iter.next();</span>
+<span class="nc" id="L1142">            LinkedList list = (LinkedList) records.get(txid);</span>
+<span class="nc" id="L1143">            Iterator oiter = list.iterator();</span>
+<span class="nc bnc" id="L1144" title="All 2 branches missed.">            while (oiter.hasNext()) {</span>
+<span class="nc" id="L1145">                Object object = oiter.next();</span>
+<span class="nc bnc" id="L1146" title="All 2 branches missed.">                if (object instanceof StateTransactionLogEntry) {</span>
+<span class="nc" id="L1147">                    System.err.println(</span>
+                            &quot;Recovered [&quot; + txid + &quot;] Class &quot; +
+<span class="nc" id="L1149">                            object.getClass().getName()</span>
+                            + &quot; [&quot;
+                            +
+<span class="nc" id="L1152">                            ((StateTransactionLogEntry) object).getState()</span>
+<span class="nc" id="L1153">                            .toString()</span>
+                            + &quot;]&quot;);
+                } else {
+<span class="nc" id="L1156">                    System.err.println(&quot;Recovered [&quot; + txid + &quot;] Class &quot; +</span>
+<span class="nc" id="L1157">                                       object.getClass().getName());</span>
+                }
+<span class="nc" id="L1159">            }</span>
+<span class="nc" id="L1160">        }</span>
+<span class="nc" id="L1161">    }</span>
+
+
+    /**
+     * Helper and type-safe method for creating a wrapper object for published
+     * messages
+     *
+     * @param message - the message published
+     * @return PublishedMessageWrapper
+     */
+    private PublishedMessageWrapper createPublishedMessageWrapper(
+            MessageImpl message) {
+<span class="nc" id="L1173">        return new PublishedMessageWrapper(message);</span>
+    }
+
+    /**
+     * Helper and type-safe method for creating a wrapper object for received
+     * messages
+     *
+     * @param id     - the identity of the consumer receiving the message
+     * @param handle - the handle of the message received
+     * @return ReceivedMessageWrapper
+     */
+    private ReceivedMessageWrapper createReceivedMessageWrapper(long id,
+                                                                MessageHandle handle) {
+<span class="nc" id="L1186">        return new ReceivedMessageWrapper(id, handle);</span>
+    }
+
+    /**
+     * This functor is used by various collections to order the transaction log
+     * files created by this resource manager. The resource manager will create
+     * log files with sequentially increasing numbers (i.e xxx01.log, xxx2.log
+     */
+<span class="nc" id="L1194">    private class TranLogFileComparator</span>
+            implements Comparator {
+
+        // implementation of Comparator.comapre
+        public int compare(Object o1, Object o2) {
+<span class="nc" id="L1199">            int result = -1;</span>
+
+            try {
+<span class="nc bnc" id="L1202" title="All 4 branches missed.">                if ((o1 instanceof TransactionLog) &amp;&amp;</span>
+                        (o2 instanceof TransactionLog)) {
+<span class="nc" id="L1204">                    long seq1 = getSequenceNumber(</span>
+<span class="nc" id="L1205">                            ((TransactionLog) o1).getName());</span>
+<span class="nc" id="L1206">                    long seq2 = getSequenceNumber(</span>
+<span class="nc" id="L1207">                            ((TransactionLog) o2).getName());</span>
+
+<span class="nc bnc" id="L1209" title="All 2 branches missed.">                    if (seq1 &gt; seq2) {</span>
+<span class="nc" id="L1210">                        result = 1;</span>
+<span class="nc bnc" id="L1211" title="All 2 branches missed.">                    } else if (seq1 &lt; seq2) {</span>
+<span class="nc" id="L1212">                        result = -1;</span>
+                    } else {
+<span class="nc" id="L1214">                        result = 0;</span>
+                    }
+<span class="nc" id="L1216">                } else {</span>
+<span class="nc" id="L1217">                    throw new ClassCastException(&quot;o1 = &quot; +</span>
+<span class="nc" id="L1218">                                                 o1.getClass().getName() + &quot; and o2 = &quot; +</span>
+<span class="nc" id="L1219">                                                 o2.getClass().getName());</span>
+                }
+<span class="nc" id="L1221">            } catch (Exception exception) {</span>
+<span class="nc" id="L1222">                throw new RuntimeException(&quot;Error in ResourceManager.compare &quot; +</span>
+<span class="nc" id="L1223">                                           exception.toString());</span>
+<span class="nc" id="L1224">            }</span>
+
+<span class="nc" id="L1226">            return result;</span>
+        }
+
+        // implementation of Comparator.equals
+        public boolean equals(Object obj) {
+<span class="nc bnc" id="L1231" title="All 2 branches missed.">            if (obj instanceof TranLogFileComparator) {</span>
+<span class="nc" id="L1232">                return true;</span>
+            }
+
+<span class="nc" id="L1235">            return false;</span>
+        }
+    }
+
+
+    /**
+     * This private member class is used to wrap the transactional object, which
+     * for this particular resource manager is a published message or a received
+     * message handle.
+     */
+    abstract private class TransactionalObjectWrapper {
+
+        /**
+         * The transactional object instance
+         */
+        private Object _object;
+
+        /**
+         * Create an instance of the wrapper using the type and the object
+         *
+         * @param object - the associated object
+         */
+<span class="nc" id="L1257">        public TransactionalObjectWrapper(Object object) {</span>
+<span class="nc" id="L1258">            _object = object;</span>
+<span class="nc" id="L1259">        }</span>
+
+        /**
+         * Check whether the wrapper contains a published message. Note that a
+         * published message has a {@link MessageImpl} a the transactional
+         * object.
+         *
+         * @return boolean - true if it is
+         */
+        public boolean isPublishedMessage() {
+<span class="nc" id="L1269">            return this instanceof PublishedMessageWrapper;</span>
+        }
+
+        /**
+         * Check whether the wrapper contains a received message handle. Note
+         * that a received message contains a {@link MessageHandle} as the
+         * transactional object.
+         *
+         * @return boolean - true if it does
+         */
+        public boolean isReceivedMessage() {
+<span class="nc" id="L1280">            return this instanceof ReceivedMessageWrapper;</span>
+        }
+
+        /**
+         * Return the transaction object
+         *
+         * @return Object
+         */
+        public Object getObject() {
+<span class="nc" id="L1289">            return _object;</span>
+        }
+
+    }
+
+
+    /**
+     * This private member class is used to wrap a published message
+     */
+    private class PublishedMessageWrapper extends TransactionalObjectWrapper {
+
+        /**
+         * Create an instance of the wrapper using the specified message
+         *
+         * @param message - the message to wrap
+         */
+<span class="nc" id="L1305">        public PublishedMessageWrapper(MessageImpl message) {</span>
+<span class="nc" id="L1306">            super(message);</span>
+<span class="nc" id="L1307">        }</span>
+
+        /**
+         * Return an instance of the message object
+         *
+         * @return MessageImpl
+         */
+        public MessageImpl getMessage() {
+<span class="nc" id="L1315">            return (MessageImpl) super.getObject();</span>
+        }
+    }
+
+
+    /**
+     * This private member class is used to wrap a received message
+     */
+    private class ReceivedMessageWrapper extends TransactionalObjectWrapper {
+
+        /**
+         * Caches the id of the {@link ConsumerEndpoint} that is processed this
+         * handle
+         */
+        private long _consumerId;
+
+        /**
+         * Create an instance of the wrapper using the specified message
+         *
+         * @param id     - the identity of the consumer endpoint
+         * @param handle - the handle to the message
+         */
+<span class="nc" id="L1337">        public ReceivedMessageWrapper(long id, MessageHandle handle) {</span>
+<span class="nc" id="L1338">            super(handle);</span>
+<span class="nc" id="L1339">            _consumerId = id;</span>
+<span class="nc" id="L1340">        }</span>
+
+        /**
+         * Return a reference to the  consumer identity
+         *
+         * @return String
+         */
+        public long getConsumerId() {
+<span class="nc" id="L1348">            return _consumerId;</span>
+        }
+
+        /**
+         * Return an instance of the message handle
+         *
+         * @return MessageHandle
+         */
+        public MessageHandle getMessageHandle() {
+<span class="nc" id="L1357">            return (MessageHandle) super.getObject();</span>
+        }
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

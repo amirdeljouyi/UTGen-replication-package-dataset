@@ -1,0 +1,854 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CopyExecutor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.plugins.dbcopy</a> &gt; <span class="el_source">CopyExecutor.java</span></div><h1>CopyExecutor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (C) 2005 Rob Manning
+ * manningr@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+package net.sourceforge.squirrel_sql.plugins.dbcopy;
+
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Types;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.fw.dialects.CreateScriptPreferences;
+import net.sourceforge.squirrel_sql.fw.dialects.DialectFactory;
+import net.sourceforge.squirrel_sql.fw.dialects.DialectUtils;
+import net.sourceforge.squirrel_sql.fw.dialects.UserCancelledOperationException;
+import net.sourceforge.squirrel_sql.fw.sql.*;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.event.AnalysisEvent;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.event.CopyEvent;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.event.CopyTableListener;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.event.ErrorEvent;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.event.RecordEvent;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.event.StatementEvent;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.event.TableEvent;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.prefs.DBCopyPreferenceBean;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.prefs.PreferencesManager;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.util.DBUtil;
+
+import org.hibernate.MappingException;
+
+/**
+ * This is the class that performs the table copy using database connections 
+ * to two different database schemas.  
+ */
+public class CopyExecutor extends I18NBaseObject {
+
+    /** the class that provides out session information */
+<span class="nc" id="L60">    SessionInfoProvider prov = null;</span>
+    
+    /** the source session.  This comes from prov */
+<span class="nc" id="L63">    ISession sourceSession = null;</span>
+    
+    /** the destination session.  This comes from prov */
+<span class="nc" id="L66">    ISession destSession = null;</span>
+    
+    /** the thread we do the work in */
+<span class="nc" id="L69">    private Thread execThread = null;</span>
+    
+    /** what value did autocommit have in dest connection when we received it */ 
+<span class="nc" id="L72">    private boolean originalAutoCommitValue = true;</span>
+    
+    /** what value does autocommit have in dest connection now */
+<span class="nc" id="L75">    private boolean currentAutoCommitValue = true;    </span>
+    
+    /** the user's preferences */
+    private static DBCopyPreferenceBean prefs = 
+<span class="nc" id="L79">                                            PreferencesManager.getPreferences();    </span>
+    
+    /** Logger for this class. */
+<span class="nc" id="L82">    private final static ILogger log = </span>
+<span class="nc" id="L83">                         LoggerController.createLogger(CopyExecutor.class);</span>
+        
+    /** the list of ITableInfos that represent the user's last selection. */
+<span class="nc" id="L86">    private ArrayList&lt;ITableInfo&gt; selectedTableInfos = null;    </span>
+    
+    /** the CopyTableListeners that have registered with this class */
+<span class="nc" id="L89">    private ArrayList&lt;CopyTableListener&gt; listeners = </span>
+        new ArrayList&lt;CopyTableListener&gt;();
+    
+    /** whether or not the user cancelled the copy operation */
+<span class="nc" id="L93">    private volatile boolean cancelled = false;    </span>
+    
+    /** impl that gives us feedback from the user */
+<span class="nc" id="L96">    private UICallbacks pref = null;</span>
+    
+    /** the start time in millis that the copy operation began */
+<span class="nc" id="L99">    private long start = 0;</span>
+    
+    /** the finish time in millis that the copy operation began */
+<span class="nc" id="L102">    private long end = 0;</span>
+    
+    /**
+     * Constructor.
+     * 
+     * @param p the provider of information regarding what to copy where.
+     */
+<span class="nc" id="L109">    public CopyExecutor(SessionInfoProvider p) {</span>
+<span class="nc" id="L110">        prov = p;</span>
+<span class="nc" id="L111">        sourceSession = prov.getSourceSession();</span>
+<span class="nc" id="L112">        destSession = prov.getDestSession();</span>
+<span class="nc" id="L113">    }</span>
+    
+    /**
+     * Starts the thread that executes the copy operation.
+     */
+    public void execute() {   	    	 
+<span class="nc" id="L119">        Runnable runnable = new Runnable() {</span>
+            public void run() {
+<span class="nc" id="L121">                _execute();</span>
+<span class="nc" id="L122">            }</span>
+        };
+<span class="nc" id="L124">        execThread = new Thread(runnable);</span>
+<span class="nc" id="L125">        execThread.setName(&quot;DBCopy Executor Thread&quot;);</span>
+<span class="nc" id="L126">        execThread.start();</span>
+<span class="nc" id="L127">    }</span>
+
+    /** 
+     * Cancels the copy operation.
+     */
+    public void cancel() {
+<span class="nc" id="L133">        cancelled = true;</span>
+<span class="nc" id="L134">        execThread.interrupt();        </span>
+<span class="nc" id="L135">    }</span>
+    
+    /**
+     * Performs the table copy operation.
+     */
+    private void _execute() {
+<span class="nc" id="L141">        start = System.currentTimeMillis();</span>
+<span class="nc" id="L142">        boolean encounteredException = false;</span>
+<span class="nc" id="L143">        ISQLConnection destConn = destSession.getSQLConnection();</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">        if (!analyzeTables()) {</span>
+<span class="nc" id="L145">            return;</span>
+        }
+<span class="nc" id="L147">        setupAutoCommit(destConn);</span>
+<span class="nc" id="L148">        List&lt;IDatabaseObjectInfo&gt; sourceObjs = prov.getSourceDatabaseObjects();</span>
+<span class="nc" id="L149">        int[] counts = getTableCounts();</span>
+<span class="nc" id="L150">        sendCopyStarted(counts);</span>
+
+        //String destSchema = prov.getDestDatabaseObject().getSimpleName();  used to break, when a table was selected
+
+<span class="nc" id="L154">       String destSchema = DBUtil.getSchemaNameFromDbObject(prov.getDestDatabaseObject());</span>
+
+<span class="nc" id="L156">       String destCatalog = prov.getDestDatabaseObject().getCatalogName();</span>
+
+<span class="nc" id="L158">       TableInfo pasteToTableInfo = prov.getPasteToTableInfo(destConn, destSchema, destCatalog);</span>
+
+<span class="nc" id="L160">       int sourceObjectCount = 0;</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">        for (IDatabaseObjectInfo info : sourceObjs) {</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">            if (! (info instanceof ITableInfo)) {</span>
+<span class="nc" id="L163">                continue;</span>
+            }
+<span class="nc" id="L165">            ITableInfo sourceTI = (ITableInfo)info;</span>
+<span class="nc" id="L166">            sendTableCopyStarted(chooseDestTableInfo(sourceTI, pasteToTableInfo), sourceObjectCount+1);</span>
+            try {
+<span class="nc" id="L168">                int destTableCount = DBUtil.getTableCount(destSession,</span>
+                                                          destCatalog,
+                                                          destSchema,
+<span class="nc" id="L171">                                                          chooseDestTableInfo(sourceTI, pasteToTableInfo).getSimpleName(),</span>
+                                                          DialectFactory.DEST_TYPE);
+<span class="nc bnc" id="L173" title="All 2 branches missed.">                if (destTableCount == -1) {</span>
+<span class="nc" id="L174">                    createTable(sourceTI, chooseDestTableInfo(sourceTI, pasteToTableInfo).getSimpleName(), destSchema, destCatalog);</span>
+                } 
+<span class="nc bnc" id="L176" title="All 2 branches missed.">                if (destTableCount &gt; 0) {</span>
+                    try {
+<span class="nc bnc" id="L178" title="All 2 branches missed.">                        if (pref.appendRecordsToExisting()) {</span>
+                            /* Do nothing */
+<span class="nc bnc" id="L180" title="All 2 branches missed.">                        } else if (pref.deleteTableData(chooseDestTableInfo(sourceTI, pasteToTableInfo).getSimpleName())) {</span>
+                            // Yes || Yes to all
+<span class="nc" id="L182">                            DBUtil.deleteDataInExistingTable(destSession,</span>
+                                                             destCatalog,
+                                                             destSchema,
+<span class="nc" id="L185">                                                             chooseDestTableInfo(sourceTI, pasteToTableInfo).getSimpleName());</span>
+                        } else {
+<span class="nc" id="L187">                            continue; // skip this table, try the next.</span>
+                        }
+                        
+<span class="nc" id="L190">                    } catch (UserCancelledOperationException e) {</span>
+<span class="nc" id="L191">                        cancelled = true;</span>
+<span class="nc" id="L192">                        break;</span>
+<span class="nc" id="L193">                    }</span>
+                } 
+                
+<span class="nc" id="L196">                copyTable(sourceTI, pasteToTableInfo, counts[sourceObjectCount]);</span>
+                
+<span class="nc bnc" id="L198" title="All 4 branches missed.">                if (sourceObjectCount == sourceObjs.size() - 1 &amp;&amp; !cancelled) {</span>
+                    // We just copied the last table.  Now it is safe to copy the
+                    // constraints.(Well, that is, if all FK dependencies are met
+                    // in the group of tables being copied. 
+                    // TODO: new feature could be to examine table list for FK's 
+                    // in tables not in the list then prompt the user to add 
+                    // those missing tables to the list.
+<span class="nc" id="L205">                    copyConstraints(sourceObjs);</span>
+                }
+<span class="nc bnc" id="L207" title="All 2 branches missed.">                if (!cancelled) {</span>
+<span class="nc" id="L208">                    sendTableCopyFinished(chooseDestTableInfo(sourceTI, pasteToTableInfo), sourceObjectCount+1);</span>
+<span class="nc" id="L209">                    sleep(prefs.getTableDelayMillis());</span>
+                }
+<span class="nc" id="L211">            } catch (SQLException e) {</span>
+<span class="nc" id="L212">                encounteredException = true;</span>
+<span class="nc" id="L213">                sendErrorEvent(ErrorEvent.SQL_EXCEPTION_TYPE, e);</span>
+<span class="nc" id="L214">                break;</span>
+<span class="nc" id="L215">            } catch (MappingException e) {</span>
+<span class="nc" id="L216">                encounteredException = true;</span>
+<span class="nc" id="L217">                sendErrorEvent(ErrorEvent.MAPPING_EXCEPTION_TYPE, e);</span>
+<span class="nc" id="L218">                break;</span>
+<span class="nc" id="L219">            } catch (UserCancelledOperationException e) {</span>
+<span class="nc" id="L220">                cancelled = true;</span>
+<span class="nc" id="L221">                break;</span>
+<span class="nc" id="L222">            } catch (Exception e) {</span>
+<span class="nc" id="L223">                encounteredException = true;</span>
+<span class="nc" id="L224">                sendErrorEvent(ErrorEvent.GENERIC_EXCEPTION, e);</span>
+<span class="nc" id="L225">                break;</span>
+<span class="nc" id="L226">            }</span>
+<span class="nc" id="L227">            sourceObjectCount++;</span>
+<span class="nc" id="L228">        }        </span>
+<span class="nc" id="L229">        restoreAutoCommit(destConn);</span>
+<span class="nc bnc" id="L230" title="All 2 branches missed.">        if (cancelled) {</span>
+<span class="nc" id="L231">            sendErrorEvent(ErrorEvent.USER_CANCELLED_EXCEPTION_TYPE);</span>
+<span class="nc" id="L232">            return;</span>
+        }
+<span class="nc bnc" id="L234" title="All 2 branches missed.">        if (encounteredException) {</span>
+<span class="nc" id="L235">            return;</span>
+        }         
+<span class="nc" id="L237">        end = System.currentTimeMillis();</span>
+        
+<span class="nc" id="L239">        ISession session = prov.getDestSession();</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">        if (session.getSessionSheet() != null) {</span>
+<span class="nc" id="L241">      	  session.getSchemaInfo().reload(DBUtil.getSchemaFromDbObject(prov.getDestDatabaseObject(), session.getSchemaInfo()));</span>
+<span class="nc" id="L242">      	  session.getSchemaInfo().fireSchemaInfoUpdate();</span>
+        }
+
+<span class="nc" id="L245">        notifyCopyFinished();</span>
+<span class="nc" id="L246">    }</span>
+
+   private ITableInfo chooseDestTableInfo(ITableInfo sourceTI, TableInfo pasteToTableInfo)
+   {
+<span class="nc bnc" id="L250" title="All 2 branches missed.">      if (null == pasteToTableInfo)</span>
+      {
+<span class="nc" id="L252">         return sourceTI;</span>
+      }
+      else
+      {
+<span class="nc" id="L256">         return pasteToTableInfo;</span>
+      }
+   }
+
+   /**
+     * Registers the specified listener to receive copy events from this class.
+     * 
+     * @param listener
+     */
+    public void addListener(CopyTableListener listener) {
+<span class="nc bnc" id="L266" title="All 2 branches missed.">        if (listener == null) {</span>
+<span class="nc" id="L267">            throw new IllegalArgumentException(&quot;listener cannot be null&quot;);</span>
+        }
+<span class="nc" id="L269">        listeners.add(listener);</span>
+<span class="nc" id="L270">    }</span>
+    
+    /**
+     * Causes the current thread to sleep for the amount of time specified if 
+     * sleepTime &gt; 0.  No effect for sleepTime &lt;= 0.
+     * 
+     * @param sleepTime time in milliseconds to make the current thread sleep.
+     */
+    private void sleep(long sleepTime) {
+<span class="nc" id="L279">        boolean shouldSleep = prefs.isDelayBetweenObjects();</span>
+<span class="nc bnc" id="L280" title="All 4 branches missed.">        if (!shouldSleep || sleepTime &lt;= 0) {</span>
+<span class="nc" id="L281">            return;</span>
+        }
+        try {
+<span class="nc" id="L284">            Thread.sleep(sleepTime);</span>
+<span class="nc" id="L285">        } catch (InterruptedException e) {</span>
+            // Do Nothing
+<span class="nc" id="L287">        }</span>
+<span class="nc" id="L288">    }</span>
+    
+    /**
+     * For all selected tables, loop through their columns and see if the column
+     * name can be used as a column name in the destination database.  This 
+     * method will send an error event if a table has any column names that 
+     * cannot be used in the destination database.  This method just returns
+     * true if the user preference is not to test column names.  
+     * 
+     * @return true if the tables can be created in the destination database; 
+     *         false is returned otherwise.
+     */
+    private boolean analyzeTables() {
+<span class="nc" id="L301">        boolean result = true;</span>
+<span class="nc bnc" id="L302" title="All 2 branches missed.">        if (!prefs.isTestColumnNames()) {</span>
+<span class="nc" id="L303">            return true;</span>
+        }
+<span class="nc bnc" id="L305" title="All 2 branches missed.">        if (DBUtil.sameDatabaseType(prov.getSourceSession(), </span>
+<span class="nc" id="L306">                                    prov.getDestSession()))</span>
+        {
+            // No need to check column name validity when source and dest are
+            // of the same type of database.
+<span class="nc" id="L310">            return true;</span>
+        }
+<span class="nc" id="L312">        sendAnalysisStarted();</span>
+        try {
+<span class="nc" id="L314">            List&lt;IDatabaseObjectInfo&gt; dbObjs = prov.getSourceDatabaseObjects();</span>
+<span class="nc" id="L315">            int sourceObjectCount = 0;</span>
+<span class="nc bnc" id="L316" title="All 2 branches missed.">            for (IDatabaseObjectInfo info : dbObjs) {</span>
+<span class="nc" id="L317">                ITableInfo ti = (ITableInfo) info;</span>
+<span class="nc" id="L318">                sendAnalyzingTable(ti, sourceObjectCount+1);</span>
+<span class="nc" id="L319">                DBUtil.validateColumnNames(ti, prov);</span>
+<span class="nc" id="L320">                sourceObjectCount++;</span>
+<span class="nc" id="L321">            }</span>
+<span class="nc" id="L322">        } catch (MappingException e) {</span>
+<span class="nc" id="L323">            sendErrorEvent(ErrorEvent.MAPPING_EXCEPTION_TYPE, e);</span>
+<span class="nc" id="L324">            result = false;</span>
+<span class="nc" id="L325">        } catch (UserCancelledOperationException e) {</span>
+<span class="nc" id="L326">            sendErrorEvent(ErrorEvent.USER_CANCELLED_EXCEPTION_TYPE, e);</span>
+<span class="nc" id="L327">            result = false;</span>
+<span class="nc" id="L328">        }</span>
+<span class="nc" id="L329">        return result;</span>
+    }        
+
+    
+    /**
+     * Setup the auto-commit setting on the specified connection to 
+     * the user's preference.
+     * 
+     * @param con
+     */
+    private void setupAutoCommit(ISQLConnection con) {
+<span class="nc" id="L340">        boolean autoCommitPref = prefs.isAutoCommitEnabled();</span>
+        try {
+<span class="nc" id="L342">            originalAutoCommitValue = con.getAutoCommit();</span>
+<span class="nc" id="L343">            currentAutoCommitValue = originalAutoCommitValue;</span>
+<span class="nc bnc" id="L344" title="All 2 branches missed.">            if (autoCommitPref != originalAutoCommitValue) {</span>
+<span class="nc" id="L345">                con.setAutoCommit(autoCommitPref);</span>
+<span class="nc" id="L346">                currentAutoCommitValue = autoCommitPref;</span>
+            }
+<span class="nc" id="L348">        } catch (SQLException e) {</span>
+            // Don't fool around with manual commit later.
+<span class="nc" id="L350">            currentAutoCommitValue = true;</span>
+<span class="nc" id="L351">            sendErrorEvent(ErrorEvent.SETUP_AUTO_COMMIT_TYPE, e);</span>
+<span class="nc" id="L352">        }</span>
+    
+<span class="nc" id="L354">    }</span>
+    
+    /**
+     * Restore the auto-commit setting on the specified connection to the 
+     * whatever it was previous to our manipulation
+     * 
+     * @param con
+     */
+    private void restoreAutoCommit(ISQLConnection con) {
+<span class="nc bnc" id="L363" title="All 2 branches missed.">        if (originalAutoCommitValue == currentAutoCommitValue) {</span>
+<span class="nc" id="L364">            return;</span>
+        }
+        try {
+<span class="nc" id="L367">            con.setAutoCommit(originalAutoCommitValue);</span>
+<span class="nc" id="L368">        } catch (SQLException e) {</span>
+<span class="nc" id="L369">            sendErrorEvent(ErrorEvent.RESTORE_AUTO_COMMIT_TYPE, e);                      </span>
+<span class="nc" id="L370">        }</span>
+<span class="nc" id="L371">    }    </span>
+    
+    private int[] getTableCounts() {
+<span class="nc" id="L374">        int[] result = null;</span>
+        
+<span class="nc" id="L376">        ISession sourceSession = prov.getSourceSession();</span>
+<span class="nc" id="L377">        List&lt;IDatabaseObjectInfo&gt; dbObjs = prov.getSourceDatabaseObjects();</span>
+<span class="nc bnc" id="L378" title="All 2 branches missed.">        if (dbObjs != null) {</span>
+<span class="nc" id="L379">            result = new int[dbObjs.size()];</span>
+<span class="nc" id="L380">            selectedTableInfos = new ArrayList&lt;ITableInfo&gt;();</span>
+<span class="nc" id="L381">            int sourceObjectCount = 0;</span>
+<span class="nc bnc" id="L382" title="All 2 branches missed.">            for (IDatabaseObjectInfo info : dbObjs) {</span>
+<span class="nc bnc" id="L383" title="All 2 branches missed.">                if (! (info instanceof ITableInfo)) {</span>
+<span class="nc" id="L384">                    continue;</span>
+                }          
+                try {
+<span class="nc" id="L387">                    ITableInfo ti = (ITableInfo) info;</span>
+<span class="nc" id="L388">                    selectedTableInfos.add(ti);</span>
+                    // This doesn't appear to work for PROGRESS RDBMS
+                    //result[i] = DBUtil.getTableCount(con, ti.getSimpleName());
+<span class="nc" id="L391">                    result[sourceObjectCount] = </span>
+<span class="nc" id="L392">                        DBUtil.getTableCount(sourceSession,</span>
+<span class="nc" id="L393">                                             ti.getCatalogName(),</span>
+<span class="nc" id="L394">                                             ti.getSchemaName(),</span>
+<span class="nc" id="L395">                                             ti.getSimpleName(),</span>
+                                             DialectFactory.SOURCE_TYPE);
+<span class="nc" id="L397">                } catch (Exception e) {</span>
+<span class="nc" id="L398">                    log.error(&quot;&quot;,e);</span>
+<span class="nc" id="L399">                    result[sourceObjectCount] = 0;</span>
+<span class="nc" id="L400">                }</span>
+<span class="nc" id="L401">                sourceObjectCount++;</span>
+<span class="nc" id="L402">            }           </span>
+        }
+<span class="nc" id="L404">        return result;</span>
+    }
+    
+    private void sendAnalysisStarted() {
+<span class="nc" id="L408">        AnalysisEvent event = new AnalysisEvent(prov);</span>
+<span class="nc" id="L409">        Iterator&lt;CopyTableListener&gt; i = listeners.iterator();</span>
+<span class="nc bnc" id="L410" title="All 2 branches missed.">        while (i.hasNext()) {</span>
+<span class="nc" id="L411">            CopyTableListener listener = i.next();</span>
+<span class="nc" id="L412">            listener.tableAnalysisStarted(event);</span>
+<span class="nc" id="L413">        }</span>
+<span class="nc" id="L414">    }</span>
+    
+    private void sendAnalyzingTable(ITableInfo ti, int number) {
+<span class="nc" id="L417">        TableEvent event = new TableEvent(prov);</span>
+<span class="nc" id="L418">        event.setTableCount(prov.getSourceDatabaseObjects().size());</span>
+<span class="nc" id="L419">        event.setTableNumber(number);</span>
+<span class="nc" id="L420">        Iterator&lt;CopyTableListener&gt; i = listeners.iterator();</span>
+<span class="nc" id="L421">        event.setTableName(ti.getSimpleName());</span>
+<span class="nc bnc" id="L422" title="All 2 branches missed.">        while (i.hasNext()) {</span>
+<span class="nc" id="L423">            CopyTableListener listener = i.next();</span>
+<span class="nc" id="L424">            listener.analyzingTable(event);</span>
+<span class="nc" id="L425">        }                </span>
+<span class="nc" id="L426">    }</span>
+    
+    private void sendCopyStarted(int[] tableCounts) {
+<span class="nc" id="L429">        CopyEvent event = new CopyEvent(prov);</span>
+<span class="nc" id="L430">        event.setTableCounts(tableCounts);</span>
+<span class="nc" id="L431">        Iterator&lt;CopyTableListener&gt; i = listeners.iterator();</span>
+<span class="nc bnc" id="L432" title="All 2 branches missed.">        while (i.hasNext()) {</span>
+<span class="nc" id="L433">            CopyTableListener listener = i.next();</span>
+<span class="nc" id="L434">            listener.copyStarted(event);</span>
+<span class="nc" id="L435">        }        </span>
+<span class="nc" id="L436">    }</span>
+    
+    private void sendTableCopyStarted(ITableInfo ti, int number) {
+<span class="nc" id="L439">        TableEvent event = new TableEvent(prov);</span>
+<span class="nc" id="L440">        event.setTableNumber(number);</span>
+<span class="nc" id="L441">        event.setTableCount(prov.getSourceDatabaseObjects().size());</span>
+<span class="nc" id="L442">        event.setTableName(ti.getSimpleName());</span>
+<span class="nc" id="L443">        Iterator&lt;CopyTableListener&gt; i = listeners.iterator();</span>
+<span class="nc bnc" id="L444" title="All 2 branches missed.">        while (i.hasNext()) {</span>
+<span class="nc" id="L445">            CopyTableListener listener = i.next();</span>
+<span class="nc" id="L446">            listener.tableCopyStarted(event);</span>
+<span class="nc" id="L447">        }</span>
+<span class="nc" id="L448">    }</span>
+
+    private void sendTableCopyFinished(ITableInfo ti, int number) {
+<span class="nc" id="L451">        TableEvent event = new TableEvent(prov);</span>
+<span class="nc" id="L452">        event.setTableNumber(number);</span>
+<span class="nc" id="L453">        event.setTableCount(prov.getSourceDatabaseObjects().size());</span>
+<span class="nc" id="L454">        event.setTableName(ti.getSimpleName());</span>
+<span class="nc" id="L455">        Iterator&lt;CopyTableListener&gt; i = listeners.iterator();</span>
+<span class="nc bnc" id="L456" title="All 2 branches missed.">        while (i.hasNext()) {</span>
+<span class="nc" id="L457">            CopyTableListener listener = i.next();</span>
+<span class="nc" id="L458">            listener.tableCopyFinished(event);</span>
+<span class="nc" id="L459">        }</span>
+<span class="nc" id="L460">    }    </span>
+    
+    /**
+     * Send an error event message to all CopyTableListeners
+     * @param type the type of the ErrorEvent.
+     */
+    private void sendErrorEvent(int type) {
+<span class="nc" id="L467">        sendErrorEvent(type, null);</span>
+<span class="nc" id="L468">    }</span>
+
+    /**
+     * Send an error event message to all CopyTableListeners
+     * @param type the type of the ErrorEvent.
+     * @param e the exception that was encountered.
+     */    
+    private void sendErrorEvent(int type, Exception e) {
+<span class="nc" id="L476">        ErrorEvent event = new ErrorEvent(prov, type);</span>
+<span class="nc" id="L477">        event.setException(e);</span>
+<span class="nc" id="L478">        Iterator&lt;CopyTableListener&gt; i = listeners.iterator();</span>
+<span class="nc bnc" id="L479" title="All 2 branches missed.">        while (i.hasNext()) {</span>
+<span class="nc" id="L480">            CopyTableListener listener = i.next();</span>
+<span class="nc" id="L481">            listener.handleError(event);</span>
+<span class="nc" id="L482">        }        </span>
+<span class="nc" id="L483">    }</span>
+    
+    private void sendRecordEvent(int number, int count) {
+<span class="nc" id="L486">        RecordEvent event = new RecordEvent(prov, number, count);</span>
+<span class="nc" id="L487">        Iterator&lt;CopyTableListener&gt; i = listeners.iterator();</span>
+<span class="nc bnc" id="L488" title="All 2 branches missed.">        while (i.hasNext()) {</span>
+<span class="nc" id="L489">            CopyTableListener listener = i.next();</span>
+<span class="nc" id="L490">            listener.recordCopied(event);</span>
+<span class="nc" id="L491">        }</span>
+<span class="nc" id="L492">    }</span>
+    
+    private void sendStatementEvent(String sql, String[] vals) {
+<span class="nc" id="L495">        StatementEvent event = </span>
+            new StatementEvent(sql, StatementEvent.INSERT_RECORD_TYPE);
+<span class="nc" id="L497">        event.setBindValues(vals);</span>
+<span class="nc" id="L498">        Iterator&lt;CopyTableListener&gt; i = listeners.iterator();</span>
+<span class="nc bnc" id="L499" title="All 2 branches missed.">        while (i.hasNext()) {</span>
+<span class="nc" id="L500">            CopyTableListener listener = i.next();</span>
+<span class="nc" id="L501">            listener.statementExecuted(event);</span>
+<span class="nc" id="L502">        }        </span>
+<span class="nc" id="L503">    }</span>
+    
+    private void notifyCopyFinished() {
+<span class="nc" id="L506">        int seconds = (int)getElapsedSeconds();</span>
+<span class="nc" id="L507">        Iterator&lt;CopyTableListener&gt; i = listeners.iterator();</span>
+<span class="nc bnc" id="L508" title="All 2 branches missed.">        while (i.hasNext()) {</span>
+<span class="nc" id="L509">            CopyTableListener listener = i.next();</span>
+<span class="nc" id="L510">            listener.copyFinished(seconds);</span>
+<span class="nc" id="L511">        }</span>
+<span class="nc" id="L512">    }</span>
+    
+    /**
+     * 
+     * @return
+     */
+    private long getElapsedSeconds() {
+<span class="nc" id="L519">        long result = 1;</span>
+<span class="nc" id="L520">        double elapsed = end - start;</span>
+<span class="nc bnc" id="L521" title="All 2 branches missed.">        if (elapsed &gt; 1000) {</span>
+<span class="nc" id="L522">            result = Math.round(elapsed / 1000);</span>
+        }
+<span class="nc" id="L524">        return result;</span>
+    }
+    
+    /**
+     * 
+     *
+     * @param sourceTableInfo
+     * @param pasteToTableInfo
+     *@param sourceTableCount  @throws MappingException
+     * @throws SQLException
+     */
+    private void copyTable(ITableInfo sourceTableInfo, TableInfo pasteToTableInfo, int sourceTableCount)
+        throws MappingException, SQLException, UserCancelledOperationException
+    {
+<span class="nc" id="L538">        PreparedStatement insertStmt = null;</span>
+<span class="nc" id="L539">        ResultSet rs = null;</span>
+<span class="nc bnc" id="L540" title="All 2 branches missed.">        if (cancelled) {</span>
+<span class="nc" id="L541">            return;</span>
+        }
+<span class="nc bnc" id="L543" title="All 2 branches missed.">        if (!PreferencesManager.getPreferences().isCopyData()) {</span>
+<span class="nc" id="L544">            return;</span>
+        }
+<span class="nc" id="L546">        ISQLConnection sourceConn = prov.getSourceSession().getSQLConnection();</span>
+<span class="nc" id="L547">        ISQLConnection destConn = prov.getDestSession().getSQLConnection();</span>
+<span class="nc" id="L548">        SQLDatabaseMetaData sourceMetaData = sourceConn.getSQLMetaData();</span>
+<span class="nc" id="L549">        SQLDatabaseMetaData destMetaData = destConn.getSQLMetaData();</span>
+        try {
+<span class="nc" id="L551">            String destSchema = DBUtil.getSchemaNameFromDbObject(prov.getDestDatabaseObject());</span>
+
+<span class="nc" id="L553">            ITableInfo destTableInfo =</span>
+<span class="nc" id="L554">                DBUtil.getTableInfo(prov.getDestSession(),</span>
+                                    destSchema,
+<span class="nc" id="L556">                                    chooseDestTableInfo(sourceTableInfo, pasteToTableInfo).getSimpleName());</span>
+            
+<span class="nc" id="L558">            TableColumnInfo[] sourceInfos = sourceMetaData.getColumnInfo(sourceTableInfo);</span>
+<span class="nc" id="L559">            TableColumnInfo[] destInfos = destMetaData.getColumnInfo(destTableInfo);</span>
+            
+<span class="nc" id="L561">            destInfos = sort(sourceInfos, </span>
+                             destInfos, 
+<span class="nc" id="L563">                             sourceTableInfo.getQualifiedName(),</span>
+<span class="nc" id="L564">                             destTableInfo.getQualifiedName());</span>
+            
+<span class="nc" id="L566">            String sourceColList = DBUtil.getColumnList(sourceInfos);</span>
+<span class="nc" id="L567">            String destColList = DBUtil.getColumnList(destInfos);</span>
+            
+<span class="nc" id="L569">            String selectSQL = DBUtil.getSelectQuery(prov,</span>
+                                                     sourceColList, 
+                                                     sourceTableInfo);
+<span class="nc" id="L572">            String insertSQL = DBUtil.getInsertSQL(prov, destColList,</span>
+                                                   destTableInfo,
+                                                   destInfos.length);
+<span class="nc" id="L575">            insertStmt = destConn.prepareStatement(insertSQL);</span>
+            
+<span class="nc" id="L577">            int count = 1;</span>
+<span class="nc" id="L578">            int commitCount = prefs.getCommitCount(); </span>
+<span class="nc" id="L579">            int columnCount = destInfos.length;</span>
+<span class="nc" id="L580">            String[] bindVarVals = new String[columnCount];</span>
+                        
+<span class="nc" id="L582">            boolean foundLOBType = false;</span>
+            // Loop through source records...
+<span class="nc" id="L584">            DBUtil.setLastStatement(selectSQL);</span>
+<span class="nc" id="L585">            rs = DBUtil.executeQuery(prov.getSourceSession(), selectSQL);</span>
+<span class="nc" id="L586">            DBUtil.setLastStatement(insertSQL);</span>
+<span class="nc" id="L587">            boolean isMysql = DialectFactory.isMySQL(destSession.getMetaData());</span>
+<span class="nc" id="L588">            boolean isSourceOracle = </span>
+<span class="nc" id="L589">                DialectFactory.isOracle(sourceSession.getMetaData());</span>
+<span class="nc" id="L590">            boolean isDestOracle = DialectFactory.isOracle(destSession.getMetaData());</span>
+<span class="nc bnc" id="L591" title="All 4 branches missed.">            while (rs.next() &amp;&amp; !cancelled) {</span>
+                // MySQL driver gets unhappy when we use the same 
+                // PreparedStatement to bind null and non-null LOB variables
+                // without clearing the parameters first.
+<span class="nc bnc" id="L595" title="All 4 branches missed.">                if (isMysql &amp;&amp; foundLOBType) </span>
+                {
+<span class="nc" id="L597">                    insertStmt.clearParameters();</span>
+                }
+<span class="nc" id="L599">                StringBuilder lastStmtValuesBuffer = new StringBuilder();</span>
+<span class="nc" id="L600">                lastStmtValuesBuffer.append(&quot;\n(Bind variable values: &quot;);</span>
+<span class="nc bnc" id="L601" title="All 2 branches missed.">                for (int i = 0; i &lt; columnCount; i++) {</span>
+
+<span class="nc" id="L603">                    int sourceColType = sourceInfos[i].getDataType();</span>
+                    // If source column is type 1111 (OTHER), try to use the 
+                    // column type name to find a type that isn't 1111.
+<span class="nc" id="L606">                    sourceColType = DBUtil.replaceOtherDataType(sourceInfos[i], prov.getSourceSession());</span>
+<span class="nc" id="L607">                    sourceColType = getDateReplacement(sourceColType, </span>
+                                                       isSourceOracle);
+                    
+<span class="nc" id="L610">                    int destColType   = destInfos[i].getDataType();</span>
+                    // If source column is type 1111 (OTHER), try to use the 
+                    // column type name to find a type that isn't 1111.
+<span class="nc" id="L613">                    destColType = DBUtil.replaceOtherDataType(destInfos[i], prov.getDestSession());</span>
+<span class="nc" id="L614">                    destColType = getDateReplacement(destColType, isDestOracle);</span>
+                    
+                    
+<span class="nc" id="L617">                    String bindVal = DBUtil.bindVariable(insertStmt,</span>
+                                                         sourceColType,
+                                                         destColType,
+                                                         i+1,
+                                                         rs);
+<span class="nc" id="L622">                    bindVarVals[i] = bindVal;</span>
+<span class="nc" id="L623">                    lastStmtValuesBuffer.append(bindVal);</span>
+<span class="nc bnc" id="L624" title="All 2 branches missed.">                    if (i + 1 &lt; columnCount) {</span>
+<span class="nc" id="L625">                        lastStmtValuesBuffer.append(&quot;, &quot;);</span>
+                    }
+<span class="nc bnc" id="L627" title="All 2 branches missed.">                    if (isLOBType(destColType)) {</span>
+<span class="nc" id="L628">                    	foundLOBType = true;</span>
+                    }
+                }                
+<span class="nc" id="L631">                lastStmtValuesBuffer.append(&quot;)&quot;);</span>
+<span class="nc" id="L632">                DBUtil.setLastStatementValues(lastStmtValuesBuffer.toString());</span>
+<span class="nc" id="L633">                sendStatementEvent(insertSQL, bindVarVals);</span>
+<span class="nc" id="L634">                insertStmt.executeUpdate();</span>
+<span class="nc" id="L635">                sendRecordEvent(count, sourceTableCount);</span>
+<span class="nc" id="L636">                count++;</span>
+<span class="nc bnc" id="L637" title="All 2 branches missed.">                if (!currentAutoCommitValue) {</span>
+<span class="nc bnc" id="L638" title="All 2 branches missed.">                    if ((count % commitCount) == 0) {</span>
+<span class="nc" id="L639">                        commitConnection(destConn);</span>
+                    }
+                }
+<span class="nc" id="L642">                sleep(prefs.getRecordDelayMillis());</span>
+<span class="nc" id="L643">            }</span>
+        } finally {
+<span class="nc" id="L645">            SQLUtilities.closeResultSet(rs);</span>
+<span class="nc" id="L646">            SQLUtilities.closeStatement(insertStmt);</span>
+<span class="nc bnc" id="L647" title="All 2 branches missed.">            if (!currentAutoCommitValue) {</span>
+<span class="nc" id="L648">                commitConnection(destConn);</span>
+            }
+        }
+<span class="nc" id="L651">    }</span>
+    
+    /**
+     * This will return a TIMESTAMP type when the specified type is a DATE and 
+     * isOracle is true.  This is done so that Oracle dates that have a time 
+     * component, will have the time component copied correctly.
+     *  
+     * @param session
+     * @param type
+     * @param isOracle
+     * @return
+     */
+    private int getDateReplacement(int type, boolean isOracle) 
+    {
+<span class="nc" id="L665">        int result = type;</span>
+<span class="nc bnc" id="L666" title="All 4 branches missed.">        if (isOracle &amp;&amp; type == java.sql.Types.DATE) {</span>
+<span class="nc" id="L667">            result = java.sql.Types.TIMESTAMP;</span>
+        }
+<span class="nc" id="L669">        return result;</span>
+    }
+    
+    /**
+     * Returns a boolean value indicating whether or not the specific column
+     * type is a binary or LOB column.
+     * @param columnType the JDBC type.
+     * 
+     * @return true if the specified type is LOB; false otherwise.
+     */
+    private boolean isLOBType(int columnType) {
+<span class="nc bnc" id="L680" title="All 8 branches missed.">        if (columnType == Types.BLOB </span>
+        		|| columnType == Types.CLOB
+                || columnType == Types.LONGVARBINARY
+                || columnType == Types.BINARY) 
+        {
+<span class="nc" id="L685">            return true;</span>
+        }
+<span class="nc" id="L687">        return false;</span>
+    }
+    
+    /**
+     * Sorts the specified destInfos array based on the order of the sourceInfos
+     * array.  Not a very efficient algorthim, but it gets the job done.
+     * TODO: rewrite this using Collections sorting capability.
+     * 
+     * @param sourceInfos
+     * @param destInfos
+     * @param sourceTableName
+     * @param destTableName
+     * @return a re-ordered version of the specified destInfos array
+     * @throws MappingException if the arrays differ in length or column names.
+     */
+    private TableColumnInfo[] sort(TableColumnInfo[] sourceInfos, 
+                                   TableColumnInfo[] destInfos,
+                                   String sourceTableName,
+                                   String destTableName)
+        throws MappingException 
+    {
+<span class="nc bnc" id="L708" title="All 2 branches missed.">        if (sourceInfos.length != destInfos.length) {</span>
+            //i18n[CopyExecutor.tablecolmismatch=Column count for table {0} in 
+            //source database is {1}, but column count for table {2} in 
+            //destination database is {3}
+<span class="nc" id="L712">            String msg = </span>
+<span class="nc" id="L713">                getMessage(&quot;CopyExecutor.tablecolmismatch&quot;,</span>
+                                      new Object[] {
+                                              sourceTableName,
+<span class="nc" id="L716">                                              Integer.valueOf(sourceInfos.length),</span>
+                                              destTableName,
+<span class="nc" id="L718">                                              Integer.valueOf(destInfos.length)});</span>
+<span class="nc" id="L719">            throw new MappingException(msg);</span>
+        }
+<span class="nc" id="L721">        ArrayList&lt;TableColumnInfo&gt; result = new ArrayList&lt;TableColumnInfo&gt;();</span>
+        
+<span class="nc bnc" id="L723" title="All 2 branches missed.">        for (int sourceIdx = 0; sourceIdx &lt; sourceInfos.length; sourceIdx++) {</span>
+<span class="nc" id="L724">            TableColumnInfo sourceInfo = sourceInfos[sourceIdx];</span>
+            // trim the column name in case of HADB
+<span class="nc" id="L726">            String sourceColumnName = sourceInfo.getColumnName().trim();</span>
+<span class="nc" id="L727">            boolean found = false;</span>
+<span class="nc" id="L728">            int destIdx = 0;</span>
+<span class="nc bnc" id="L729" title="All 4 branches missed.">            while (!found &amp;&amp; destIdx &lt; destInfos.length) {</span>
+<span class="nc" id="L730">                TableColumnInfo destInfo = destInfos[destIdx];</span>
+                // trim the column name in case of HADB
+<span class="nc" id="L732">                String destColumnName = destInfo.getColumnName().trim();</span>
+<span class="nc bnc" id="L733" title="All 2 branches missed.">                if (destColumnName.equalsIgnoreCase(sourceColumnName)) {</span>
+<span class="nc" id="L734">                    result.add(destInfo);</span>
+<span class="nc" id="L735">                    found = true;</span>
+                }
+<span class="nc" id="L737">                destIdx++;</span>
+<span class="nc" id="L738">            }</span>
+<span class="nc bnc" id="L739" title="All 2 branches missed.">            if (!found) {</span>
+<span class="nc" id="L740">                throw new MappingException(&quot;Destination table &quot;+destTableName+</span>
+                                    &quot; doesn't appear to have a column named &quot;+
+<span class="nc" id="L742">                                    sourceInfo.getColumnName());</span>
+            }
+        }
+<span class="nc" id="L745">        return result.toArray(new TableColumnInfo[destInfos.length]);</span>
+    }
+    
+    /**
+     * Commit the specified Connection and log any SQLExceptions that might 
+     * occur.
+     * 
+     * @param connection
+     */
+    private void commitConnection(ISQLConnection connection) {
+        try {
+<span class="nc" id="L756">            connection.commit();</span>
+<span class="nc" id="L757">        } catch (SQLException e) {</span>
+<span class="nc" id="L758">            log.error(&quot;Failed to commit connection - &quot;+connection, e);</span>
+<span class="nc" id="L759">        }</span>
+<span class="nc" id="L760">    }</span>
+    
+    /**
+     * Copies the foreign key constraints.  Primary keys are created in the table
+     * create statement, since some databases don't support adding primary keys
+     * after table creation. This will have no effect when using Axion as the 
+     * source database.
+     *  
+     * @param sourceConn
+     * @param destConn
+     * @param ti
+     * @throws SQLException
+     */
+    private void copyConstraints(List&lt;IDatabaseObjectInfo&gt; dbObjs) 
+        throws SQLException, UserCancelledOperationException 
+    {
+<span class="nc bnc" id="L776" title="All 2 branches missed.">        if (!prefs.isCopyForeignKeys() </span>
+<span class="nc bnc" id="L777" title="All 2 branches missed.">        		|| DialectFactory.isAxion(prov.getSourceSession().getMetaData())) {</span>
+<span class="nc" id="L778">            return;</span>
+        }
+<span class="nc" id="L780">        ISQLConnection destConn = prov.getDestSession().getSQLConnection();</span>
+<span class="nc bnc" id="L781" title="All 2 branches missed.">        for (IDatabaseObjectInfo info : dbObjs) {</span>
+<span class="nc" id="L782">            ITableInfo ti = (ITableInfo) info;</span>
+<span class="nc" id="L783">            Set&lt;String&gt; fkStmts = </span>
+<span class="nc" id="L784">                DBUtil.getForeignKeySQL(prov, ti, selectedTableInfos);</span>
+<span class="nc" id="L785">            Iterator&lt;String&gt; it = fkStmts.iterator();</span>
+<span class="nc bnc" id="L786" title="All 2 branches missed.">            while (it.hasNext()) {</span>
+<span class="nc" id="L787">                String fkSQL = it.next();</span>
+<span class="nc" id="L788">                DBUtil.setLastStatementValues(&quot;&quot;);</span>
+                try {
+<span class="nc" id="L790">                    DBUtil.executeUpdate(destConn, fkSQL, true);</span>
+<span class="nc" id="L791">                } catch (SQLException e) {</span>
+<span class="nc" id="L792">                    log.error(&quot;Unexpected exception while attempting to &quot; +</span>
+                              &quot;create FK constraint using sql = &quot;+fkSQL, e);
+<span class="nc" id="L794">                }</span>
+<span class="nc" id="L795">            }           </span>
+<span class="nc" id="L796">        }</span>
+<span class="nc" id="L797">    }    </span>
+    
+    private void createTable(ITableInfo ti, String destTableName, String destSchema, String destCatalog)
+        throws SQLException, UserCancelledOperationException, MappingException
+    {
+<span class="nc bnc" id="L802" title="All 2 branches missed.">        if (cancelled) {</span>
+<span class="nc" id="L803">            return;</span>
+        }
+<span class="nc" id="L805">        ISQLConnection destCon = prov.getDestSession().getSQLConnection();</span>
+<span class="nc" id="L806">        String createTableSql = DBUtil.getCreateTableSql(prov, ti, destTableName, destSchema, destCatalog);</span>
+
+<span class="nc bnc" id="L808" title="All 2 branches missed.">        if (log.isDebugEnabled()) {</span>
+<span class="nc" id="L809">      	  log.debug(&quot;Creating table in dest db with SQL: &quot;+createTableSql);</span>
+        }
+        
+<span class="nc" id="L812">        DBUtil.executeUpdate(destCon, createTableSql, true);</span>
+        
+<span class="nc bnc" id="L814" title="All 4 branches missed.">        if (prefs.isCommitAfterTableDefs() &amp;&amp; !currentAutoCommitValue) {</span>
+<span class="nc" id="L815">            commitConnection(destCon);</span>
+        }
+        
+<span class="nc bnc" id="L818" title="All 6 branches missed.">        if (prefs.isCopyIndexDefs() &amp;&amp; (null == prov.getPasteToTableName() || false == prov.isCopiedFormDestinationSession() ) ) {</span>
+<span class="nc" id="L819">            Collection&lt;String&gt; indices = null;</span>
+<span class="nc" id="L820">            ISQLDatabaseMetaData sqlmd = sourceSession.getMetaData();</span>
+<span class="nc" id="L821">            CreateScriptPreferences prefs = new CreateScriptPreferences();</span>
+<span class="nc bnc" id="L822" title="All 2 branches missed.">            prefs.setQualifyTableNames(null != destSchema);</span>
+
+<span class="nc bnc" id="L824" title="All 2 branches missed.">           if (this.prefs.isCopyPrimaryKeys()) {</span>
+<span class="nc" id="L825">                PrimaryKeyInfo[] pkList = sqlmd.getPrimaryKey(ti);</span>
+<span class="nc" id="L826">                List&lt;PrimaryKeyInfo&gt; pkList2 = Arrays.asList(pkList);</span>
+<span class="nc" id="L827">                indices = DialectUtils.createIndexes(ti, destTableName, destSchema, sqlmd, pkList2, prefs);</span>
+<span class="nc" id="L828">            } else {</span>
+<span class="nc" id="L829">                indices = DialectUtils.createIndexes(ti, destTableName, destSchema, sqlmd, null, prefs);</span>
+            }
+<span class="nc" id="L831">            Iterator&lt;String&gt; i = indices.iterator();</span>
+<span class="nc bnc" id="L832" title="All 2 branches missed.">            while (i.hasNext()) {</span>
+<span class="nc" id="L833">                String createIndicesSql = i.next();</span>
+<span class="nc" id="L834">                DBUtil.executeUpdate(destCon, createIndicesSql, true);</span>
+<span class="nc" id="L835">            }</span>
+        }
+<span class="nc" id="L837">    }</span>
+
+    /**
+     * @param pref The pref to set.
+     */
+    public void setPref(UICallbacks pref) {
+<span class="nc" id="L843">        this.pref = pref;</span>
+<span class="nc" id="L844">    }</span>
+
+    /**
+     * @return Returns the pref.
+     */
+    public UICallbacks getPref() {
+<span class="nc" id="L850">        return pref;</span>
+    }    
+    
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

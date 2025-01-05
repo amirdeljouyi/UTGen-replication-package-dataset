@@ -1,0 +1,959 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ObjectTree.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.session.mainpanel.objecttree</a> &gt; <span class="el_source">ObjectTree.java</span></div><h1>ObjectTree.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.session.mainpanel.objecttree;
+/*
+ * Copyright (C) 2002-2004 Colin Bell
+ * colbell@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write toS the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+import java.awt.Color;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import javax.swing.Action;
+import javax.swing.JMenu;
+import javax.swing.JPopupMenu;
+import javax.swing.JTree;
+import javax.swing.SwingUtilities;
+import javax.swing.ToolTipManager;
+import javax.swing.event.EventListenerList;
+import javax.swing.event.TreeExpansionEvent;
+import javax.swing.event.TreeExpansionListener;
+import javax.swing.event.TreeSelectionEvent;
+import javax.swing.event.TreeSelectionListener;
+import javax.swing.tree.DefaultMutableTreeNode;
+import javax.swing.tree.TreePath;
+
+import net.sourceforge.squirrel_sql.client.action.ActionCollection;
+import net.sourceforge.squirrel_sql.client.gui.db.SQLAliasColorProperties;
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.client.session.action.CopyQualifiedObjectNameAction;
+import net.sourceforge.squirrel_sql.client.session.action.CopySimpleObjectNameAction;
+import net.sourceforge.squirrel_sql.client.session.action.DeleteSelectedTablesAction;
+import net.sourceforge.squirrel_sql.client.session.action.EditWhereColsAction;
+import net.sourceforge.squirrel_sql.client.session.action.FilterObjectsAction;
+import net.sourceforge.squirrel_sql.client.session.action.RefreshObjectTreeItemAction;
+import net.sourceforge.squirrel_sql.client.session.action.RefreshSchemaInfoAction;
+import net.sourceforge.squirrel_sql.client.session.action.SQLFilterAction;
+import net.sourceforge.squirrel_sql.client.session.action.SetDefaultCatalogAction;
+import net.sourceforge.squirrel_sql.fw.gui.CursorChanger;
+import net.sourceforge.squirrel_sql.fw.gui.GUIUtils;
+import net.sourceforge.squirrel_sql.fw.id.IIdentifier;
+import net.sourceforge.squirrel_sql.fw.sql.DatabaseObjectType;
+import net.sourceforge.squirrel_sql.fw.sql.IDatabaseObjectInfo;
+import net.sourceforge.squirrel_sql.fw.sql.ITableInfo;
+import net.sourceforge.squirrel_sql.fw.util.EnumerationIterator;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+/**
+ * This is the tree showing the structure of objects in the database.
+ *
+ * @author &lt;A HREF=&quot;mailto:colbell@users.sourceforge.net&quot;&gt;Colin Bell&lt;/A&gt;
+ */
+class ObjectTree extends JTree
+{
+    private static final long serialVersionUID = 1L;
+
+    /** Logger for this class. */
+<span class="nc" id="L79">	private static final ILogger s_log =</span>
+<span class="nc" id="L80">		LoggerController.createLogger(ObjectTree.class);</span>
+
+	/** Model for this tree. */
+	private final ObjectTreeModel _model;
+
+	/** Current session. */
+	private final ISession _session;
+
+	/**
+	 * Collection of popup menus (&lt;TT&gt;JPopupMenu&lt;/TT&gt; instances) for the
+	 * object tree. Keyed by node type.
+	 */
+<span class="nc" id="L92">	private final Map&lt;IIdentifier, JPopupMenu&gt; _popups = </span>
+        new HashMap&lt;IIdentifier, JPopupMenu&gt;();
+
+	/**
+	 * Global popup menu. This contains items that are to be displayed
+	 * in the popup menu no matter what items are selected in the tree.
+	 */
+<span class="nc" id="L99">	private final JPopupMenu _globalPopup = new JPopupMenu();</span>
+
+<span class="nc" id="L101">	private final List&lt;Action&gt; _globalActions = new ArrayList&lt;Action&gt;();</span>
+
+	/**
+	 * Object to synchronize on so that only one node can be expanded at any
+	 * one time.
+	 */
+<span class="nc" id="L107">	private Object _syncObject = new Object();</span>
+
+	/**
+	 * String representation of the &lt;TT&gt;TreePath&lt;/TT&gt; objects that have been
+	 * expanded. The key is &lt;TT&gt;Treepath.toString()&lt;/TT&gt; and the value
+	 * is &lt;TT&gt;null&lt;/TT&gt;.
+	 */
+<span class="nc" id="L114">	private Map&lt;String, Object&gt; _expandedPathNames = new HashMap&lt;String, Object&gt;();</span>
+
+	/**
+	 * Collection of listeners to this object tree.
+	 */
+<span class="nc" id="L119">	private EventListenerList _listenerList = new EventListenerList();</span>
+
+<span class="nc" id="L121">   private boolean _startExpandInThread = true;</span>
+
+   /**
+    * ctor specifying session.
+    *
+    * @param	session	Current session.
+    *
+    * @throws	IllegalArgumentException
+    * 			Thrown if &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;ISession&lt;/TT&gt; passed.
+    */
+   ObjectTree(ISession session)
+   {
+<span class="nc" id="L133">      super(new ObjectTreeModel(session));</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">      if (session == null)</span>
+      {
+<span class="nc" id="L136">         throw new IllegalArgumentException(&quot;ISession == null&quot;);</span>
+      }
+<span class="nc" id="L138">      setRowHeight(getFontMetrics(getFont()).getHeight());</span>
+<span class="nc" id="L139">      _session = session;</span>
+<span class="nc" id="L140">      _model = (ObjectTreeModel)getModel();</span>
+<span class="nc" id="L141">      setModel(_model);</span>
+
+<span class="nc" id="L143">      addTreeExpansionListener(new NodeExpansionListener());</span>
+
+<span class="nc" id="L145">      addTreeSelectionListener(new TreeSelectionListener()</span>
+<span class="nc" id="L146">      {</span>
+         public void valueChanged(TreeSelectionEvent e)
+         {
+<span class="nc bnc" id="L149" title="All 2 branches missed.">            if(null != e.getNewLeadSelectionPath())</span>
+            {
+<span class="nc" id="L151">               scrollPathToVisible(e.getNewLeadSelectionPath());</span>
+            }
+<span class="nc" id="L153">         }</span>
+      });
+
+<span class="nc" id="L156">      setShowsRootHandles(true);</span>
+
+      // Add actions to the popup menu.
+<span class="nc" id="L159">      final ActionCollection actions = session.getApplication().getActionCollection();</span>
+
+      // Options for global popup menu.
+<span class="nc" id="L162">      addToPopup(actions.get(RefreshSchemaInfoAction.class));</span>
+<span class="nc" id="L163">      addToPopup(actions.get(RefreshObjectTreeItemAction.class));</span>
+
+<span class="nc" id="L165">      addToPopup(DatabaseObjectType.TABLE, actions.get(EditWhereColsAction.class));</span>
+
+<span class="nc" id="L167">      addToPopup(DatabaseObjectType.TABLE, actions.get(SQLFilterAction.class));</span>
+<span class="nc" id="L168">      addToPopup(DatabaseObjectType.VIEW, actions.get(SQLFilterAction.class));</span>
+
+<span class="nc" id="L170">      addToPopup(DatabaseObjectType.TABLE, actions.get(DeleteSelectedTablesAction.class));</span>
+
+<span class="nc" id="L172">      addToPopup(DatabaseObjectType.SESSION, actions.get(FilterObjectsAction.class));</span>
+
+
+<span class="nc" id="L175">      session.getApplication().getThreadPool().addTask(new Runnable() {</span>
+          public void run() {
+            try
+            {
+                // Option to select default catalog only applies to sessions
+                // that support catalogs.
+<span class="nc bnc" id="L181" title="All 2 branches missed.">                if (_session.getSQLConnection().getSQLMetaData().supportsCatalogs())</span>
+                {
+<span class="nc" id="L183">                    SwingUtilities.invokeLater(new Runnable() {</span>
+                        public void run() {
+<span class="nc" id="L185">                            addToPopup(DatabaseObjectType.CATALOG,</span>
+<span class="nc" id="L186">                                       actions.get(SetDefaultCatalogAction.class));</span>
+<span class="nc" id="L187">                        }</span>
+
+                    });
+                }
+            }
+<span class="nc" id="L192">            catch (Throwable th)</span>
+            {
+                // Assume DBMS doesn't support catalogs.
+<span class="nc" id="L195">                s_log.debug(th);</span>
+<span class="nc" id="L196">            }</span>
+
+<span class="nc" id="L198">            SwingUtilities.invokeLater(new Runnable() {</span>
+                public void run() {
+<span class="nc" id="L200">                    addToPopup(actions.get(CopySimpleObjectNameAction.class));</span>
+<span class="nc" id="L201">                    addToPopup(actions.get(CopyQualifiedObjectNameAction.class));</span>
+
+
+<span class="nc" id="L204">                  addMouseListener(new ObjectTreeMouseListener());</span>
+<span class="nc" id="L205">                  setCellRenderer(new ObjectTreeCellRenderer(_model, _session));</span>
+<span class="nc" id="L206">                  ObjectTree.this.refresh(false);</span>
+<span class="nc" id="L207">                  ObjectTree.this.setSelectionPath(ObjectTree.this.getPathForRow(0));</span>
+<span class="nc" id="L208">                }</span>
+            });
+<span class="nc" id="L210">          }</span>
+      });
+
+<span class="nc" id="L213">      SQLAliasColorProperties colorProps = session.getAlias().getColorProperties();</span>
+<span class="nc bnc" id="L214" title="All 2 branches missed.">      if (colorProps.isOverrideObjectTreeBackgroundColor()) {</span>
+<span class="nc" id="L215">      	int rgbValue = colorProps.getObjectTreeBackgroundColorRgbValue();</span>
+<span class="nc" id="L216">      	setBackground(new Color(rgbValue));</span>
+      }
+<span class="nc" id="L218">   }</span>
+
+   // Mouse listener used to display popup menu.
+<span class="nc" id="L221">   private class ObjectTreeMouseListener extends MouseAdapter {</span>
+      public void mousePressed(MouseEvent evt)
+      {      	
+      	 
+<span class="nc bnc" id="L225" title="All 2 branches missed.">          if (evt.isPopupTrigger())</span>
+          {
+    			// If the user wants to select for Right mouse clicks then change the selection before popup 
+         	// appears
+<span class="nc bnc" id="L229" title="All 2 branches missed.">         	 if (_session.getApplication().getSquirrelPreferences().getSelectOnRightMouseClick()) {         	 </span>
+<span class="nc" id="L230">	         	 TreePath path = ObjectTree.this.getPathForLocation(evt.getX(), evt.getY());</span>
+<span class="nc" id="L231">	         	 boolean alreadySelected = false;</span>
+<span class="nc" id="L232">	         	 TreePath[] selectedPaths = ObjectTree.this.getSelectionPaths();</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">	         	 if (selectedPaths != null) {	         	 </span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">		         	 for (TreePath selectedPath : selectedPaths) {</span>
+<span class="nc bnc" id="L235" title="All 4 branches missed.">		         		 if (path != null &amp;&amp; path.equals(selectedPath)) {</span>
+<span class="nc" id="L236">		         			 alreadySelected = true;</span>
+<span class="nc" id="L237">		         			 break;</span>
+		         		 }
+		         	 }
+	         	 }
+<span class="nc bnc" id="L241" title="All 2 branches missed.">	         	 if (!alreadySelected) {</span>
+<span class="nc" id="L242">	         		 ObjectTree.this.setSelectionPath(path);</span>
+	         	 }
+         	 }
+<span class="nc" id="L245">             showPopup(evt.getX(), evt.getY());</span>
+          }
+<span class="nc" id="L247">      }</span>
+      public void mouseReleased(MouseEvent evt)
+      {
+<span class="nc bnc" id="L250" title="All 2 branches missed.">          if (evt.isPopupTrigger())</span>
+          {
+<span class="nc" id="L252">              showPopup(evt.getX(), evt.getY());</span>
+          }
+<span class="nc" id="L254">      }   	</span>
+   }
+   
+	/**
+	 * Component has been added to its parent.
+	 */
+	public void addNotify()
+	{
+<span class="nc" id="L262">		super.addNotify();</span>
+		// Register so that we can display different tooltips depending
+		// which entry in list mouse is over.
+<span class="nc" id="L265">		ToolTipManager.sharedInstance().registerComponent(this);</span>
+<span class="nc" id="L266">	}</span>
+
+	/**
+	 * Component has been removed from its parent.
+	 */
+	public void removeNotify()
+	{
+<span class="nc" id="L273">		super.removeNotify();</span>
+
+		// Don't need tooltips any more.
+<span class="nc" id="L276">		ToolTipManager.sharedInstance().unregisterComponent(this);</span>
+<span class="nc" id="L277">	}</span>
+
+	/**
+	 * Return the name of the object that the mouse is currently
+	 * over as the tooltip text.
+	 *
+	 * @param	event	Used to determine the current mouse position.
+	 */
+	public String getToolTipText(MouseEvent evt)
+	{
+<span class="nc" id="L287">		String tip = null;</span>
+<span class="nc" id="L288">		final TreePath path = getPathForLocation(evt.getX(), evt.getY());</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">		if (path != null)</span>
+		{
+<span class="nc" id="L291">			tip = path.getLastPathComponent().toString();</span>
+		}
+		else
+		{
+<span class="nc" id="L295">			tip = getToolTipText();</span>
+		}
+<span class="nc" id="L297">		return tip;</span>
+	}
+
+	/**
+	 * Return the typed data model for this tree.
+	 *
+	 * @return	The typed data model for this tree.
+	 */
+	public ObjectTreeModel getTypedModel()
+	{
+<span class="nc" id="L307">		return _model;</span>
+	}
+
+	/**
+	 * Refresh tree.
+    * @param reloadSchemaInfo
+    */
+	public void refresh(final boolean reloadSchemaInfo)
+	{
+<span class="nc" id="L316">      Runnable task = new Runnable()</span>
+<span class="nc" id="L317">      {</span>
+         public void run()
+         {
+<span class="nc bnc" id="L320" title="All 2 branches missed.">            if (reloadSchemaInfo)</span>
+            {
+<span class="nc" id="L322">               _session.getSchemaInfo().reloadAll();</span>
+            }
+
+
+<span class="nc" id="L326">            GUIUtils.processOnSwingEventThread(new Runnable()</span>
+<span class="nc" id="L327">            {</span>
+               public void run()
+               {
+<span class="nc" id="L330">                  refreshTree();</span>
+<span class="nc" id="L331">               }</span>
+            });
+<span class="nc" id="L333">         }</span>
+      };
+
+<span class="nc bnc" id="L336" title="All 2 branches missed.">      if(reloadSchemaInfo)</span>
+      {
+<span class="nc" id="L338">         _session.getApplication().getThreadPool().addTask(task);</span>
+      }
+      else
+      {
+         // No need to this in background when SchemaInfo  is not reloaded.
+<span class="nc" id="L343">         task.run();</span>
+      }
+<span class="nc" id="L345">   }</span>
+
+   private void refreshTree()
+   {
+<span class="nc" id="L349">      final TreePath[] selectedPaths = getSelectionPaths();</span>
+<span class="nc" id="L350">      final Map&lt;String, Object&gt; selectedPathNames = </span>
+          new HashMap&lt;String, Object&gt;();
+<span class="nc bnc" id="L352" title="All 2 branches missed.">      if (selectedPaths != null)</span>
+      {
+<span class="nc bnc" id="L354" title="All 2 branches missed.">         for (int i = 0; i &lt; selectedPaths.length; ++i)</span>
+         {
+<span class="nc" id="L356">            selectedPathNames.put(selectedPaths[i].toString(), null);</span>
+         }
+      }
+<span class="nc" id="L359">      ObjectTreeNode root = _model.getRootObjectTreeNode();</span>
+<span class="nc" id="L360">      root.removeAllChildren();</span>
+<span class="nc" id="L361">      fireObjectTreeCleared();</span>
+<span class="nc" id="L362">      startExpandingTree(root, false, selectedPathNames, false);</span>
+<span class="nc" id="L363">      fireObjectTreeRefreshed();</span>
+<span class="nc" id="L364">   }</span>
+
+   /**
+    * Refresh the nodes currently selected in the object tree.
+    */
+   public void refreshSelectedNodes()
+   {
+
+<span class="nc" id="L372">      final TreePath[] selectedPaths = getSelectionPaths();</span>
+<span class="nc" id="L373">      ObjectTreeNode[] nodes = getSelectedNodes();</span>
+<span class="nc" id="L374">      final Map&lt;String, Object&gt; selectedPathNames = </span>
+          new HashMap&lt;String, Object&gt;();
+<span class="nc bnc" id="L376" title="All 2 branches missed.">      if (selectedPaths != null)</span>
+      {
+<span class="nc bnc" id="L378" title="All 2 branches missed.">         for (int i = 0; i &lt; selectedPaths.length; ++i)</span>
+         {
+<span class="nc" id="L380">            selectedPathNames.put(selectedPaths[i].toString(), null);</span>
+         }
+      }
+<span class="nc" id="L383">      clearSelection();</span>
+
+
+<span class="nc" id="L386">      DefaultMutableTreeNode parent = (DefaultMutableTreeNode) nodes[0].getParent();</span>
+
+<span class="nc bnc" id="L388" title="All 2 branches missed.">      if (parent != null)</span>
+      {
+<span class="nc" id="L390">         parent.removeAllChildren();</span>
+<span class="nc" id="L391">         startExpandingTree((ObjectTreeNode) parent, false, selectedPathNames, true);</span>
+      }
+      else
+      {
+<span class="nc" id="L395">         nodes[0].removeAllChildren();</span>
+<span class="nc" id="L396">         startExpandingTree(nodes[0], false, selectedPathNames, true);</span>
+      }
+<span class="nc" id="L398">   }</span>
+
+   /**
+	 * Adds a listener for changes in this cache entry.
+	 *
+	 * @param	lis	a IObjectCacheChangeListener that will be notified when
+	 *				objects are added and removed from this cache entry.
+	 */
+	public void addObjectTreeListener(IObjectTreeListener lis)
+	{
+<span class="nc" id="L408">		_listenerList.add(IObjectTreeListener.class, lis);</span>
+<span class="nc" id="L409">	}</span>
+
+	/**
+	 * Removes a listener for changes in this cache entry.
+	 *
+	 * @param	lis a IObjectCacheChangeListener that will be notified when
+	 *			objects are added and removed from this cache entry.
+	 */
+	void removeObjectTreeListener(IObjectTreeListener lis)
+	{
+<span class="nc" id="L419">		_listenerList.remove(IObjectTreeListener.class, lis);</span>
+<span class="nc" id="L420">	}</span>
+
+	/**
+	 * Restore the expansion state of the tree starting at the passed node.
+	 * The passed node is always expanded.
+	 *
+	 * @param	node	Node to restore expansion state from.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if null ObjectTreeNode passed.
+	 */
+	private void restoreExpansionState(ObjectTreeNode node,
+	                                   Map&lt;String, Object&gt; previouslySelectedTreePathNames, 
+                                       List&lt;TreePath&gt; selectedTreePaths)
+	{
+<span class="nc bnc" id="L435" title="All 2 branches missed.">		if (node == null)</span>
+		{
+<span class="nc" id="L437">			throw new IllegalArgumentException(&quot;ObjectTreeNode == null&quot;);</span>
+		}
+
+<span class="nc" id="L440">		final TreePath nodePath = new TreePath(node.getPath());</span>
+<span class="nc bnc" id="L441" title="All 2 branches missed.">        if (matchKeyPrefix(previouslySelectedTreePathNames, node, nodePath.toString()))</span>
+		{
+<span class="nc" id="L443">			selectedTreePaths.add(nodePath);</span>
+		}
+
+
+      try
+      {
+<span class="nc" id="L449">         _startExpandInThread = false;</span>
+<span class="nc" id="L450">         expandPath(nodePath);</span>
+      }
+      finally
+      {
+<span class="nc" id="L454">         _startExpandInThread = true;</span>
+      }
+
+
+
+      // Go through each child of the parent and see if it was previously
+		// expanded. If it was recursively call this method in order to expand
+		// the child.
+      @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L463">      Enumeration&lt;ObjectTreeNode&gt; childEnumeration = </span>
+<span class="nc" id="L464">          (Enumeration&lt;ObjectTreeNode&gt;) node.children();</span>
+<span class="nc" id="L465">		Iterator&lt;ObjectTreeNode&gt; it = </span>
+            new EnumerationIterator&lt;ObjectTreeNode&gt;(childEnumeration);
+<span class="nc bnc" id="L467" title="All 2 branches missed.">		while (it.hasNext())</span>
+		{
+<span class="nc" id="L469">			final ObjectTreeNode child = it.next();</span>
+<span class="nc" id="L470">			final TreePath childPath = new TreePath(child.getPath());</span>
+<span class="nc" id="L471">			final String childPathName = childPath.toString();</span>
+
+<span class="nc bnc" id="L473" title="All 2 branches missed.">         if (matchKeyPrefix(previouslySelectedTreePathNames, child, childPathName))</span>
+			{
+<span class="nc" id="L475">				selectedTreePaths.add(childPath);</span>
+			}
+
+<span class="nc bnc" id="L478" title="All 2 branches missed.">			if (_expandedPathNames.containsKey(childPathName))</span>
+			{
+<span class="nc" id="L480">				restoreExpansionState(child, previouslySelectedTreePathNames, selectedTreePaths);</span>
+         }
+<span class="nc" id="L482">		}</span>
+<span class="nc" id="L483">	}</span>
+
+    /**
+     * This is to handle the case where the user has enabled showRowCounts and 
+     * the table/view name as it appeared before is different only because the 
+     * number of rows has changed. For example, suppose a user deletes records
+     * in a table &quot;foo&quot; with 100 rows then refreshes the tree.  The tree node
+     * before the delete looks like foo(100) and after looks like foo(0).  We 
+     * want to strip off the (...) and test to see if the selected path &quot;foo&quot;
+     * is the same before the delete as after.  This way, when the user refreshes
+     * &quot;foo(...)&quot;, then it is still selected after the refresh.
+     * 
+     * @param map
+     * @param pattern
+     * @return
+     */
+    protected boolean matchKeyPrefix(Map&lt;String, Object&gt; map, ObjectTreeNode node, String path) {
+        // We only show row counts for tables and views.  Other objects won't 
+        // be affected by changing row counts.
+<span class="nc bnc" id="L502" title="All 2 branches missed.">        if (node.getDatabaseObjectType() != DatabaseObjectType.TABLE</span>
+<span class="nc bnc" id="L503" title="All 2 branches missed.">                &amp;&amp; node.getDatabaseObjectType() != DatabaseObjectType.VIEW) </span>
+        {
+<span class="nc" id="L505">            return map.containsKey(path);</span>
+        }
+<span class="nc" id="L507">        Set&lt;String&gt; s = map.keySet();</span>
+<span class="nc" id="L508">        Iterator&lt;String&gt; i = s.iterator();</span>
+<span class="nc" id="L509">        String pathPrefix = path;</span>
+<span class="nc bnc" id="L510" title="All 2 branches missed.">        if (path.indexOf(&quot;(&quot;) != -1) {</span>
+<span class="nc" id="L511">            pathPrefix = path.substring(0, path.lastIndexOf(&quot;(&quot;));</span>
+        }
+<span class="nc" id="L513">        boolean result = false;</span>
+<span class="nc bnc" id="L514" title="All 2 branches missed.">        while (i.hasNext()) {</span>
+<span class="nc" id="L515">            String key = i.next();</span>
+<span class="nc" id="L516">            String keyPrefix = key;</span>
+<span class="nc bnc" id="L517" title="All 2 branches missed.">            if (key.indexOf(&quot;(&quot;) != -1) {</span>
+<span class="nc" id="L518">                keyPrefix = key.substring(0, key.lastIndexOf(&quot;(&quot;));</span>
+            }
+<span class="nc bnc" id="L520" title="All 2 branches missed.">            if (keyPrefix.equals(pathPrefix)) {</span>
+<span class="nc" id="L521">                result = true;</span>
+<span class="nc" id="L522">                break;</span>
+            }
+<span class="nc" id="L524">        }</span>
+<span class="nc" id="L525">        return result;</span>
+    }
+        
+	private void startExpandingTree(ObjectTreeNode node,
+                                   boolean selectNode,
+                                   Map&lt;String, Object&gt; selectedPathNames,
+                                   boolean refreshSchemaInfo
+   )
+	{
+<span class="nc" id="L534">		ExpansionController exp = new ExpansionController(node, selectNode, selectedPathNames, refreshSchemaInfo);</span>
+<span class="nc" id="L535">      exp.run();</span>
+<span class="nc" id="L536">	}</span>
+
+	private void expandNode(ObjectTreeNode node, boolean selectNode)
+	{
+<span class="nc bnc" id="L540" title="All 2 branches missed.">		if (node == null)</span>
+		{
+<span class="nc" id="L542">			throw new IllegalArgumentException(&quot;ObjectTreeNode == null&quot;);</span>
+		}
+		// If node hasn't already been expanded.
+<span class="nc bnc" id="L545" title="All 4 branches missed.">		if (node.getChildCount() == 0 &amp;&amp; node.hasNoChildrenFoundWithExpander() == false)</span>
+		{
+			// Add together the standard expanders for this node type and any
+			// individual expanders that there are for the node and process them.
+<span class="nc" id="L549">			final DatabaseObjectType dboType = node.getDatabaseObjectType();</span>
+<span class="nc" id="L550">			INodeExpander[] stdExpanders = _model.getExpanders(dboType);</span>
+<span class="nc" id="L551">			INodeExpander[] extraExpanders = node.getExpanders();</span>
+<span class="nc bnc" id="L552" title="All 4 branches missed.">			if (stdExpanders.length &gt; 0 || extraExpanders.length &gt; 0)</span>
+			{
+<span class="nc" id="L554">				INodeExpander[] expanders = null;</span>
+<span class="nc bnc" id="L555" title="All 4 branches missed.">				if (stdExpanders.length &gt; 0 &amp;&amp; extraExpanders.length == 0)</span>
+				{
+<span class="nc" id="L557">					expanders = stdExpanders;</span>
+				}
+<span class="nc bnc" id="L559" title="All 4 branches missed.">				else if (stdExpanders.length == 0 &amp;&amp; extraExpanders.length &gt; 0)</span>
+				{
+<span class="nc" id="L561">					expanders = extraExpanders;</span>
+				}
+				else
+				{
+<span class="nc" id="L565">					expanders = new INodeExpander[stdExpanders.length + extraExpanders.length];</span>
+<span class="nc" id="L566">					System.arraycopy(stdExpanders, 0, expanders, 0, stdExpanders.length);</span>
+<span class="nc" id="L567">					System.arraycopy(extraExpanders, 0, expanders, stdExpanders.length,</span>
+										extraExpanders.length);
+				}
+<span class="nc" id="L570">				new TreeLoader(this._session, this, this._model, node, expanders, selectNode).execute();</span>
+			}
+		}
+<span class="nc" id="L573">	}</span>
+
+	/**
+	 * Add an item to the popup menu for the specified node type in the object
+	 * tree.
+	 *
+	 * @param	dboType		Database Object Type.
+	 * @param	action		Action to add to menu.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;Action&lt;/TT&gt; or
+	 *			&lt;TT&gt;DatabaseObjectType&lt;/TT&gt;thrown.
+	 */
+	void addToPopup(DatabaseObjectType dboType, Action action)
+	{
+<span class="nc bnc" id="L588" title="All 2 branches missed.">		if (dboType == null)</span>
+		{
+<span class="nc" id="L590">			throw new IllegalArgumentException(&quot;Null DatabaseObjectType passed&quot;);</span>
+		}
+<span class="nc bnc" id="L592" title="All 2 branches missed.">		if (action == null)</span>
+		{
+<span class="nc" id="L594">			throw new IllegalArgumentException(&quot;Null Action passed&quot;);</span>
+		}
+
+<span class="nc" id="L597">		final JPopupMenu pop = getPopup(dboType, true);</span>
+<span class="nc" id="L598">		pop.add(action);</span>
+<span class="nc" id="L599">	}</span>
+
+	/**
+	 * Add an item to the popup menu for the all nodes.
+	 *
+	 * @param	action		Action to add to menu.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;Action&lt;/TT&gt; thrown.
+	 */
+	void addToPopup(Action action)
+	{
+<span class="nc bnc" id="L611" title="All 2 branches missed.">		if (action == null)</span>
+		{
+<span class="nc" id="L613">			throw new IllegalArgumentException(&quot;Null Action passed&quot;);</span>
+		}
+<span class="nc" id="L615">		_globalPopup.add(action);</span>
+<span class="nc" id="L616">		_globalActions.add(action);</span>
+
+<span class="nc bnc" id="L618" title="All 2 branches missed.">		for (Iterator&lt;JPopupMenu&gt; it = _popups.values().iterator(); it.hasNext();)</span>
+		{
+<span class="nc" id="L620">			JPopupMenu pop = it.next();</span>
+<span class="nc" id="L621">			pop.add(action);</span>
+<span class="nc" id="L622">		}</span>
+<span class="nc" id="L623">	}</span>
+
+	/**
+	 * Add an hierarchical menu to the popup menu for the specified database
+	 * object type.
+	 *
+	 * @param	dboType		Database object type.
+	 * @param	menu		&lt;TT&gt;JMenu&lt;/TT&gt; to add to menu.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;DatabaseObjectType&lt;/TT&gt; or
+	 * 			&lt;TT&gt;JMenu&lt;/TT&gt; thrown.
+	 */
+	public void addToPopup(DatabaseObjectType dboType, JMenu menu)
+	{
+<span class="nc bnc" id="L638" title="All 2 branches missed.">		if (dboType == null)</span>
+		{
+<span class="nc" id="L640">			throw new IllegalArgumentException(&quot;DatabaseObjectType == null&quot;);</span>
+		}
+<span class="nc bnc" id="L642" title="All 2 branches missed.">		if (menu == null)</span>
+		{
+<span class="nc" id="L644">			throw new IllegalArgumentException(&quot;JMenu == null&quot;);</span>
+		}
+
+<span class="nc" id="L647">		final JPopupMenu pop = getPopup(dboType, true);</span>
+<span class="nc" id="L648">		pop.add(menu);</span>
+<span class="nc" id="L649">	}</span>
+
+	/**
+	 * Add an hierarchical menu to the popup menu for all node types.
+	 *
+	 * @param	menu	&lt;TT&gt;JMenu&lt;/TT&gt; to add to menu.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;JMenu&lt;/TT&gt; thrown.
+	 */
+	public void addToPopup(JMenu menu)
+	{
+<span class="nc bnc" id="L661" title="All 2 branches missed.">		if (menu == null)</span>
+		{
+<span class="nc" id="L663">			throw new IllegalArgumentException(&quot;JMenu == null&quot;);</span>
+		}
+<span class="nc" id="L665">		_globalPopup.add(menu);</span>
+<span class="nc" id="L666">		_globalActions.add(menu.getAction());</span>
+
+<span class="nc bnc" id="L668" title="All 2 branches missed.">		for (Iterator&lt;JPopupMenu&gt; it = _popups.values().iterator(); it.hasNext();)</span>
+		{
+<span class="nc" id="L670">			JPopupMenu pop = it.next();</span>
+<span class="nc" id="L671">			pop.add(menu);</span>
+<span class="nc" id="L672">		}</span>
+<span class="nc" id="L673">	}</span>
+
+	/**
+	 * Get the popup menu for the passed database object type. If one
+	 * doesn't exist then create one if requested to do so.
+
+	 * @param	dboType		Database Object Type.
+	 * @param	create		If &lt;TT&gt;true&lt;/TT&gt; popup will eb created if it
+	 *						doesn't exist.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;Action&lt;/TT&gt; or
+	 *			&lt;TT&gt;DatabaseObjectType&lt;/TT&gt;thrown.
+	 */
+	private JPopupMenu getPopup(DatabaseObjectType dboType, boolean create)
+	{
+<span class="nc bnc" id="L689" title="All 2 branches missed.">		if (dboType == null)</span>
+		{
+<span class="nc" id="L691">			throw new IllegalArgumentException(&quot;Null DatabaseObjectType passed&quot;);</span>
+		}
+<span class="nc" id="L693">		IIdentifier key = dboType.getIdentifier();</span>
+<span class="nc" id="L694">		JPopupMenu pop = _popups.get(key);</span>
+<span class="nc bnc" id="L695" title="All 4 branches missed.">		if (pop == null &amp;&amp; create)</span>
+		{
+<span class="nc" id="L697">			pop = new JPopupMenu();</span>
+<span class="nc" id="L698">			_popups.put(key, pop);</span>
+<span class="nc bnc" id="L699" title="All 2 branches missed.">			for (Iterator&lt;Action&gt; it = _globalActions.iterator(); it.hasNext();)</span>
+			{
+<span class="nc" id="L701">				pop.add(it.next());</span>
+			}
+		}
+<span class="nc" id="L704">		return pop;</span>
+	}
+
+	/**
+	 * Return an array of the currently selected nodes. This array is sorted
+	 * by the simple name of the database object.
+	 *
+	 * @return	array of &lt;TT&gt;ObjectTreeNode&lt;/TT&gt; objects.
+	 */
+	ObjectTreeNode[] getSelectedNodes()
+	{
+<span class="nc" id="L715">		TreePath[] paths = getSelectionPaths();</span>
+<span class="nc" id="L716">		List&lt;ObjectTreeNode&gt; list = new ArrayList&lt;ObjectTreeNode&gt;();</span>
+<span class="nc bnc" id="L717" title="All 2 branches missed.">		if (paths != null)</span>
+		{
+<span class="nc bnc" id="L719" title="All 2 branches missed.">			for (int i = 0; i &lt; paths.length; ++i)</span>
+			{
+<span class="nc" id="L721">				Object obj = paths[i].getLastPathComponent();</span>
+<span class="nc bnc" id="L722" title="All 2 branches missed.">				if (obj instanceof ObjectTreeNode)</span>
+				{
+<span class="nc" id="L724">					list.add((ObjectTreeNode)obj);</span>
+				}
+			}
+		}
+<span class="nc" id="L728">		ObjectTreeNode[] ar = list.toArray(new ObjectTreeNode[list.size()]);</span>
+<span class="nc" id="L729">		Arrays.sort(ar, new NodeComparator());</span>
+<span class="nc" id="L730">		return ar;</span>
+	}
+    
+	/**
+	 * Return an array of the currently selected database
+	 * objects.
+	 *
+	 * @return	array of &lt;TT&gt;ObjectTreeNode&lt;/TT&gt; objects.
+	 */
+	IDatabaseObjectInfo[] getSelectedDatabaseObjects()
+	{
+<span class="nc" id="L741">		ObjectTreeNode[] nodes = getSelectedNodes();</span>
+<span class="nc" id="L742">		IDatabaseObjectInfo[] dbObjects = new IDatabaseObjectInfo[nodes.length];</span>
+<span class="nc bnc" id="L743" title="All 2 branches missed.">		for (int i = 0; i &lt; nodes.length; ++i)</span>
+		{
+<span class="nc" id="L745">			dbObjects[i] = nodes[i].getDatabaseObjectInfo();</span>
+		}
+<span class="nc" id="L747">		return dbObjects;</span>
+	}
+
+    /**
+     * Return a type-safe list of the currently selected database tables
+     *
+     * @return  list of &lt;TT&gt;ITableInfo&lt;/TT&gt; objects.
+     */
+    List&lt;ITableInfo&gt; getSelectedTables()
+    {
+<span class="nc" id="L757">        ObjectTreeNode[] nodes = getSelectedNodes();</span>
+<span class="nc" id="L758">        ArrayList&lt;ITableInfo&gt; result = new ArrayList&lt;ITableInfo&gt;(); </span>
+<span class="nc bnc" id="L759" title="All 2 branches missed.">        for (int i = 0; i &lt; nodes.length; ++i)</span>
+        {
+<span class="nc bnc" id="L761" title="All 2 branches missed.">            if (nodes[i].getDatabaseObjectType() == DatabaseObjectType.TABLE) {</span>
+<span class="nc" id="L762">                result.add((ITableInfo)nodes[i].getDatabaseObjectInfo());</span>
+            }
+        }
+<span class="nc" id="L765">        return result;</span>
+    }
+    
+    
+	/**
+	 * Get the appropriate popup menu for the currently selected nodes
+	 * in the object tree and display it.
+	 *
+	 * @param	x	X pos to display popup at.
+	 * @param	y	Y pos to display popup at.
+	 */
+	private void showPopup(int x, int y)
+	{
+<span class="nc" id="L778">		ObjectTreeNode[] selObj = getSelectedNodes();</span>
+<span class="nc bnc" id="L779" title="All 2 branches missed.">		if (selObj.length &gt; 0)</span>
+		{
+			// See if all selected nodes are of the same type.
+<span class="nc" id="L782">			boolean sameType = true;</span>
+<span class="nc" id="L783">			final DatabaseObjectType dboType = selObj[0].getDatabaseObjectType();</span>
+<span class="nc bnc" id="L784" title="All 2 branches missed.">			for (int i = 1; i &lt; selObj.length; ++i)</span>
+			{
+<span class="nc bnc" id="L786" title="All 2 branches missed.">				if (selObj[i].getDatabaseObjectType() != dboType)</span>
+				{
+<span class="nc" id="L788">					sameType = false;</span>
+<span class="nc" id="L789">					break;</span>
+				}
+			}
+
+<span class="nc" id="L793">			JPopupMenu pop = null;</span>
+<span class="nc bnc" id="L794" title="All 2 branches missed.">			if (sameType)</span>
+			{
+<span class="nc" id="L796">				pop = getPopup(dboType, false);</span>
+			}
+<span class="nc bnc" id="L798" title="All 2 branches missed.">			if (pop == null)</span>
+			{
+<span class="nc" id="L800">				pop = _globalPopup;</span>
+			}
+<span class="nc" id="L802">			pop.show(this, x, y);</span>
+		}
+<span class="nc" id="L804">	}</span>
+
+	/**
+	 * Fire a &quot;tree cleared&quot; event to all listeners.
+	 */
+	private void fireObjectTreeCleared()
+	{
+		// Guaranteed to be non-null.
+<span class="nc" id="L812">		Object[] listeners = _listenerList.getListenerList();</span>
+		// Process the listeners last to first, notifying
+		// those that are interested in this event.
+<span class="nc" id="L815">		ObjectTreeListenerEvent evt = null;</span>
+<span class="nc bnc" id="L816" title="All 2 branches missed.">		for (int i = listeners.length - 2; i &gt;= 0; i-=2 )</span>
+		{
+<span class="nc bnc" id="L818" title="All 2 branches missed.">			if (listeners[i] == IObjectTreeListener.class)</span>
+			{
+				// Lazily create the event.
+<span class="nc bnc" id="L821" title="All 2 branches missed.">				if (evt == null)</span>
+				{
+<span class="nc" id="L823">					evt = new ObjectTreeListenerEvent(ObjectTree.this);</span>
+				}
+<span class="nc" id="L825">				((IObjectTreeListener)listeners[i + 1]).objectTreeCleared(evt);</span>
+			}
+		}
+<span class="nc" id="L828">	}</span>
+
+	/**
+	 * Fire a &quot;tree refreshed&quot; event to all listeners.
+	 */
+	private void fireObjectTreeRefreshed()
+	{
+		// Guaranteed to be non-null.
+<span class="nc" id="L836">		Object[] listeners = _listenerList.getListenerList();</span>
+		// Process the listeners last to first, notifying
+		// those that are interested in this event.
+<span class="nc" id="L839">		ObjectTreeListenerEvent evt = null;</span>
+<span class="nc bnc" id="L840" title="All 2 branches missed.">		for (int i = listeners.length - 2; i &gt;= 0; i-=2 )</span>
+		{
+<span class="nc bnc" id="L842" title="All 2 branches missed.">			if (listeners[i] == IObjectTreeListener.class)</span>
+			{
+				// Lazily create the event.
+<span class="nc bnc" id="L845" title="All 2 branches missed.">				if (evt == null)</span>
+				{
+<span class="nc" id="L847">					evt = new ObjectTreeListenerEvent(ObjectTree.this);</span>
+				}
+<span class="nc" id="L849">				((IObjectTreeListener)listeners[i + 1]).objectTreeRefreshed(evt);</span>
+			}
+		}
+<span class="nc" id="L852">	}</span>
+
+	public void dispose()
+	{
+		// Menues that are also shown in the main window Session menu might
+		// be in this popup. If we don't remove them, the Session won't be Garbage Collected.
+<span class="nc" id="L858">		_globalPopup.removeAll();</span>
+<span class="nc" id="L859">		_globalPopup.setInvoker(null);</span>
+<span class="nc" id="L860">		_globalActions.clear();</span>
+<span class="nc bnc" id="L861" title="All 2 branches missed.">		for(Iterator&lt;JPopupMenu&gt; i=_popups.values().iterator(); i.hasNext();)</span>
+		{
+<span class="nc" id="L863">			JPopupMenu popup = i.next();</span>
+<span class="nc" id="L864">			popup.removeAll();</span>
+<span class="nc" id="L865">			popup.setInvoker(null);</span>
+<span class="nc" id="L866">		}</span>
+<span class="nc" id="L867">		_popups.clear();</span>
+<span class="nc" id="L868">	}</span>
+
+<span class="nc" id="L870">	private final class NodeExpansionListener implements TreeExpansionListener</span>
+	{
+		public void treeExpanded(TreeExpansionEvent evt)
+		{
+			// Get the node to be expanded.
+<span class="nc" id="L875">			final TreePath path = evt.getPath();</span>
+<span class="nc" id="L876">			final Object parentObj = path.getLastPathComponent();</span>
+<span class="nc bnc" id="L877" title="All 2 branches missed.">			if (parentObj instanceof ObjectTreeNode)</span>
+			{
+<span class="nc" id="L879">				startExpandingTree((ObjectTreeNode)parentObj, false, null, false);</span>
+<span class="nc" id="L880">				_expandedPathNames.put(path.toString(), null);</span>
+			}
+<span class="nc" id="L882">		}</span>
+
+		public void treeCollapsed(TreeExpansionEvent evt)
+		{
+<span class="nc" id="L886">			_expandedPathNames.remove(evt.getPath().toString());</span>
+<span class="nc" id="L887">		}</span>
+	}
+
+	/**
+	 * This class is used to sort the nodes by their title.
+	 */
+	private static class NodeComparator implements Comparator&lt;ObjectTreeNode&gt;,
+                                                   Serializable
+	{
+        private static final long serialVersionUID = 1L;
+
+        public int compare(ObjectTreeNode obj1, ObjectTreeNode obj2)
+		{
+<span class="nc" id="L900">			return obj1.toString().compareToIgnoreCase(obj2.toString());</span>
+		}
+	}
+
+	private class ExpansionController implements Runnable
+	{
+		private final ObjectTreeNode _node;
+		private final boolean _selectNode;
+		private final Map&lt;String, Object&gt; _selectedPathNames;
+      private boolean _refreshSchemaInfo;
+
+      ExpansionController(ObjectTreeNode node, 
+                          boolean selectNode, 
+                          Map&lt;String, Object&gt; selectedPathNames, 
+                          boolean refreshSchemaInfo)
+<span class="nc" id="L915">      {</span>
+<span class="nc" id="L916">         super();</span>
+<span class="nc" id="L917">         _node = node;</span>
+<span class="nc" id="L918">         _selectNode = selectNode;</span>
+<span class="nc" id="L919">         _selectedPathNames = selectedPathNames;</span>
+<span class="nc" id="L920">         _refreshSchemaInfo = refreshSchemaInfo;</span>
+<span class="nc" id="L921">      }</span>
+
+		public void run()
+		{
+<span class="nc" id="L925">			synchronized (ObjectTree.this._syncObject)</span>
+			{
+<span class="nc" id="L927">				CursorChanger cursorChg = new CursorChanger(ObjectTree.this);</span>
+<span class="nc" id="L928">				cursorChg.show();</span>
+				try
+				{
+<span class="nc bnc" id="L931" title="All 2 branches missed.">               if(_refreshSchemaInfo)</span>
+               {
+<span class="nc" id="L933">                  _session.getSchemaInfo().reload(_node.getDatabaseObjectInfo());</span>
+               }
+
+<span class="nc" id="L936">               expandNode(_node, _selectNode);</span>
+<span class="nc bnc" id="L937" title="All 2 branches missed.">					if (_selectedPathNames != null)</span>
+					{
+<span class="nc" id="L939">						final List&lt;TreePath&gt; newlySelectedTreepaths = new ArrayList&lt;TreePath&gt;();</span>
+						
+<span class="nc" id="L941">						GUIUtils.processOnSwingEventThread(new Runnable()</span>
+<span class="nc" id="L942">						{</span>
+							public void run()
+							{
+<span class="nc" id="L945">                        restoreExpansionState(_node, _selectedPathNames, newlySelectedTreepaths);</span>
+<span class="nc" id="L946">                        setSelectionPaths(newlySelectedTreepaths.toArray(new TreePath[newlySelectedTreepaths.size()]));</span>
+<span class="nc" id="L947">                     }</span>
+						});
+					}
+				}
+				finally
+				{
+<span class="nc" id="L953">					cursorChg.restore();</span>
+				}
+<span class="nc" id="L955">			}</span>
+<span class="nc" id="L956">		}</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EventDispatchThreadHangMonitor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.util</a> &gt; <span class="el_source">EventDispatchThreadHangMonitor.java</span></div><h1>EventDispatchThreadHangMonitor.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.util;
+
+import java.awt.AWTEvent;
+import java.awt.EventQueue;
+import java.awt.Toolkit;
+import java.io.PrintStream;
+import java.util.Timer;
+import java.util.TimerTask;
+
+/**
+ * Monitors the AWT event dispatch thread for events that take longer than
+ * a certain time to be dispatched.
+ * 
+ * The principle is to record the time at which we start processing an event,
+ * and have another thread check frequently to see if we're still processing.
+ * If the other thread notices that we've been processing a single event for
+ * too long, it prints a stack trace showing what the event dispatch thread
+ * is doing, and continues to time it until it finally finishes.
+ * 
+ * This is useful in determining what code is causing your Java application's
+ * GUI to be unresponsive.
+ * 
+ * @author Elliott Hughes &lt;enh@jessies.org&gt;
+ */
+public final class EventDispatchThreadHangMonitor extends EventQueue {
+<span class="nc" id="L26">    private static final EventQueue INSTANCE = new EventDispatchThreadHangMonitor();</span>
+    
+    // Time to wait between checks that the event dispatch thread isn't hung.
+    private static final long CHECK_INTERVAL_MS = 100;
+    
+    // Maximum time we won't warn about.
+    private static final long UNREASONABLE_DISPATCH_DURATION_MS = 500;
+    
+    // Used as the value of startedLastEventDispatchAt when we're not in
+    // the middle of event dispatch.
+    private static final long NO_CURRENT_EVENT = 0;
+    
+    // When we started dispatching the current event, in milliseconds.
+<span class="nc" id="L39">    private long startedLastEventDispatchAt = NO_CURRENT_EVENT;</span>
+    
+    // Have we already dumped a stack trace for the current event dispatch?
+<span class="nc" id="L42">    private boolean reportedHang = false;</span>
+    
+    // The event dispatch thread, for the purpose of getting stack traces.
+<span class="nc" id="L45">    private Thread eventDispatchThread = null;</span>
+    
+<span class="nc" id="L47">    private EventDispatchThreadHangMonitor() {</span>
+<span class="nc" id="L48">        initTimer();</span>
+<span class="nc" id="L49">    }</span>
+    
+    /**
+     * Sets up a timer to check for hangs frequently.
+     */
+    private void initTimer() {
+<span class="nc" id="L55">        final long initialDelayMs = 0;</span>
+<span class="nc" id="L56">        final boolean isDaemon = true;</span>
+<span class="nc" id="L57">        Timer timer = new Timer(&quot;EventDispatchThreadHangMonitor&quot;, isDaemon);</span>
+<span class="nc" id="L58">        timer.schedule(new HangChecker(), initialDelayMs, CHECK_INTERVAL_MS);</span>
+<span class="nc" id="L59">    }</span>
+    
+<span class="nc" id="L61">    private class HangChecker extends TimerTask {</span>
+        @Override
+        public void run() {
+            // Synchronize on the outer class, because that's where all
+            // the state lives.
+<span class="nc" id="L66">            synchronized (INSTANCE) {</span>
+<span class="nc" id="L67">                checkForHang();</span>
+<span class="nc" id="L68">            }</span>
+<span class="nc" id="L69">        }</span>
+        
+        private void checkForHang() {
+<span class="nc bnc" id="L72" title="All 2 branches missed.">            if (startedLastEventDispatchAt == NO_CURRENT_EVENT) {</span>
+                // We don't destroy the timer when there's nothing happening
+                // because it would mean a lot more work on every single AWT
+                // event that gets dispatched.
+<span class="nc" id="L76">                return;</span>
+            }
+<span class="nc bnc" id="L78" title="All 2 branches missed.">            if (timeSoFar() &gt; UNREASONABLE_DISPATCH_DURATION_MS) {</span>
+<span class="nc" id="L79">                reportHang();</span>
+            }
+<span class="nc" id="L81">        }</span>
+        
+        private void reportHang() {
+<span class="nc bnc" id="L84" title="All 2 branches missed.">            if (reportedHang) {</span>
+                // Don't keep reporting the same hang every 100 ms.
+<span class="nc" id="L86">                return;</span>
+            }
+            
+<span class="nc" id="L89">            reportedHang = true;</span>
+<span class="nc" id="L90">            System.out.println(&quot;--- event dispatch thread stuck processing event for &quot; +  timeSoFar() + &quot; ms:&quot;);</span>
+<span class="nc" id="L91">            StackTraceElement[] stackTrace = eventDispatchThread.getStackTrace();</span>
+<span class="nc" id="L92">            printStackTrace(System.out, stackTrace);</span>
+<span class="nc" id="L93">        }</span>
+        
+        private void printStackTrace(PrintStream out, StackTraceElement[] stackTrace) {
+            // We know that it's not interesting to show any code above where
+            // we get involved in event dispatch, so we stop printing the stack
+            // trace when we get as far back as our code.
+<span class="nc" id="L99">            final String ourEventQueueClassName = EventDispatchThreadHangMonitor.class.getName();</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">            for (StackTraceElement stackTraceElement : stackTrace) {</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">                if (stackTraceElement.getClassName().equals(ourEventQueueClassName)) {</span>
+<span class="nc" id="L102">                    return;</span>
+                }
+<span class="nc" id="L104">                out.println(&quot;    &quot; + stackTraceElement);</span>
+            }
+<span class="nc" id="L106">        }</span>
+    }
+    
+    /**
+     * Returns how long we've been processing the current event (in
+     * milliseconds).
+     */
+    private long timeSoFar() {
+<span class="nc" id="L114">        long currentTime = System.currentTimeMillis();</span>
+<span class="nc" id="L115">        return (currentTime - startedLastEventDispatchAt);</span>
+    }
+    
+    /**
+     * Sets up hang detection for the event dispatch thread.
+     */
+    public static void initMonitoring() {
+<span class="nc" id="L122">        Toolkit.getDefaultToolkit().getSystemEventQueue().push(INSTANCE);</span>
+<span class="nc" id="L123">    }</span>
+    
+    /**
+     * Overrides EventQueue.dispatchEvent to call our pre and post hooks either
+     * side of the system's event dispatch code.
+     */
+    @Override
+    protected void dispatchEvent(AWTEvent event) {
+<span class="nc" id="L131">        preDispatchEvent();</span>
+<span class="nc" id="L132">        super.dispatchEvent(event);</span>
+<span class="nc" id="L133">        postDispatchEvent();</span>
+<span class="nc" id="L134">    }</span>
+    
+    /**
+     * Stores the time at which we started processing the current event.
+     */
+    private synchronized void preDispatchEvent() {
+<span class="nc bnc" id="L140" title="All 2 branches missed.">        if (eventDispatchThread == null) {</span>
+            // I don't know of any API for getting the event dispatch thread,
+            // but we can assume that it's the current thread if we're in the
+            // middle of dispatching an AWT event...
+<span class="nc" id="L144">            eventDispatchThread = Thread.currentThread();</span>
+        }
+        
+<span class="nc" id="L147">        reportedHang = false;</span>
+<span class="nc" id="L148">        startedLastEventDispatchAt = System.currentTimeMillis();</span>
+<span class="nc" id="L149">    }</span>
+    
+    /**
+     * Reports the end of any ongoing hang, and notes that we're no longer
+     * processing an event.
+     */
+    private synchronized void postDispatchEvent() {
+<span class="nc bnc" id="L156" title="All 2 branches missed.">        if (reportedHang) {</span>
+<span class="nc" id="L157">            System.out.println(&quot;--- event dispatch thread unstuck after &quot; + timeSoFar() + &quot; ms.&quot;);</span>
+        }
+<span class="nc" id="L159">        startedLastEventDispatchAt = NO_CURRENT_EVENT;</span>
+<span class="nc" id="L160">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

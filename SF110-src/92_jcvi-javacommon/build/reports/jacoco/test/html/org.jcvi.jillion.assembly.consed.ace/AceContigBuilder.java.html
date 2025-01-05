@@ -1,0 +1,871 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AceContigBuilder.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.assembly.consed.ace</a> &gt; <span class="el_source">AceContigBuilder.java</span></div><h1>AceContigBuilder.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+/*
+ * Created on Feb 6, 2009
+ *
+ * @author dkatzel
+ */
+package org.jcvi.jillion.assembly.consed.ace;
+
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Set;
+import java.util.SortedMap;
+import java.util.SortedSet;
+import java.util.TreeMap;
+import java.util.TreeSet;
+
+import org.jcvi.jillion.assembly.Contig;
+import org.jcvi.jillion.assembly.ContigBuilder;
+import org.jcvi.jillion.assembly.util.CoverageMap;
+import org.jcvi.jillion.assembly.util.CoverageMapBuilder;
+import org.jcvi.jillion.assembly.util.CoverageRegion;
+import org.jcvi.jillion.assembly.util.GapQualityValueStrategy;
+import org.jcvi.jillion.assembly.util.Slice;
+import org.jcvi.jillion.assembly.util.SliceMap;
+import org.jcvi.jillion.assembly.util.consensus.ConsensusCaller;
+import org.jcvi.jillion.core.Direction;
+import org.jcvi.jillion.core.Range;
+import org.jcvi.jillion.core.datastore.DataStoreException;
+import org.jcvi.jillion.core.io.IOUtil;
+import org.jcvi.jillion.core.qual.PhredQuality;
+import org.jcvi.jillion.core.qual.QualitySequence;
+import org.jcvi.jillion.core.qual.QualitySequenceBuilder;
+import org.jcvi.jillion.core.qual.QualitySequenceDataStore;
+import org.jcvi.jillion.core.residue.nt.NucleotideSequence;
+import org.jcvi.jillion.core.residue.nt.NucleotideSequenceBuilder;
+import org.jcvi.jillion.core.util.MapUtil;
+import org.jcvi.jillion.core.util.iter.IteratorUtil;
+import org.jcvi.jillion.core.util.iter.StreamingIterator;
+import org.jcvi.jillion.internal.assembly.DefaultContig;
+import org.jcvi.jillion.internal.assembly.util.CompactedSliceMap;
+/**
+ * {@code AceContigBuilder} is a {@link Builder}
+ * for {@link AceContig}s that allows
+ * creating {@link AceContig} objects read by read by adding assembled reads
+ * and setting a consensus.  An {@link AceContigBuilder}
+ * can be used to create AceContig objects that 
+ * have been created by an assembler or can be used
+ * to create contigs from &quot;scratch&quot;.
+ * There are additional methods to allow
+ * the contig consensus or underlying
+ * reads to be modified before
+ * the creation of the {@link AceContig} instance
+ * (which is immutable).
+ * &lt;p/&gt;
+ * This class is not thread-safe.
+ * @author dkatzel
+ *
+ *
+ */
+public final class  AceContigBuilder implements ContigBuilder&lt;AceAssembledRead,AceContig&gt;{
+    /**
+     * default quality value that every basecall will get
+     * if consensus caller is used to recall the consensus
+     * but no {@link QualitySequenceDataStore} is given.
+     */
+<span class="nc" id="L91">    private static final PhredQuality DEFAULT_QUALITY = PhredQuality.valueOf(30);</span>
+	/**
+	 * {@link ConsensusCaller} used to update the
+	 * consensus during {@link #build()}.  If set to {@code null},
+	 * then no recalling is to be done (null by default).
+	 */
+<span class="nc" id="L97">	private ConsensusCaller consensusCaller =null;</span>
+	/**
+	 * {@link QualitySequenceDataStore} used during
+	 * consensus recalling.  Set to null if 
+	 * no recalling is to be done. (null by default).
+	 */
+<span class="nc" id="L103">	private QualitySequenceDataStore qualityDataStore =null;</span>
+	
+<span class="nc" id="L105">	private GapQualityValueStrategy qualityValueStrategy=null;</span>
+	
+    private NucleotideSequence initialConsensus;
+    private final NucleotideSequenceBuilder mutableConsensus;
+    private String contigId;
+    private final Map&lt;String, AceAssembledReadBuilder&gt; aceReadBuilderMap;
+<span class="nc" id="L111">    private int contigLeft= -1;</span>
+<span class="nc" id="L112">    private int contigRight = -1;</span>
+<span class="nc" id="L113">    private volatile boolean built=false;</span>
+<span class="nc" id="L114">    private boolean complemented=false;</span>
+<span class="nc" id="L115">    private boolean computeConsensusQualities=false;</span>
+    
+    private QualitySequenceBuilder mutableConsensusQualities;
+    /**
+     * Create a new {@link AceContigBuilder} for a contig with the given
+     * contig id and starting with the given consensus.  Both the contig id
+     * and the consensus can be changed by calling methods on the returned
+     * builder.
+     * @param contigId the initial contig id to use for this contig (may later be changed)
+     * @param initialConsensus the initial contig consensus for this contig (may be changed later)
+     * @throws NullPointerException if contigId or consensus are null.
+     */
+    public AceContigBuilder(String contigId, String initialConsensus){
+<span class="nc" id="L128">       this(contigId,                   </span>
+<span class="nc" id="L129">    		   new NucleotideSequenceBuilder(initialConsensus).build()</span>
+        );
+<span class="nc" id="L131">    }</span>
+    
+    public AceContigBuilder setInitialConsensusQualities(QualitySequence consensusQualities){
+<span class="nc" id="L134">    	this.mutableConsensusQualities = new QualitySequenceBuilder(consensusQualities);</span>
+<span class="nc" id="L135">    	return this;</span>
+    }
+    
+    private QualitySequenceBuilder createDefaultQualitySequenceBuilder(){
+<span class="nc" id="L139">    	int ungappedConsensusLength = (int)mutableConsensus.getUngappedLength();</span>
+<span class="nc" id="L140">    	byte[] quals = new byte[ungappedConsensusLength];</span>
+<span class="nc" id="L141">    	Arrays.fill(quals, DEFAULT_QUALITY.getQualityScore());</span>
+<span class="nc" id="L142">    	return new QualitySequenceBuilder(quals);</span>
+    }
+    /**
+     * Create a new {@link AceContigBuilder} for a contig with the given
+     * contig id and starting with the given consensus.  Both the contig id
+     * and the consensus can be changed by calling methods on the returned
+     * builder.
+     * @param contigId the initial contig id to use for this contig (may later be changed)
+     * @param initialConsensus the initial contig consensus for this contig (may be changed later)
+     * @throws NullPointerException if contigId or consensus are null.
+     */
+<span class="nc" id="L153">    public AceContigBuilder(String contigId, NucleotideSequence initialConsensus){</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        if(contigId ==null){</span>
+<span class="nc" id="L155">            throw new NullPointerException(&quot;contig id can not be null&quot;);</span>
+        }
+<span class="nc bnc" id="L157" title="All 2 branches missed.">        if(initialConsensus ==null){</span>
+<span class="nc" id="L158">            throw new NullPointerException(&quot;consensus can not be null&quot;);</span>
+        }
+<span class="nc" id="L160">    	this.initialConsensus = initialConsensus;</span>
+<span class="nc" id="L161">    	 this.contigId = contigId;</span>
+<span class="nc" id="L162">    	 this.mutableConsensus = new NucleotideSequenceBuilder(initialConsensus);</span>
+<span class="nc" id="L163">    	 aceReadBuilderMap = new HashMap&lt;String, AceAssembledReadBuilder&gt;();</span>
+<span class="nc" id="L164">    }</span>
+    
+    /**
+     * Create a new {@link AceContigBuilder} for a contig with the given
+     * contig id and starting with the given consensus.  Both the contig id
+     * and the consensus can be changed by calling methods on the returned
+     * builder.
+     * @param contigId the initial contig id to use for this contig (may later be changed)
+     * @param initialConsensus the initial contig consensus for this contig (may be changed later)
+     * @param estimatedNumberOfReads expected number of reads that will be added to this
+     * contig.  This value is only used to allocate the initial map sizes for internal
+     * data structures as a performance optimization.  Must be &gt;=0.
+     * 
+     * @throws NullPointerException if contigId or consensus are null.
+     * @throws IllegalArgumentException if estimatedNumberOfReads
+     * is &lt;0
+     */
+    public AceContigBuilder(String contigId, NucleotideSequence initialConsensus,
+<span class="nc" id="L182">    		int estimatedNumberOfReads){</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">        if(contigId ==null){</span>
+<span class="nc" id="L184">            throw new NullPointerException(&quot;contig id can not be null&quot;);</span>
+        }
+<span class="nc bnc" id="L186" title="All 2 branches missed.">        if(initialConsensus ==null){</span>
+<span class="nc" id="L187">            throw new NullPointerException(&quot;consensus can not be null&quot;);</span>
+        }
+<span class="nc" id="L189">    	this.initialConsensus = initialConsensus;</span>
+<span class="nc" id="L190">    	 this.contigId = contigId;</span>
+<span class="nc" id="L191">    	 this.mutableConsensus = new NucleotideSequenceBuilder(initialConsensus);</span>
+<span class="nc" id="L192">    	 int capacity = MapUtil.computeMinHashMapSizeWithoutRehashing(estimatedNumberOfReads);</span>
+<span class="nc" id="L193">    	 aceReadBuilderMap = new HashMap&lt;String, AceAssembledReadBuilder&gt;(capacity);</span>
+<span class="nc" id="L194">    }</span>
+    /**
+     * Create a new instance of DefaultAceContigBuilder
+     * whose initial state is an exact copy
+     * of the given AceContig.
+     * @param copy the {@link AceContig} to copy
+     * can not be null.
+     * @throws NullPointerException if copy is null.
+     */
+<span class="nc" id="L203">    public AceContigBuilder(AceContig copy){</span>
+<span class="nc" id="L204">    	this.contigId=copy.getId();</span>
+<span class="nc" id="L205">    	this.initialConsensus = copy.getConsensusSequence();</span>
+<span class="nc" id="L206">    	this.mutableConsensus = new NucleotideSequenceBuilder(initialConsensus);</span>
+<span class="nc" id="L207">    	aceReadBuilderMap = new HashMap&lt;String, AceAssembledReadBuilder&gt;(MapUtil.computeMinHashMapSizeWithoutRehashing(copy.getNumberOfReads()));</span>
+<span class="nc" id="L208">    	StreamingIterator&lt;AceAssembledRead&gt; readIter =null;</span>
+    	try{
+<span class="nc" id="L210">    		readIter = copy.getReadIterator();</span>
+<span class="nc bnc" id="L211" title="All 2 branches missed.">    		while(readIter.hasNext()){</span>
+<span class="nc" id="L212">    			this.addRead(readIter.next());</span>
+    		}
+    	}finally{
+<span class="nc" id="L215">    		IOUtil.closeAndIgnoreErrors(readIter);</span>
+    	}
+<span class="nc" id="L217">    }</span>
+    /**
+     * Set this contig as being complemented.
+     * This does not actually modify either the consensus
+     * or underlying read sequences.  If you wish
+     * to actually reverse complement the basecalls
+     * you must use call {@link NucleotideSequenceBuilder#reverseComplement()}
+     * method on the consensus builder returned by {@link #getConsensusBuilder()}
+     * and on each underlying read using {@link #getAllAssembledReadBuilders()}.
+     * @param complemented is this ace contig complemented or not.
+     * @return this
+     */
+    public AceContigBuilder setComplemented(boolean complemented){
+<span class="nc" id="L230">        this.complemented = complemented;</span>
+<span class="nc" id="L231">        return this;</span>
+    }
+    /**
+     * Recall the consensus using the given
+     * {@link ConsensusCaller} and {@link QualitySequenceDataStore}
+     * which contains the quality data for all of the reads in this ace contig.
+     * The consensus will get recalled inside the {@link #build()}
+     * and {@link #recallConsensusNow()}.
+     * method before the {@link AceContig} instance is created.
+     * @param consensusCaller the {@link ConsensusCaller}  instance to use
+     * to recall the consensus of this contig; can not be null.
+     * @param qualityDataStore the {@link QualitySequenceDataStore}
+     * which contains all the quality data for all of the reads
+     * in this contig; can not be null. This value will override
+     * the quality datastore set by {@link #computeConsensusQualities(QualitySequenceDataStore)}
+     * and vice versa, last one called wins. (This is more for user's
+     * convenience in case they don't want to do one or the other).
+     * @return this.
+     * @throws NullPointerException if any parameter is null.
+     */
+    @Override
+    public AceContigBuilder recallConsensus(ConsensusCaller consensusCaller, 
+    		QualitySequenceDataStore qualityDataStore,
+    		GapQualityValueStrategy qualityValueStrategy){
+<span class="nc bnc" id="L255" title="All 2 branches missed.">    	if(consensusCaller ==null){</span>
+<span class="nc" id="L256">    		throw new NullPointerException(&quot;consensus caller can not be null&quot;);</span>
+    	}
+<span class="nc bnc" id="L258" title="All 2 branches missed.">    	if(qualityDataStore ==null){</span>
+<span class="nc" id="L259">    		throw new NullPointerException(&quot;quality datastore can not be null&quot;);</span>
+    	}
+<span class="nc" id="L261">    	this.consensusCaller=consensusCaller;</span>
+<span class="nc" id="L262">    	this.qualityDataStore = qualityDataStore;</span>
+<span class="nc" id="L263">    	this.qualityValueStrategy = qualityValueStrategy;</span>
+<span class="nc" id="L264">    	return this;</span>
+    }
+    /**
+     * Compute the consensus Qualities using the same
+     * algorithm that consed uses.    The read quality values
+     * will be taken from the {@link QualitySequenceDataStore} set by
+     * {@link #recallConsensus(ConsensusCaller, QualitySequenceDataStore, GapQualityValueStrategy)}.
+     * If you do not wish to recall consensus, then use 
+     * {@link #computeConsensusQualities(QualitySequenceDataStore)}.
+     * If this method is not specified
+     * AND {@link #setInitialConsensusQualities(QualitySequence)} is not
+     * called, then the consensus qualities will be set to a dummy value
+     * of all 30.
+     * @return this
+     * @see #computeConsensusQualities(QualitySequenceDataStore)
+     * 
+     */
+    public AceContigBuilder computeConsensusQualities(){
+<span class="nc" id="L282">    	this.computeConsensusQualities = true;</span>
+<span class="nc" id="L283">    	return this;</span>
+    }
+    /**
+     * Compute the consensus Qualities using the same
+     * algorithm that consed uses.    The read quality values
+     * will be taken from the given {@link QualitySequenceDataStore}.
+     * If this method is not specified
+     * AND {@link #setInitialConsensusQualities(QualitySequence)} is not
+     * called, then the consensus qualities will be set to a dummy value
+     * of all 30.
+     * @param readQualityDataStore the {@link QualitySequenceDataStore}
+     * to use to compute consensus qualities.  This value will override
+     * the quality datastore set by {@link #recallConsensus(ConsensusCaller, QualitySequenceDataStore, GapQualityValueStrategy)}
+     * and vice versa, last one called wins. (This is more for user's
+     * convenience in case they don't want to do one or the other).
+     * @return this
+     * @throws NullPointerException if readQualityDataStore is null.
+     */
+    public AceContigBuilder computeConsensusQualities(QualitySequenceDataStore readQualityDataStore){
+<span class="nc bnc" id="L302" title="All 2 branches missed.">    	if(readQualityDataStore ==null){</span>
+<span class="nc" id="L303">    		throw new NullPointerException(&quot;read quality datastore can not be null&quot;);</span>
+    	}
+<span class="nc" id="L305">    	this.computeConsensusQualities = true;</span>
+    	
+<span class="nc" id="L307">    	this.qualityDataStore = readQualityDataStore;</span>
+<span class="nc" id="L308">    	return this;</span>
+    }
+    /**
+     * Recall the consensus using the given
+     * {@link ConsensusCaller} using faked quality data
+     * where all basecalls (and gaps) all get the same quality value.
+     * The consensus will get recalled inside the {@link #build()}
+     * and from {@link #recallConsensusNow()}.
+     * method before the {@link AceContig} instance is created.
+     * @param consensusCaller the {@link ConsensusCaller}  instance to use
+     * to recall the consensus of this contig; can not be null.
+     * @return this.
+     * @throws NullPointerException if any parameter is null.
+     */
+    @Override
+    public AceContigBuilder recallConsensus(ConsensusCaller consensusCaller){
+<span class="nc bnc" id="L324" title="All 2 branches missed.">    	if(consensusCaller ==null){</span>
+<span class="nc" id="L325">    		throw new NullPointerException(&quot;consensus caller can not be null&quot;);</span>
+    	}
+<span class="nc" id="L327">    	this.consensusCaller=consensusCaller;</span>
+<span class="nc" id="L328">    	this.qualityDataStore = null;</span>
+<span class="nc" id="L329">    	this.qualityValueStrategy = null;</span>
+<span class="nc" id="L330">    	return this;</span>
+    }
+    /**
+    * {@inheritDoc}
+    */
+    @Override
+    public AceContigBuilder setContigId(String contigId){
+<span class="nc bnc" id="L337" title="All 2 branches missed.">        if(contigId==null){</span>
+<span class="nc" id="L338">            throw new NullPointerException(&quot;contig id can not be null&quot;);</span>
+        }
+<span class="nc" id="L340">        this.contigId = contigId;</span>
+<span class="nc" id="L341">        return this;</span>
+    }
+    /**
+    * {@inheritDoc}
+    */
+    @Override
+    public String getContigId() {
+<span class="nc" id="L348">        return contigId;</span>
+    }
+    /**
+    * {@inheritDoc}
+    */
+    @Override
+    public int numberOfReads(){
+<span class="nc" id="L355">        return aceReadBuilderMap.size();</span>
+    }
+    
+    
+    @Override
+    public AceContigBuilder addRead(AceAssembledRead acePlacedRead) {
+<span class="nc" id="L361">     return addRead(acePlacedRead.getId(),</span>
+<span class="nc" id="L362">    		 acePlacedRead.getNucleotideSequence(),</span>
+<span class="nc" id="L363">    		 (int)acePlacedRead.getGappedStartOffset(),</span>
+<span class="nc" id="L364">    		 acePlacedRead.getDirection(),</span>
+<span class="nc" id="L365">    		 acePlacedRead.getReadInfo().getValidRange(),</span>
+<span class="nc" id="L366">    		 acePlacedRead.getPhdInfo(),</span>
+<span class="nc" id="L367">    		 acePlacedRead.getReadInfo().getUngappedFullLength());</span>
+    }
+    
+    /**
+    * {@inheritDoc}
+    */
+    @Override
+    public AceContigBuilder addAllReads(Iterable&lt;AceAssembledRead&gt; reads){
+<span class="nc bnc" id="L375" title="All 2 branches missed.">        for(AceAssembledRead read : reads){</span>
+<span class="nc" id="L376">            addRead(read);</span>
+<span class="nc" id="L377">        }</span>
+<span class="nc" id="L378">        return this;</span>
+    }
+	/**
+    * {@inheritDoc}
+    */
+	@Override
+    public Collection&lt;AceAssembledReadBuilder&gt; getAllAssembledReadBuilders(){
+<span class="nc" id="L385">	    return aceReadBuilderMap.values();</span>
+	}
+    /**
+    * {@inheritDoc}
+    */
+    @Override
+    public AceAssembledReadBuilder getAssembledReadBuilder(String readId){
+<span class="nc" id="L392">        return aceReadBuilderMap.get(readId);</span>
+    }
+    
+    
+    /**
+    * {@inheritDoc}
+    */
+    @Override
+    public AceContigBuilder removeRead(String readId) {
+<span class="nc bnc" id="L401" title="All 2 branches missed.">        if(readId==null){</span>
+<span class="nc" id="L402">            throw new NullPointerException(&quot;read id can not be null&quot;);</span>
+        }
+<span class="nc" id="L404">        aceReadBuilderMap.remove(readId);</span>
+<span class="nc" id="L405">        return this;</span>
+    }
+    
+    /**
+     * Add a read to this contig with the given values.  This read
+     * can later get modified via the {@link #getAssembledReadBuilder(String)}.
+     * The read to be added must be fully contained 
+     * @param readId the id this read should have
+     * @param validBases the gapped bases of this read that align (however well/badly)
+     * to this contig and will be used as underlying sequence data for this contig.
+     * @param offset the gapped start offset of this read into the contig
+     * consensus.
+     * @param dir the {@link Direction} of this read.
+     * @param clearRange the ungapped clear range of the valid bases
+     * relative to the full length non-trimmed raw full length
+     * read from the sequence machine.
+     * @param phdInfo the {@link PhdInfo} object for this read.
+     * @param ungappedFullLength the ungapped full length
+     * non-trimmed raw full length
+     * read from the sequence machine.
+     * @return this.
+     */
+    public AceContigBuilder addRead(String readId, NucleotideSequence validBases, int offset,
+            Direction dir, Range clearRange,PhdInfo phdInfo,int ungappedFullLength) {
+<span class="nc bnc" id="L429" title="All 2 branches missed.">        if(readId ==null){</span>
+<span class="nc" id="L430">        	throw new NullPointerException(&quot;readId can not be null&quot;);</span>
+        }
+<span class="nc bnc" id="L432" title="All 2 branches missed.">    	if(validBases ==null){</span>
+<span class="nc" id="L433">    		throw new NullPointerException(&quot;valid bases can not be null&quot;);</span>
+    	}
+    	//contig left (and right) might be beyond consensus depending on how
+        //trimmed the data is and what assembly/consensus caller is used.
+        //force contig left and right to be within the called consensus
+        //BCISD-211
+<span class="nc" id="L439">        int correctedOffset = Math.max(0,offset);</span>
+<span class="nc" id="L440">        adjustContigLeftAndRight(validBases, correctedOffset);</span>
+<span class="nc" id="L441">        AceAssembledReadBuilder aceReadBuilder = createNewAceReadBuilder(readId, validBases, correctedOffset, dir, </span>
+                    clearRange,phdInfo,ungappedFullLength);
+            
+            
+<span class="nc" id="L445">            aceReadBuilderMap.put(readId,aceReadBuilder);</span>
+        
+<span class="nc" id="L447">        return this;</span>
+    }
+    private AceAssembledReadBuilder createNewAceReadBuilder(
+            String readId, NucleotideSequence validBases, int offset,
+            Direction dir, Range clearRange, PhdInfo phdInfo,int ungappedFullLength) {
+<span class="nc" id="L452">        return DefaultAceAssembledRead.createBuilder(</span>
+                initialConsensus,readId,
+                validBases,
+                offset,dir,clearRange,phdInfo,ungappedFullLength);
+    }
+    private void adjustContigLeftAndRight(NucleotideSequence validBases, int offset) {
+<span class="nc" id="L458">        adjustContigLeft(offset);</span>
+<span class="nc" id="L459">        adjustContigRight(validBases, offset);</span>
+<span class="nc" id="L460">    }</span>
+    private void adjustContigRight(NucleotideSequence validBases, int offset) {
+<span class="nc" id="L462">        final int endOfNewRead = offset+ (int)validBases.getLength()-1;</span>
+<span class="nc bnc" id="L463" title="All 6 branches missed.">        if(endOfNewRead &lt;= initialConsensus.getLength() &amp;&amp; (contigRight ==-1 || endOfNewRead &gt; contigRight)){</span>
+<span class="nc" id="L464">            contigRight = endOfNewRead ;</span>
+        }
+<span class="nc" id="L466">    }</span>
+    private void adjustContigLeft(int offset) {
+        
+<span class="nc bnc" id="L469" title="All 4 branches missed.">        if(contigLeft ==-1 || offset &lt;contigLeft){</span>
+<span class="nc" id="L470">            contigLeft = offset;</span>
+        }
+<span class="nc" id="L472">    }</span>
+    
+    
+    /**
+    * {@inheritDoc}
+    */
+    @Override
+    public NucleotideSequenceBuilder getConsensusBuilder() {
+<span class="nc" id="L480">        return mutableConsensus;</span>
+    }
+    /**
+    * {@inheritDoc}
+    */
+    @Override
+    public AceContig build(){
+<span class="nc bnc" id="L487" title="All 2 branches missed.">         if(built){</span>
+<span class="nc" id="L488">             throw new IllegalStateException(&quot;this contig has already been built&quot;);</span>
+         }
+         
+<span class="nc bnc" id="L491" title="All 2 branches missed.">        if(numberOfReads()==0){</span>
+            //force empty contig if no reads...
+<span class="nc" id="L493">        	 built=true;</span>
+<span class="nc" id="L494">            return new DefaultAceContigImpl(contigId, new NucleotideSequenceBuilder().build(),</span>
+<span class="nc" id="L495">            		Collections.&lt;AceAssembledRead&gt;emptySet(),complemented,</span>
+<span class="nc" id="L496">            		new QualitySequenceBuilder().build());</span>
+        }
+<span class="nc bnc" id="L498" title="All 2 branches missed.">        if(consensusCaller !=null){</span>
+<span class="nc" id="L499">			recallConsensusNow();</span>
+        }
+        
+        
+<span class="nc" id="L503">        SortedSet&lt;AceAssembledRead&gt; placedReads = new TreeSet&lt;AceAssembledRead&gt;(ConsedReadComparator.INSTANCE);</span>
+        //contig left (and right) might be beyond consensus depending on how
+        //trimmed the data is and what assembler/consensus caller is used.
+        //force contig left and right to be within the called consensus
+        //for example, reads that have negative start offsets
+        //not AF records with negative values; actual negative alignment start offsets!
+        //BCISD-211            
+<span class="nc" id="L510">        contigLeft = Math.max(contigLeft, 0);</span>
+<span class="nc" id="L511">        contigRight = Math.min(contigRight,(int)mutableConsensus.getLength()-1);</span>
+        //here only include the gapped valid range consensus bases
+        //throw away the rest            
+<span class="nc" id="L514">        Range contigTrimRange = Range.of(contigLeft, contigRight);</span>
+<span class="nc" id="L515">		NucleotideSequence validConsensus = mutableConsensus</span>
+<span class="nc" id="L516">        		.copy()</span>
+<span class="nc" id="L517">        		.trim(contigTrimRange)</span>
+<span class="nc" id="L518">        		.build();</span>
+		
+<span class="nc bnc" id="L520" title="All 2 branches missed.">        for(AceAssembledReadBuilder aceReadBuilder : aceReadBuilderMap.values()){</span>
+<span class="nc" id="L521">        	int newOffset = (int)aceReadBuilder.getBegin() - contigLeft;</span>
+<span class="nc" id="L522">            aceReadBuilder.reference(validConsensus,newOffset);</span>
+<span class="nc" id="L523">            placedReads.add(aceReadBuilder.build());                </span>
+<span class="nc" id="L524">        } </span>
+       
+<span class="nc bnc" id="L526" title="All 2 branches missed.">        if(mutableConsensusQualities ==null){</span>
+        	//no consensus qualities set
+<span class="nc bnc" id="L528" title="All 2 branches missed.">        	if(computeConsensusQualities){</span>
+<span class="nc bnc" id="L529" title="All 2 branches missed.">        		if(qualityDataStore ==null){</span>
+<span class="nc" id="L530">        			throw new NullPointerException(&quot;quality datastore can not be null&quot;);</span>
+        		}
+        		try {
+<span class="nc" id="L533">					mutableConsensusQualities = new QualitySequenceBuilder(ConsedConsensusQualityComputer.computeConsensusQualities(mutableConsensus.build(), placedReads, qualityDataStore));</span>
+<span class="nc" id="L534">				} catch (DataStoreException e) {</span>
+<span class="nc" id="L535">					throw new IllegalStateException(&quot;error computing consensus quality sequence&quot;,e);</span>
+<span class="nc" id="L536">				}</span>
+        	}else{
+<span class="nc" id="L538">        		mutableConsensusQualities = createDefaultQualitySequenceBuilder();</span>
+        	}
+        }else{
+        	//make sure consensus quality length matches consensus ungapped length
+<span class="nc" id="L542">        	long qualLength =mutableConsensusQualities.getLength();</span>
+<span class="nc" id="L543">        	long ungappedLength = mutableConsensus.getUngappedLength();</span>
+<span class="nc bnc" id="L544" title="All 2 branches missed.">        	if(qualLength != ungappedLength){</span>
+<span class="nc" id="L545">        		throw new IllegalStateException(&quot;given consensus quality length does not match ungapped consensus length&quot;);</span>
+        	}
+        }
+<span class="nc" id="L548">        NucleotideSequence fullConsensus = mutableConsensus.build();</span>
+<span class="nc" id="L549">        Range ungappedContigTrimRange = Range.of(fullConsensus.getUngappedOffsetFor(contigLeft),</span>
+<span class="nc" id="L550">        										fullConsensus.getUngappedOffsetFor(contigRight));</span>
+<span class="nc" id="L551">        QualitySequence consensusQualitySequence = mutableConsensusQualities</span>
+<span class="nc" id="L552">								        		.trim(ungappedContigTrimRange)</span>
+<span class="nc" id="L553">								    			.build();</span>
+<span class="nc" id="L554">        built=true;</span>
+<span class="nc" id="L555">        aceReadBuilderMap.clear();</span>
+<span class="nc" id="L556">        initialConsensus = null;</span>
+        
+<span class="nc" id="L558">        return new DefaultAceContigImpl(contigId, validConsensus,placedReads,complemented, consensusQualitySequence);</span>
+    }
+    /**
+     * Recompute the contig
+     * consensus now using the current reads in the contig
+     * using the {@link ConsensusCaller} and optional quality data
+     * that was set by
+     * {@link #recallConsensus(ConsensusCaller)} or
+     * {@link #recallConsensus(ConsensusCaller, QualitySequenceDataStore, GapQualityValueStrategy)}.
+     * Only regions of the contig that have read coverage 
+     * get recalled.  The Consensus of &quot;0x&quot; regions
+     * remains unchanged.
+     * 
+     * If this method is called without first
+     * setting a {@link ConsensusCaller}, then this
+     * method will throw an {@link IllegalStateException}.
+     * &lt;p/&gt;
+     * Recomputing the contig consensus may be computationally
+     * expensive and time consuming.  So this method
+     * should not be called on a regular basis.
+     * Also, the contig consensus will always
+     * get recalled during {@link #build()}
+     * even if this method has already been called
+     * since it is too hard to track if any underlying read changes occurred
+     * in between.
+     * @return this.
+     * @throws IllegalStateException if a consensus caller
+     * was not first set using {@link #recallConsensus(ConsensusCaller)} or
+     * {@link #recallConsensus(ConsensusCaller, QualitySequenceDataStore, GapQualityValueStrategy)}.
+     * @see #build()
+     */
+    @Override
+    public AceContigBuilder recallConsensusNow() {
+<span class="nc bnc" id="L591" title="All 2 branches missed.">    	if(consensusCaller==null){</span>
+<span class="nc" id="L592">    		throw new IllegalStateException(&quot;must set consensus caller&quot;);</span>
+    	}
+    	
+    	final SliceMap sliceMap;
+    	try{
+<span class="nc bnc" id="L597" title="All 2 branches missed.">    	if(qualityDataStore==null){</span>
+<span class="nc" id="L598">    		sliceMap= CompactedSliceMap.create(createStreamingReadIterator(),</span>
+<span class="nc" id="L599">    			(int)mutableConsensus.getLength(),DEFAULT_QUALITY, qualityValueStrategy);</span>
+    	}else{
+<span class="nc" id="L601">    		sliceMap= CompactedSliceMap.create(createStreamingReadIterator(),</span>
+<span class="nc" id="L602">        			(int)mutableConsensus.getLength(),qualityDataStore, qualityValueStrategy);</span>
+    	}
+<span class="nc" id="L604">    	}catch(DataStoreException e){</span>
+<span class="nc" id="L605">    		throw new IllegalStateException(&quot;error getting quality values from datastore&quot;,e);</span>
+<span class="nc" id="L606">    	}</span>
+    	
+<span class="nc bnc" id="L608" title="All 2 branches missed.">    	for(int i=0; i&lt;sliceMap.getSize(); i++){</span>
+<span class="nc" id="L609">    		Slice slice = sliceMap.getSlice(i);</span>
+<span class="nc bnc" id="L610" title="All 2 branches missed.">    		if(slice.getCoverageDepth() !=0){</span>
+<span class="nc" id="L611">    			mutableConsensus.replace(i,consensusCaller.callConsensus(slice).getConsensus());</span>
+    		}
+    	}
+    	
+    	
+<span class="nc" id="L616">    	return this;</span>
+	}
+    private StreamingIterator&lt;AceAssembledRead&gt; createStreamingReadIterator(){
+    	
+<span class="nc" id="L620">    	return IteratorUtil.createStreamingIterator(new Iterator&lt;AceAssembledRead&gt;() {</span>
+<span class="nc" id="L621">    		Iterator&lt;AceAssembledReadBuilder&gt; builderIterator = aceReadBuilderMap.values().iterator();</span>
+			@Override
+			public boolean hasNext() {
+<span class="nc" id="L624">				return builderIterator.hasNext();</span>
+			}
+
+			@Override
+			public AceAssembledRead next() {
+				//should be able to call build multiple times
+<span class="nc" id="L630">				return builderIterator.next().build();</span>
+			}
+
+			@Override
+			public void remove() {
+<span class="nc" id="L635">				throw new UnsupportedOperationException();					</span>
+			}
+    		
+		});
+    }
+    /**
+     * Split the contents of the current ContigBuilder into possibly multiple
+     * new ContigBuilders.  The returned ContigBuilders will be new
+     * instances which only contain the reads and consensus of the initial
+     * contig that intersects the input rangesToKeep.  If a {@link ConsensusCaller}
+     * and related {@link QualitySequenceDataStore} and {@link GapQualityValueStrategy}
+     * were set via {@link #recallConsensus(ConsensusCaller)} or {@link #recallConsensus(ConsensusCaller, QualitySequenceDataStore, GapQualityValueStrategy)}
+     * then those values are copied as well.
+     * @param rangesToKeep The {@link Range}s of the contig to make into new
+     * contigs.  For each range given, a new ContigBuilder instance is created
+     * which contains only the reads and portion of the consensus sequence
+     * that intersects that range in the original contig.  If a read
+     * extends beyond the input range, then that read sequence is trimmed.
+     * If a read spans multiple input ranges, then it will exist (but trimmed)
+     * in multiple returned contig Builders.  If the given ranges to keep are overlapping, then the returned
+     * contigBuilders will also be overlapping.  Each returned contigBuilder will have all
+     * have the same contig id this contigBuilder. 
+     * &lt;strong&gt;It is up to the client to modify or remove reads and change the returned
+     * contig ids so that the final contigs meet the desired 
+     * uniqueness constraints &lt;/strong&gt;   
+     * @return a new Map, sorted by Range arrival, each entry value in the map is a new contigBuilder
+     * which contains only the portion of this contig at that particular entry key range.  The same id
+     * is used for all the returned split contigBuilders so be sure to rename them using 
+     * {@link #setContigId(String)} to make them unique.
+     */
+    public SortedMap&lt;Range, AceContigBuilder&gt; split(Collection&lt;Range&gt; rangesToKeep){
+<span class="nc" id="L666">    	SortedMap&lt;Range, AceContigBuilder&gt; splitContigs = new TreeMap&lt;Range, AceContigBuilder&gt;(Range.Comparators.ARRIVAL);</span>
+    	
+<span class="nc" id="L668">    	CoverageMap&lt;AceAssembledReadBuilder&gt; coverageMap = new CoverageMapBuilder&lt;AceAssembledReadBuilder&gt;(aceReadBuilderMap.values()).build();</span>
+    	
+<span class="nc bnc" id="L670" title="All 2 branches missed.">    	for(Range rangeTokeep :rangesToKeep){</span>
+    		
+<span class="nc" id="L672">            NucleotideSequence contigConsensus =mutableConsensus</span>
+<span class="nc" id="L673">            									.copy()</span>
+<span class="nc" id="L674">												.trim(rangeTokeep)</span>
+<span class="nc" id="L675">												.build();</span>
+<span class="nc" id="L676">            AceContigBuilder splitContig = new AceContigBuilder(contigId, contigConsensus);</span>
+<span class="nc" id="L677">            splitContig.consensusCaller = this.consensusCaller;</span>
+<span class="nc" id="L678">            splitContig.qualityDataStore = this.qualityDataStore;</span>
+<span class="nc" id="L679">            splitContig.qualityValueStrategy = this.qualityValueStrategy;</span>
+            
+<span class="nc" id="L681">            Set&lt;String&gt; contigReads = new HashSet&lt;String&gt;();            </span>
+<span class="nc bnc" id="L682" title="All 2 branches missed.">            for(CoverageRegion&lt;AceAssembledReadBuilder&gt; region : coverageMap.getRegionsWhichIntersect(rangeTokeep)){</span>
+<span class="nc bnc" id="L683" title="All 2 branches missed.">                for(AceAssembledReadBuilder read : region){</span>
+<span class="nc" id="L684">                    contigReads.add(read.getId());</span>
+<span class="nc" id="L685">                }</span>
+<span class="nc" id="L686">            }</span>
+<span class="nc bnc" id="L687" title="All 2 branches missed.">            for(String readId : contigReads){</span>
+            	//create a copy so we 
+            	//can modify our version without
+            	//affecting original
+<span class="nc" id="L691">            	AceAssembledReadBuilder readBuilder = aceReadBuilderMap.get(readId)</span>
+<span class="nc" id="L692">            											.copy();</span>
+<span class="nc" id="L693">            	Range readTrimRange = new Range.Builder(readBuilder.asRange().intersection(rangeTokeep))</span>
+<span class="nc" id="L694">            						.shift(-readBuilder.getBegin()) //adjust trim range to be relative of read start</span>
+<span class="nc" id="L695">            						.build();</span>
+            	//trim updated
+            	//valid range sequence
+            	//and clear range
+            	//so we can just use the returned values
+            	//when adding this adjusted read to the split
+            	//contig.
+<span class="nc" id="L702">        		readBuilder.trim(readTrimRange);</span>
+            	
+            	
+<span class="nc" id="L705">            	splitContig.addRead(readId, </span>
+<span class="nc" id="L706">            			readBuilder.getCurrentNucleotideSequence(), </span>
+<span class="nc" id="L707">            			(int)(readBuilder.getBegin() - rangeTokeep.getBegin()), </span>
+<span class="nc" id="L708">            			readBuilder.getDirection(), </span>
+<span class="nc" id="L709">            			readBuilder.getClearRange(), </span>
+<span class="nc" id="L710">            			readBuilder.getPhdInfo(), </span>
+<span class="nc" id="L711">            			readBuilder.getUngappedFullLength());</span>
+<span class="nc" id="L712">            }</span>
+<span class="nc" id="L713">            splitContigs.put(rangeTokeep, splitContig);</span>
+<span class="nc" id="L714">    	}</span>
+    	
+<span class="nc" id="L716">    	return splitContigs;</span>
+    }
+
+	/**
+     * Comparator singleton that sorts reads like consed does when outputing ace files.
+     * @author dkatzel
+     *
+     */
+<span class="nc" id="L724">    private static enum ConsedReadComparator implements Comparator&lt;AceAssembledRead&gt;{</span>
+<span class="nc" id="L725">		INSTANCE;</span>
+		
+		@Override
+		public int compare(AceAssembledRead o1, AceAssembledRead o2) {
+<span class="nc" id="L729">			int comp= Range.Comparators.ARRIVAL.compare(o1.asRange(),o2.asRange());</span>
+<span class="nc bnc" id="L730" title="All 2 branches missed.">			if(comp!=0){</span>
+<span class="nc" id="L731">				return comp;</span>
+			}
+			//ranges the same order by id
+<span class="nc" id="L734">			return o1.getId().compareTo(o2.getId());</span>
+		}
+
+	}
+    
+    private static final class  DefaultAceContigImpl implements AceContig{
+
+    	
+        private final boolean complemented;
+        private final QualitySequence consensusQualities;
+        
+        private final Contig&lt;AceAssembledRead&gt; contig;
+        private DefaultAceContigImpl(String id, NucleotideSequence consensus,
+                Set&lt;AceAssembledRead&gt; reads,boolean complemented,
+<span class="nc" id="L748">                QualitySequence consensusQualities) {</span>
+<span class="nc" id="L749">            contig = new DefaultContig&lt;AceAssembledRead&gt;(id, consensus, reads);</span>
+<span class="nc" id="L750">            this.complemented = complemented;</span>
+<span class="nc" id="L751">            this.consensusQualities = consensusQualities;</span>
+<span class="nc" id="L752">        }</span>
+       
+        
+        
+        @Override
+		public QualitySequence getConsensusQualitySequence() {
+<span class="nc" id="L758">			return consensusQualities;</span>
+		}
+
+
+
+		/**
+        * {@inheritDoc}
+        */
+        @Override
+        public boolean isComplemented() {
+<span class="nc" id="L768">            return complemented;</span>
+        }
+
+
+
+		@Override
+		public String getId() {
+<span class="nc" id="L775">			return contig.getId();</span>
+		}
+
+
+
+		@Override
+		public long getNumberOfReads() {
+<span class="nc" id="L782">			return contig.getNumberOfReads();</span>
+		}
+
+
+
+		@Override
+		public NucleotideSequence getConsensusSequence() {
+<span class="nc" id="L789">			return contig.getConsensusSequence();</span>
+		}
+
+
+
+		@Override
+		public AceAssembledRead getRead(String id) {
+<span class="nc" id="L796">			return contig.getRead(id);</span>
+		}
+
+
+
+		@Override
+		public boolean containsRead(String readId) {
+<span class="nc" id="L803">			return contig.containsRead(readId);</span>
+		}
+
+
+
+		@Override
+		public StreamingIterator&lt;AceAssembledRead&gt; getReadIterator() {
+<span class="nc" id="L810">			return contig.getReadIterator();</span>
+		}
+
+
+
+		@Override
+		public int hashCode() {
+<span class="nc" id="L817">			final int prime = 31;</span>
+<span class="nc" id="L818">			int result = 1;</span>
+<span class="nc bnc" id="L819" title="All 2 branches missed.">			result = prime * result + (complemented ? 1231 : 1237);</span>
+<span class="nc" id="L820">			result = prime * result + contig.hashCode();</span>
+<span class="nc" id="L821">			return result;</span>
+		}
+
+
+
+		@Override
+		public boolean equals(Object obj) {
+<span class="nc bnc" id="L828" title="All 2 branches missed.">			if (this == obj) {</span>
+<span class="nc" id="L829">				return true;</span>
+			}
+<span class="nc bnc" id="L831" title="All 2 branches missed.">			if (obj == null) {</span>
+<span class="nc" id="L832">				return false;</span>
+			}
+<span class="nc bnc" id="L834" title="All 2 branches missed.">			if (!(obj instanceof AceContig)) {</span>
+<span class="nc" id="L835">				return false;</span>
+			}
+<span class="nc" id="L837">			AceContig other = (AceContig) obj;</span>
+<span class="nc bnc" id="L838" title="All 2 branches missed.">			if (complemented != other.isComplemented()) {</span>
+<span class="nc" id="L839">				return false;</span>
+			}
+<span class="nc bnc" id="L841" title="All 2 branches missed.">			if (!contig.getId().equals(other.getId())) {</span>
+<span class="nc" id="L842">				return false;</span>
+			}
+<span class="nc bnc" id="L844" title="All 2 branches missed.">			if (!contig.getConsensusSequence().equals(other.getConsensusSequence())) {</span>
+<span class="nc" id="L845">				return false;</span>
+			}
+<span class="nc bnc" id="L847" title="All 2 branches missed.">			if (contig.getNumberOfReads()!=other.getNumberOfReads()) {</span>
+<span class="nc" id="L848">				return false;</span>
+			}
+<span class="nc" id="L850">			StreamingIterator&lt;AceAssembledRead&gt; readIter=null;</span>
+			try{
+<span class="nc" id="L852">				readIter = contig.getReadIterator();</span>
+<span class="nc bnc" id="L853" title="All 2 branches missed.">				while(readIter.hasNext()){</span>
+<span class="nc" id="L854">					AceAssembledRead read = readIter.next();</span>
+<span class="nc" id="L855">					String readId = read.getId();</span>
+<span class="nc bnc" id="L856" title="All 2 branches missed.">					if(!other.containsRead(readId)){</span>
+<span class="nc" id="L857">						return false;</span>
+					}
+<span class="nc bnc" id="L859" title="All 2 branches missed.">					if(!read.equals(other.getRead(readId))){</span>
+<span class="nc" id="L860">						return false;</span>
+					}
+<span class="nc" id="L862">				}</span>
+			}finally{
+<span class="nc" id="L864">				IOUtil.closeAndIgnoreErrors(readIter);</span>
+			}			
+<span class="nc" id="L866">			return true;</span>
+		}
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

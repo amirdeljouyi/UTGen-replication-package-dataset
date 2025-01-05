@@ -1,0 +1,335 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SequentialTreeBuilder.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">52_lagoon</a> &gt; <a href="index.source.html" class="el_package">nu.staldal.xtree</a> &gt; <span class="el_source">SequentialTreeBuilder.java</span></div><h1>SequentialTreeBuilder.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2002-2003, Mikael St�ldal
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ * notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ * notice, this list of conditions and the following disclaimer in the
+ * documentation and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of the author nor the names of its contributors
+ * may be used to endorse or promote products derived from this software
+ * without specific prior written permission.
+ *
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ *
+ * Note: This is known as &quot;the modified BSD license&quot;. It's an approved
+ * Open Source and Free Software license, see
+ * http://www.opensource.org/licenses/
+ * and
+ * http://www.gnu.org/philosophy/license-list.html
+ */
+
+package nu.staldal.xtree;
+
+import java.util.*;
+import java.io.*;
+import java.net.URL;
+
+import javax.xml.parsers.*;
+
+import org.xml.sax.*;
+
+
+/**
+ * Build a list of XTree:s from a SAX2 event stream, or by parsing an XML document.
+ * &lt;p&gt;
+ * Useful to process a large document sequentially, without need to store the whole
+ * document in memory at the same time.
+ * &lt;p&gt;
+ * The SequentialTreeBuilder ensures that the tree will not have two adjacent Text nodes.
+ */
+public class SequentialTreeBuilder implements ContentHandler, ErrorHandler
+{
+	public static final boolean DEBUG = false;
+
+    private static final String XML_NS =
+    	&quot;http://www.w3.org/XML/1998/namespace&quot;;
+
+	private URL baseURI;
+<span class="nc" id="L68">    private Locator locator = null;</span>
+	private ElementHandler handler;
+	private Element rootElement;
+	private TreeBuilder subTreeBuilder;
+<span class="nc" id="L72">	private Vector nsPrefix = null;</span>
+<span class="nc" id="L73">	private Vector nsURI = null;</span>
+<span class="nc" id="L74">	private int inSubTree = 0;</span>
+
+
+	/**
+	 * Parse an XML document into a list of XTree:s, one for each element under the root.
+	 * Uses JAXP to find a parser.
+	 * Will not support xml:base.
+	 *
+	 * @param xmlInput    the input to parse
+	 * @param validateDTD validate using DTD
+	 * @param handler     handler to invoke for each element
+	 *
+	 * @return the root element (without any children)
+	 *
+	 * @throws SAXParseException if the XML data is not valid
+	 * @throws SAXException if any other error occurs while parsing the XML data
+	 * @throws IOException  if there was some I/O error while reading the input.
+	 */
+	public static Element parseXMLSequential(InputSource xmlInput, boolean validateDTD, 
+								   ElementHandler handler)
+		throws SAXParseException, SAXException, IOException
+	{
+		try {
+<span class="nc" id="L97">			SAXParserFactory parserFactory = SAXParserFactory.newInstance();</span>
+<span class="nc" id="L98">			parserFactory.setNamespaceAware(true);</span>
+<span class="nc" id="L99">			parserFactory.setValidating(validateDTD);</span>
+<span class="nc" id="L100">			parserFactory.setFeature(&quot;http://xml.org/sax/features/namespaces&quot;, true);</span>
+<span class="nc" id="L101">			parserFactory.setFeature(&quot;http://xml.org/sax/features/namespace-prefixes&quot;, false);</span>
+<span class="nc" id="L102">			parserFactory.setFeature(&quot;http://xml.org/sax/features/validation&quot;, validateDTD);			</span>
+	
+<span class="nc" id="L104">			XMLReader xmlReader = parserFactory.newSAXParser().getXMLReader();			</span>
+<span class="nc" id="L105">			SequentialTreeBuilder tb = new SequentialTreeBuilder(handler);</span>
+
+<span class="nc" id="L107">			xmlReader.setContentHandler(tb);</span>
+<span class="nc" id="L108">			xmlReader.setErrorHandler(tb);</span>
+<span class="nc" id="L109">			xmlReader.parse(xmlInput);</span>
+					
+<span class="nc" id="L111">			return tb.getRootElement();</span>
+		}
+<span class="nc" id="L113">		catch (javax.xml.parsers.ParserConfigurationException e)</span>
+		{
+<span class="nc" id="L115">			throw new Error(&quot;XML parser configuration error: &quot; + e.getMessage());	</span>
+		}
+	}
+
+
+	/**
+	 * Constructs a SequentialTreeBuilder, ready to receive SAX events.
+	 * Will not support xml:base.
+	 *
+	 * @param handler   handler to invoke for each element
+	 */
+	public SequentialTreeBuilder(ElementHandler handler)
+	{
+<span class="nc" id="L128">		this(handler, null);</span>
+<span class="nc" id="L129">	}</span>
+
+
+	/**
+	 * Constructs a SequentialTreeBuilder, ready to receive SAX events.
+	 *
+	 * @param handler   handler to invoke for each element
+	 * @param base      base URL for the document, to support xml:base.
+	 */
+	public SequentialTreeBuilder(ElementHandler handler, URL base)
+<span class="nc" id="L139">	{</span>
+<span class="nc" id="L140">		this.handler = handler;</span>
+<span class="nc" id="L141">		baseURI = base;</span>
+<span class="nc" id="L142">		subTreeBuilder = new TreeBuilder();</span>
+<span class="nc" id="L143">	}</span>
+
+
+	/**
+	 * Obtain the root Element
+	 *
+	 * @throws IllegalStateException  if the SAX events received so far
+	 * doesn't constitues a well-formed XML document.
+	 */
+	public Element getRootElement()
+		throws IllegalStateException
+	{
+<span class="nc bnc" id="L155" title="All 2 branches missed.">		if (rootElement == null)</span>
+<span class="nc" id="L156">			throw new IllegalStateException(&quot;No root element&quot;);</span>
+
+<span class="nc" id="L158">		return rootElement;</span>
+	}
+
+
+    // ContentHandler implementation
+
+    public void setDocumentLocator(Locator locator)
+    {
+<span class="nc" id="L166">		this.locator = locator;</span>
+<span class="nc" id="L167">		subTreeBuilder.setDocumentLocator(locator);</span>
+<span class="nc" id="L168">    }</span>
+
+    public void startDocument()
+        throws SAXException
+    {
+		// nothing to do
+<span class="nc" id="L174">    }</span>
+
+    public void endDocument()
+        throws SAXException
+    {
+		// nothing to do
+<span class="nc" id="L180">    }</span>
+
+    public void startElement(String namespaceURI, String localName,
+                             String qName, Attributes atts)
+        throws SAXException
+    {
+        if (DEBUG) System.out.println(&quot;startElement(&quot;+namespaceURI+','+
+			localName+','+qName+')');
+
+<span class="nc bnc" id="L189" title="All 2 branches missed.">		if (rootElement == null)</span>
+		{
+<span class="nc" id="L191">			rootElement = new Element(namespaceURI, localName, atts.getLength());</span>
+<span class="nc bnc" id="L192" title="All 2 branches missed.">			if (locator != null)</span>
+			{
+<span class="nc" id="L194">				rootElement.setSystemId(locator.getSystemId());</span>
+<span class="nc" id="L195">				rootElement.setLine(locator.getLineNumber());</span>
+<span class="nc" id="L196">				rootElement.setColumn(locator.getColumnNumber());</span>
+			}
+<span class="nc bnc" id="L198" title="All 2 branches missed.">			if (baseURI != null) rootElement.setBaseURI(baseURI);</span>
+<span class="nc bnc" id="L199" title="All 2 branches missed.">			for (int i = 0; i &lt; atts.getLength(); i++)</span>
+			{
+<span class="nc" id="L201">				rootElement.addAttribute(atts.getURI(i), atts.getLocalName(i),</span>
+<span class="nc" id="L202">					atts.getType(i), atts.getValue(i));</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">				if (atts.getURI(i).equals(XML_NS) &amp;&amp;</span>
+<span class="nc bnc" id="L204" title="All 2 branches missed.">						atts.getLocalName(i).equals(&quot;base&quot;))</span>
+				{
+					try {
+<span class="nc" id="L207">						URL url = new URL(rootElement.getBaseURI(), atts.getValue(i));</span>
+<span class="nc" id="L208">						rootElement.setBaseURI(url);</span>
+					}
+<span class="nc" id="L210">					catch (java.net.MalformedURLException e)</span>
+					{
+<span class="nc" id="L212">						throw new SAXException(e);</span>
+<span class="nc" id="L213">					}</span>
+	
+				}
+			}
+<span class="nc bnc" id="L217" title="All 2 branches missed.">	     	if (nsPrefix != null)</span>
+    	 	{
+<span class="nc" id="L219">				rootElement.setNamespaceMappings(nsPrefix, nsURI);</span>
+			}
+		}
+		else
+		{
+<span class="nc" id="L224">			inSubTree++;</span>
+<span class="nc" id="L225">			subTreeBuilder.startElement(namespaceURI, localName, qName, atts);</span>
+		}
+<span class="nc" id="L227">    }</span>
+
+    public void endElement(String namespaceURI, String localName,
+                           String qName)
+        throws SAXException
+    {
+		if (DEBUG) System.out.println(&quot;endElement(&quot;+namespaceURI+','
+            +localName+','+qName+')');
+	
+<span class="nc bnc" id="L236" title="All 2 branches missed.">		if (inSubTree&gt;0)</span>
+		{
+<span class="nc" id="L238">			subTreeBuilder.endElement(namespaceURI, localName, qName);</span>
+			
+<span class="nc bnc" id="L240" title="All 2 branches missed.">			if (inSubTree == 1)</span>
+			{
+<span class="nc" id="L242">				Element el = subTreeBuilder.getTree();</span>
+<span class="nc" id="L243">				el.setParent(rootElement);</span>
+<span class="nc" id="L244">				handler.processElement(el);</span>
+<span class="nc" id="L245">				subTreeBuilder.reset();</span>
+			}
+			
+<span class="nc" id="L248">			inSubTree--;			</span>
+		}
+		else
+		{
+			// nothing to do	
+		}		
+<span class="nc" id="L254">    }</span>
+
+    public void startPrefixMapping(String prefix, String uri)
+        throws SAXException
+    {
+		if (DEBUG) System.out.println(&quot;startPrefixMapping(&quot;+
+			((prefix.length() == 0) ? &quot;&lt;default&gt;&quot; : prefix)+','+
+			uri+')');
+
+<span class="nc bnc" id="L263" title="All 2 branches missed.">		if (rootElement == null)</span>
+		{
+<span class="nc bnc" id="L265" title="All 2 branches missed.">			if (nsPrefix == null)</span>
+			{
+<span class="nc" id="L267">				nsPrefix = new Vector();</span>
+<span class="nc" id="L268">				nsURI = new Vector();</span>
+			}
+<span class="nc" id="L270">			nsPrefix.addElement(prefix);</span>
+<span class="nc" id="L271">			nsURI.addElement(uri);</span>
+		}
+		else
+		{
+<span class="nc" id="L275">			subTreeBuilder.startPrefixMapping(prefix, uri);	</span>
+		}
+<span class="nc" id="L277">    }</span>
+
+    public void endPrefixMapping(String prefix)
+        throws SAXException
+    {
+		if (DEBUG) System.out.println(&quot;endPrefixMapping(&quot;+
+			((prefix.length() == 0) ? &quot;&lt;default&gt;&quot; : prefix)+')');
+
+        // nothing to do
+<span class="nc" id="L286">    }</span>
+
+    public void characters(char ch[], int start, int length)
+        throws SAXException
+    {
+<span class="nc bnc" id="L291" title="All 2 branches missed.">		if (inSubTree&gt;0)</span>
+<span class="nc" id="L292">			subTreeBuilder.characters(ch, start, length);</span>
+<span class="nc" id="L293">    }</span>
+
+    public void ignorableWhitespace(char ch[], int start, int length)
+        throws SAXException
+    {
+<span class="nc bnc" id="L298" title="All 2 branches missed.">		if (inSubTree&gt;0)</span>
+<span class="nc" id="L299">			subTreeBuilder.ignorableWhitespace(ch, start, length);</span>
+<span class="nc" id="L300">    }</span>
+
+    public void processingInstruction(String target, String data)
+        throws SAXException
+    {
+<span class="nc bnc" id="L305" title="All 2 branches missed.">		if (inSubTree&gt;0)</span>
+<span class="nc" id="L306">			subTreeBuilder.processingInstruction(target, data);</span>
+<span class="nc" id="L307">    }</span>
+
+    public void skippedEntity(String name)
+        throws SAXException
+    {
+<span class="nc bnc" id="L312" title="All 2 branches missed.">		if (inSubTree&gt;0)</span>
+<span class="nc" id="L313">			subTreeBuilder.skippedEntity(name);</span>
+<span class="nc" id="L314">    }</span>
+
+
+	// ErrorHandler implementation
+
+	public void fatalError(SAXParseException e) throws SAXParseException
+	{
+<span class="nc" id="L321">		throw e;</span>
+	}
+
+	public void error(SAXParseException e) throws SAXParseException
+	{
+<span class="nc" id="L326">		throw e;</span>
+	}
+
+	public void warning(SAXParseException e)
+	{
+		// do nothing
+<span class="nc" id="L332">	}</span>
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,592 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FileReceiver.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.technical.file</a> &gt; <span class="el_source">FileReceiver.java</span></div><h1>FileReceiver.java</h1><pre class="source lang-java linenums">package net.sf.xbus.technical.file;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Vector;
+
+import net.sf.xbus.application.Adapter;
+import net.sf.xbus.application.PostProcessor;
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.MessageHandler;
+import net.sf.xbus.base.core.TAManager;
+import net.sf.xbus.base.core.TAResource;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.core.trace.Trace;
+import net.sf.xbus.base.deletedMessageStore.DeletedMessageStore;
+import net.sf.xbus.base.notifyerror.NotifyError;
+import net.sf.xbus.base.xbussystem.XBUSSystem;
+import net.sf.xbus.technical.Receiver;
+import net.sf.xbus.technical.ReceiverSingleInterface;
+
+/**
+ * When the &lt;code&gt;FileReceiver&lt;/code&gt; receives a request it reads the files
+ * into a String and calls the application layer.
+ */
+<span class="nc" id="L30">public class FileReceiver extends FileBase</span>
+		implements
+			Receiver,
+			TAResource,
+			ReceiverSingleInterface
+{
+<span class="nc" id="L36">	protected FileReceiverConfiguration mConfiguration = null;</span>
+
+	/**
+	 * Full path name of the file to be read
+	 */
+<span class="nc" id="L41">	private String mFilename = null;</span>
+
+	/**
+	 * Full path name of the copy from the original file to be read. &lt;br&gt;
+	 * The filename is with current date expanded.
+	 */
+<span class="nc" id="L47">	protected String mCopyname = null;</span>
+
+	/**
+	 * Full path name of the back up copy
+	 */
+<span class="nc" id="L52">	private String mBackupname = null;</span>
+
+	/**
+	 * This method manages all processes of the receipt for one as parameter
+	 * given name of the neighbor-system.
+	 * &lt;p&gt;
+	 * First, the list of {@link net.sf.xbus.base.xbussystem.XBUSSystem}for
+	 * this system is determined by replacing the markers for additional
+	 * adresses.
+	 * &lt;p&gt;
+	 * After that for each XBUSSystem the method {@link #doReceive(XBUSSystem)}
+	 * is invoked to read the file and process its content.
+	 * &lt;p&gt;
+	 * 
+	 * @see net.sf.xbus.base.xbussystem.XBUSSystem#getSystems(String, String)
+	 * @param systemName name of the interface definition
+	 * @exception XException if something goes wrong
+	 */
+	public void receive(String systemName)
+	{
+		try
+		{
+<span class="nc" id="L74">			readConfiguration(systemName);</span>
+
+			// FileReceiver will be registered by TAManager
+<span class="nc" id="L77">			TAManager taManager = TAManager.getInstance();</span>
+<span class="nc" id="L78">			taManager.clearManager();</span>
+<span class="nc" id="L79">			taManager.registerResource(this);</span>
+
+			// determine the list of XBUSSystem for the system
+<span class="nc" id="L82">			List systems = XBUSSystem.getSystems(systemName, mConfiguration</span>
+<span class="nc" id="L83">					.getFileName());</span>
+
+<span class="nc" id="L85">			boolean successful = true;</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">			for (Iterator it = systems.iterator(); it.hasNext();)</span>
+			{
+<span class="nc" id="L88">				XBUSSystem xbusSystem = (XBUSSystem) it.next();</span>
+<span class="nc" id="L89">				Trace.info(&quot;Start processing &quot; + xbusSystem.getCompleteName());</span>
+<span class="nc bnc" id="L90" title="All 2 branches missed.">				if (!doReceive(xbusSystem))</span>
+				{
+<span class="nc" id="L92">					successful = false;</span>
+				}
+<span class="nc" id="L94">			}</span>
+
+<span class="nc bnc" id="L96" title="All 2 branches missed.">			if (successful)</span>
+			{
+<span class="nc" id="L98">				PostProcessor.start(new XBUSSystem(systemName), null,</span>
+						Constants.POSTPROCESSING_FINAL);
+			}
+		}
+<span class="nc" id="L102">		catch (Throwable e)</span>
+		{
+			try
+			{
+<span class="nc" id="L106">				NotifyError.notifyError(this, new XBUSSystem(systemName), e</span>
+<span class="nc" id="L107">						.getMessage(), null, null);</span>
+			}
+<span class="nc" id="L109">			catch (XException e1)</span>
+			{
+				// do nothing
+<span class="nc" id="L112">			}</span>
+		}
+		finally
+		{
+			// close resources and remove from the resources
+<span class="nc" id="L117">			TAManager.getInstance().close();</span>
+<span class="nc" id="L118">			TAManager.getInstance().removeResource(this);</span>
+		}
+<span class="nc" id="L120">	}</span>
+
+	/**
+	 * Reads some entries from the configuration.
+	 * 
+	 * @param systemName
+	 * @throws XException if anything goes wrong
+	 */
+	public void readConfiguration(String systemName) throws XException
+	{
+		// filename, encoding and resolution for this system
+		// are read from the configuration and saved into class variables
+<span class="nc" id="L132">		mConfiguration = new FileReceiverConfiguration(systemName);</span>
+<span class="nc" id="L133">	}</span>
+
+	/**
+	 * Manages the process of receipt for several XBUSSystems. This method does
+	 * the following:
+	 * &lt;ol&gt;
+	 * &lt;li&gt;replace placeholders in the filename with the dealer information
+	 * &lt;li&gt;create copy and backup files, depending on the final resolution
+	 * &lt;li&gt;read file into String
+	 * &lt;li&gt;call application layer - Adapter
+	 * &lt;li&gt;determine the resulting returncode
+	 * &lt;/ol&gt;
+	 * 
+	 * @param xbusSystem name of the interface definition
+	 */
+	protected boolean doReceive(XBUSSystem xbusSystem)
+	{
+<span class="nc" id="L150">		boolean successful = false;</span>
+		try
+		{
+			// The file path name may contain placeholders for informations on
+			// the address.
+			// In flw. method these placeholders will be replaced with their
+			// actual values for the address
+			// of the neighbor-system.
+			// if the address has not been set, the text will be returned
+			// without modifications.
+<span class="nc" id="L160">			mFilename = xbusSystem.replaceAllMarkers(mConfiguration</span>
+<span class="nc" id="L161">					.getFileName())[0];</span>
+			// Trace.info(&quot;Receiving data from &quot; + mFilename);
+			// only if the file exist
+<span class="nc" id="L164">			File file = new File(mFilename);</span>
+<span class="nc bnc" id="L165" title="All 2 branches missed.">			if (file.exists())</span>
+			{
+<span class="nc bnc" id="L167" title="All 4 branches missed.">				if (xbusSystem.getMaxAge() &gt; 0 || xbusSystem.getMinAge() &gt; 0)</span>
+				{ // Restrictions to file age is specified.
+					// Test the limits.
+<span class="nc" id="L170">					long fileTimestamp = file.lastModified();</span>
+<span class="nc" id="L171">					long now = System.currentTimeMillis();</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">					if (now - fileTimestamp &lt; xbusSystem.getMinAge())</span>
+						// The minimal age is not satisfied.
+<span class="nc" id="L174">						successful = true;</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">					else if (xbusSystem.getMaxAge() &gt; 0</span>
+<span class="nc bnc" id="L176" title="All 2 branches missed.">							&amp;&amp; now - fileTimestamp &gt; xbusSystem.getMaxAge())</span>
+						// The file is too old.
+<span class="nc" id="L178">						successful = true;</span>
+				} // then (mMaxAge&gt;0 || mMinAge&gt;0)
+
+<span class="nc bnc" id="L181" title="All 2 branches missed.">				if (!successful)</span>
+				{
+<span class="nc" id="L183">					Trace.info(&quot;Receiving data from &quot; + mFilename);</span>
+<span class="nc" id="L184">					TAManager.getInstance().begin();</span>
+					// check if the file meets the requirements of Resolution
+					// otherwise save xbusSystem with FileReceiver into Vector
+					// to be
+					// retry late
+<span class="nc bnc" id="L189" title="All 2 branches missed.">					if (!checkFilePermissions())</span>
+					{
+						// wrong file permissions
+<span class="nc" id="L192">						Vector params = new Vector(1);</span>
+<span class="nc" id="L193">						params.add(mFilename);</span>
+
+<span class="nc" id="L195">						throw new XException(Constants.LOCATION_EXTERN,</span>
+								Constants.LAYER_TECHNICAL,
+								Constants.PACKAGE_TECHNICAL_FILE, &quot;17&quot;, params);
+					} // then (!checkFilePermissions())
+					else
+					{
+						try
+						{
+							// make copy and use this copy for read
+<span class="nc" id="L204">							mCopyname = mFilename + Constants.getDateAsString();</span>
+<span class="nc" id="L205">							copyFile(mFilename, mCopyname);</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">							if (!mConfiguration.getResolution().equals(</span>
+									Constants.READ_PRESERVE))
+							{
+								// hide file from other using wenn
+								// resolution delete or rename
+<span class="nc" id="L211">								mBackupname = mFilename</span>
+										+ Constants.BACKUP_SUFFIX;
+<span class="nc" id="L213">								renameFile(mFilename, mBackupname);</span>
+							} // The content of the request.
+							// Subclasses may define their own request content.
+<span class="nc" id="L216">							Object requestContent = getRequestContent();</span>
+
+							// call application layer
+<span class="nc" id="L219">							Adapter adapter = new Adapter();</span>
+<span class="nc" id="L220">							adapter.callApplication(xbusSystem, requestContent,</span>
+<span class="nc" id="L221">									getType());</span>
+							// check the Adapter return code
+							// in case of &quot;not success&quot; throw new XException
+<span class="nc bnc" id="L224" title="All 2 branches missed.">							if (Constants.RC_OK.equals(adapter.getReturncode()))</span>
+							{
+<span class="nc" id="L226">								TAManager.getInstance().commit();</span>
+
+<span class="nc" id="L228">								PostProcessor.start(xbusSystem, adapter</span>
+<span class="nc" id="L229">										.getResponse(),</span>
+										Constants.POSTPROCESSING_PERSYSTEM);
+
+<span class="nc" id="L232">								Trace.info(&quot;End processing &quot;</span>
+<span class="nc" id="L233">										+ xbusSystem.getCompleteName());</span>
+<span class="nc" id="L234">								Trace</span>
+<span class="nc" id="L235">										.info(&quot;----------------------------------------&quot;);</span>
+<span class="nc" id="L236">								successful = true;</span>
+							} // then
+							// (Constants.RC_OK.equals(adapter.getReturncode()))
+							else
+							{
+<span class="nc" id="L241">								TAManager.getInstance().rollback();</span>
+
+<span class="nc" id="L243">								NotifyError.notifyError(this, xbusSystem,</span>
+<span class="nc" id="L244">										adapter.getErrormessage(),</span>
+										requestContent, null);
+
+<span class="nc" id="L247">								Trace.info(&quot;Error while processing &quot;</span>
+<span class="nc" id="L248">										+ xbusSystem.getCompleteName());</span>
+<span class="nc" id="L249">								Trace</span>
+<span class="nc" id="L250">										.info(&quot;----------------------------------------&quot;);</span>
+<span class="nc" id="L251">								return false;</span>
+							} // else
+							// (Constants.RC_OK.equals(adapter.getReturncode()))
+
+						} // try
+<span class="nc" id="L256">						catch (Throwable t)</span>
+						{
+							// Something unexpected has happened.
+<span class="nc" id="L259">							TAManager.getInstance().rollback();</span>
+<span class="nc" id="L260">							NotifyError.notifyError(this, xbusSystem, t</span>
+<span class="nc" id="L261">									.getMessage(), null, null);</span>
+
+<span class="nc" id="L263">							Trace.info(&quot;Error while processing &quot;</span>
+<span class="nc" id="L264">									+ xbusSystem.getCompleteName());</span>
+<span class="nc" id="L265">							Trace</span>
+<span class="nc" id="L266">									.info(&quot;----------------------------------------&quot;);</span>
+
+<span class="nc" id="L268">							throw new XException(Constants.LOCATION_EXTERN,</span>
+									Constants.LAYER_TECHNICAL,
+									Constants.PACKAGE_TECHNICAL_FILE, &quot;0&quot;, t);
+<span class="nc" id="L271">						} // catch (Throwable t)</span>
+
+					} // else (!checkFilePermissions())
+				} // if (!successful)
+			} // then (file.exists())
+			else
+			{
+				// Trace.info(&quot;File does not exist&quot;);
+<span class="nc" id="L279">				successful = true;</span>
+			} // else (file.exists())
+		} // try
+<span class="nc" id="L282">		catch (XException e)</span>
+		{
+<span class="nc" id="L284">			successful = false;</span>
+<span class="nc" id="L285">		} // (XException e)</span>
+<span class="nc" id="L286">		return successful;</span>
+	} // doReceive
+
+	/**
+	 * &lt;code&gt;getRequestContent&lt;/code&gt; delivers the content of the request.
+	 * Subclasses may define their own request content.
+	 * 
+	 * @return the interface file content as &lt;code&gt;String&lt;/code&gt; but casted to
+	 *         &lt;code&gt;Object&lt;/code&gt; for compliance reasons
+	 */
+	protected Object getRequestContent() throws XException
+	{
+		// read file
+<span class="nc" id="L299">		return readFile(mCopyname);</span>
+	} // getRequestContent()
+
+	/**
+	 * Depending on the FinalResolution having read from the standard
+	 * configuration, checks this method a file on an opportunity to meet the
+	 * requirements.
+	 * &lt;p&gt;
+	 * &lt;table border&gt;
+	 * &lt;tr&gt;
+	 * &lt;th&gt;Resolution&lt;/th&gt;
+	 * &lt;th&gt;Requirements&lt;/th&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;Preserve&lt;/td&gt;
+	 * &lt;td&gt;the file is a normal file (not a directory) &lt;br&gt;
+	 * the application can read from this file&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;Rename, Delete&lt;/td&gt;
+	 * &lt;td&gt;the file is a normal file (not a directory) &lt;br&gt;
+	 * the application can read from this file &lt;br&gt;
+	 * the application can modify this file&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;/table&gt;
+	 * 
+	 * @return true if the file meets the requirements of Resolution, otherwise
+	 *         false
+	 * @exception XException if the file not exist or can not be read
+	 */
+	private boolean checkFilePermissions() throws XException
+	{
+<span class="nc" id="L331">		File readFile = new File(mFilename);</span>
+		// 1. check if it is one file ist
+<span class="nc bnc" id="L333" title="All 2 branches missed.">		if (!readFile.isFile())</span>
+		{
+<span class="nc" id="L335">			List params = new Vector();</span>
+<span class="nc" id="L336">			params.add(mFilename);</span>
+<span class="nc" id="L337">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_FILE, &quot;18&quot;, params);
+		} // 2. check if file can be read
+<span class="nc bnc" id="L341" title="All 2 branches missed.">		if (!readFile.canRead())</span>
+		{
+<span class="nc" id="L343">			List params = new Vector();</span>
+<span class="nc" id="L344">			params.add(mFilename);</span>
+<span class="nc" id="L345">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_FILE, &quot;19&quot;, params);
+		}
+
+		// 3. resolution: Rename and Delete will take in account
+<span class="nc bnc" id="L351" title="All 2 branches missed.">		return mConfiguration.getResolution().equals(Constants.READ_PRESERVE)</span>
+				? true
+<span class="nc" id="L353">				: readFile.canWrite();</span>
+	}
+
+	/**
+	 * Reads entire contents of a file into a String.
+	 * &lt;p&gt;
+	 * &lt;b&gt;&lt;i&gt;Note: &lt;/i&gt; &lt;/b&gt; the filePermissions &lt;b&gt;(canRead) &lt;/b&gt; must be
+	 * determine prior to invoking this method!
+	 * 
+	 * @return file content as String
+	 * @exception XException if file can not be read or any I/O error occurs
+	 */
+	private String readFile(String fileName) throws XException
+	{
+<span class="nc" id="L367">		StringBuffer retBuffer = new StringBuffer();</span>
+<span class="nc" id="L368">		File sourceFile = new File(fileName);</span>
+		String zeile;
+<span class="nc" id="L370">		BufferedReader buffReader = null;</span>
+		try
+		{
+
+<span class="nc" id="L374">			buffReader = new BufferedReader(new InputStreamReader(</span>
+					new FileInputStream(sourceFile), mConfiguration
+<span class="nc" id="L376">							.getEncoding()));</span>
+
+<span class="nc bnc" id="L378" title="All 2 branches missed.">			if ((zeile = buffReader.readLine()) == null)</span>
+			{
+<span class="nc" id="L380">				buffReader.close();</span>
+<span class="nc" id="L381">				return &quot;&quot;;</span>
+			}
+			else
+			{
+<span class="nc" id="L385">				retBuffer.append(zeile);</span>
+			}
+
+<span class="nc bnc" id="L388" title="All 2 branches missed.">			while ((zeile = buffReader.readLine()) != null)</span>
+			{
+<span class="nc" id="L390">				retBuffer.append(Constants.LINE_SEPERATOR);</span>
+<span class="nc" id="L391">				retBuffer.append(zeile);</span>
+			}
+		}
+<span class="nc" id="L394">		catch (IOException e)</span>
+		{
+<span class="nc" id="L396">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_FILE, &quot;0&quot;, e);
+		}
+		finally
+		{
+<span class="nc bnc" id="L402" title="All 2 branches missed.">			if (buffReader != null)</span>
+			{
+				try
+				{
+<span class="nc" id="L406">					buffReader.close();</span>
+				}
+<span class="nc" id="L408">				catch (IOException e1)</span>
+				{
+					// explicitly do nothing
+<span class="nc" id="L411">				}</span>
+			}
+		}
+
+<span class="nc" id="L415">		return retBuffer.toString();</span>
+	}
+
+	/**
+	 * Implemented method &lt;code&gt;commit&lt;/code&gt; from TAResource interface. The
+	 * purpose of commit actions is to remove any backup information that had
+	 * been created during process(tansaction).
+	 * &lt;p&gt;
+	 * Depending on the FinalResolution, the following acts commit all actions.
+	 * &lt;p&gt;
+	 * &lt;table border&gt;
+	 * &lt;tr&gt;
+	 * &lt;th&gt;Resolution&lt;/th&gt;
+	 * &lt;th&gt;Acts&lt;/th&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;Preserve&lt;/td&gt;
+	 * &lt;td&gt;delete copy file&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;Rename&lt;/td&gt;
+	 * &lt;td&gt;delete backup copy&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;Delete&lt;/td&gt;
+	 * &lt;td&gt;&amp;nbsp;1. delete copy file &lt;br&gt;
+	 * &amp;nbsp;2. delete backup copy&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;/table&gt;
+	 * 
+	 * @see net.sf.xbus.base.core.TAResource#commit()
+	 * @exception XException if any error occurs
+	 */
+	public void commit() throws XException
+	{
+<span class="nc bnc" id="L450" title="All 2 branches missed.">		if (mConfiguration.getResolution().equals(Constants.READ_RENAME)</span>
+<span class="nc bnc" id="L451" title="All 2 branches missed.">				|| mConfiguration.getResolution().equals(Constants.READ_DELETE))</span>
+		{
+
+<span class="nc" id="L454">			deleteFile(mBackupname);</span>
+		}
+<span class="nc bnc" id="L456" title="All 2 branches missed.">		if (mConfiguration.getResolution().equals(Constants.READ_PRESERVE)</span>
+<span class="nc bnc" id="L457" title="All 2 branches missed.">				|| mConfiguration.getResolution().equals(Constants.READ_DELETE))</span>
+		{
+
+<span class="nc" id="L460">			deleteFile(mCopyname);</span>
+		}
+<span class="nc" id="L462">	}</span>
+
+	/**
+	 * Implemented method &lt;code&gt;rollback&lt;/code&gt; from TAResource ignores all
+	 * changes have made since the beginning of the process (transaction).
+	 * &lt;p&gt;
+	 * Depending on the FinalResolution, the following acts roll back all
+	 * modifications that have been made in the file system:
+	 * &lt;p&gt;
+	 * &lt;table border&gt;
+	 * &lt;tr&gt;
+	 * &lt;th&gt;Resolution&lt;/th&gt;
+	 * &lt;th&gt;Acts&lt;/th&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;Preserve&lt;/td&gt;
+	 * &lt;td&gt;delete copy file&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;Rename&lt;/td&gt;
+	 * &lt;td&gt;&amp;nbsp;1. rename backup copy to the original file &lt;br&gt;
+	 * &amp;nbsp;2. delete copy file&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;Delete&lt;/td&gt;
+	 * &lt;td&gt;&amp;nbsp;1. rename backup copy to the original file &lt;br&gt;
+	 * &amp;nbsp;2. delete copy file&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;/table&gt;
+	 * 
+	 * @see net.sf.xbus.base.core.TAResource#rollback()
+	 * @exception XException if any error occurs
+	 */
+	public void rollback() throws XException
+	{
+<span class="nc" id="L497">		boolean rename = mConfiguration.getOnError().equals(</span>
+				Constants.READ_RENAME);
+<span class="nc" id="L499">		boolean delete = mConfiguration.getOnError().equals(</span>
+				Constants.READ_DELETE);
+<span class="nc" id="L501">		boolean preserve = mConfiguration.getOnError().equals(</span>
+				Constants.READ_PRESERVE);
+
+<span class="nc bnc" id="L504" title="All 2 branches missed.">		if (delete)</span>
+		{
+<span class="nc bnc" id="L506" title="All 2 branches missed.">			if (DeletedMessageStore.getInstance().writeMessage())</span>
+			{
+<span class="nc" id="L508">				deleteFile(mCopyname);</span>
+<span class="nc bnc" id="L509" title="All 2 branches missed.">				if (mConfiguration.getResolution().equals(</span>
+						Constants.READ_PRESERVE))
+				{
+<span class="nc" id="L512">					deleteFile(mFilename);</span>
+				}
+				else
+				{
+<span class="nc" id="L516">					deleteFile(mBackupname);</span>
+				}
+			}
+			else
+			{
+<span class="nc" id="L521">				delete = false;</span>
+<span class="nc" id="L522">				rename = true;</span>
+			}
+		}
+
+<span class="nc bnc" id="L526" title="All 2 branches missed.">		if (preserve)</span>
+		{
+<span class="nc bnc" id="L528" title="All 2 branches missed.">			if (!mConfiguration.getResolution().equals(Constants.READ_PRESERVE))</span>
+			{
+<span class="nc" id="L530">				File srcFile = new File(mBackupname);</span>
+<span class="nc" id="L531">				File destFile = new File(mFilename);</span>
+<span class="nc bnc" id="L532" title="All 2 branches missed.">				if (srcFile.renameTo(destFile) == false)</span>
+				{
+<span class="nc" id="L534">					Vector params = new Vector(2);</span>
+<span class="nc" id="L535">					params.add(mBackupname);</span>
+<span class="nc" id="L536">					params.add(mFilename);</span>
+
+<span class="nc" id="L538">					String key = Constants.LOCATION_INTERN + &quot;_&quot;</span>
+							+ Constants.LAYER_TECHNICAL + &quot;_&quot;
+							+ Constants.PACKAGE_TECHNICAL_FILE + &quot;_&quot; + &quot;1&quot;;
+
+<span class="nc" id="L542">					MessageHandler msg = MessageHandler.getInstance(&quot;errors&quot;);</span>
+<span class="nc" id="L543">					String messageText = msg.getMessage(key, params);</span>
+
+<span class="nc" id="L545">					Trace.warn(messageText);</span>
+				}
+
+			}
+<span class="nc" id="L549">			deleteFile(mCopyname);</span>
+		}
+
+<span class="nc bnc" id="L552" title="All 2 branches missed.">		if (rename)</span>
+		{
+<span class="nc bnc" id="L554" title="All 2 branches missed.">			if (mConfiguration.getResolution().equals(Constants.READ_PRESERVE))</span>
+			{
+<span class="nc" id="L556">				deleteFile(mFilename);</span>
+			}
+			else
+			{
+<span class="nc" id="L560">				deleteFile(mBackupname);</span>
+			}
+		}
+<span class="nc" id="L563">	}</span>
+
+	/**
+	 * Is not implemented for file system
+	 */
+	public void open()
+<span class="nc" id="L569">	{}</span>
+
+	public String getConfigFilename()
+	{
+<span class="nc" id="L573">		return mConfiguration.getFileName();</span>
+	}
+
+	public String getOnError()
+	{
+<span class="nc" id="L578">		return mConfiguration.getOnError();</span>
+	}
+
+	/**
+	 * Is not implemented for file system
+	 */
+	public void close()
+<span class="nc" id="L585">	{}</span>
+
+	public String getType()
+	{
+<span class="nc" id="L589">		return Constants.TYPE_TEXT;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

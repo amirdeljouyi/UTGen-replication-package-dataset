@@ -1,0 +1,802 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DriverInternalFrame.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.gui.db</a> &gt; <span class="el_source">DriverInternalFrame.java</span></div><h1>DriverInternalFrame.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.gui.db;
+
+/*
+ * Copyright (C) 2001-2004 Colin Bell
+ * colbell@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+
+import net.sourceforge.squirrel_sql.client.IApplication;
+import net.sourceforge.squirrel_sql.client.gui.desktopcontainer.DialogWidget;
+import static net.sourceforge.squirrel_sql.client.preferences.PreferenceType.DRIVER_DEFINITIONS;
+import net.sourceforge.squirrel_sql.fw.gui.DefaultFileListBoxModel;
+import net.sourceforge.squirrel_sql.fw.gui.FileListBox;
+import net.sourceforge.squirrel_sql.fw.gui.GUIUtils;
+import net.sourceforge.squirrel_sql.fw.gui.IFileListBoxModel;
+import net.sourceforge.squirrel_sql.fw.persist.ValidationException;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLDriver;
+import net.sourceforge.squirrel_sql.fw.sql.SQLDriverClassLoader;
+import net.sourceforge.squirrel_sql.fw.util.FileExtensionFilter;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+import javax.swing.*;
+import javax.swing.event.ListDataEvent;
+import javax.swing.event.ListDataListener;
+import javax.swing.event.ListSelectionEvent;
+import javax.swing.event.ListSelectionListener;
+import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.event.KeyEvent;
+import java.io.File;
+import java.net.MalformedURLException;
+import java.net.URL;
+
+/**
+ * This dialog allows maintenance of a JDBC driver definition.
+ * 
+ * @author &lt;A HREF=&quot;mailto:colbell@users.sourceforge.net&quot;&gt;Colin Bell&lt;/A&gt;
+ */
+@SuppressWarnings(&quot;serial&quot;)
+public class DriverInternalFrame extends DialogWidget
+{
+	/** Different types of maintenance that can be done. */
+	public interface MaintenanceType
+	{
+		int NEW = 1;
+
+		int MODIFY = 2;
+
+		int COPY = 3;
+	}
+
+	/** Internationalized strings for this class. */
+<span class="nc" id="L70">	private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L71">		StringManagerFactory.getStringManager(DriverInternalFrame.class);</span>
+
+	/** Logger for this class. */
+<span class="nc" id="L74">	private static final ILogger s_log = LoggerController.createLogger(DriverInternalFrame.class);</span>
+
+	/** Number of characters to display in D/E fields. */
+	private static final int COLUMN_COUNT = 25;
+
+	/** Width to make listboxes. */
+	private static final int LIST_WIDTH = 400;
+
+	/** Application API. */
+	private final IApplication _app;
+
+	/** JDBC driver being maintained. */
+	private final ISQLDriver _sqlDriver;
+
+	/** Type of maintenance being done. @see MaintenanceType. */
+	private final int _maintType;
+
+	/** Frame title. */
+<span class="nc" id="L92">	private final JLabel _titleLbl = new JLabel();</span>
+
+	/** Control for the &lt;TT&gt;ISQLDriver.IPropertyNames.NAME&lt;/TT&gt; property. */
+<span class="nc" id="L95">	private final JTextField _driverName = new JTextField();</span>
+
+	/** Control for the &lt;TT&gt;ISQLDriver.IPropertyNames.DRIVER_CLASS&lt;/TT&gt; property. */
+<span class="nc" id="L98">	private final JComboBox _driverClassCmb = new JComboBox();</span>
+
+	/** Control for the &lt;TT&gt;ISQLDriver.IPropertyNames.URL&lt;/TT&gt; property. */
+<span class="nc" id="L101">	private final JTextField _url = new JTextField();</span>
+
+<span class="nc" id="L103">	private final JTextField _weburl = new JTextField();</span>
+
+	/** Listbox containing the Java class path. */
+<span class="nc" id="L106">	private final FileListBox _javaClassPathList = new FileListBox();</span>
+
+	/** Listbox containing the extra class path. */
+<span class="nc" id="L109">	private final FileListBox _extraClassPathList = new FileListBox(new DefaultFileListBoxModel());</span>
+
+	/** Button to list drivers in a jar within the Java Class path list. */
+	private ListDriversButton _javaClasspathListDriversBtn;
+
+	/** Button to list drivers in a jar within the Extra Class path list. */
+	private ListDriversButton _extraClasspathListDriversBtn;
+
+	/** Button to delete entry from Extra Class path list. */
+	private JButton _extraClasspathDeleteBtn;
+
+	/** Button to move entry up in Extra Class path list. */
+	private JButton _extraClasspathUpBtn;
+
+	/** Button to move entry down in Extra Class path list. */
+	private JButton _extraClasspathDownBtn;
+
+<span class="nc" id="L126">	private File lastExtraClassPathFileSelected = null;</span>
+
+	/**
+	 * Ctor.
+	 * 
+	 * @param app
+	 *           Application API.
+	 * @param sqlDriver
+	 *           JDBC driver definition to be maintained.
+	 * @param maintType
+	 *           Maintenance type. @see MaintenanceType.
+	 * @throws IllegalArgumentException
+	 *            Thrown if &lt;TT&gt;null&lt;/TT&gt; passed for &lt;TT&gt;app&lt;/TT&gt; or &lt;TT&gt;sqlDriver&lt;/TT&gt; or an invalid value
+	 *            passed for &lt;TT&gt;maintType&lt;/TT&gt;.
+	 */
+	DriverInternalFrame(IApplication app, ISQLDriver sqlDriver, int maintType)
+	{
+<span class="nc" id="L143">		super(&quot;&quot;, true, app);</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">		if (app == null) { throw new IllegalArgumentException(&quot;Null IApplication passed&quot;); }</span>
+<span class="nc bnc" id="L145" title="All 2 branches missed.">		if (sqlDriver == null) { throw new IllegalArgumentException(&quot;Null ISQLDriver passed&quot;); }</span>
+<span class="nc bnc" id="L146" title="All 4 branches missed.">		if (maintType &lt; MaintenanceType.NEW || maintType &gt; MaintenanceType.COPY) { throw new IllegalArgumentException(</span>
+		// i18n[DriverInternalFrame.error.illegalvalue=Illegal value of {0} passed for Maintenance type]
+<span class="nc" id="L148">			s_stringMgr.getString(&quot;DriverInternalFrame.error.illegalvalue&quot;, maintType)); }</span>
+
+<span class="nc" id="L150">		_app = app;</span>
+<span class="nc" id="L151">		_sqlDriver = sqlDriver;</span>
+<span class="nc" id="L152">		_maintType = maintType;</span>
+
+<span class="nc" id="L154">		createGUI();</span>
+<span class="nc" id="L155">		loadData();</span>
+<span class="nc" id="L156">		pack();</span>
+<span class="nc" id="L157">	}</span>
+
+	/**
+	 * Set title of this frame. Ensure that the title label matches the frame title.
+	 * 
+	 * @param title
+	 *           New title text.
+	 */
+	public void setTitle(String title)
+	{
+<span class="nc" id="L167">		super.setTitle(title);</span>
+<span class="nc" id="L168">		_titleLbl.setText(title);</span>
+<span class="nc" id="L169">	}</span>
+
+	/**
+	 * Return the driver that is being maintained.
+	 * 
+	 * @return the driver that is being maintained.
+	 */
+	ISQLDriver getSQLDriver()
+	{
+<span class="nc" id="L178">		return _sqlDriver;</span>
+	}
+
+	/**
+	 * Load data from the JDBC driver definition into the maintenance controls.
+	 */
+	private void loadData()
+	{
+<span class="nc" id="L186">		_driverName.setText(_sqlDriver.getName());</span>
+<span class="nc" id="L187">		_driverClassCmb.setSelectedItem(_sqlDriver.getDriverClassName());</span>
+<span class="nc" id="L188">		_url.setText(_sqlDriver.getUrl());</span>
+<span class="nc" id="L189">		_weburl.setText(_sqlDriver.getWebSiteUrl());</span>
+
+<span class="nc" id="L191">		_extraClassPathList.removeAll();</span>
+<span class="nc" id="L192">		String[] fileNames = _sqlDriver.getJarFileNames();</span>
+<span class="nc" id="L193">		IFileListBoxModel model = _extraClassPathList.getTypedModel();</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">		for (int i = 0; i &lt; fileNames.length; ++i)</span>
+		{
+<span class="nc" id="L196">			model.addFile(new File(fileNames[i]));</span>
+		}
+
+<span class="nc bnc" id="L199" title="All 2 branches missed.">		if (model.getSize() &gt; 0)</span>
+		{
+<span class="nc" id="L201">			_extraClassPathList.setSelectedIndex(0);</span>
+		}
+
+<span class="nc" id="L204">	}</span>
+
+	/**
+	 * User has requested close so get rid of this maintenance dialog.
+	 */
+	private void performClose()
+	{
+<span class="nc" id="L211">		dispose();</span>
+<span class="nc" id="L212">	}</span>
+
+	/**
+	 * OK button pressed. Edit data and if ok save to drivers model and then close dialog.
+	 */
+	private void performOk()
+	{
+		try
+		{
+<span class="nc" id="L221">			applyFromDialog();</span>
+<span class="nc bnc" id="L222" title="All 4 branches missed.">			if (_maintType == MaintenanceType.NEW || _maintType == MaintenanceType.COPY)</span>
+			{
+<span class="nc" id="L224">				_app.getDataCache().addDriver(_sqlDriver, _app.getMessageHandler());</span>
+			}
+			else
+			{
+<span class="nc" id="L228">				_app.getDataCache().refreshDriver(_sqlDriver, _app.getMessageHandler());</span>
+			}
+
+<span class="nc" id="L231">			_app.savePreferences(DRIVER_DEFINITIONS);</span>
+<span class="nc" id="L232">			dispose();</span>
+		}
+<span class="nc" id="L234">		catch (Throwable th)</span>
+		{
+<span class="nc" id="L236">			displayErrorMessage(th);</span>
+<span class="nc" id="L237">		}</span>
+<span class="nc" id="L238">	}</span>
+
+	/**
+	 * Apply data from the data entry controls to the JDBC driver definition.
+	 */
+	private void applyFromDialog() throws ValidationException
+	{
+<span class="nc" id="L245">		_sqlDriver.setName(_driverName.getText().trim());</span>
+<span class="nc" id="L246">		_sqlDriver.setJarFileNames(_extraClassPathList.getTypedModel().getFileNames());</span>
+
+<span class="nc" id="L248">		String driverClassName = (String) _driverClassCmb.getSelectedItem();</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">		_sqlDriver.setDriverClassName(driverClassName != null ? driverClassName.trim() : null);</span>
+
+<span class="nc" id="L251">		_sqlDriver.setUrl(_url.getText().trim());</span>
+<span class="nc" id="L252">		_sqlDriver.setWebSiteUrl(_weburl.getText().trim());</span>
+<span class="nc" id="L253">	}</span>
+
+	/**
+	 * Display an error msg in a dialog. Uses &lt;TT&gt;SwingUtilities.invokeLater()&lt;/TT&gt; because this may be called
+	 * before the main dialog is displayed.
+	 * 
+	 * @param th
+	 *           The exception containing the error message.
+	 */
+	private void displayErrorMessage(final Throwable th)
+	{
+<span class="nc" id="L264">		SwingUtilities.invokeLater(new Runnable()</span>
+<span class="nc" id="L265">		{</span>
+			public void run()
+			{
+<span class="nc" id="L268">				_app.showErrorDialog(th);</span>
+<span class="nc" id="L269">			}</span>
+		});
+<span class="nc" id="L271">	}</span>
+
+	private void createGUI()
+	{
+<span class="nc" id="L275">		setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);</span>
+
+		// This is a tool window.
+<span class="nc" id="L278">		makeToolWindow(true);</span>
+
+		String winTitle;
+<span class="nc bnc" id="L281" title="All 2 branches missed.">		if (_maintType == MaintenanceType.MODIFY)</span>
+		{
+<span class="nc" id="L283">			winTitle = s_stringMgr.getString(&quot;DriverInternalFrame.changedriver&quot;, _sqlDriver.getName());</span>
+		}
+		else
+		{
+<span class="nc" id="L287">			winTitle = s_stringMgr.getString(&quot;DriverInternalFrame.adddriver&quot;);</span>
+		}
+<span class="nc" id="L289">		setTitle(winTitle);</span>
+
+<span class="nc" id="L291">		_driverName.setColumns(COLUMN_COUNT);</span>
+<span class="nc" id="L292">		_url.setColumns(COLUMN_COUNT);</span>
+
+		// Reset the background to the colour that the current Look
+		// and Feel uses for internal frames.
+<span class="nc" id="L296">		Container contentPane = getContentPane();</span>
+<span class="nc" id="L297">		Color color = UIManager.getDefaults().getColor(&quot;Panel.background&quot;);</span>
+<span class="nc bnc" id="L298" title="All 2 branches missed.">		if (color != null)</span>
+		{
+<span class="nc" id="L300">			contentPane.setBackground(color);</span>
+		}
+
+<span class="nc" id="L303">		GridBagConstraints gbc = new GridBagConstraints();</span>
+<span class="nc" id="L304">		contentPane.setLayout(new GridBagLayout());</span>
+
+<span class="nc" id="L306">		gbc.anchor = GridBagConstraints.NORTHWEST;</span>
+<span class="nc" id="L307">		gbc.gridwidth = GridBagConstraints.REMAINDER;</span>
+<span class="nc" id="L308">		gbc.weightx = 1;</span>
+
+		// Title label at top.
+<span class="nc" id="L311">		gbc.gridx = 0;</span>
+<span class="nc" id="L312">		gbc.gridy = 0;</span>
+<span class="nc" id="L313">		gbc.insets = new Insets(5, 10, 5, 10);</span>
+<span class="nc" id="L314">		gbc.fill = GridBagConstraints.HORIZONTAL;</span>
+<span class="nc" id="L315">		contentPane.add(_titleLbl, gbc);</span>
+
+		// Separated by a line.
+<span class="nc" id="L318">		++gbc.gridy;</span>
+<span class="nc" id="L319">		gbc.insets = new Insets(0, 10, 5, 10);</span>
+<span class="nc" id="L320">		contentPane.add(new JSeparator(), gbc);</span>
+
+<span class="nc" id="L322">		++gbc.gridy;</span>
+<span class="nc" id="L323">		contentPane.add(createDriverPanel(), gbc);</span>
+
+<span class="nc" id="L325">		JTabbedPane tabPnl = new JTabbedPane();</span>
+<span class="nc" id="L326">		tabPnl.addTab(s_stringMgr.getString(&quot;DriverInternalFrame.javaclasspath&quot;), createJavaClassPathPanel());</span>
+<span class="nc" id="L327">		tabPnl.addTab(s_stringMgr.getString(&quot;DriverInternalFrame.extraclasspath&quot;), createExtraClassPathPanel());</span>
+
+<span class="nc" id="L329">		++gbc.gridy;</span>
+<span class="nc" id="L330">		gbc.fill = GridBagConstraints.BOTH;</span>
+<span class="nc" id="L331">		gbc.weighty = 1;</span>
+<span class="nc" id="L332">		contentPane.add(tabPnl, gbc);</span>
+
+<span class="nc" id="L334">		++gbc.gridy;</span>
+<span class="nc" id="L335">		gbc.fill = GridBagConstraints.HORIZONTAL;</span>
+<span class="nc" id="L336">		gbc.weighty = 0;</span>
+<span class="nc" id="L337">		contentPane.add(createDriverClassPanel(), gbc);</span>
+
+		// Separated by a line.
+<span class="nc" id="L340">		++gbc.gridy;</span>
+<span class="nc" id="L341">		gbc.fill = GridBagConstraints.HORIZONTAL;</span>
+<span class="nc" id="L342">		gbc.insets = new Insets(5, 10, 5, 10);</span>
+<span class="nc" id="L343">		contentPane.add(new JSeparator(), gbc);</span>
+
+<span class="nc" id="L345">		++gbc.gridy;</span>
+<span class="nc" id="L346">		contentPane.add(createButtonsPanel(), gbc);</span>
+
+<span class="nc" id="L348">		AbstractAction closeAction = new AbstractAction()</span>
+<span class="nc" id="L349">		{</span>
+			public void actionPerformed(ActionEvent actionEvent)
+			{
+<span class="nc" id="L352">				performClose();</span>
+<span class="nc" id="L353">			}</span>
+		};
+<span class="nc" id="L355">		KeyStroke escapeStroke = KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0);</span>
+<span class="nc" id="L356">		getRootPane().getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(escapeStroke,</span>
+			&quot;CloseAction&quot;);
+<span class="nc" id="L358">		getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(escapeStroke, &quot;CloseAction&quot;);</span>
+<span class="nc" id="L359">		getRootPane().getInputMap(JComponent.WHEN_FOCUSED).put(escapeStroke, &quot;CloseAction&quot;);</span>
+<span class="nc" id="L360">		getRootPane().getActionMap().put(&quot;CloseAction&quot;, closeAction);</span>
+
+<span class="nc" id="L362">	}</span>
+
+	private JPanel createButtonsPanel()
+	{
+<span class="nc" id="L366">		JPanel pnl = new JPanel();</span>
+
+<span class="nc" id="L368">		JButton okBtn = new JButton(s_stringMgr.getString(&quot;DriverInternalFrame.ok&quot;));</span>
+<span class="nc" id="L369">		okBtn.addActionListener(new ActionListener()</span>
+<span class="nc" id="L370">		{</span>
+			public void actionPerformed(ActionEvent evt)
+			{
+<span class="nc" id="L373">				performOk();</span>
+<span class="nc" id="L374">			}</span>
+		});
+<span class="nc" id="L376">		JButton closeBtn = new JButton(s_stringMgr.getString(&quot;DriverInternalFrame.close&quot;));</span>
+<span class="nc" id="L377">		closeBtn.addActionListener(new ActionListener()</span>
+<span class="nc" id="L378">		{</span>
+			public void actionPerformed(ActionEvent evt)
+			{
+<span class="nc" id="L381">				performClose();</span>
+<span class="nc" id="L382">			}</span>
+		});
+
+<span class="nc" id="L385">		pnl.add(okBtn);</span>
+<span class="nc" id="L386">		pnl.add(closeBtn);</span>
+
+<span class="nc" id="L388">		GUIUtils.setJButtonSizesTheSame(new JButton[] { okBtn, closeBtn });</span>
+<span class="nc" id="L389">		getRootPane().setDefaultButton(okBtn);</span>
+
+<span class="nc" id="L391">		return pnl;</span>
+	}
+
+	private JPanel createDriverPanel()
+	{
+<span class="nc" id="L396">		_driverName.setColumns(25);</span>
+
+<span class="nc" id="L398">		JPanel pnl = new JPanel(new GridBagLayout());</span>
+<span class="nc" id="L399">		pnl.setBorder(BorderFactory.createTitledBorder(s_stringMgr.getString(&quot;DriverInternalFrame.driver&quot;)));</span>
+
+<span class="nc" id="L401">		final GridBagConstraints gbc = new GridBagConstraints();</span>
+<span class="nc" id="L402">		gbc.fill = GridBagConstraints.HORIZONTAL;</span>
+<span class="nc" id="L403">		gbc.insets = new Insets(4, 4, 4, 4);</span>
+
+<span class="nc" id="L405">		gbc.gridx = 0;</span>
+<span class="nc" id="L406">		gbc.gridy = 0;</span>
+<span class="nc" id="L407">		pnl.add(new JLabel(s_stringMgr.getString(&quot;DriverInternalFrame.name&quot;), SwingConstants.RIGHT), gbc);</span>
+
+<span class="nc" id="L409">		++gbc.gridy;</span>
+<span class="nc" id="L410">		pnl.add(new JLabel(s_stringMgr.getString(&quot;DriverInternalFrame.egurl&quot;), SwingConstants.RIGHT), gbc);</span>
+
+<span class="nc" id="L412">		++gbc.gridy;</span>
+<span class="nc" id="L413">		pnl.add(new JLabel(s_stringMgr.getString(&quot;DriverInternalFrame.weburl&quot;), SwingConstants.RIGHT), gbc);</span>
+
+<span class="nc" id="L415">		gbc.weightx = 1.0;</span>
+<span class="nc" id="L416">		gbc.gridy = 0;</span>
+<span class="nc" id="L417">		++gbc.gridx;</span>
+<span class="nc" id="L418">		pnl.add(_driverName, gbc);</span>
+
+<span class="nc" id="L420">		++gbc.gridy;</span>
+<span class="nc" id="L421">		pnl.add(_url, gbc);</span>
+
+<span class="nc" id="L423">		++gbc.gridy;</span>
+<span class="nc" id="L424">		pnl.add(_weburl, gbc);</span>
+
+<span class="nc" id="L426">		return pnl;</span>
+	}
+
+	private Component createDriverClassPanel()
+	{
+<span class="nc" id="L431">		_driverClassCmb.setEditable(true);</span>
+
+<span class="nc" id="L433">		JPanel pnl = new JPanel(new GridBagLayout());</span>
+
+<span class="nc" id="L435">		final GridBagConstraints gbc = new GridBagConstraints();</span>
+<span class="nc" id="L436">		gbc.fill = GridBagConstraints.HORIZONTAL;</span>
+<span class="nc" id="L437">		gbc.insets = new Insets(4, 4, 4, 4);</span>
+
+<span class="nc" id="L439">		gbc.gridx = 0;</span>
+<span class="nc" id="L440">		gbc.gridy = 0;</span>
+<span class="nc" id="L441">		pnl.add(new JLabel(s_stringMgr.getString(&quot;DriverInternalFrame.classname&quot;), SwingConstants.RIGHT), gbc);</span>
+
+<span class="nc" id="L443">		gbc.weightx = 1.0;</span>
+<span class="nc" id="L444">		++gbc.gridx;</span>
+<span class="nc" id="L445">		pnl.add(_driverClassCmb, gbc);</span>
+
+<span class="nc" id="L447">		return pnl;</span>
+	}
+
+	/**
+	 * Create the panel that displays the current class path.
+	 * 
+	 * @return Panel that displays the current class path.
+	 */
+	private JPanel createJavaClassPathPanel()
+	{
+<span class="nc" id="L457">		_javaClasspathListDriversBtn = new ListDriversButton(_javaClassPathList);</span>
+<span class="nc bnc" id="L458" title="All 2 branches missed.">		_javaClasspathListDriversBtn.setEnabled(_javaClassPathList.getModel().getSize() &gt; 0);</span>
+		// _javaClassPathList.addListSelectionListener(new JavaClassPathListBoxListener());
+
+<span class="nc" id="L461">		IFileListBoxModel model = _javaClassPathList.getTypedModel();</span>
+<span class="nc bnc" id="L462" title="All 2 branches missed.">		if (model.getSize() &gt; 0)</span>
+		{
+<span class="nc" id="L464">			_javaClassPathList.setSelectedIndex(0);</span>
+		}
+
+<span class="nc" id="L467">		JPanel pnl = new JPanel(new GridBagLayout());</span>
+<span class="nc" id="L468">		final GridBagConstraints gbc = new GridBagConstraints();</span>
+<span class="nc" id="L469">		gbc.insets = new Insets(4, 4, 4, 4);</span>
+<span class="nc" id="L470">		gbc.anchor = GridBagConstraints.WEST;</span>
+<span class="nc" id="L471">		gbc.weighty = 1.0;</span>
+
+		// Scrollbars are &quot;shown always&quot; to stop sheet resizing when they
+		// are shown/hidden.
+<span class="nc" id="L475">		gbc.gridx = 0;</span>
+<span class="nc" id="L476">		gbc.gridy = 0;</span>
+<span class="nc" id="L477">		gbc.gridheight = GridBagConstraints.REMAINDER;</span>
+<span class="nc" id="L478">		gbc.fill = GridBagConstraints.BOTH;</span>
+<span class="nc" id="L479">		gbc.weightx = 1.0;</span>
+<span class="nc" id="L480">		JScrollPane sp =</span>
+			new JScrollPane(_javaClassPathList, JScrollPane.VERTICAL_SCROLLBAR_ALWAYS,
+				JScrollPane.HORIZONTAL_SCROLLBAR_ALWAYS);
+<span class="nc" id="L483">		final Dimension dm = sp.getPreferredSize();</span>
+<span class="nc" id="L484">		dm.width = LIST_WIDTH; // Required otherwise it gets too wide.</span>
+<span class="nc" id="L485">		sp.setPreferredSize(dm);</span>
+<span class="nc" id="L486">		pnl.add(sp, gbc);</span>
+
+<span class="nc" id="L488">		++gbc.gridx;</span>
+<span class="nc" id="L489">		gbc.gridheight = 1;</span>
+<span class="nc" id="L490">		gbc.fill = GridBagConstraints.HORIZONTAL;</span>
+<span class="nc" id="L491">		gbc.anchor = GridBagConstraints.NORTH;</span>
+<span class="nc" id="L492">		gbc.weightx = 0.0;</span>
+<span class="nc" id="L493">		pnl.add(_javaClasspathListDriversBtn, gbc);</span>
+
+<span class="nc" id="L495">		return pnl;</span>
+	}
+
+	/**
+	 * Create the panel that displays the extra class path.
+	 * 
+	 * @return Panel that displays the extra class path.
+	 */
+	private JPanel createExtraClassPathPanel()
+	{
+<span class="nc" id="L505">		_extraClasspathListDriversBtn = new ListDriversButton(_extraClassPathList);</span>
+<span class="nc" id="L506">		_extraClassPathList.addListSelectionListener(new ExtraClassPathListBoxListener());</span>
+<span class="nc" id="L507">		_extraClassPathList.getModel().addListDataListener(new ExtraClassPathListDataListener());</span>
+
+<span class="nc" id="L509">		_extraClasspathUpBtn = new JButton(s_stringMgr.getString(&quot;DriverInternalFrame.up&quot;));</span>
+<span class="nc" id="L510">		_extraClasspathUpBtn.setEnabled(false);</span>
+<span class="nc" id="L511">		_extraClasspathUpBtn.addActionListener(new ActionListener()</span>
+<span class="nc" id="L512">		{</span>
+			public void actionPerformed(ActionEvent evt)
+			{
+<span class="nc" id="L515">				synchronized (_extraClassPathList)</span>
+				{
+<span class="nc" id="L517">					int idx = _extraClassPathList.getSelectedIndex();</span>
+<span class="nc bnc" id="L518" title="All 2 branches missed.">					if (idx &gt; 0)</span>
+					{
+<span class="nc" id="L520">						IFileListBoxModel model = _extraClassPathList.getTypedModel();</span>
+<span class="nc" id="L521">						File file = model.removeFile(idx);</span>
+<span class="nc" id="L522">						--idx;</span>
+<span class="nc" id="L523">						model.insertFileAt(file, idx);</span>
+<span class="nc" id="L524">						_extraClassPathList.setSelectedIndex(idx);</span>
+					}
+<span class="nc" id="L526">				}</span>
+<span class="nc" id="L527">			}</span>
+		});
+
+<span class="nc" id="L530">		_extraClasspathDownBtn = new JButton(s_stringMgr.getString(&quot;DriverInternalFrame.down&quot;));</span>
+<span class="nc" id="L531">		_extraClasspathDownBtn.setEnabled(false);</span>
+<span class="nc" id="L532">		_extraClasspathDownBtn.addActionListener(new ActionListener()</span>
+<span class="nc" id="L533">		{</span>
+			public void actionPerformed(ActionEvent evt)
+			{
+<span class="nc" id="L536">				synchronized (_extraClassPathList)</span>
+				{
+<span class="nc" id="L538">					int idx = _extraClassPathList.getSelectedIndex();</span>
+<span class="nc" id="L539">					IFileListBoxModel model = _extraClassPathList.getTypedModel();</span>
+<span class="nc bnc" id="L540" title="All 4 branches missed.">					if (idx &gt; -1 &amp;&amp; idx &lt; (model.getSize() - 1))</span>
+					{
+<span class="nc" id="L542">						File file = model.removeFile(idx);</span>
+<span class="nc" id="L543">						++idx;</span>
+<span class="nc" id="L544">						model.insertFileAt(file, idx);</span>
+<span class="nc" id="L545">						_extraClassPathList.setSelectedIndex(idx);</span>
+					}
+<span class="nc" id="L547">				}</span>
+<span class="nc" id="L548">			}</span>
+		});
+
+<span class="nc" id="L551">		JButton newBtn = new AddListEntryButton();</span>
+
+<span class="nc" id="L553">		_extraClasspathDeleteBtn = new JButton(s_stringMgr.getString(&quot;DriverInternalFrame.delete&quot;));</span>
+<span class="nc" id="L554">		_extraClasspathDeleteBtn.setEnabled(false);</span>
+<span class="nc" id="L555">		_extraClasspathDeleteBtn.addActionListener(new ActionListener()</span>
+<span class="nc" id="L556">		{</span>
+			public void actionPerformed(ActionEvent evt)
+			{
+<span class="nc" id="L559">				int idx = _extraClassPathList.getSelectedIndex();</span>
+<span class="nc bnc" id="L560" title="All 2 branches missed.">				if (idx != -1)</span>
+				{
+<span class="nc" id="L562">					IFileListBoxModel model = _extraClassPathList.getTypedModel();</span>
+<span class="nc" id="L563">					model.removeFile(idx);</span>
+<span class="nc" id="L564">					final int size = model.getSize();</span>
+<span class="nc bnc" id="L565" title="All 2 branches missed.">					if (idx &lt; size)</span>
+					{
+<span class="nc" id="L567">						_extraClassPathList.setSelectedIndex(idx);</span>
+					}
+<span class="nc bnc" id="L569" title="All 2 branches missed.">					else if (size &gt; 0)</span>
+					{
+<span class="nc" id="L571">						_extraClassPathList.setSelectedIndex(size - 1);</span>
+					}
+				}
+<span class="nc" id="L574">			}</span>
+		});
+
+<span class="nc" id="L577">		JPanel pnl = new JPanel(new GridBagLayout());</span>
+<span class="nc" id="L578">		final GridBagConstraints gbc = new GridBagConstraints();</span>
+<span class="nc" id="L579">		gbc.anchor = GridBagConstraints.WEST;</span>
+<span class="nc" id="L580">		gbc.weightx = 1.0;</span>
+<span class="nc" id="L581">		gbc.weighty = 1.0;</span>
+<span class="nc" id="L582">		gbc.insets = new Insets(4, 4, 4, 4);</span>
+
+		// Scrollbars are &quot;shown always&quot; to stop sheet resizing when they
+		// are shown/hidden.
+<span class="nc" id="L586">		gbc.gridheight = GridBagConstraints.REMAINDER;</span>
+<span class="nc" id="L587">		gbc.gridx = 0;</span>
+<span class="nc" id="L588">		gbc.gridy = 0;</span>
+<span class="nc" id="L589">		gbc.fill = GridBagConstraints.BOTH;</span>
+<span class="nc" id="L590">		JScrollPane sp =</span>
+			new JScrollPane(_extraClassPathList, JScrollPane.VERTICAL_SCROLLBAR_ALWAYS,
+				JScrollPane.HORIZONTAL_SCROLLBAR_ALWAYS);
+<span class="nc" id="L593">		final Dimension dm = sp.getPreferredSize();</span>
+<span class="nc" id="L594">		dm.width = LIST_WIDTH; // Required otherwise it gets too wide.</span>
+<span class="nc" id="L595">		sp.setPreferredSize(dm);</span>
+<span class="nc" id="L596">		pnl.add(sp, gbc);</span>
+
+<span class="nc" id="L598">		gbc.gridheight = 1;</span>
+<span class="nc" id="L599">		gbc.weightx = 0.0;</span>
+<span class="nc" id="L600">		gbc.weighty = 0.0;</span>
+<span class="nc" id="L601">		gbc.fill = GridBagConstraints.HORIZONTAL;</span>
+<span class="nc" id="L602">		++gbc.gridx;</span>
+<span class="nc" id="L603">		pnl.add(_extraClasspathListDriversBtn, gbc);</span>
+
+<span class="nc" id="L605">		++gbc.gridy;</span>
+<span class="nc" id="L606">		gbc.insets = new Insets(5, 5, 5, 5);</span>
+<span class="nc" id="L607">		pnl.add(new JSeparator(), gbc);</span>
+<span class="nc" id="L608">		gbc.insets = new Insets(4, 4, 4, 4);</span>
+
+<span class="nc" id="L610">		++gbc.gridy;</span>
+<span class="nc" id="L611">		pnl.add(_extraClasspathUpBtn, gbc);</span>
+
+<span class="nc" id="L613">		++gbc.gridy;</span>
+<span class="nc" id="L614">		pnl.add(_extraClasspathDownBtn, gbc);</span>
+
+<span class="nc" id="L616">		++gbc.gridy;</span>
+<span class="nc" id="L617">		gbc.insets = new Insets(5, 5, 5, 5);</span>
+<span class="nc" id="L618">		pnl.add(new JSeparator(), gbc);</span>
+<span class="nc" id="L619">		gbc.insets = new Insets(4, 4, 4, 4);</span>
+
+<span class="nc" id="L621">		++gbc.gridy;</span>
+<span class="nc" id="L622">		pnl.add(newBtn, gbc);</span>
+
+<span class="nc" id="L624">		++gbc.gridy;</span>
+<span class="nc" id="L625">		pnl.add(_extraClasspathDeleteBtn, gbc);</span>
+
+<span class="nc" id="L627">		return pnl;</span>
+	}
+
+	/**
+	 * Button that allows user to enter new items in the Extra Class Path list.
+	 */
+	private final class AddListEntryButton extends JButton implements ActionListener
+	{
+		private JFileChooser _chooser;
+
+		AddListEntryButton()
+<span class="nc" id="L638">		{</span>
+<span class="nc" id="L639">			super(s_stringMgr.getString(&quot;DriverInternalFrame.add&quot;));</span>
+<span class="nc" id="L640">			addActionListener(this);</span>
+<span class="nc" id="L641">		}</span>
+
+		public void actionPerformed(ActionEvent evt)
+		{
+<span class="nc bnc" id="L645" title="All 2 branches missed.">			if (_chooser == null)</span>
+			{
+<span class="nc" id="L647">				_chooser = new JFileChooser();</span>
+<span class="nc bnc" id="L648" title="All 2 branches missed.">				if (lastExtraClassPathFileSelected != null)</span>
+				{
+<span class="nc bnc" id="L650" title="All 2 branches missed.">					if (lastExtraClassPathFileSelected.isDirectory())</span>
+					{
+<span class="nc" id="L652">						_chooser.setCurrentDirectory(lastExtraClassPathFileSelected);</span>
+					}
+					else
+					{
+<span class="nc" id="L656">						_chooser.setCurrentDirectory(new File(lastExtraClassPathFileSelected.getParent()));</span>
+					}
+				}
+<span class="nc" id="L659">				_chooser.setFileHidingEnabled(false);</span>
+<span class="nc" id="L660">				_chooser.setMultiSelectionEnabled(true);</span>
+<span class="nc" id="L661">				_chooser.setFileSelectionMode(JFileChooser.FILES_AND_DIRECTORIES);</span>
+<span class="nc" id="L662">				_chooser.addChoosableFileFilter(new FileExtensionFilter(</span>
+<span class="nc" id="L663">					s_stringMgr.getString(&quot;DriverInternalFrame.jarfiles&quot;), new String[] { &quot;.jar&quot;, &quot;.zip&quot; }));</span>
+			}
+<span class="nc" id="L665">			int returnVal = _chooser.showOpenDialog(getParent());</span>
+<span class="nc bnc" id="L666" title="All 2 branches missed.">			if (returnVal == JFileChooser.APPROVE_OPTION)</span>
+			{
+<span class="nc" id="L668">				File[] selFiles = _chooser.getSelectedFiles();</span>
+<span class="nc bnc" id="L669" title="All 2 branches missed.">				if (selFiles != null)</span>
+				{
+<span class="nc" id="L671">					IFileListBoxModel myModel = _extraClassPathList.getTypedModel();</span>
+<span class="nc bnc" id="L672" title="All 2 branches missed.">					for (int i = 0; i &lt; selFiles.length; ++i)</span>
+					{
+<span class="nc" id="L674">						myModel.addFile(selFiles[i]);</span>
+					}
+<span class="nc" id="L676">					_extraClassPathList.setSelectedIndex(myModel.getSize() - 1);</span>
+				}
+			}
+<span class="nc" id="L679">		}</span>
+	}
+
+	/**
+	 * Button that will list all the drivers in the file current selected in a listbox.
+	 */
+	private final class ListDriversButton extends JButton implements ActionListener
+	{
+		private FileListBox _listBox;
+
+		ListDriversButton(FileListBox listBox)
+<span class="nc" id="L690">		{</span>
+<span class="nc" id="L691">			super(s_stringMgr.getString(&quot;DriverInternalFrame.listdrivers&quot;));</span>
+<span class="nc" id="L692">			setEnabled(false);</span>
+<span class="nc" id="L693">			_listBox = listBox;</span>
+<span class="nc" id="L694">			addActionListener(this);</span>
+<span class="nc" id="L695">		}</span>
+
+		public void actionPerformed(ActionEvent e)
+		{
+<span class="nc" id="L699">			_driverClassCmb.removeAllItems();</span>
+<span class="nc" id="L700">			final String[] fileNames = _listBox.getTypedModel().getFileNames();</span>
+
+<span class="nc bnc" id="L702" title="All 2 branches missed.">			if (fileNames.length &gt; 0)</span>
+			{
+<span class="nc" id="L704">				_app.getThreadPool().addTask(new Runnable()</span>
+<span class="nc" id="L705">				{</span>
+					@Override
+					public void run()
+					{
+						try
+						{
+<span class="nc" id="L711">							final URL[] urls = new URL[fileNames.length];</span>
+<span class="nc bnc" id="L712" title="All 2 branches missed.">							for (int i = 0; i &lt; fileNames.length; ++i)</span>
+							{
+<span class="nc" id="L714">								urls[i] = new File(fileNames[i]).toURI().toURL();</span>
+							}
+
+<span class="nc" id="L717">							SQLDriverClassLoader cl = new SQLDriverClassLoader(urls);</span>
+							@SuppressWarnings(&quot;unchecked&quot;)
+							// This can take a long time for big jars - so it is not done on the EDT.
+<span class="nc" id="L720">							Class[] classes = cl.getDriverClasses(s_log);</span>
+<span class="nc bnc" id="L721" title="All 2 branches missed.">							for (int i = 0; i &lt; classes.length; ++i)</span>
+							{
+<span class="nc" id="L723">								addDriverClassToCombo(classes[i].getName());</span>
+							}
+						}
+<span class="nc" id="L726">						catch (MalformedURLException ex)</span>
+						{
+<span class="nc" id="L728">							displayErrorMessage(ex);</span>
+<span class="nc" id="L729">						}</span>
+
+<span class="nc" id="L731">					}</span>
+				});
+			}
+
+<span class="nc bnc" id="L735" title="All 2 branches missed.">			if (_driverClassCmb.getItemCount() &gt; 0)</span>
+			{
+<span class="nc" id="L737">				_driverClassCmb.setSelectedIndex(0);</span>
+			}
+<span class="nc" id="L739">		}</span>
+	}
+
+	private void addDriverClassToCombo(final String driverClassName)
+	{
+<span class="nc" id="L744">		GUIUtils.processOnSwingEventThread(new Runnable()</span>
+<span class="nc" id="L745">		{</span>
+			@Override
+			public void run()
+			{
+<span class="nc" id="L749">				_driverClassCmb.addItem(driverClassName);</span>
+<span class="nc" id="L750">			}</span>
+
+		});
+<span class="nc" id="L753">	}</span>
+
+<span class="nc" id="L755">	private class ExtraClassPathListDataListener implements ListDataListener</span>
+	{
+		public void contentsChanged(ListDataEvent evt)
+		{
+<span class="nc bnc" id="L759" title="All 2 branches missed.">			final boolean enable = _extraClassPathList.getModel().getSize() &gt; 0;</span>
+<span class="nc" id="L760">			_extraClasspathListDriversBtn.setEnabled(enable);</span>
+<span class="nc" id="L761">		}</span>
+
+		public void intervalAdded(ListDataEvent evt)
+		{
+<span class="nc bnc" id="L765" title="All 2 branches missed.">			final boolean enable = _extraClassPathList.getModel().getSize() &gt; 0;</span>
+<span class="nc" id="L766">			_extraClasspathListDriversBtn.setEnabled(enable);</span>
+<span class="nc" id="L767">		}</span>
+
+		public void intervalRemoved(ListDataEvent evt)
+		{
+<span class="nc bnc" id="L771" title="All 2 branches missed.">			final boolean enable = _extraClassPathList.getModel().getSize() &gt; 0;</span>
+<span class="nc" id="L772">			_extraClasspathListDriversBtn.setEnabled(enable);</span>
+<span class="nc" id="L773">		}</span>
+	}
+
+<span class="nc" id="L776">	private class ExtraClassPathListBoxListener implements ListSelectionListener</span>
+	{
+		public void valueChanged(ListSelectionEvent evt)
+		{
+<span class="nc" id="L780">			final int selIdx = _extraClassPathList.getSelectedIndex();</span>
+<span class="nc" id="L781">			lastExtraClassPathFileSelected = _extraClassPathList.getSelectedFile();</span>
+<span class="nc" id="L782">			final ListModel model = _extraClassPathList.getModel();</span>
+
+<span class="nc bnc" id="L784" title="All 2 branches missed.">			_extraClasspathDeleteBtn.setEnabled(selIdx != -1);</span>
+
+<span class="nc bnc" id="L786" title="All 4 branches missed.">			_extraClasspathUpBtn.setEnabled(selIdx &gt; 0 &amp;&amp; model.getSize() &gt; 1);</span>
+<span class="nc bnc" id="L787" title="All 4 branches missed.">			_extraClasspathDownBtn.setEnabled(selIdx &gt; -1 &amp;&amp; selIdx &lt; (model.getSize() - 1));</span>
+			//
+			// boolean enable = false;
+			// if (selIdx != -1)
+			// {
+			// File file = _extraClassPathList.getSelectedFile();
+			// if (file != null)
+			// {
+			// enable = file.isFile();
+			// }
+			// }
+			// _extraClasspathListDriversBtn.setEnabled(enable);
+<span class="nc" id="L799">		}</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

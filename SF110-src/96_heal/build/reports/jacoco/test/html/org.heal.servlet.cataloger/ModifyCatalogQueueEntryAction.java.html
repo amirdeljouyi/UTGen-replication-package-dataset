@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ModifyCatalogQueueEntryAction.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">96_heal</a> &gt; <a href="index.source.html" class="el_package">org.heal.servlet.cataloger</a> &gt; <span class="el_source">ModifyCatalogQueueEntryAction.java</span></div><h1>ModifyCatalogQueueEntryAction.java</h1><pre class="source lang-java linenums">package org.heal.servlet.cataloger;
+
+import org.heal.module.catalog.QueueDAO;
+import org.heal.module.catalog.QueuedRecordBean;
+import org.heal.module.metadata.MetadataDAO;
+import org.heal.module.metadata.ShortMetadataBean;
+import org.heal.servlet.Action;
+import org.heal.util.AuthenticationTools;
+import org.heal.util.FileLocator;
+
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.channels.FileChannel;
+import java.sql.SQLException;
+
+/**
+ * An {@link org.heal.servlet.Action Action} which is called in order to edit a metadata item which is in
+ * the catalog queue.
+ *
+ * @author Brad Schaefer (&lt;A HREF=&quot;mailto:schaefer@lib.med.utah.edu&quot;&gt;schaefer@lib.med.utah.edu&lt;/A&gt;)
+ * @version 1.0
+ */
+<span class="nc" id="L29">public class ModifyCatalogQueueEntryAction implements Action {</span>
+    public void perform(HttpServlet servlet, HttpServletRequest request, HttpServletResponse response)
+            throws IOException, ServletException {
+<span class="nc" id="L32">        final String catalogQueueEntryId = request.getParameter(&quot;catalogQueueEntryId&quot;);</span>
+<span class="nc" id="L33">        final String status = request.getParameter(&quot;status&quot;);</span>
+
+<span class="nc bnc" id="L35" title="All 6 branches missed.">        if(!AuthenticationTools.isCataloger(request)</span>
+                || null == catalogQueueEntryId || null == status) {
+            // The user does not have the access to view this page
+            // or the Catalog Queue entry id or status is missing,
+            // so we go no further, and redirect them to an access denied page
+            // TODO instead of hardcoding page locations, this should be in config files somewhere
+<span class="nc" id="L41">            response.sendRedirect(&quot;/error/accessDenied.jsp&quot;);</span>
+<span class="nc" id="L42">            return;</span>
+        }
+
+<span class="nc" id="L45">        final String metadataId = request.getParameter(&quot;metadataId&quot;);</span>
+<span class="nc" id="L46">        final QueueDAO queueManager =</span>
+<span class="nc" id="L47">                (QueueDAO)servlet.getServletContext().getAttribute(&quot;QueueDAO&quot;);</span>
+
+        try {
+<span class="nc" id="L50">            final String statusTest = status.toLowerCase();</span>
+<span class="nc bnc" id="L51" title="All 4 branches missed.">            if(&quot;waiting&quot;.equals(statusTest) || &quot;incomplete&quot;.equals(statusTest)) {</span>
+                // If the status is 'waiting', or incomplete, we just save the catalog queue entry
+
+// Creates an QueuedRecordBean based on the form data
+<span class="nc" id="L55">                final QueuedRecordBean catalogEntry = new QueuedRecordBean();</span>
+<span class="nc" id="L56">                catalogEntry.setQueuedRecordId(catalogQueueEntryId);</span>
+<span class="nc" id="L57">                catalogEntry.setComments(request.getParameter(&quot;comment&quot;));</span>
+<span class="nc" id="L58">                catalogEntry.getShortMetadata().setMetadataId(metadataId);</span>
+<span class="nc" id="L59">                catalogEntry.setStatus(status);</span>
+<span class="nc" id="L60">                catalogEntry.setType(QueueDAO.TYPE_CATALOG);</span>
+
+<span class="nc" id="L62">                queueManager.saveQueuedRecord(catalogEntry);</span>
+<span class="nc bnc" id="L63" title="All 2 branches missed.">            } else if(&quot;cataloged&quot;.equals(statusTest)) {</span>
+// If the status is 'cataloged' we mark it as such in the database,
+// and copy the file to the content directory
+
+<span class="nc" id="L67">                MetadataDAO metadataServices =</span>
+<span class="nc" id="L68">                        (MetadataDAO)servlet.getServletContext().getAttribute(&quot;MetadataDAO&quot;);</span>
+<span class="nc" id="L69">                FileLocator fileLocator = (FileLocator)servlet.getServletContext().getAttribute(&quot;healFileLocator&quot;);</span>
+<span class="nc" id="L70">                ShortMetadataBean metadata = metadataServices.getShortMetadata(metadataId);</span>
+<span class="nc" id="L71">                queueManager.markRecordCataloged(metadataId);</span>
+<span class="nc" id="L72">                queueManager.dequeue(catalogQueueEntryId);</span>
+
+<span class="nc" id="L74">                String sourceFile = fileLocator.getUploadFilePath(metadata.getLocation());</span>
+<span class="nc" id="L75">                String destinationFile = fileLocator.getContentFilePath(metadata.getLocation());</span>
+<span class="nc bnc" id="L76" title="All 2 branches missed.">                if(!new File(destinationFile).exists()) {</span>
+<span class="nc" id="L77">                    copyFile(sourceFile, destinationFile);</span>
+                }
+            }
+<span class="nc" id="L80">        } catch(SQLException e) {</span>
+            // TODO logging?
+<span class="nc" id="L82">        }</span>
+
+        // TODO instead of hardcoding page locations, this should be in config files somewhere
+<span class="nc" id="L85">        response.sendRedirect(&quot;showCatalogQueue&quot;);</span>
+<span class="nc" id="L86">    }</span>
+
+    /**
+     * Copies a file from a sourceLocation to a destinationLocation.
+     *
+     * @param sourceLocation
+     * @param destinationLocation
+     */
+    private static void copyFile(String sourceLocation, String destinationLocation) {
+<span class="nc" id="L95">        FileChannel srcChannel = null;</span>
+<span class="nc" id="L96">        FileChannel dstChannel = null;</span>
+        try {
+            // Create channel on the source
+<span class="nc" id="L99">            srcChannel = new FileInputStream(sourceLocation).getChannel();</span>
+
+            // Create channel on the destination
+<span class="nc" id="L102">            dstChannel = new FileOutputStream(destinationLocation).getChannel();</span>
+
+            // Copy file contents from source to destination
+<span class="nc" id="L105">            dstChannel.transferFrom(srcChannel, 0, srcChannel.size());</span>
+<span class="nc" id="L106">        } catch(IOException e) {</span>
+<span class="nc" id="L107">            e.printStackTrace();</span>
+        } finally {
+            // Close the channels
+<span class="nc bnc" id="L110" title="All 2 branches missed.">            if(null != srcChannel) {</span>
+                try {
+<span class="nc" id="L112">                    srcChannel.close();</span>
+<span class="nc" id="L113">                } catch(IOException e) {</span>
+<span class="nc" id="L114">                }</span>
+            }
+<span class="nc bnc" id="L116" title="All 2 branches missed.">            if(null != dstChannel) {</span>
+                try {
+<span class="nc" id="L118">                    dstChannel.close();</span>
+<span class="nc" id="L119">                } catch(IOException e) {</span>
+<span class="nc" id="L120">                }</span>
+            }
+        }
+<span class="nc" id="L123">    }</span>
+
+    /**
+     * @return &lt;code&gt;true&lt;/code&gt;
+     */
+    public boolean actionRequiresLogin() {
+<span class="nc" id="L129">        return true;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

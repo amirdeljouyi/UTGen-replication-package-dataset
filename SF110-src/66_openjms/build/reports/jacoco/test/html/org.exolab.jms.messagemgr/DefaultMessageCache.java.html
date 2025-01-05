@@ -1,0 +1,259 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DefaultMessageCache.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.messagemgr</a> &gt; <span class="el_source">DefaultMessageCache.java</span></div><h1>DefaultMessageCache.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2001-2003 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: DefaultMessageCache.java,v 1.5 2007/01/24 12:00:28 tanderson Exp $
+ *
+ * Date         Author  Changes
+ * 3/1/2001     jima    Created
+ */
+package org.exolab.jms.messagemgr;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.exolab.jms.message.MessageImpl;
+import org.exolab.jms.persistence.DatabaseService;
+import org.exolab.jms.persistence.PersistenceAdapter;
+import org.exolab.jms.persistence.PersistenceException;
+
+import javax.jms.JMSException;
+import java.sql.Connection;
+import java.util.HashMap;
+import java.util.Map;
+
+
+/**
+ * Default implementation of the {@link MessageCache} interface.
+ *
+ * @author &lt;a href=&quot;mailto:jima@comware.com.au&quot;&gt;Jim Alateras&lt;/a&gt;
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.5 $ $Date: 2007/01/24 12:00:28 $
+ */
+<span class="nc" id="L70">final class DefaultMessageCache implements MessageCache {</span>
+
+    /**
+     * Maintains the pool of transient messages.
+     */
+<span class="nc" id="L75">    private final Map _transient = new HashMap(1023);</span>
+
+    /**
+     * Maintains the pool of persistent messages.
+     */
+<span class="nc" id="L80">    private final Map _persistent = new HashMap(1023);</span>
+
+    /**
+     * Maintains the references to messages.
+     */
+<span class="nc" id="L85">    private final Map _references = new HashMap(1023);</span>
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L90">    private static final Log _log = LogFactory.getLog(</span>
+            DefaultMessageCache.class);
+
+
+    /**
+     * Add a reference and its corresponding message to the cache.
+     *
+     * @param reference the reference to the message
+     * @param message   the message
+     */
+    public synchronized void addMessage(MessageRef reference,
+                                        MessageImpl message) {
+<span class="nc" id="L102">        String messageId = reference.getMessageId();</span>
+<span class="nc bnc" id="L103" title="All 2 branches missed.">        if (reference.isPersistent()) {</span>
+<span class="nc" id="L104">            _persistent.put(messageId, message);</span>
+        } else {
+<span class="nc" id="L106">            _transient.put(messageId, message);</span>
+        }
+<span class="nc" id="L108">        addMessageRef(messageId, reference);</span>
+<span class="nc" id="L109">    }</span>
+
+    /**
+     * Adds a message reference to the cache.
+     *
+     * @param reference the message reference to add
+     */
+    public synchronized void addMessageRef(MessageRef reference) {
+<span class="nc" id="L117">        addMessageRef(reference.getMessageId(), reference);</span>
+<span class="nc" id="L118">    }</span>
+
+    /**
+     * Returns a message reference, given its identifier.
+     *
+     * @param messageId the message identifier
+     * @return the message reference associated with &lt;code&gt;messageId&lt;/code&gt;, or
+     *         &lt;code&gt;null&lt;/code&gt;  if none exists
+     */
+    public synchronized MessageRef getMessageRef(String messageId) {
+<span class="nc" id="L128">        return (MessageRef) _references.get(messageId);</span>
+    }
+
+    /**
+     * Returns the message corresponding to the specified reference.
+     *
+     * @param reference the message reference
+     * @return the associated message, or &lt;code&gt;null&lt;/code&gt; if none exists
+     * @throws JMSException for any error
+     */
+    public synchronized MessageImpl getMessage(MessageRef reference)
+            throws JMSException {
+        MessageImpl message;
+<span class="nc" id="L141">        final String messageId = reference.getMessageId();</span>
+
+<span class="nc bnc" id="L143" title="All 2 branches missed.">        if (reference.isPersistent()) {</span>
+<span class="nc" id="L144">            message = (MessageImpl) _persistent.get(messageId);</span>
+
+            // if the message is not cached then try and retrieve it from the
+            // database and cache it.
+<span class="nc bnc" id="L148" title="All 2 branches missed.">            if (message == null) {</span>
+                // fault in at least the next message from the database
+                try {
+<span class="nc" id="L151">                    DatabaseService service = DatabaseService.getInstance();</span>
+<span class="nc" id="L152">                    PersistenceAdapter adapter = service.getAdapter();</span>
+<span class="nc" id="L153">                    Connection connection = service.getConnection();</span>
+<span class="nc" id="L154">                    message = adapter.getMessage(connection, messageId);</span>
+<span class="nc" id="L155">                } catch (PersistenceException exception) {</span>
+<span class="nc" id="L156">                    final String msg = &quot;Failed to retrieve message&quot;;</span>
+<span class="nc" id="L157">                    _log.error(msg, exception);</span>
+<span class="nc" id="L158">                    throw new JMSException(msg + &quot;: &quot; + exception.getMessage());</span>
+<span class="nc" id="L159">                }</span>
+                // add the message to the persistent cache once it has been
+                // retrieved from the datastore
+<span class="nc bnc" id="L162" title="All 2 branches missed.">                if (message != null) {</span>
+<span class="nc" id="L163">                    _persistent.put(messageId, message);</span>
+                }
+            }
+        } else {
+<span class="nc" id="L167">            message = (MessageImpl) _transient.get(messageId);</span>
+        }
+
+<span class="nc bnc" id="L170" title="All 4 branches missed.">        if (message != null &amp;&amp; !message.getReadOnly()) {</span>
+            // mark the message as read-only
+<span class="nc" id="L172">            message.setReadOnly(true);</span>
+        }
+
+<span class="nc" id="L175">        return message;</span>
+    }
+
+    /**
+     * Destroys the message corresponding to the reference.
+     *
+     * @throws JMSException for any error
+     */
+    public synchronized void destroy(MessageRef reference) throws JMSException {
+<span class="nc" id="L184">        final String messageId = reference.getMessageId();</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">        if (_references.remove(messageId) != null) {</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">            if (reference.isPersistent()) {</span>
+                try {
+<span class="nc" id="L188">                    DatabaseService service = DatabaseService.getInstance();</span>
+<span class="nc" id="L189">                    Connection connection = service.getConnection();</span>
+<span class="nc" id="L190">                    PersistenceAdapter adapter = service.getAdapter();</span>
+<span class="nc" id="L191">                    adapter.removeMessage(connection, messageId);</span>
+<span class="nc" id="L192">                } catch (Exception exception) {</span>
+<span class="nc" id="L193">                    _log.error(&quot;Failed to remove message&quot;, exception);</span>
+<span class="nc" id="L194">                    throw new JMSException(&quot;Failed to remove message: &quot;</span>
+<span class="nc" id="L195">                            + exception.getMessage());</span>
+<span class="nc" id="L196">                }</span>
+<span class="nc" id="L197">                _persistent.remove(messageId);</span>
+            } else {
+<span class="nc" id="L199">                _transient.remove(messageId);</span>
+            }
+        }
+<span class="nc" id="L202">    }</span>
+
+    /**
+     * Clear the persistent and non-persistent message cache.
+     */
+    public synchronized void clear() {
+<span class="nc" id="L208">        _transient.clear();</span>
+<span class="nc" id="L209">        _persistent.clear();</span>
+<span class="nc" id="L210">        _references.clear();</span>
+<span class="nc" id="L211">    }</span>
+
+    /**
+     * Clear only the persistent messages in the cache.
+     */
+    public synchronized void clearPersistentMessages() {
+<span class="nc" id="L217">        _persistent.clear();</span>
+<span class="nc" id="L218">    }</span>
+
+    /**
+     * Return the number of messages in the transient cache.
+     *
+     * @return the number of messages in the transient cache
+     */
+    public synchronized int getTransientCount() {
+<span class="nc" id="L226">        return _transient.size();</span>
+    }
+
+    /**
+     * Return the number of messages in the persistent cache.
+     *
+     * @return the number of messages in the persistent cache
+     */
+    public synchronized int getPersistentCount() {
+<span class="nc" id="L235">        return _persistent.size();</span>
+    }
+
+    /**
+     * Return the number of message references in the cache.
+     *
+     * @return the number of message references in the cache
+     */
+    public synchronized int getMessageCount() {
+<span class="nc" id="L244">        return _references.size();</span>
+    }
+
+    /**
+     * Add a message reference to the cache.
+     *
+     * @param messageId the message identifier
+     * @param reference the message reference
+     */
+    private void addMessageRef(String messageId, MessageRef reference) {
+<span class="nc" id="L254">        _references.put(messageId, reference);</span>
+<span class="nc" id="L255">    }</span>
+
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

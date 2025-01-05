@@ -1,0 +1,713 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>StandaloneComponent.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">80_wheelwebtool</a> &gt; <a href="index.source.html" class="el_package">wheel.components</a> &gt; <span class="el_source">StandaloneComponent.java</span></div><h1>StandaloneComponent.java</h1><pre class="source lang-java linenums">/*
+Copyright (c) 2007-2008, Henri Frilund
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+    * Neither the name of the &lt;ORGANIZATION&gt; nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+&quot;AS IS&quot; AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+package wheel.components;
+
+import org.xmlpull.v1.XmlSerializer;
+import org.mvel.PropertyAccessor;
+import wheel.*;
+import wheel.persistence.Scope;
+import wheel.util.ComponentStore;
+import wheel.util.InitialFieldValue;
+import wheel.util.LinkToDomain;
+import wheel.util.WheelURL;
+
+import javax.servlet.http.HttpServletRequest;
+import java.io.IOException;
+import java.util.*;
+
+/**
+ * Defines the contract for complex components. Complex components are components that can contain forms and can have their
+ * own resource bundles for messages.
+ * There are no limitations for complex components and they can be full-blown applications that live inside a containing Page.
+ *
+ * @author Henri Frilund
+ */
+public abstract class StandaloneComponent extends RenderableComponent implements IContainer, IBuildableComponent {
+    private IEngine engine;
+    Map&lt;String,Object&gt; validationVariables;
+    private Messages messages;
+<span class="pc" id="L50">    String contentType = &quot;text/html&quot;;</span>
+    Map&lt;String, InitialFieldValue&gt; initialFieldValues;
+    boolean ajaxComponent;
+    private boolean built;
+    private StandaloneComponentConfiguration config;
+    boolean reusable;
+    List&lt;Asset&gt; assetsToAddToPage;
+    List&lt;String&gt; exposedFields;
+<span class="pc" id="L58">    private Map&lt;String,Integer&gt; typeCounts = new HashMap&lt;String,Integer&gt;();</span>
+    private boolean rewinding;
+    private ComponentStore componentStore;
+    private Block head;
+    private Block body;
+    private List&lt;Asset&gt; assets;
+<span class="pc" id="L64">    boolean renderDoctype = true;</span>
+<span class="pc" id="L65">    boolean renderGeneratedComponentIds = false;</span>
+    private Form submittedForm;
+    private String submitTarget;
+    private String focusedComponent;
+    private List&lt;String&gt; updateTargets;
+    private Set&lt;IBuildableComponent&gt; postBuildCallbacks;
+    private boolean pageBuild;
+    Set&lt;String&gt; standaloneComponentsUsed;
+    boolean wrapIds;
+    boolean wrapFormIds;
+    boolean containsForm;
+
+
+    public StandaloneComponent() {
+<span class="fc" id="L79">        super(&quot;&quot;);</span>
+<span class="fc" id="L80">        engine = AbstractEngine.getCurrentServer();</span>
+<span class="fc" id="L81">        messages = new Messages(this);</span>
+<span class="fc" id="L82">    }</span>
+
+    protected StandaloneComponent(String componentId) {
+<span class="nc" id="L85">        super(componentId);</span>
+<span class="nc" id="L86">        messages = new Messages(this);</span>
+<span class="nc" id="L87">        engine = AbstractEngine.getCurrentServer();</span>
+<span class="nc" id="L88">    }</span>
+
+    protected StandaloneComponent(Component parent, String componentId) {
+<span class="nc" id="L91">        super(parent, componentId);</span>
+<span class="nc" id="L92">        messages = new Messages(this);</span>
+<span class="nc" id="L93">        engine = AbstractEngine.getCurrentServer();</span>
+<span class="nc" id="L94">    }</span>
+
+    @Override
+    public StandaloneComponentConfiguration config() {
+<span class="nc bnc" id="L98" title="All 2 branches missed.">        if (config == null)</span>
+<span class="nc" id="L99">            config = new StandaloneComponentConfiguration(this);</span>
+
+<span class="nc" id="L101">        return config;</span>
+    }
+
+    /**
+     * Returns true if this complex component is rewinding. Rewinding means that a form submit has been recieved and the component
+     * tree has been built once so that values from the submit were possible to bind. When the binding is done, the component tree is
+     * built again, this time in rewind-mode. You should use this method whenever you want to append validation messages or change the structure of the
+     * component in any way depending on the results of the form submit.
+     * @return
+     */
+    public boolean isRewinding() {
+<span class="nc" id="L112">        StandaloneComponent page = getPage();</span>
+
+<span class="nc bnc" id="L114" title="All 4 branches missed.">        if (page.isPageRewinding() &amp;&amp; page._getSubmitTarget().equals(getComponentId()))</span>
+<span class="nc" id="L115">            return true;</span>
+
+<span class="nc" id="L117">        return false;</span>
+    }
+
+    /**
+     * Returns the Messages-object giving access to localized messages. Localized messages can be added to any complex component
+     * by creating .properties file to the same package as the class file and with the same name as the component class.
+     * @return
+     */
+    public Messages getMessages() {
+<span class="nc" id="L126">        return messages;</span>
+    }
+
+
+
+    /**
+     * Returns true if the form element with the given componentId is valid. Internally this method checks first if the component is rewinding.
+     * If not, will return true.
+     * @param formElementName The component ID of the form element.
+     * @return
+     */
+    public boolean isValid(String formElementName) {
+<span class="nc bnc" id="L138" title="All 4 branches missed.">        if (isRewinding() &amp;&amp; !getSubmittedForm().isValid(formElementName))</span>
+<span class="nc" id="L139">            return false;</span>
+
+<span class="nc" id="L141">        return true;</span>
+    }
+
+    /**
+     * Lists all valiation errors for all form elements. Internally checks if the component is rewinding. If not, will return an empty list.
+     * @return
+     */
+    public List&lt;ValidationError&gt; listErrors() {
+<span class="nc" id="L149">        List&lt;ValidationError&gt; errors = new LinkedList&lt;ValidationError&gt;();</span>
+
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        if (isRewinding()) {</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">            for (FormElement formElement : getSubmittedForm().getInvalidFields()) {</span>
+<span class="nc" id="L153">                errors.addAll(formElement.getErrors());</span>
+<span class="nc" id="L154">            }</span>
+        }
+
+<span class="nc" id="L157">        return errors;</span>
+    }
+
+    /**
+     * Returns the first error for the form element in the submitted form. If the field is valid or doesn't exist, returns null.
+     * @param componentId
+     * @return
+     */
+    public ValidationError getError(String componentId) {
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        if (isRewinding()) {</span>
+<span class="nc" id="L167">            FormElement field = getSubmittedForm().field(componentId);</span>
+
+<span class="nc bnc" id="L169" title="All 4 branches missed.">            if (field != null &amp;&amp; field.getErrors().size() &gt; 0)</span>
+<span class="nc" id="L170">                return field.getErrors().get(0);</span>
+        }
+
+<span class="nc" id="L173">        return null;</span>
+    }
+
+
+    public String defaultTagName() {
+<span class="fc" id="L178">        return &quot;div&quot;;</span>
+    }
+
+
+    /**
+     * Calling this method causes all field marked with @Value(linkTo = ...) annotation to be written to the domain objects.
+     */
+    public void commit() {
+<span class="nc" id="L186">        Map&lt;String,LinkToDomain&gt; links = (Map&lt;String,LinkToDomain&gt;) getEngine().getObjectStore().get(&quot;linksToDomain&quot;, getPage().getPagePath(), Map.class, this, Scope.component);</span>
+
+<span class="nc bnc" id="L188" title="All 2 branches missed.">        if (links != null) {</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">            for (LinkToDomain linkToDomain : links.values()) {</span>
+<span class="nc" id="L190">                linkToDomain.writeToDomain(this);</span>
+<span class="nc" id="L191">            }</span>
+        }
+<span class="nc" id="L193">    }</span>
+
+    /**
+     * Calling this method causes all field marked with @Value(linkTo = ...) annotation and identified in the input varargs to be writtetn to the domain objects.
+     * @param fields Names of the fields to commit.
+     */
+    public void commit(String...fields) {
+<span class="nc" id="L200">        Map&lt;String,LinkToDomain&gt; links = (Map&lt;String,LinkToDomain&gt;) getEngine().getObjectStore().get(&quot;linksToDomain&quot;, getPage().getPagePath(), Map.class, this, Scope.component);</span>
+
+<span class="nc bnc" id="L202" title="All 4 branches missed.">        if (links != null &amp;&amp; fields != null) {</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">            for (int i = 0; i &lt; fields.length; i++) {</span>
+<span class="nc" id="L204">                String field = fields[i];</span>
+<span class="nc" id="L205">                LinkToDomain link = links.get(field);</span>
+
+<span class="nc bnc" id="L207" title="All 2 branches missed.">                if (link != null)</span>
+<span class="nc" id="L208">                    link.writeToDomain(this);</span>
+            }
+        }
+<span class="nc" id="L211">    }</span>
+
+    public void rollback() {
+<span class="nc" id="L214">        Map&lt;String,LinkToDomain&gt; links = (Map&lt;String,LinkToDomain&gt;) getEngine().getObjectStore().get(&quot;linksToDomain&quot;, getPage().getPagePath(), Map.class, this, Scope.component);</span>
+
+<span class="nc bnc" id="L216" title="All 2 branches missed.">        if (links != null) {</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">            for (LinkToDomain linkToDomain : links.values()) {</span>
+<span class="nc" id="L218">                linkToDomain.copyFromDomain(this);</span>
+<span class="nc" id="L219">            }</span>
+        }
+<span class="nc" id="L221">    }</span>
+
+    public void rollback(String...fields) {
+<span class="nc" id="L224">        Map&lt;String,LinkToDomain&gt; links = (Map&lt;String,LinkToDomain&gt;) getEngine().getObjectStore().get(&quot;linksToDomain&quot;, getPage().getPagePath(), Map.class, this, Scope.component);</span>
+
+<span class="nc bnc" id="L226" title="All 4 branches missed.">        if (links != null &amp;&amp; fields != null) {</span>
+<span class="nc bnc" id="L227" title="All 2 branches missed.">            for (int i = 0; i &lt; fields.length; i++) {</span>
+<span class="nc" id="L228">                String field = fields[i];</span>
+<span class="nc" id="L229">                LinkToDomain link = links.get(field);</span>
+
+<span class="nc bnc" id="L231" title="All 2 branches missed.">                if (link != null)</span>
+<span class="nc" id="L232">                    link.copyFromDomain(this);</span>
+            }
+        }
+<span class="nc" id="L235">    }</span>
+
+    public void preBuild() {
+<span class="nc" id="L238">    }</span>
+
+    public void postBuild() {
+<span class="nc" id="L241">    }</span>
+
+    public boolean _isBuilt() {
+<span class="nc" id="L244">        return built;</span>
+    }
+
+    public void _setBuilt(boolean built) {
+<span class="nc" id="L248">        this.built = built;</span>
+<span class="nc" id="L249">    }</span>
+
+    @Override
+    public void afterAdd() {
+<span class="nc bnc" id="L253" title="All 2 branches missed.">        if (assetsToAddToPage != null) {</span>
+<span class="nc" id="L254">            StandaloneComponent page = getPage();</span>
+
+<span class="nc bnc" id="L256" title="All 2 branches missed.">            for (Asset asset : assetsToAddToPage) {</span>
+<span class="nc" id="L257">                page._addAsset(asset);</span>
+<span class="nc" id="L258">            }</span>
+
+<span class="nc" id="L260">            assetsToAddToPage.clear();</span>
+<span class="nc" id="L261">            assetsToAddToPage = null;</span>
+        }
+<span class="nc" id="L263">    }</span>
+
+    @Override
+    public void _render(XmlSerializer serializer) throws IOException {
+<span class="nc bnc" id="L267" title="All 2 branches missed.">        if (isPage())</span>
+<span class="nc" id="L268">            renderPage(serializer);</span>
+        else
+<span class="nc" id="L270">            super._render(serializer);</span>
+<span class="nc" id="L271">    }</span>
+
+    private void renderPage(XmlSerializer serializer) throws IOException {
+<span class="nc bnc" id="L274" title="All 2 branches missed.">        if (engine.getRequest().getParameter(&quot;xml&quot;) != null)</span>
+<span class="nc" id="L275">            config().setContentType(&quot;text/xml&quot;);</span>
+        else
+<span class="nc" id="L277">            config().setContentType(&quot;text/html&quot;);</span>
+
+<span class="nc" id="L279">        buildPage();</span>
+
+<span class="nc" id="L281">        List&lt;Component&gt; styleAndScriptComponents = head.findAll(el(&quot;getTagName() == 'script' || getTagName() == 'style'&quot;));</span>
+
+<span class="nc" id="L283">        Set cssFiles = engine._getAvailableCssFiles();</span>
+<span class="nc" id="L284">        Set jsFiles = engine._getAvailableJsFiles();</span>
+
+<span class="nc" id="L286">        LinkedList&lt;Class&gt; classes = new LinkedList&lt;Class&gt;();</span>
+
+<span class="nc" id="L288">        Class clazz = getClass();</span>
+<span class="nc" id="L289">        boolean assetFound = false;</span>
+
+<span class="nc bnc" id="L291" title="All 4 branches missed.">        while (clazz != null &amp;&amp; !clazz.getName().equals(&quot;wheel.components.StandaloneComponent&quot;)) {</span>
+<span class="nc" id="L292">            classes.addFirst(clazz);</span>
+<span class="nc" id="L293">            clazz = clazz.getSuperclass();</span>
+        }
+
+<span class="nc bnc" id="L296" title="All 2 branches missed.">        for (Class aClass : classes) {</span>
+<span class="nc" id="L297">            String className = aClass.getName().replaceAll(engine.getBasePackage() + &quot;.&quot;, &quot;&quot;);</span>
+
+<span class="nc" id="L299">            String cssName = className.replace('.', '/') + &quot;.css&quot;;</span>
+<span class="nc" id="L300">            String jsName = className.replace('.', '/') + &quot;.js&quot;;</span>
+
+<span class="nc bnc" id="L302" title="All 2 branches missed.">            if (cssFiles.contains(cssName)) {</span>
+<span class="nc" id="L303">                Component css = head.create().link();</span>
+<span class="nc" id="L304">                css.attributes(&quot;rel&quot;, &quot;stylesheet&quot;, &quot;type&quot;, &quot;text/css&quot;, &quot;href&quot;, engine.getCssPath() + cssName);</span>
+<span class="nc" id="L305">                head.add(css);</span>
+            }
+
+<span class="nc bnc" id="L308" title="All 2 branches missed.">            if (cssFiles.contains(cssName.replace(&quot;.css&quot;, &quot;_print.css&quot;))) {</span>
+<span class="nc" id="L309">                Component printCss = head.create().link();</span>
+<span class="nc" id="L310">                printCss.attributes(&quot;rel&quot;, &quot;stylesheet&quot;, &quot;type&quot;, &quot;text/css&quot;, &quot;href&quot;, cssName.replace(&quot;.css&quot;, &quot;_print.css&quot;));</span>
+<span class="nc" id="L311">                head.add(printCss);</span>
+            }
+
+<span class="nc bnc" id="L314" title="All 2 branches missed.">            if (jsFiles.contains(jsName)) {</span>
+<span class="nc" id="L315">                Component js = head.create().script();</span>
+<span class="nc" id="L316">                js.attributes(&quot;type&quot;, &quot;text/javascript&quot;, &quot;src&quot;, engine.getJsPath() + jsName);</span>
+<span class="nc" id="L317">                head.add(js);</span>
+            }
+
+<span class="nc bnc" id="L320" title="All 2 branches missed.">            if (!assetFound) {</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">                if (clazz.getResource(cssName) != null) {</span>
+<span class="nc" id="L322">                    _addAsset(new Asset(getComponentName() + &quot;.css&quot;, this));</span>
+                }
+
+<span class="nc bnc" id="L325" title="All 2 branches missed.">                if (clazz.getResource(jsName) != null) {</span>
+<span class="nc" id="L326">                    _addAsset(new Asset(getComponentName() + &quot;.js&quot;, this));</span>
+                }
+            }
+<span class="nc" id="L329">        }</span>
+
+
+
+
+<span class="nc bnc" id="L334" title="All 2 branches missed.">        if (assetsToAddToPage != null) {</span>
+<span class="nc bnc" id="L335" title="All 2 branches missed.">            if (assets == null)</span>
+<span class="nc" id="L336">                assets = new LinkedList&lt;Asset&gt;();</span>
+
+<span class="nc" id="L338">            assets.addAll(assetsToAddToPage);</span>
+        }
+
+<span class="nc bnc" id="L341" title="All 2 branches missed.">        if (assets != null) {</span>
+<span class="nc bnc" id="L342" title="All 2 branches missed.">            for (Asset asset : assets) {</span>
+<span class="nc bnc" id="L343" title="All 2 branches missed.">                if (asset.getType() == Asset.AssetType.js) {</span>
+<span class="nc" id="L344">                    Component script = head.create().script();</span>
+
+<span class="nc" id="L346">                    script.attribute(&quot;type&quot;, &quot;text/javascript&quot;);</span>
+
+<span class="nc bnc" id="L348" title="All 2 branches missed.">                    if (jsFiles.contains(asset.getFileUri())) {</span>
+<span class="nc" id="L349">                        script.attribute(&quot;src&quot;, engine.getJsPath() + asset.getFileUri() + asset.getExpiresQueryString());</span>
+                    }
+                    else
+<span class="nc" id="L352">                        script.attribute(&quot;src&quot;, asset.getUrl());</span>
+
+
+<span class="nc" id="L355">                    head.add(script);</span>
+<span class="nc" id="L356">                }</span>
+
+<span class="nc bnc" id="L358" title="All 2 branches missed.">                else if (asset.getType() == Asset.AssetType.css) {</span>
+<span class="nc" id="L359">                    Component link = head.create().link();</span>
+
+<span class="nc" id="L361">                    link.attribute(&quot;rel&quot;, &quot;stylesheet&quot;).</span>
+<span class="nc" id="L362">                            attribute(&quot;type&quot;, &quot;text/css&quot;);</span>
+
+<span class="nc bnc" id="L364" title="All 2 branches missed.">                    if (asset.getMedia() != null)</span>
+<span class="nc" id="L365">                        link.attribute(&quot;media&quot;, asset.getMedia());</span>
+
+<span class="nc bnc" id="L367" title="All 2 branches missed.">                    if (cssFiles.contains(asset.getFileUri())) {</span>
+<span class="nc" id="L368">                        link.attribute(&quot;href&quot;, engine.getCssPath() + asset.getFileUri() + asset.getExpiresQueryString());</span>
+                    }
+                    else {
+<span class="nc" id="L371">                        link.attribute(&quot;href&quot;, asset.getUrl());</span>
+                    }
+
+<span class="nc" id="L374">                    head.add(link);</span>
+                }
+<span class="nc" id="L376">            }</span>
+        }
+
+<span class="nc bnc" id="L379" title="All 2 branches missed.">        for (Component component : styleAndScriptComponents) {</span>
+<span class="nc" id="L380">            head.remove(component);</span>
+<span class="nc" id="L381">            head.add(component);</span>
+<span class="nc" id="L382">        }</span>
+
+<span class="nc" id="L384">        serializer.startDocument(engine.getEncoding(), null);</span>
+
+<span class="nc bnc" id="L386" title="All 2 branches missed.">        if (renderDoctype)</span>
+<span class="nc" id="L387">            serializer.docdecl(&quot; html PUBLIC \&quot;-//W3C//DTD XHTML 1.0 Strict//EN\&quot; \&quot;http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\&quot;&quot;);</span>
+
+<span class="nc" id="L389">        serializer.text(&quot;\n&quot;);</span>
+
+<span class="nc" id="L391">        serializer.startTag(&quot;&quot;, &quot;html&quot;);</span>
+<span class="nc" id="L392">        serializer.attribute(&quot;&quot;, &quot;lang&quot;, engine.getLocale().getLanguage());</span>
+
+<span class="nc bnc" id="L394" title="All 2 branches missed.">        if (renderDoctype)</span>
+<span class="nc" id="L395">            serializer.attribute(&quot;&quot;, &quot;xmlns&quot;, &quot;http://www.w3.org/1999/xhtml&quot;);</span>
+
+<span class="nc" id="L397">        head._render(serializer);</span>
+<span class="nc" id="L398">        remove(head);</span>
+
+<span class="nc" id="L400">        serializer.startTag(&quot;&quot;, body.getTagName());</span>
+<span class="nc" id="L401">        body._renderXhtmlAttributes(serializer);</span>
+<span class="nc" id="L402">        body._renderClassReferenceFromHints(serializer);</span>
+
+<span class="nc bnc" id="L404" title="All 2 branches missed.">        for (RenderableComponent renderable : _getRenderableChildren()) {</span>
+<span class="nc" id="L405">            renderable._render(serializer);</span>
+<span class="nc" id="L406">        }</span>
+
+<span class="nc bnc" id="L408" title="All 2 branches missed.">        if (focusedComponent != null) {</span>
+<span class="nc" id="L409">            serializer.startTag(&quot;&quot;, &quot;script&quot;);</span>
+<span class="nc" id="L410">            serializer.attribute(&quot;&quot;, &quot;language&quot;, &quot;javascript&quot;);</span>
+<span class="nc" id="L411">            serializer.text(&quot;document.getElementById('&quot; + focusedComponent + &quot;').focus();&quot;);</span>
+<span class="nc" id="L412">            serializer.endTag(&quot;&quot;, &quot;script&quot;);</span>
+        }
+
+<span class="nc" id="L415">        serializer.endTag(&quot;&quot;, body.getTagName());</span>
+<span class="nc" id="L416">        serializer.endTag(&quot;&quot;, &quot;html&quot;);</span>
+<span class="nc" id="L417">        serializer.endDocument();</span>
+<span class="nc" id="L418">    }</span>
+
+    private void buildPage() {
+<span class="nc bnc" id="L421" title="All 2 branches missed.">        if (pageBuild)</span>
+<span class="nc" id="L422">            return;</span>
+
+        try {
+<span class="nc" id="L425">            head = create().wBlock(&quot;head&quot;);</span>
+
+<span class="nc" id="L427">            add(head);</span>
+<span class="nc" id="L428">            body = create().wBlock(&quot;body&quot;);</span>
+
+<span class="nc bnc" id="L430" title="All 2 branches missed.">            if (updateTargets != null) {</span>
+<span class="nc bnc" id="L431" title="All 2 branches missed.">                for (String updateTarget : updateTargets) {</span>
+<span class="nc" id="L432">                    find(updateTarget).wrapSelf();</span>
+<span class="nc" id="L433">                }</span>
+            }
+
+<span class="nc" id="L436">            head.meta().attributes(&quot;http-equiv&quot;, &quot;content-type&quot;, &quot;content&quot;, &quot;text/html;charset=&quot; + engine.getEncoding());</span>
+        } finally {
+<span class="nc" id="L438">            pageBuild = true;</span>
+        }
+<span class="nc" id="L440">    }</span>
+
+    public void _postProcessRequest() {
+<span class="nc bnc" id="L443" title="All 2 branches missed.">        if (postBuildCallbacks != null) {</span>
+<span class="nc bnc" id="L444" title="All 2 branches missed.">            for (IBuildableComponent buildableComponent : postBuildCallbacks) {</span>
+<span class="nc" id="L445">                buildableComponent.postBuild();</span>
+<span class="nc" id="L446">            }</span>
+        }
+<span class="nc" id="L448">    }</span>
+
+    public void _postBuildPage() {
+<span class="nc bnc" id="L451" title="All 2 branches missed.">        if (standaloneComponentsUsed != null)</span>
+<span class="nc" id="L452">            standaloneComponentsUsed.clear();</span>
+
+<span class="nc" id="L454">        containsForm = false;</span>
+<span class="nc" id="L455">        wrapFormIds = false;</span>
+<span class="nc" id="L456">    }</span>
+
+    /**
+     * Generates a componentId for the given Component.
+     * @param component Component to generate componentId for.
+     * @return Component short classname + &quot;_&quot; + integer count of the component type on this page. Example_ Label_4.
+     */
+    public String _generateComponentId(Component component) {
+<span class="nc" id="L464">        StandaloneComponent page = getPage();</span>
+
+<span class="nc" id="L466">        component._setGeneratedId(true);</span>
+<span class="nc" id="L467">        String className = component.getClass().getName();</span>
+<span class="nc" id="L468">        int lastIndex = className.lastIndexOf(&quot;.&quot;);</span>
+<span class="nc" id="L469">        className = className.substring(lastIndex + 1, className.length());</span>
+
+<span class="nc" id="L471">        int count = 0;</span>
+
+<span class="nc bnc" id="L473" title="All 2 branches missed.">        if (page.typeCounts.containsKey(className))</span>
+<span class="nc" id="L474">            count = page.typeCounts.get(className);</span>
+
+<span class="nc" id="L476">        count++;</span>
+
+<span class="nc" id="L478">        page.typeCounts.put(className, count);</span>
+
+<span class="nc" id="L480">        return className + &quot;_&quot; + count;</span>
+    }
+
+    /**
+     * Creates a string representation that, when appended to an URL, give access to this page.
+     * @return The full classname where basePackageForPages is removed and .'s are replaced with /'s. Example com.foo.bar.TestPage -&gt; bar/TestPage (where basePackageForPages = com.foo).
+     */
+    public String getPagePath() {
+<span class="nc" id="L488">        String basePackage = engine.getBasePackage();</span>
+<span class="nc" id="L489">        String className = getPage().getClass().getName();</span>
+<span class="nc" id="L490">        className = className.replace(basePackage, &quot;&quot;);</span>
+
+<span class="nc bnc" id="L492" title="All 2 branches missed.">        if (className.startsWith(&quot;.&quot;))</span>
+<span class="nc" id="L493">            className = className.substring(1, className.length());</span>
+
+
+<span class="nc" id="L496">        return className.replace('.', '/');</span>
+    }
+
+    /**
+     * Returns true if a form submit is rewinding on this page.
+     * @return
+     */
+    public boolean isPageRewinding() {
+<span class="nc" id="L504">        return getPage().rewinding;</span>
+    }
+
+    /**
+     * Intended for internal use.
+     * @param rewinding
+     */
+    public void _setPageRewinding(boolean rewinding) {
+<span class="nc" id="L512">        getPage().rewinding = rewinding;</span>
+<span class="nc" id="L513">    }</span>
+
+    /**
+     * Intended for internal use.
+     * @param form
+     * @return True if the page is rewinding the given form.
+     */
+    public boolean _isRewindingForm(Form form) {
+<span class="nc bnc" id="L521" title="All 4 branches missed.">        if (rewinding &amp;&amp; getSubmittedForm().equals(form))</span>
+<span class="nc" id="L522">            return true;</span>
+
+<span class="nc" id="L524">        return false;</span>
+    }
+
+
+    /**
+     * Intended for internal use.
+     * @return
+     */
+    public ComponentStore _getComponentStore() {
+<span class="nc bnc" id="L533" title="All 2 branches missed.">        if (componentStore == null)</span>
+<span class="nc" id="L534">            componentStore = new ComponentStore();</span>
+
+<span class="nc" id="L536">        return componentStore;</span>
+    }
+
+
+    Block getHead() {
+<span class="nc" id="L541">        StandaloneComponent page = getPage();</span>
+<span class="nc" id="L542">        page.buildPage();</span>
+<span class="nc" id="L543">        return page.head;</span>
+    }
+
+    Block getBody() {
+<span class="nc" id="L547">        StandaloneComponent page = getPage();</span>
+<span class="nc" id="L548">        page.buildPage();</span>
+<span class="nc" id="L549">        return page.body;</span>
+    }
+
+    /**
+     * Reserved for internal use. Use Component.addAsset() instead
+     * @param asset
+     */
+    void _addAsset(Asset asset) {
+<span class="nc" id="L557">        StandaloneComponent page = getPage();</span>
+
+<span class="nc bnc" id="L559" title="All 2 branches missed.">        if (page.assets == null)</span>
+<span class="nc" id="L560">            page.assets = new LinkedList&lt;Asset&gt;();</span>
+
+<span class="nc bnc" id="L562" title="All 2 branches missed.">        if (!page.assets.contains(asset))</span>
+<span class="nc" id="L563">            page.assets.add(asset);</span>
+
+<span class="nc bnc" id="L565" title="All 2 branches missed.">        if (page.updateTargets != null)</span>
+<span class="nc" id="L566">            page.updateTargets.clear();</span>
+<span class="nc" id="L567">    }</span>
+
+
+
+    /**
+     *
+     * @return The complete URL for this page, including scheme, engine name, port, context path and servlet path.
+     */
+    public String getPageUrl() {
+<span class="nc" id="L576">        HttpServletRequest request = getEngine().getRequest();</span>
+<span class="nc" id="L577">        return  request.getScheme() + &quot;://&quot; + request.getServerName() + &quot;:&quot; +  request.getServerPort() +</span>
+<span class="nc" id="L578">                request.getContextPath() + request.getServletPath() + &quot;/&quot; + getPagePath();</span>
+    }
+
+
+
+
+    /**
+     * Intended for internal use.
+     */
+    @Override
+    public synchronized void _clear() {
+<span class="nc" id="L589">        super._clear();</span>
+
+<span class="nc bnc" id="L591" title="All 2 branches missed.">        if (assets != null)</span>
+<span class="nc" id="L592">            assets.clear();</span>
+
+<span class="nc bnc" id="L594" title="All 2 branches missed.">        if (postBuildCallbacks != null)</span>
+<span class="nc" id="L595">            postBuildCallbacks.clear();</span>
+
+<span class="nc bnc" id="L597" title="All 2 branches missed.">        if (updateTargets != null)</span>
+<span class="nc" id="L598">            updateTargets.clear();</span>
+<span class="nc" id="L599">    }</span>
+
+    /**
+     * @return The form that was submitted to this page.
+     * @throws wheel.WheelException if no form was submitted.
+     */
+    public Form getSubmittedForm() {
+<span class="nc" id="L606">        StandaloneComponent page = getPage();</span>
+
+<span class="nc bnc" id="L608" title="All 2 branches missed.">        if (page.submittedForm == null)</span>
+<span class="nc" id="L609">            throw new WheelException(&quot;Tried to access a form, but none was submitted.&quot;, this);</span>
+
+<span class="nc" id="L611">        return page.submittedForm;</span>
+    }
+
+    /**
+     * Intended for internal use.
+     * @param submittedForm
+     */
+    public void _setSubmittedForm(Form submittedForm) {
+<span class="nc" id="L619">        getPage().submittedForm = submittedForm;</span>
+<span class="nc" id="L620">    }</span>
+
+
+    /**
+     *
+     * @return componentId for the StandaloneComponent that is the reciever of the submitted form.
+     */
+    public String _getSubmitTarget() {
+<span class="nc bnc" id="L628" title="All 2 branches missed.">        if (submitTarget == null)</span>
+<span class="nc" id="L629">            throw new WheelException(&quot;Tried to access a submit target, but no form was submitted.&quot;, this);</span>
+
+<span class="nc" id="L631">        return submitTarget;</span>
+    }
+
+    /**
+     * Intended for internal use.
+     * @param submitTarget
+     */
+    public void _setSubmitTarget(String submitTarget) {
+<span class="nc" id="L639">        this.submitTarget = submitTarget;</span>
+<span class="nc" id="L640">    }</span>
+
+
+    /**
+     * Sets the browser focus. Will cause the page to render a javascript fragment like this:&lt;br/&gt;
+     * &lt;pre&gt;document.getElementById('componentId').focus();&lt;/pre&gt;
+     */
+    public void setFocus(Component component) {
+<span class="nc" id="L648">        getPage().focusedComponent = component.getComponentId();</span>
+<span class="nc" id="L649">    }</span>
+
+
+
+    public void loadJQuery() {
+<span class="nc" id="L654">        _addAsset(new Asset(&quot;asset/wheel/components/jquery.js&quot; + &quot;?expires=88&quot;, &quot;jquery.js&quot;, Asset.AssetType.js));</span>
+<span class="nc" id="L655">    }</span>
+
+    void _addUpdateTarget(String updateTargetId) {
+<span class="nc" id="L658">        StandaloneComponent page = getPage();</span>
+
+<span class="nc bnc" id="L660" title="All 2 branches missed.">        if (page.updateTargets == null)</span>
+<span class="nc" id="L661">            page.updateTargets = new LinkedList&lt;String&gt;();</span>
+
+<span class="nc" id="L663">        page.updateTargets.add(updateTargetId);</span>
+<span class="nc" id="L664">    }</span>
+
+    void _addPostBuildCallback(IBuildableComponent buildableComponent) {
+<span class="nc" id="L667">        StandaloneComponent page = getPage();</span>
+
+<span class="nc bnc" id="L669" title="All 2 branches missed.">        if (page.postBuildCallbacks == null)</span>
+<span class="nc" id="L670">            page.postBuildCallbacks = new HashSet&lt;IBuildableComponent&gt;();</span>
+
+<span class="nc" id="L672">        page.postBuildCallbacks.add(buildableComponent);</span>
+<span class="nc" id="L673">    }</span>
+
+    public boolean isPage() {
+<span class="nc bnc" id="L676" title="All 2 branches missed.">        return this.getParent() == null;</span>
+    }
+
+    void addUsedStandaloneComponent(StandaloneComponent component) {
+<span class="nc bnc" id="L680" title="All 2 branches missed.">        if (standaloneComponentsUsed == null)</span>
+<span class="nc" id="L681">            standaloneComponentsUsed = new HashSet&lt;String&gt;();</span>
+
+<span class="nc" id="L683">        String name = component.getComponentName();</span>
+
+<span class="nc bnc" id="L685" title="All 2 branches missed.">        if (standaloneComponentsUsed.contains(name)) {</span>
+<span class="nc" id="L686">            component.wrapIds = true;</span>
+        }
+        else
+<span class="nc" id="L689">            standaloneComponentsUsed.add(component.getComponentName());</span>
+<span class="nc" id="L690">    }</span>
+
+    public void _injectExposedFields() {
+<span class="nc" id="L693">        WheelURL url = getEngine().getWheelURL();</span>
+
+<span class="nc bnc" id="L695" title="All 4 branches missed.">        if (url.getParameters().size() == 0 || url.getParameters().containsKey(&quot;wheelSubmitId&quot;))</span>
+<span class="nc" id="L696">            return;</span>
+
+<span class="nc bnc" id="L698" title="All 4 branches missed.">        if (this.isPage() || url.getComponent().equals(getComponentId())) {</span>
+<span class="nc bnc" id="L699" title="All 2 branches missed.">            for (Iterator iterator = url.getParameters().keySet().iterator(); iterator.hasNext();) {</span>
+<span class="nc" id="L700">                String key = (String) iterator.next();</span>
+<span class="nc" id="L701">                String value = ((String[])url.getParameters().get(key))[0];</span>
+
+<span class="nc bnc" id="L703" title="All 2 branches missed.">                if (config().isFieldExposed(key)) {</span>
+                    try {
+<span class="nc" id="L705">                        PropertyAccessor.set(this, key, value);</span>
+<span class="nc" id="L706">                    } catch(Exception e) {}</span>
+                }
+<span class="nc" id="L708">            }</span>
+        }
+<span class="nc" id="L710">    }</span>
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

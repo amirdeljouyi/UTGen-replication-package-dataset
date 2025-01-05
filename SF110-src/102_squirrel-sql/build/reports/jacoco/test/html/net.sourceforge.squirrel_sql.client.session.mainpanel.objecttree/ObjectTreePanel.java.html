@@ -1,0 +1,1093 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ObjectTreePanel.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.session.mainpanel.objecttree</a> &gt; <span class="el_source">ObjectTreePanel.java</span></div><h1>ObjectTreePanel.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.session.mainpanel.objecttree;
+/*
+ * Copyright (C) 2002-2004 Colin Bell
+ * colbell@users.sourceforge.net
+ *
+ * Modifications Copyright (C) 2003-2004 Jason Height
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+
+import net.sourceforge.squirrel_sql.client.session.IObjectTreeAPI;
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.client.session.mainpanel.objecttree.tabs.BaseDataSetTab;
+import net.sourceforge.squirrel_sql.client.session.mainpanel.objecttree.tabs.DatabaseObjectInfoTab;
+import net.sourceforge.squirrel_sql.client.session.mainpanel.objecttree.tabs.IObjectTab;
+import net.sourceforge.squirrel_sql.client.session.mainpanel.objecttree.tabs.database.*;
+import net.sourceforge.squirrel_sql.client.session.mainpanel.objecttree.tabs.procedure.ProcedureColumnsTab;
+import net.sourceforge.squirrel_sql.client.session.mainpanel.objecttree.tabs.table.*;
+import net.sourceforge.squirrel_sql.client.session.properties.SessionProperties;
+import net.sourceforge.squirrel_sql.client.session.schemainfo.FilterMatcher;
+import net.sourceforge.squirrel_sql.client.util.IdentifierFactory;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.DataSetException;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.DataSetUpdateableTableModelListener;
+import net.sourceforge.squirrel_sql.fw.gui.GUIUtils;
+import net.sourceforge.squirrel_sql.fw.id.IIdentifier;
+import net.sourceforge.squirrel_sql.fw.sql.DatabaseObjectType;
+import net.sourceforge.squirrel_sql.fw.sql.IDatabaseObjectInfo;
+import net.sourceforge.squirrel_sql.fw.sql.ITableInfo;
+import net.sourceforge.squirrel_sql.fw.sql.SQLDatabaseMetaData;
+import net.sourceforge.squirrel_sql.fw.util.Utilities;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+import javax.activation.DataHandler;
+import javax.swing.*;
+import javax.swing.event.*;
+import javax.swing.tree.TreePath;
+import java.awt.*;
+import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.Transferable;
+import java.beans.PropertyChangeEvent;
+import java.beans.PropertyChangeListener;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * This is the panel for the Object Tree tab.
+ *
+ * @author &lt;A HREF=&quot;mailto:colbell@users.sourceforge.net&quot;&gt;Colin Bell&lt;/A&gt;
+ */
+public class ObjectTreePanel extends JPanel implements IObjectTreeAPI
+{
+   /** Logger for this class. */
+<span class="nc" id="L68">	private static final ILogger s_log =</span>
+<span class="nc" id="L69">		LoggerController.createLogger(ObjectTreePanel.class);</span>
+
+	/** The &lt;TT&gt;IIdentifier&lt;/TT&gt; that uniquely identifies this object. */
+<span class="nc" id="L72">	private IIdentifier _id = IdentifierFactory.getInstance().createIdentifier();</span>
+
+	/** Current session. */
+	private transient ISession _session;
+
+	/** Tree of objects within the database. */
+	private ObjectTree _tree;
+
+	/** Split pane between the object tree and the data panel. */
+<span class="nc" id="L81">	private final JSplitPane _splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);</span>
+
+	/**
+	 * Empty data panel. Used if the object selected in the object
+	 * tree doesn't require a panel.
+	 */
+	private final ObjectTreeTabbedPane _emptyTabPane;
+
+	/**
+	 * Contains instances of &lt;TT&gt;ObjectTreeTabbedPane&lt;/TT&gt; objects keyed by
+	 * the node type. I.E. the tabbed folders for each node type are kept here.
+	 */
+<span class="nc" id="L93">	private final Map&lt;IIdentifier, ObjectTreeTabbedPane&gt; _tabbedPanes = </span>
+        new HashMap&lt;IIdentifier, ObjectTreeTabbedPane&gt;();
+
+	/** Listens to changes in session properties. */
+	private SessionPropertiesListener _propsListener;
+
+	/** Listens to changes in each of the tabbed folders. */
+	private TabbedPaneListener _tabPnlListener;
+
+<span class="nc" id="L102">	private transient ObjectTreeSelectionListener _objTreeSelLis = null;</span>
+
+<span class="nc" id="L104">   private ObjectTreeTabbedPane _selectedObjTreeTabbedPane = null;</span>
+   
+   /** used to save and restore previously selected object tree paths */ 
+<span class="nc" id="L107">   private TreePath[] previouslySelectedPaths = null;</span>
+
+   private FindInObjectTreeController _findInObjectTreeController;
+
+   /**
+	 * ctor specifying the current session.
+	 *
+	 * @param	session	Current session.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;ISession&lt;/TT&gt; passed.
+	 */
+	public ObjectTreePanel(ISession session)
+<span class="nc" id="L120">	{</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">		if (session == null)</span>
+		{
+<span class="nc" id="L123">			throw new IllegalArgumentException(&quot;ISession == null&quot;);</span>
+		}
+<span class="nc" id="L125">		_session = session;</span>
+
+<span class="nc" id="L127">		_emptyTabPane = new ObjectTreeTabbedPane(_session);</span>
+
+<span class="nc" id="L129">      _findInObjectTreeController = new FindInObjectTreeController(_session);</span>
+
+<span class="nc" id="L131">      createGUI();</span>
+
+<span class="nc" id="L133">      init();</span>
+
+<span class="nc" id="L135">      initDnD();</span>
+
+<span class="nc" id="L137">   }</span>
+
+   private void initDnD()
+   {
+<span class="nc" id="L141">      _tree.setTransferHandler(new TransferHandler(&quot;DragedTreeNode&quot;)</span>
+<span class="nc" id="L142">      {</span>
+         @Override
+         protected Transferable createTransferable(JComponent c)
+         {
+<span class="nc" id="L146">            return new DataHandler(new ObjectTreeDndTransfer(getSelectedTables(), _session.getIdentifier()), DataFlavor.javaJVMLocalObjectMimeType);</span>
+         }
+
+         public int getSourceActions(JComponent c)
+         {
+<span class="nc" id="L151">            return COPY;</span>
+         }
+
+      });
+<span class="nc" id="L155">      _tree.setDragEnabled(true);</span>
+<span class="nc" id="L156">   }</span>
+
+   private void init()
+   {
+      try
+      {
+         // Register tabs to display in the details panel for database nodes.
+<span class="nc" id="L163">         addDetailTab(DatabaseObjectType.SESSION, new MetaDataTab());</span>
+<span class="nc" id="L164">         addDetailTab(DatabaseObjectType.SESSION, new ConnectionStatusTab());</span>
+
+         try
+         {
+<span class="nc" id="L168">            SQLDatabaseMetaData md =</span>
+<span class="nc" id="L169">               _session.getSQLConnection().getSQLMetaData();</span>
+<span class="nc bnc" id="L170" title="All 2 branches missed.">            if (md.supportsCatalogs())</span>
+            {
+<span class="nc" id="L172">               _addDetailTab(DatabaseObjectType.SESSION, new CatalogsTab());</span>
+            }
+         }
+<span class="nc" id="L175">         catch (Throwable th)</span>
+         {
+<span class="nc" id="L177">            s_log.error(&quot;Error in supportsCatalogs()&quot;, th);</span>
+<span class="nc" id="L178">         }</span>
+
+         try
+         {
+<span class="nc" id="L182">            SQLDatabaseMetaData md =</span>
+<span class="nc" id="L183">               _session.getSQLConnection().getSQLMetaData();</span>
+<span class="nc bnc" id="L184" title="All 2 branches missed.">            if (md.supportsSchemas())</span>
+            {
+<span class="nc" id="L186">               _addDetailTab(DatabaseObjectType.SESSION, new SchemasTab());</span>
+            }
+         }
+<span class="nc" id="L189">         catch (Throwable th)</span>
+         {
+<span class="nc" id="L191">            s_log.error(&quot;Error in supportsCatalogs()&quot;, th);</span>
+<span class="nc" id="L192">         }</span>
+<span class="nc" id="L193">         _addDetailTab(DatabaseObjectType.SESSION, new TableTypesTab());</span>
+<span class="nc" id="L194">         _addDetailTab(DatabaseObjectType.SESSION, new DataTypesTab());</span>
+<span class="nc" id="L195">         _addDetailTab(DatabaseObjectType.SESSION, new NumericFunctionsTab());</span>
+<span class="nc" id="L196">         _addDetailTab(DatabaseObjectType.SESSION, new StringFunctionsTab());</span>
+<span class="nc" id="L197">         _addDetailTab(DatabaseObjectType.SESSION, new SystemFunctionsTab());</span>
+<span class="nc" id="L198">         _addDetailTab(DatabaseObjectType.SESSION, new TimeDateFunctionsTab());</span>
+<span class="nc" id="L199">         _addDetailTab(DatabaseObjectType.SESSION, new KeywordsTab());</span>
+
+         // Register tabs to display in the details panel for catalog nodes.
+<span class="nc" id="L202">         _addDetailTab(DatabaseObjectType.CATALOG, new DatabaseObjectInfoTab());</span>
+
+         // Register tabs to display in the details panel for schema nodes.
+<span class="nc" id="L205">         _addDetailTab(DatabaseObjectType.SCHEMA, new DatabaseObjectInfoTab());</span>
+
+<span class="nc" id="L207">         _addDetailTabForTableLikeObjects(DatabaseObjectType.TABLE);</span>
+<span class="nc" id="L208">         _addDetailTabForTableLikeObjects(DatabaseObjectType.VIEW);</span>
+
+         // Register tabs to display in the details panel for procedure nodes.
+<span class="nc" id="L211">         _addDetailTab(DatabaseObjectType.PROCEDURE, new DatabaseObjectInfoTab());</span>
+<span class="nc" id="L212">         _addDetailTab(DatabaseObjectType.PROCEDURE, new ProcedureColumnsTab());</span>
+
+         // Register tabs to display in the details panel for UDT nodes.
+<span class="nc" id="L215">         _addDetailTab(DatabaseObjectType.UDT, new DatabaseObjectInfoTab());</span>
+
+<span class="nc" id="L217">         _session.getSchemaInfo().addSchemaInfoUpdateListener(new net.sourceforge.squirrel_sql.client.session.schemainfo.SchemaInfoUpdateListener()</span>
+<span class="nc" id="L218">         {</span>
+            public void schemaInfoUpdated()
+            {
+<span class="nc" id="L221">               refreshTree(false);</span>
+<span class="nc" id="L222">            }</span>
+         });
+
+      }
+<span class="nc" id="L226">      catch (Throwable th)</span>
+      {
+<span class="nc" id="L228">         s_log.error(&quot;Error doing background initalization of Object tree&quot; , th);</span>
+<span class="nc" id="L229">      }</span>
+<span class="nc" id="L230">   }</span>
+
+   private void _addDetailTabForTableLikeObjects(final DatabaseObjectType type)
+   {
+<span class="nc" id="L234">       GUIUtils.processOnSwingEventThread(new Runnable() {</span>
+          public void run() {
+<span class="nc" id="L236">              addDetailTabForTableLikeObjects(type);</span>
+<span class="nc" id="L237">          }</span>
+       });
+<span class="nc" id="L239">   }</span>
+    
+   private void addDetailTabForTableLikeObjects(DatabaseObjectType type)
+   {
+      // Register tabs to display in the details panel for table nodes.
+<span class="nc" id="L244">      addDetailTab(type, new DatabaseObjectInfoTab());</span>
+
+<span class="nc" id="L246">      ContentsTab conttentsTab = new ContentsTab(this);</span>
+<span class="nc" id="L247">      conttentsTab.addListener(new DataSetUpdateableTableModelListener()</span>
+<span class="nc" id="L248">      {</span>
+         public void forceEditMode(boolean mode)
+         {
+<span class="nc" id="L251">            onForceEditMode(mode);</span>
+<span class="nc" id="L252">         }</span>
+      });
+<span class="nc" id="L254">      addDetailTab(type, conttentsTab);</span>
+
+<span class="nc" id="L256">      addDetailTab(type, new RowCountTab());</span>
+<span class="nc" id="L257">      addDetailTab(type, new ColumnsTab());</span>
+<span class="nc" id="L258">      addDetailTab(type, new PrimaryKeyTab());</span>
+<span class="nc" id="L259">      addDetailTab(type, new ExportedKeysTab());</span>
+<span class="nc" id="L260">      addDetailTab(type, new ImportedKeysTab());</span>
+<span class="nc" id="L261">      addDetailTab(type, new IndexesTab());</span>
+<span class="nc" id="L262">      addDetailTab(type, new TablePriviligesTab());</span>
+<span class="nc" id="L263">      addDetailTab(type, new ColumnPriviligesTab());</span>
+<span class="nc" id="L264">      addDetailTab(type, new RowIDTab());</span>
+<span class="nc" id="L265">      addDetailTab(type, new VersionColumnsTab());</span>
+<span class="nc" id="L266">   }</span>
+
+   /**
+	 * Return the unique identifier for this object.
+	 *
+	 * @return the unique identifier for this object.
+	 */
+	public IIdentifier getIdentifier()
+	{
+<span class="nc" id="L275">		return _id;</span>
+	}
+
+	public void addNotify()
+	{
+<span class="nc" id="L280">		super.addNotify();</span>
+<span class="nc" id="L281">		_tabPnlListener = new TabbedPaneListener();</span>
+<span class="nc" id="L282">		_propsListener = new SessionPropertiesListener();</span>
+<span class="nc" id="L283">		_session.getProperties().addPropertyChangeListener(_propsListener);</span>
+
+<span class="nc" id="L285">		Iterator&lt;ObjectTreeTabbedPane&gt; it = _tabbedPanes.values().iterator();</span>
+<span class="nc bnc" id="L286" title="All 2 branches missed.">		while (it.hasNext())</span>
+		{
+			//setupTabbedPane((ObjectTreeTabbedPane)it.next());
+<span class="nc" id="L289">			ObjectTreeTabbedPane ottp = it.next();</span>
+<span class="nc" id="L290">			ottp.getTabbedPane().addChangeListener(_tabPnlListener);</span>
+<span class="nc" id="L291">		}</span>
+
+<span class="nc" id="L293">		_objTreeSelLis = new ObjectTreeSelectionListener();</span>
+<span class="nc" id="L294">		_tree.addTreeSelectionListener(_objTreeSelLis);</span>
+<span class="nc" id="L295">	}</span>
+
+	public void removeNotify()
+	{
+<span class="nc" id="L299">		super.removeNotify();</span>
+
+<span class="nc bnc" id="L301" title="All 2 branches missed.">		if (_propsListener != null)</span>
+		{
+<span class="nc" id="L303">			_session.getProperties().removePropertyChangeListener(_propsListener);</span>
+<span class="nc" id="L304">			_propsListener = null;</span>
+		}
+
+<span class="nc" id="L307">		Iterator&lt;ObjectTreeTabbedPane&gt; it = _tabbedPanes.values().iterator();</span>
+<span class="nc bnc" id="L308" title="All 2 branches missed.">		while (it.hasNext())</span>
+		{
+<span class="nc" id="L310">			ObjectTreeTabbedPane pane = it.next();</span>
+<span class="nc" id="L311">			pane.getTabbedPane().removeChangeListener(_tabPnlListener);</span>
+<span class="nc" id="L312">		}</span>
+<span class="nc" id="L313">		_tabPnlListener = null;</span>
+<span class="nc bnc" id="L314" title="All 2 branches missed.">		if (_objTreeSelLis != null)</span>
+		{
+<span class="nc" id="L316">			_tree.removeTreeSelectionListener(_objTreeSelLis);</span>
+<span class="nc" id="L317">			_objTreeSelLis = null;</span>
+		}
+<span class="nc" id="L319">	}</span>
+
+	/**
+	 * Add an expander for the specified database object type.
+	 *
+	 * @param	dboType		Database object type.
+	 * @param	expander	Expander called to add children to a parent node.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;DatabaseObjectType&lt;/TT&gt;
+	 * 			or &lt;TT&gt;INodeExpander&lt;/TT&gt; passed.
+	 */
+	public void addExpander(DatabaseObjectType dboType, INodeExpander expander)
+	{
+<span class="nc bnc" id="L333" title="All 2 branches missed.">		if (dboType == null)</span>
+		{
+<span class="nc" id="L335">			throw new IllegalArgumentException(&quot;Null DatabaseObjectType passed&quot;);</span>
+		}
+<span class="nc bnc" id="L337" title="All 2 branches missed.">		if (expander == null)</span>
+		{
+<span class="nc" id="L339">			throw new IllegalArgumentException(&quot;Null INodeExpander passed&quot;);</span>
+		}
+<span class="nc" id="L341">		_tree.getTypedModel().addExpander(dboType, expander);</span>
+<span class="nc" id="L342">	}</span>
+
+   /**
+    * Expands the specified tree node.
+    * 
+    * @param node the tree node to expand
+    */    
+    public void expandNode(ObjectTreeNode node) {
+<span class="nc" id="L350">        IDatabaseObjectInfo info = node.getDatabaseObjectInfo();</span>
+<span class="nc" id="L351">        TreePath path = getTreePath(info.getCatalogName(), </span>
+<span class="nc" id="L352">                                    info.getSchemaName(), </span>
+<span class="nc" id="L353">                                    new FilterMatcher(info.getSimpleName(), null));    </span>
+<span class="nc" id="L354">        _tree.fireTreeExpanded(path);</span>
+<span class="nc" id="L355">    }</span>
+    
+    private void _addDetailTab(final DatabaseObjectType dboType, 
+                               final IObjectTab tab) 
+    {
+<span class="nc" id="L360">        GUIUtils.processOnSwingEventThread(new Runnable() {</span>
+            public void run() {
+<span class="nc" id="L362">                addDetailTab(dboType, tab);</span>
+<span class="nc" id="L363">            }</span>
+        });
+<span class="nc" id="L365">    }</span>
+    
+	/**
+	 * Add a tab to be displayed in the detail panel for the passed
+	 * database object type type.
+	 *
+	 * @param	dboType		Database Object type.
+	 * @param	tab			Tab to be displayed.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown when a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;DatabaseObjectType&lt;/TT&gt; or
+	 * 			&lt;TT&gt;IObjectPanelTab&lt;/TT&gt; passed.
+	 */
+	public void addDetailTab(DatabaseObjectType dboType, IObjectTab tab)
+	{
+<span class="nc bnc" id="L380" title="All 2 branches missed.">		if (dboType == null)</span>
+		{
+<span class="nc" id="L382">			throw new IllegalArgumentException(&quot;Null DatabaseObjectType passed&quot;);</span>
+		}
+<span class="nc bnc" id="L384" title="All 2 branches missed.">		if (tab == null)</span>
+		{
+<span class="nc" id="L386">			throw new IllegalArgumentException(&quot;IObjectPanelTab == null&quot;);</span>
+		}
+
+<span class="nc" id="L389">		getOrCreateObjectPanelTabbedPane(dboType).addObjectPanelTab(tab);</span>
+<span class="nc" id="L390">	}</span>
+
+	/**
+	 * Add a listener to the object tree for structure changes. I.E nodes
+	 * added/removed.
+	 *
+	 * @param	lis		The &lt;TT&gt;TreeModelListener&lt;/TT&gt; you want added.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;TreeModelListener&lt;/TT&gt; passed.
+	 */
+	public void addTreeModelListener(TreeModelListener lis)
+	{
+<span class="nc bnc" id="L403" title="All 2 branches missed.">		if (lis == null)</span>
+		{
+<span class="nc" id="L405">			throw new IllegalArgumentException(&quot;TreeModelListener == null&quot;);</span>
+		}
+<span class="nc" id="L407">		_tree.getModel().addTreeModelListener(lis);</span>
+<span class="nc" id="L408">	}</span>
+
+	/**
+	 * Remove a structure changes listener from the object tree.
+	 *
+	 * @param	lis		The &lt;TT&gt;TreeModelListener&lt;/TT&gt; you want removed.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;TreeModelListener&lt;/TT&gt; passed.
+	 */
+	public void removeTreeModelListener(TreeModelListener lis)
+	{
+<span class="nc bnc" id="L420" title="All 2 branches missed.">		if (lis == null)</span>
+		{
+<span class="nc" id="L422">			throw new IllegalArgumentException(&quot;TreeModelListener == null&quot;);</span>
+		}
+<span class="nc" id="L424">		_tree.getModel().removeTreeModelListener(lis);</span>
+<span class="nc" id="L425">	}</span>
+
+	/**
+	 * Add a listener to the object tree for selection changes.
+	 *
+	 * @param	lis		The &lt;TT&gt;TreeSelectionListener&lt;/TT&gt; you want added.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;TreeSelectionListener&lt;/TT&gt; passed.
+	 */
+	public void addTreeSelectionListener(TreeSelectionListener lis)
+	{
+<span class="nc bnc" id="L437" title="All 2 branches missed.">		if (lis == null)</span>
+		{
+<span class="nc" id="L439">			throw new IllegalArgumentException(&quot;TreeSelectionListener == null&quot;);</span>
+		}
+<span class="nc" id="L441">		_tree.addTreeSelectionListener(lis);</span>
+<span class="nc" id="L442">	}</span>
+
+	/**
+	 * Remove a listener from the object tree for selection changes.
+	 *
+	 * @param	lis		The &lt;TT&gt;TreeSelectionListener&lt;/TT&gt; you want removed.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;TreeSelectionListener&lt;/TT&gt; passed.
+	 */
+	public void removeTreeSelectionListener(TreeSelectionListener lis)
+	{
+<span class="nc bnc" id="L454" title="All 2 branches missed.">		if (lis == null)</span>
+		{
+<span class="nc" id="L456">			throw new IllegalArgumentException(&quot;TreeSelectionListener == null&quot;);</span>
+		}
+<span class="nc" id="L458">		_tree.removeTreeSelectionListener(lis);</span>
+<span class="nc" id="L459">	}</span>
+
+	/**
+	 * Add a listener to the object tree.
+	 *
+	 * @param	lis		The &lt;TT&gt;ObjectTreeListener&lt;/TT&gt; you want added.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;ObjectTreeListener&lt;/TT&gt; passed.
+	 */
+	public void addObjectTreeListener(IObjectTreeListener lis)
+	{
+<span class="nc bnc" id="L471" title="All 2 branches missed.">		if (lis == null)</span>
+		{
+<span class="nc" id="L473">			throw new IllegalArgumentException(&quot;IObjectTreeListener == null&quot;);</span>
+		}
+<span class="nc" id="L475">		_tree.addObjectTreeListener(lis);</span>
+<span class="nc" id="L476">	}</span>
+
+	/**
+	 * Remove a listener from the object tree.
+	 *
+	 * @param	lis		The &lt;TT&gt;ObjectTreeListener&lt;/TT&gt; you want removed.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;ObjectTreeListener&lt;/TT&gt; passed.
+	 */
+	public void removeObjectTreeListener(IObjectTreeListener lis)
+	{
+<span class="nc bnc" id="L488" title="All 2 branches missed.">		if (lis == null)</span>
+		{
+<span class="nc" id="L490">			throw new IllegalArgumentException(&quot;IObjectTreeListener == null&quot;);</span>
+		}
+<span class="nc" id="L492">		_tree.removeObjectTreeListener(lis);</span>
+<span class="nc" id="L493">	}</span>
+
+	/**
+	 * Add an item to the popup menu for the specified database object type
+	 * in the object tree.
+	 *
+	 * @param	dboType		Database Object type.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if a &lt;TT&gt;null&lt;/passed&gt; &lt;TT&gt;DatabaseObjectType&lt;/TT&gt;
+	 * 			or &lt;TT&gt;Action&lt;/TT&gt; passed.
+	 */
+	public void addToPopup(DatabaseObjectType dboType, Action action)
+	{
+<span class="nc bnc" id="L507" title="All 2 branches missed.">		if (dboType == null)</span>
+		{
+<span class="nc" id="L509">			throw new IllegalArgumentException(&quot;Null DatabaseObjectType passed&quot;);</span>
+		}
+<span class="nc bnc" id="L511" title="All 2 branches missed.">		if (action == null)</span>
+		{
+<span class="nc" id="L513">			throw new IllegalArgumentException(&quot;Null Action passed&quot;);</span>
+		}
+<span class="nc" id="L515">		_tree.addToPopup(dboType, action);</span>
+<span class="nc" id="L516">	}</span>
+
+	/**
+	 * Add an item to the popup menu for all node types in the object
+	 * tree.
+	 *
+	 * @param	action		Action to add to menu.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;Action&lt;/TT&gt; passed.
+	 */
+	public void addToPopup(Action action)
+	{
+<span class="nc bnc" id="L529" title="All 2 branches missed.">		if (action == null)</span>
+		{
+<span class="nc" id="L531">			throw new IllegalArgumentException(&quot;Null Action passed&quot;);</span>
+		}
+<span class="nc" id="L533">		_tree.addToPopup(action);</span>
+<span class="nc" id="L534">	}</span>
+
+	/**
+	 * Add an hierarchical menu to the popup menu for the specified database
+	 * object type.
+	 *
+	 * @param	dboType		Database object type.
+	 * @param	menu		&lt;TT&gt;JMenu&lt;/TT&gt; to add to menu.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;DatabaseObjectType&lt;/TT&gt; or
+	 * 			&lt;TT&gt;JMenu&lt;/TT&gt; thrown.
+	 */
+	public void addToPopup(DatabaseObjectType dboType, JMenu menu)
+	{
+<span class="nc bnc" id="L549" title="All 2 branches missed.">		if (dboType == null)</span>
+		{
+<span class="nc" id="L551">			throw new IllegalArgumentException(&quot;DatabaseObjectType == null&quot;);</span>
+		}
+<span class="nc bnc" id="L553" title="All 2 branches missed.">		if (menu == null)</span>
+		{
+<span class="nc" id="L555">			throw new IllegalArgumentException(&quot;JMenu == null&quot;);</span>
+		}
+<span class="nc" id="L557">		_tree.addToPopup(dboType, menu);</span>
+<span class="nc" id="L558">	}</span>
+
+	/**
+	 * Add an hierarchical menu to the popup menu for all node types.
+	 *
+	 * @param	menu	&lt;TT&gt;JMenu&lt;/TT&gt; to add to menu.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;JMenu&lt;/TT&gt; thrown.
+	 */
+	public void addToPopup(JMenu menu)	{
+<span class="nc bnc" id="L569" title="All 2 branches missed.">		if (menu == null)</span>
+		{
+<span class="nc" id="L571">			throw new IllegalArgumentException(&quot;JMenu == null&quot;);</span>
+		}
+<span class="nc" id="L573">		_tree.addToPopup(menu);</span>
+<span class="nc" id="L574">	}</span>
+
+   public ISession getSession()
+   {
+<span class="nc" id="L578">      return _session;</span>
+   }
+
+	/**
+	 * Return an array of the currently selected nodes.
+	 *
+	 * @return array of &lt;TT&gt;ObjectTreeNode&lt;/TT&gt; objects.
+	 */
+	public ObjectTreeNode[] getSelectedNodes()
+	{
+<span class="nc" id="L588">		return _tree.getSelectedNodes();</span>
+	}
+
+   /**
+    * Return a type-safe list of the currently selected database tables
+    * 
+    * @return list of &lt;TT&gt;ITableInfo&lt;/TT&gt; objects.
+    */
+   public List&lt;ITableInfo&gt; getSelectedTables() {
+<span class="nc" id="L597">      return _tree.getSelectedTables();</span>
+   }
+   
+   /**
+    * Saves the tree paths that are currently selected.  These can then be 
+    * restored with restoreSavedSelectedPaths.
+    */
+   public void saveSelectedPaths() {
+<span class="nc" id="L605">      previouslySelectedPaths = _tree.getSelectionPaths();</span>
+<span class="nc" id="L606">   }</span>
+   
+   /**
+    * Used to restore selected tree paths that were saved with saveSelectedPaths.
+    */
+   public void restoreSavedSelectedPaths() {
+<span class="nc" id="L612">      _tree.setSelectionPaths(previouslySelectedPaths);</span>
+<span class="nc" id="L613">      _tree.requestFocusInWindow();</span>
+<span class="nc" id="L614">   }</span>
+    
+	/**
+	 * Return an array of the currently selected database
+	 * objects. This is guaranteed to be non-null.
+	 *
+	 * @return	array of &lt;TT&gt;ObjectTreeNode&lt;/TT&gt; objects.
+	 */
+	public IDatabaseObjectInfo[] getSelectedDatabaseObjects()
+	{
+<span class="nc" id="L624">		return _tree.getSelectedDatabaseObjects();</span>
+	}
+
+	/**
+	 * Retrieve details about all object types that can be in this
+	 * tree.
+	 *
+	 * @return	DatabaseObjectType[]	Array of object type info objects.
+	 */
+	public DatabaseObjectType[] getDatabaseObjectTypes()
+	{
+<span class="nc" id="L635">		return _tree.getTypedModel().getDatabaseObjectTypes();</span>
+	}
+
+	/**
+	 * Refresh object tree.
+	 */
+	public void refreshTree()
+	{
+<span class="nc" id="L643">      refreshTree(false);</span>
+<span class="nc" id="L644">   }</span>
+
+   public void refreshTree(boolean reloadSchemaInfo)
+   {
+<span class="nc" id="L648">      _tree.refresh(reloadSchemaInfo);</span>
+<span class="nc" id="L649">   }</span>
+
+   /**
+	 * Refresh the nodes currently selected in the object tree.
+	 */
+	public void refreshSelectedNodes()
+	{
+<span class="nc" id="L656">		_tree.refreshSelectedNodes();</span>
+<span class="nc" id="L657">	}</span>
+
+	/**
+	 * Remove one or more nodes from the tree.
+	 *
+	 * @param	nodes	Array of nodes to be removed.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;ObjectTreeNode[]&lt;/TT&gt; thrown.
+	 */
+	public void removeNodes(ObjectTreeNode[] nodes)
+	{
+<span class="nc bnc" id="L669" title="All 2 branches missed.">		if (nodes == null)</span>
+		{
+<span class="nc" id="L671">			throw new IllegalArgumentException(&quot;ObjectTreeNode[] == null&quot;);</span>
+		}
+<span class="nc" id="L673">		ObjectTreeModel model = _tree.getTypedModel();</span>
+<span class="nc bnc" id="L674" title="All 2 branches missed.">		for (int i = 0; i &lt; nodes.length; ++i)</span>
+		{
+<span class="nc" id="L676">			model.removeNodeFromParent(nodes[i]);</span>
+		}
+<span class="nc" id="L678">	}</span>
+
+	public IObjectTab getTabbedPaneIfSelected(DatabaseObjectType dbObjectType, String title)
+	{
+<span class="nc" id="L682">		return getTabbedPane(dbObjectType).getTabIfSelected(title);</span>
+	}
+
+    /**
+     * Calls refreshComponent on the selected tab in the current 
+     * ObjectTreeTabbedPane, if the selected tab happens to be a BaseDataSetTab
+     * type. 
+     * 
+     * @throws DataSetException if there was a problem refreshing the component.
+     */
+    public void refreshSelectedTab() throws DataSetException 
+    {
+<span class="nc bnc" id="L694" title="All 2 branches missed.">        if (_selectedObjTreeTabbedPane != null) {</span>
+<span class="nc" id="L695">            IObjectTab tab= _selectedObjTreeTabbedPane.getSelectedTab();</span>
+<span class="nc bnc" id="L696" title="All 2 branches missed.">            if (tab != null) {</span>
+<span class="nc bnc" id="L697" title="All 2 branches missed.">                if (tab instanceof BaseDataSetTab) {</span>
+<span class="nc" id="L698">                    BaseDataSetTab btab = (BaseDataSetTab) tab;</span>
+<span class="nc" id="L699">                    btab.refreshComponent();</span>
+                }
+            }        
+        }
+<span class="nc" id="L703">    }</span>
+    
+   /**
+    * Tries to locate the object given by the paramteres in the Object tree.
+    * The first matching object found is selected.
+    *
+    * @param catalog null means any catalog
+    * @param schema null means any schema
+    * @return true if the Object was found and selected.
+    */
+   public boolean selectInObjectTree(String catalog, String schema, FilterMatcher objectMatcher)
+   {
+<span class="nc bnc" id="L715" title="All 2 branches missed.">      if (&quot;&quot;.equals(objectMatcher.getMetaDataMatchString())) {</span>
+<span class="nc" id="L716">          return false;</span>
+      }
+
+<span class="nc" id="L719">      TreePath treePath = getTreePath(catalog, schema, objectMatcher);</span>
+<span class="nc bnc" id="L720" title="All 2 branches missed.">      if(null != treePath)</span>
+      {
+<span class="nc" id="L722">         _tree.setSelectionPath(treePath);</span>
+<span class="nc" id="L723">         _tree.scrollPathToVisible(treePath);</span>
+<span class="nc" id="L724">         return true;</span>
+      }
+      else
+      {
+<span class="nc" id="L728">         return false;</span>
+      }
+   }
+
+   /**
+    * Get the TreePath to the node with the specified catalog, schema and 
+    * object name.
+    * 
+    * @param catalog the catalog that the node is located in - can be null
+    * @param schema the schema that the node is located in - can be null
+    * @param object display name of the node
+    *
+    * @return the TreePath to the node with the specified criteria, or the root
+    *         node if a node with matching characteristics isn't found.
+    */
+   private TreePath getTreePath(String catalog, String schema, FilterMatcher objectMatcher) {
+<span class="nc" id="L744">       ObjectTreeModel otm = (ObjectTreeModel) _tree.getModel();</span>
+<span class="nc" id="L745">       TreePath treePath = </span>
+<span class="nc" id="L746">           otm.getPathToDbInfo(catalog, </span>
+                               schema, 
+                               objectMatcher,
+<span class="nc" id="L749">                               (ObjectTreeNode) otm.getRoot(), </span>
+                               false);
+<span class="nc bnc" id="L751" title="All 2 branches missed.">       if(null == treePath)</span>
+       {
+<span class="nc" id="L753">          treePath = otm.getPathToDbInfo(catalog, </span>
+                                         schema, 
+                                         objectMatcher,
+<span class="nc" id="L756">                                         (ObjectTreeNode) otm.getRoot(), </span>
+                                         true);
+       }
+<span class="nc" id="L759">       return treePath;</span>
+   }
+   
+   /**
+	 * Add a known database object type to the object tree.
+	 *
+	 * @param	dboType		The new database object type.
+	 */
+	public void addKnownDatabaseObjectType(DatabaseObjectType dboType)
+	{
+<span class="nc" id="L769">		_tree.getTypedModel().addKnownDatabaseObjectType(dboType);</span>
+<span class="nc" id="L770">	}</span>
+
+	/**
+	 * Set the panel to be shown in the data area for the passed
+	 * path.
+	 *
+	 * @param	path	path of node currently selected.
+	 */
+	private void setSelectedObjectPanel(final TreePath path)
+	{
+<span class="nc" id="L780">		GUIUtils.processOnSwingEventThread(new Runnable()</span>
+<span class="nc" id="L781">		{</span>
+			public void run()
+			{
+<span class="nc" id="L784">				ObjectTreeTabbedPane tabPane = null;</span>
+<span class="nc bnc" id="L785" title="All 2 branches missed.">				if (path != null)</span>
+				{
+<span class="nc" id="L787">					Object lastComp = path.getLastPathComponent();</span>
+<span class="nc bnc" id="L788" title="All 2 branches missed.">					if (lastComp instanceof ObjectTreeNode)</span>
+					{
+<span class="nc" id="L790">						ObjectTreeNode node = (ObjectTreeNode)lastComp;</span>
+<span class="nc" id="L791">						tabPane = getDetailPanel(node);</span>
+<span class="nc" id="L792">						tabPane.setDatabaseObjectInfo(node.getDatabaseObjectInfo());</span>
+<span class="nc" id="L793">						tabPane.selectCurrentTab();</span>
+					}
+				}
+<span class="nc" id="L796">				setSelectedObjectPanel(tabPane);</span>
+<span class="nc" id="L797">			}</span>
+		});
+<span class="nc" id="L799">	}</span>
+
+	/**
+	 * Set the panel in the data area to that passed.
+	 *
+	 */
+	private void setSelectedObjectPanel(ObjectTreeTabbedPane pane)
+	{
+<span class="nc" id="L807">        _selectedObjTreeTabbedPane = pane;</span>
+<span class="nc" id="L808">		JTabbedPane comp = null;</span>
+<span class="nc bnc" id="L809" title="All 2 branches missed.">		if (pane != null)</span>
+		{
+<span class="nc" id="L811">			comp = pane.getTabbedPane();</span>
+		}
+<span class="nc bnc" id="L813" title="All 2 branches missed.">		if (comp == null)</span>
+		{
+<span class="nc" id="L815">			comp = _emptyTabPane.getTabbedPane();</span>
+		}
+
+<span class="nc" id="L818">		int divLoc = _splitPane.getDividerLocation();</span>
+<span class="nc" id="L819">		Component existing = _splitPane.getRightComponent();</span>
+<span class="nc bnc" id="L820" title="All 2 branches missed.">		if (existing != null)</span>
+		{
+<span class="nc" id="L822">			_splitPane.remove(existing);</span>
+		}
+<span class="nc" id="L824">		_splitPane.add(comp, JSplitPane.RIGHT);</span>
+<span class="nc" id="L825">		_splitPane.setDividerLocation(divLoc);</span>
+
+<span class="nc bnc" id="L827" title="All 2 branches missed.">		if (pane != null)</span>
+		{
+<span class="nc" id="L829">			pane.selectCurrentTab();</span>
+		}
+<span class="nc" id="L831">	}</span>
+
+	/**
+	 * Get the detail panel to be displayed for the passed node.
+	 *
+	 * @param	node	Node to get details panel for.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;ObjectTreeNode&lt;/TT&gt; passed.
+	 */
+	private ObjectTreeTabbedPane getDetailPanel(ObjectTreeNode node)
+	{
+<span class="nc bnc" id="L843" title="All 2 branches missed.">		if (node == null)</span>
+		{
+<span class="nc" id="L845">			throw new IllegalArgumentException(&quot;ObjectTreeNode == null&quot;);</span>
+		}
+
+<span class="nc" id="L848">		ObjectTreeTabbedPane tabPane = getTabbedPane(node.getDatabaseObjectType());</span>
+<span class="nc bnc" id="L849" title="All 2 branches missed.">		if (tabPane != null)</span>
+		{
+<span class="nc" id="L851">			return tabPane;</span>
+		}
+
+<span class="nc" id="L854">		return _emptyTabPane;</span>
+	}
+
+	/**
+	 * Return the tabbed pane for the passed object tree node type.
+	 *
+	 * @param	dboType		The database object type we are getting a tabbed
+	 *						pane for.
+	 *
+	 * @return		the &lt;TT&gt;ObjectTreeTabbedPane&lt;/TT&gt; for the passed database object
+	 *				type.
+	 */
+	private ObjectTreeTabbedPane getTabbedPane(DatabaseObjectType dboType)
+	{
+<span class="nc" id="L868">		return _tabbedPanes.get(dboType.getIdentifier());</span>
+	}
+
+	/**
+	 * Return the tabbed pane for the passed database object type. If one
+	 * doesn't exist then create it.
+	 *
+	 * @param	dboType		The database object type we are getting a tabbed
+	 *						pane for.
+	 *
+	 * @return	the &lt;TT&gt;List&lt;/TT&gt; containing all the &lt;TT&gt;IObjectPanelTab&lt;/TT&gt;
+	 * 			instances for the passed object tree node type.
+	 */
+	private ObjectTreeTabbedPane getOrCreateObjectPanelTabbedPane(DatabaseObjectType dboType)
+	{
+<span class="nc bnc" id="L883" title="All 2 branches missed.">		if (dboType == null)</span>
+		{
+<span class="nc" id="L885">			throw new IllegalArgumentException(&quot;Null DatabaseObjectType passed&quot;);</span>
+		}
+
+<span class="nc" id="L888">		final IIdentifier key = dboType.getIdentifier();</span>
+<span class="nc" id="L889">		ObjectTreeTabbedPane tabPane = _tabbedPanes.get(key);</span>
+<span class="nc bnc" id="L890" title="All 2 branches missed.">		if (tabPane == null)</span>
+		{
+<span class="nc" id="L892">			tabPane = new ObjectTreeTabbedPane(_session);</span>
+<span class="nc" id="L893">			setupTabbedPane(tabPane);</span>
+<span class="nc" id="L894">			_tabbedPanes.put(key, tabPane);</span>
+		}
+<span class="nc" id="L896">		return tabPane;</span>
+	}
+
+	/**
+	 * Create the user interface.
+	 */
+	private void createGUI()
+	{
+<span class="nc" id="L904">		setLayout(new BorderLayout());</span>
+
+<span class="nc" id="L906">		_tree = new ObjectTree(_session);</span>
+
+<span class="nc" id="L908">		_splitPane.setOneTouchExpandable(true);</span>
+<span class="nc" id="L909">		_splitPane.setContinuousLayout(true);</span>
+
+<span class="nc" id="L911">      LeftPanel leftPanel = new LeftPanel();</span>
+<span class="nc" id="L912">      leftPanel.setMinimumSize(new Dimension(50,50));</span>
+<span class="nc" id="L913">      _splitPane.add(leftPanel, JSplitPane.LEFT);</span>
+<span class="nc" id="L914">		add(_splitPane, BorderLayout.CENTER);</span>
+<span class="nc" id="L915">		_splitPane.setDividerLocation(200);</span>
+
+<span class="nc" id="L917">		_tree.setSelectionRow(0);</span>
+<span class="nc" id="L918">	}</span>
+
+	private synchronized void propertiesHaveChanged(String propName)
+	{
+<span class="nc bnc" id="L922" title="All 2 branches missed.">		if (propName == null</span>
+<span class="nc bnc" id="L923" title="All 2 branches missed.">			|| propName.equals(SessionProperties.IPropertyNames.META_DATA_OUTPUT_CLASS_NAME)</span>
+<span class="nc bnc" id="L924" title="All 2 branches missed.">			|| propName.equals(SessionProperties.IPropertyNames.TABLE_CONTENTS_OUTPUT_CLASS_NAME)</span>
+<span class="nc bnc" id="L925" title="All 2 branches missed.">			|| propName.equals(SessionProperties.IPropertyNames.SQL_RESULTS_OUTPUT_CLASS_NAME)</span>
+<span class="nc bnc" id="L926" title="All 2 branches missed.">			|| propName.equals(SessionProperties.IPropertyNames.OBJECT_TAB_PLACEMENT))</span>
+		{
+<span class="nc" id="L928">			final SessionProperties props = _session.getProperties();</span>
+
+<span class="nc" id="L930">			Iterator&lt;ObjectTreeTabbedPane&gt; it = _tabbedPanes.values().iterator();</span>
+<span class="nc bnc" id="L931" title="All 2 branches missed.">			while (it.hasNext())</span>
+			{
+<span class="nc" id="L933">				ObjectTreeTabbedPane pane = it.next();</span>
+
+<span class="nc bnc" id="L935" title="All 2 branches missed.">				if (propName == null</span>
+<span class="nc bnc" id="L936" title="All 2 branches missed.">					|| propName.equals(SessionProperties.IPropertyNames.META_DATA_OUTPUT_CLASS_NAME)</span>
+<span class="nc bnc" id="L937" title="All 2 branches missed.">					|| propName.equals(SessionProperties.IPropertyNames.TABLE_CONTENTS_OUTPUT_CLASS_NAME)</span>
+<span class="nc bnc" id="L938" title="All 2 branches missed.">					|| propName.equals(SessionProperties.IPropertyNames.SQL_RESULTS_OUTPUT_CLASS_NAME))</span>
+				{
+<span class="nc" id="L940">					pane.rebuild();</span>
+				}
+<span class="nc bnc" id="L942" title="All 2 branches missed.">				if (propName == null</span>
+<span class="nc bnc" id="L943" title="All 2 branches missed.">					|| propName.equals(SessionProperties.IPropertyNames.OBJECT_TAB_PLACEMENT))</span>
+				{
+<span class="nc" id="L945">					pane.getTabbedPane().setTabPlacement(props.getObjectTabPlacement());</span>
+				}
+<span class="nc" id="L947">			}</span>
+		}
+<span class="nc" id="L949">	}</span>
+
+
+   private void onForceEditMode(boolean editable)
+   {
+<span class="nc" id="L954">      Iterator&lt;ObjectTreeTabbedPane&gt; it = _tabbedPanes.values().iterator();</span>
+<span class="nc bnc" id="L955" title="All 2 branches missed.">      while (it.hasNext())</span>
+      {
+<span class="nc" id="L957">         ObjectTreeTabbedPane pane = it.next();</span>
+<span class="nc" id="L958">         pane.rebuild();</span>
+
+<span class="nc" id="L960">      }</span>
+<span class="nc" id="L961">   }</span>
+
+
+
+	private void setupTabbedPane(ObjectTreeTabbedPane pane)
+	{
+<span class="nc" id="L967">		final SessionProperties props = _session.getProperties();</span>
+<span class="nc" id="L968">		pane.rebuild();</span>
+<span class="nc" id="L969">		final JTabbedPane p = pane.getTabbedPane();</span>
+<span class="nc" id="L970">		p.setTabPlacement(props.getObjectTabPlacement());</span>
+<span class="nc" id="L971">		p.addChangeListener(_tabPnlListener);</span>
+<span class="nc" id="L972">	}</span>
+
+	public void sessionWindowClosing()
+	{
+<span class="nc" id="L976">      _findInObjectTreeController.dispose();</span>
+<span class="nc" id="L977">      _tree.dispose();</span>
+<span class="nc" id="L978">	}</span>
+
+   public FindInObjectTreeController getFindController()
+   {
+<span class="nc" id="L982">      return _findInObjectTreeController;   </span>
+   }
+
+   @Override
+   public Component getDetailTabComp()
+   {
+<span class="nc" id="L988">      return _splitPane.getRightComponent();</span>
+   }
+
+   private final class LeftPanel extends JPanel
+	{
+		private static final long serialVersionUID = 1L;
+
+		LeftPanel()
+<span class="nc" id="L996">		{</span>
+<span class="nc" id="L997">			super(new BorderLayout());</span>
+<span class="nc" id="L998">         add(_findInObjectTreeController.getFindInObjectTreePanel(), BorderLayout.NORTH);</span>
+<span class="nc" id="L999">         JScrollPane sp = new JScrollPane();</span>
+<span class="nc" id="L1000">			sp.setBorder(BorderFactory.createEmptyBorder());</span>
+<span class="nc" id="L1001">			sp.setViewportView(_tree);</span>
+<span class="nc" id="L1002">			sp.setPreferredSize(new Dimension(200, 200));</span>
+<span class="nc" id="L1003">			add(sp, BorderLayout.CENTER);</span>
+<span class="nc" id="L1004">		}</span>
+	}
+
+	/**
+	 * This class listens for changes in the node selected in the tree
+	 * and displays the appropriate detail panel for the node.
+	 */
+<span class="nc" id="L1011">	private final class ObjectTreeSelectionListener</span>
+		implements TreeSelectionListener
+	{
+		public void valueChanged(TreeSelectionEvent evt)
+		{
+<span class="nc" id="L1016">			setSelectedObjectPanel(evt.getNewLeadSelectionPath());</span>
+<span class="nc" id="L1017">		}</span>
+	}
+
+	/**
+	 * Listen for changes in session properties.
+	 */
+<span class="nc" id="L1023">	private class SessionPropertiesListener implements PropertyChangeListener</span>
+	{
+		public void propertyChange(PropertyChangeEvent evt)
+		{
+<span class="nc" id="L1027">			propertiesHaveChanged(evt.getPropertyName());</span>
+<span class="nc" id="L1028">		}</span>
+	}
+
+	/**
+	 * When a different tab is selected in one of the tabbed panels then
+	 * refresh the newly selected tab.
+	 */
+	private static class TabbedPaneListener implements ChangeListener
+	{
+		public void stateChanged(ChangeEvent evt)
+		{
+<span class="nc" id="L1039">			final Object src = evt.getSource();</span>
+<span class="nc bnc" id="L1040" title="All 2 branches missed.">			if (!(src instanceof JTabbedPane))</span>
+			{
+<span class="nc" id="L1042">				StringBuilder buf = new StringBuilder();</span>
+<span class="nc" id="L1043">				buf.append(&quot;Source object in TabbedPaneListener was not a JTabbedpane&quot;)</span>
+<span class="nc bnc" id="L1044" title="All 2 branches missed.">					.append(&quot; - it was &quot;)</span>
+<span class="nc" id="L1045">					.append(src == null ? &quot;null&quot; : src.getClass().getName());</span>
+<span class="nc" id="L1046">				s_log.error(buf.toString());</span>
+<span class="nc" id="L1047">				return;</span>
+			}
+<span class="nc" id="L1049">			JTabbedPane tabPane = (JTabbedPane)src;</span>
+
+<span class="nc" id="L1051">			Object prop = tabPane.getClientProperty(ObjectTreeTabbedPane.IClientPropertiesKeys.TABBED_PANE_OBJ);</span>
+<span class="nc bnc" id="L1052" title="All 2 branches missed.">			if (!(prop instanceof ObjectTreeTabbedPane))</span>
+			{
+<span class="nc" id="L1054">				StringBuilder buf = new StringBuilder();</span>
+<span class="nc" id="L1055">				buf.append(&quot;Client property in JTabbedPane was not an ObjectTreeTabbedPane&quot;)</span>
+<span class="nc bnc" id="L1056" title="All 2 branches missed.">					.append(&quot; - it was &quot;)</span>
+<span class="nc" id="L1057">					.append(prop == null ? &quot;null&quot; : prop.getClass().getName());</span>
+<span class="nc" id="L1058">				s_log.error(buf.toString());</span>
+<span class="nc" id="L1059">				return;</span>
+			}
+
+<span class="nc" id="L1062">			((ObjectTreeTabbedPane)prop).selectCurrentTab();</span>
+<span class="nc" id="L1063">		}</span>
+	}
+
+    /**
+     * @see net.sourceforge.squirrel_sql.client.session.IObjectTreeAPI#selectRoot()
+     */
+    public void selectRoot() {
+        // TODO: Figure out why the selection of the root node in the object tree
+        // is undone if we don't delay. It seems like some other thread racing 
+        // to set the selected node to none.  When this happens, the detail pane
+        // for the root node disappears when a session is first opened, or when
+        // an ObjectTree frame is created.  This is a really crappy and unreliable
+        // way to fix this problem, but it hides the problem for now.  A better 
+        // understanding of the architecture of session creation is required 
+        // before a proper solution can be attempted. RMM 20051217
+<span class="nc" id="L1078">        _session.getApplication().getThreadPool().addTask(new delaySelectionRunnable());</span>
+<span class="nc" id="L1079">    }</span>
+
+<span class="nc" id="L1081">    private class delaySelectionRunnable implements Runnable {</span>
+        public void run() {
+<span class="nc" id="L1083">      	  Utilities.sleep(50);</span>
+<span class="nc" id="L1084">      	  SwingUtilities.invokeLater(new Runnable() {</span>
+                public void run() {
+<span class="nc" id="L1086">                    TreePath rootPath = _tree.getPathForRow(0);</span>
+<span class="nc" id="L1087">                    _tree.setSelectionPath(rootPath);</span>
+<span class="nc" id="L1088">                }</span>
+            });            
+<span class="nc" id="L1090">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

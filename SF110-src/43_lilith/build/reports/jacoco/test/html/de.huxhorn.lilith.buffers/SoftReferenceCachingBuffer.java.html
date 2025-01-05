@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SoftReferenceCachingBuffer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">43_lilith</a> &gt; <a href="index.source.html" class="el_package">de.huxhorn.lilith.buffers</a> &gt; <span class="el_source">SoftReferenceCachingBuffer.java</span></div><h1>SoftReferenceCachingBuffer.java</h1><pre class="source lang-java linenums">package de.huxhorn.lilith.buffers;
+
+import de.huxhorn.sulky.buffers.Buffer;
+import de.huxhorn.sulky.buffers.Dispose;
+import de.huxhorn.sulky.buffers.DisposeOperation;
+import de.huxhorn.sulky.buffers.Reset;
+import de.huxhorn.sulky.buffers.ResetOperation;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.lang.ref.Reference;
+import java.lang.ref.ReferenceQueue;
+import java.lang.ref.SoftReference;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+public class SoftReferenceCachingBuffer&lt;E&gt;
+	implements Buffer&lt;E&gt;, ResetOperation, DisposeOperation
+{
+<span class="nc" id="L22">	private final Logger logger = LoggerFactory.getLogger(SoftReferenceCachingBuffer.class);</span>
+
+<span class="nc" id="L24">	private static final ReferenceQueue refQueue = new ReferenceQueue();</span>
+
+	static
+	{
+<span class="nc" id="L28">		Thread cleanupThread = new Thread(new ReferenceQueueRunnable(), &quot;ReferenceQueue-Cleanup&quot;);</span>
+<span class="nc" id="L29">		cleanupThread.setDaemon(true);</span>
+<span class="nc" id="L30">		cleanupThread.start();</span>
+<span class="nc" id="L31">		final Logger logger = LoggerFactory.getLogger(SoftReferenceCachingBuffer.class);</span>
+
+<span class="nc bnc" id="L33" title="All 2 branches missed.">		if(logger.isInfoEnabled()) logger.info(&quot;Started thread {}.&quot;, cleanupThread);</span>
+<span class="nc" id="L34">	}</span>
+
+	private Buffer&lt;E&gt; buffer;
+
+	private Map&lt;Long, MySoftReference&lt;E&gt;&gt; cache;
+	private boolean disposed;
+
+	public SoftReferenceCachingBuffer(Buffer&lt;E&gt; buffer)
+<span class="nc" id="L42">	{</span>
+<span class="nc" id="L43">		this.disposed = false;</span>
+<span class="nc" id="L44">		this.buffer = buffer;</span>
+<span class="nc" id="L45">		this.cache = new ConcurrentHashMap&lt;Long, MySoftReference&lt;E&gt;&gt;();</span>
+<span class="nc" id="L46">	}</span>
+
+	Buffer&lt;E&gt; getWrappedBuffer()
+	{
+<span class="nc" id="L50">		return buffer;</span>
+	}
+
+	public E get(long index)
+	{
+<span class="nc bnc" id="L55" title="All 2 branches missed.">		if(disposed)</span>
+		{
+<span class="nc" id="L57">			return null;</span>
+		}
+<span class="nc" id="L59">		SoftReference&lt;E&gt; softy = cache.get(index);</span>
+		E result;
+<span class="nc bnc" id="L61" title="All 2 branches missed.">		if(softy != null)</span>
+		{
+<span class="nc" id="L63">			result = softy.get();</span>
+<span class="nc bnc" id="L64" title="All 2 branches missed.">			if(result == null)</span>
+			{
+<span class="nc" id="L66">				cache.remove(index);</span>
+			}
+			else
+			{
+				// found in cache...
+<span class="nc bnc" id="L71" title="All 2 branches missed.">				if(logger.isDebugEnabled()) logger.debug(&quot;Retrieved {} from cache.&quot;, index);</span>
+<span class="nc" id="L72">				return result;</span>
+			}
+		}
+
+<span class="nc" id="L76">		result = buffer.get(index);</span>
+<span class="nc bnc" id="L77" title="All 2 branches missed.">		if(result != null)</span>
+		{
+<span class="nc" id="L79">			cache.put(index, new MySoftReference&lt;E&gt;(cache, index, result));</span>
+<span class="nc bnc" id="L80" title="All 2 branches missed.">			if(logger.isDebugEnabled()) logger.debug(&quot;Added {} to cache.&quot;, index);</span>
+		}
+<span class="nc" id="L82">		return result;</span>
+	}
+
+	public long getSize()
+	{
+<span class="nc" id="L87">		return buffer.getSize();</span>
+	}
+
+	public Iterator&lt;E&gt; iterator()
+	{
+<span class="nc" id="L92">		return buffer.iterator();</span>
+	}
+
+	public void reset()
+	{
+<span class="nc" id="L97">		Reset.reset(buffer);</span>
+<span class="nc" id="L98">		cache.clear();</span>
+<span class="nc" id="L99">	}</span>
+
+	public void dispose()
+	{
+<span class="nc" id="L103">		disposed = true;</span>
+<span class="nc" id="L104">		cache.clear();</span>
+<span class="nc" id="L105">		Dispose.dispose(buffer);</span>
+<span class="nc" id="L106">	}</span>
+
+	public boolean isDisposed()
+	{
+<span class="nc" id="L110">		return disposed;</span>
+	}
+
+	private static class MySoftReference&lt;E&gt;
+		extends SoftReference&lt;E&gt;
+	{
+		private long index;
+		private Map&lt;Long, MySoftReference&lt;E&gt;&gt; cache;
+
+		public MySoftReference(Map&lt;Long, MySoftReference&lt;E&gt;&gt; cache, long index, E referent)
+		{
+			// the following cast is safe since we are not using the content in the reference queue......
+			//noinspection unchecked
+<span class="nc" id="L123">			super(referent, refQueue);</span>
+<span class="nc" id="L124">			this.index = index;</span>
+<span class="nc" id="L125">			this.cache = cache;</span>
+<span class="nc" id="L126">		}</span>
+
+		public long getIndex()
+		{
+<span class="nc" id="L130">			return index;</span>
+		}
+
+		public void removeFromCache()
+		{
+<span class="nc" id="L135">			cache.remove(index);</span>
+<span class="nc" id="L136">			final Logger logger = LoggerFactory.getLogger(SoftReferenceCachingBuffer.class);</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">			if(logger.isDebugEnabled()) logger.debug(&quot;Removed {} from cache.&quot;, index);</span>
+<span class="nc" id="L138">		}</span>
+	}
+
+	private static class ReferenceQueueRunnable
+		implements Runnable
+	{
+
+		public void run()
+		{
+
+			for(; ;)
+			{
+				try
+				{
+<span class="nc" id="L152">					Reference ref = refQueue.remove();</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">					if(ref instanceof MySoftReference)</span>
+					{
+<span class="nc" id="L155">						MySoftReference reference = (MySoftReference) ref;</span>
+<span class="nc" id="L156">						reference.removeFromCache();</span>
+<span class="nc" id="L157">					}</span>
+					else
+					{
+<span class="nc" id="L160">						final Logger logger = LoggerFactory.getLogger(SoftReferenceCachingBuffer.class);</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">						if(logger.isWarnEnabled()) logger.warn(&quot;Unexpected reference!! {}&quot;, ref);</span>
+					}
+				}
+<span class="nc" id="L164">				catch(InterruptedException e)</span>
+				{
+<span class="nc" id="L166">					final Logger logger = LoggerFactory.getLogger(SoftReferenceCachingBuffer.class);</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">					if(logger.isInfoEnabled()) logger.info(&quot;Interrupted ReferenceQueueRunnable...&quot;);</span>
+<span class="nc" id="L168">					break;</span>
+<span class="nc" id="L169">				}</span>
+			}
+<span class="nc" id="L171">		}</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

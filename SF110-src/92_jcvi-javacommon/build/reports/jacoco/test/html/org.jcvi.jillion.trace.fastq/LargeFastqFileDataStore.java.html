@@ -1,0 +1,336 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LargeFastqFileDataStore.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.trace.fastq</a> &gt; <span class="el_source">LargeFastqFileDataStore.java</span></div><h1>LargeFastqFileDataStore.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+/*
+ * Created on Dec 15, 2009
+ *
+ * @author dkatzel
+ */
+package org.jcvi.jillion.trace.fastq;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+
+import org.jcvi.jillion.core.datastore.DataStoreClosedException;
+import org.jcvi.jillion.core.datastore.DataStoreException;
+import org.jcvi.jillion.core.datastore.DataStoreFilter;
+import org.jcvi.jillion.core.datastore.DataStoreFilters;
+import org.jcvi.jillion.core.io.IOUtil;
+import org.jcvi.jillion.core.util.iter.StreamingIterator;
+import org.jcvi.jillion.internal.core.datastore.DataStoreStreamingIterator;
+import org.jcvi.jillion.internal.core.util.iter.AbstractBlockingStreamingIterator;
+/**
+ * {@code LargeFastqFileDataStore} is a {@link FastqDataStore} implementation
+ * to be used a very large Fastq Files.  No data contained in this
+ * fastq file is stored in memory except it's size (which is lazy loaded).
+ * This means that each call to {@link FastqDataStore#get(String)}
+ * or {@link FastqDataStore#contains(String)} requires re-parsing the fastq file
+ * which can take some time.  
+ * It is recommended that instances are wrapped
+ * in  a cached datastore using
+ * {@link DataStoreUtil#createNewCachedDataStore(Class, DataStore, int)}.
+ * @author dkatzel
+ *
+ *
+ */
+final class LargeFastqFileDataStore implements FastqDataStore {
+    private final FastqQualityCodec qualityCodec;
+    private final File fastQFile;
+<span class="nc" id="L57">    private Long size=null;</span>
+    private volatile boolean closed;
+    private final DataStoreFilter filter;
+    
+    /**
+     * Create a new {@link FastqDataStore} instance for the given
+     * fastqFile which will contain all the
+     * records in the file.  This implementation will use the given
+     * {@link FastqQualityCodec} to decode the qualities of the fastq record
+     * (if provided)This should return
+     * the same data store implementation as
+     * {@link #create(File, DataStoreFilter, FastqQualityCodec) create(fastqFile, qualityCodec, DataStoreFilters.alwaysAccept())}
+     * @param fastqFile the fastq file to create a {@link FastqDataStore}
+     * for (can not be null, and must exist).
+     * @param qualityCodec the {@link FastqQualityCodec} that should be used
+     * to decode the fastq file.  If this value is null, then 
+     * the datastore implementation will try to guess the codec used which might
+     * have a performance penalty associated with it.
+     * @return a new {@link FastqDataStore} instance, will never be null.
+     * @throws FileNotFoundException if the given Fastq file does not exist.
+     * @throws NullPointerException if fastqFile is null.
+     * @see #create(File, DataStoreFilter, FastqQualityCodec)
+     */
+    public static FastqDataStore create(File fastqFile, FastqQualityCodec qualityCodec) throws FileNotFoundException{
+<span class="nc" id="L81">    	return new LargeFastqFileDataStore(fastqFile, qualityCodec,DataStoreFilters.alwaysAccept());</span>
+    }
+    /**
+     * Create a new {@link FastqDataStore} instance for the given
+     * fastqFile which will only contain all the
+     * records in the file that are accepted by the given filter.  
+     * This implementation will use the given
+     * {@link FastqQualityCodec} to decode the qualities of the fastq record
+     * (if provided)
+     * @param fastqFile the fastq file to create a {@link FastqDataStore}
+     * for (can not be null, and must exist).
+     * @param filter the {@link DataStoreFilter} used to filter out records
+     * from the datastore. If this value is null,
+     * then all records in the file will be included in the datastore.
+     * @param qualityCodec the {@link FastqQualityCodec} that should be used
+     * to decode the fastq file.  If this value is null, then 
+     * the datastore implementation will try to guess the codec used which might
+     * have a performance penalty associated with it.
+     * @return a new {@link FastqDataStore} instance, will never be null.
+     * @throws FileNotFoundException if the given Fastq file does not exist.
+     * @throws NullPointerException if fastqFile is null.
+     */
+    public static FastqDataStore create(File fastqFile, DataStoreFilter filter, FastqQualityCodec qualityCodec) throws FileNotFoundException{
+<span class="nc" id="L104">    	return new LargeFastqFileDataStore(fastqFile, qualityCodec,filter);</span>
+    }
+    /**
+     * @param qualityCodec
+     * @throws FileNotFoundException 
+     */
+<span class="nc" id="L110">    private LargeFastqFileDataStore(File fastQFile, FastqQualityCodec qualityCodec,DataStoreFilter filter) throws FileNotFoundException {</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">    	if(fastQFile==null){</span>
+<span class="nc" id="L112">    		throw new NullPointerException(&quot;fastq file can not be null&quot;);</span>
+    	}
+<span class="nc bnc" id="L114" title="All 2 branches missed.">    	if(!fastQFile.exists()){</span>
+<span class="nc" id="L115">    		throw new FileNotFoundException(&quot;could not find &quot; + fastQFile.getAbsolutePath());</span>
+    	}
+<span class="nc bnc" id="L117" title="All 2 branches missed.">    	if(filter==null){</span>
+<span class="nc" id="L118">    		throw new NullPointerException(&quot;filter can not be null&quot;);</span>
+    	}
+    	
+<span class="nc" id="L121">    	this.filter = filter;</span>
+<span class="nc" id="L122">        this.qualityCodec = qualityCodec;</span>
+<span class="nc" id="L123">        this.fastQFile = fastQFile;        </span>
+<span class="nc" id="L124">    }</span>
+
+    @Override
+    public synchronized void close() throws IOException {
+<span class="nc" id="L128">        closed = true;        </span>
+<span class="nc" id="L129">    }</span>
+    
+    /**
+     * {@inheritDoc}
+     */
+     @Override
+     public synchronized boolean isClosed() {
+<span class="nc" id="L136">         return closed;</span>
+     }
+    
+    @Override
+    public synchronized boolean contains(String id) throws DataStoreException {
+<span class="nc" id="L141">        throwExceptionIfClosed();</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">        if(!filter.accept(id)){</span>
+<span class="nc" id="L143">        	return false;</span>
+        }
+<span class="nc" id="L145">        StreamingIterator&lt;FastqRecord&gt; iter =null;        </span>
+        try{
+<span class="nc" id="L147">        	iter= iterator();</span>
+<span class="nc bnc" id="L148" title="All 2 branches missed.">        	while(iter.hasNext()){</span>
+<span class="nc" id="L149">                FastqRecord fastQ = iter.next();</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">                if(fastQ.getId().equals(id)){                    </span>
+<span class="nc" id="L151">                    return true;</span>
+                }
+<span class="nc" id="L153">            }</span>
+<span class="nc" id="L154">            return false;</span>
+        }finally{
+<span class="nc" id="L156">        	IOUtil.closeAndIgnoreErrors(iter);</span>
+        }
+        
+    }
+    private void throwExceptionIfClosed(){
+<span class="nc bnc" id="L161" title="All 2 branches missed.">        if(closed){</span>
+<span class="nc" id="L162">            throw new DataStoreClosedException(&quot;datastore is closed&quot;);</span>
+        }
+<span class="nc" id="L164">    }</span>
+    @Override
+    public synchronized FastqRecord get(String id) throws DataStoreException {
+<span class="nc" id="L167">    	 throwExceptionIfClosed();</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">        if(!filter.accept(id)){</span>
+<span class="nc" id="L169">        	return null;</span>
+        }
+<span class="nc" id="L171">        StreamingIterator&lt;FastqRecord&gt; iter =null;</span>
+        try{
+<span class="nc" id="L173">        	iter= iterator();</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">        	while(iter.hasNext()){</span>
+<span class="nc" id="L175">                FastqRecord fastQ = iter.next();</span>
+<span class="nc bnc" id="L176" title="All 2 branches missed.">                if(fastQ.getId().equals(id)){                    </span>
+<span class="nc" id="L177">                    return fastQ;</span>
+                }
+<span class="nc" id="L179">            }</span>
+        }finally{
+<span class="nc" id="L181">        	IOUtil.closeAndIgnoreErrors(iter);</span>
+        }
+        //not found
+<span class="nc" id="L184">       return null;</span>
+    }
+
+    @Override
+    public synchronized StreamingIterator&lt;String&gt; idIterator() throws DataStoreException {
+<span class="nc" id="L189">        throwExceptionIfClosed();</span>
+<span class="nc" id="L190">        FastqIdIterator iterator = new FastqIdIterator(filter);</span>
+<span class="nc" id="L191">        iterator.start();</span>
+<span class="nc" id="L192">		return DataStoreStreamingIterator.create(this,iterator);        </span>
+    }
+
+    @Override
+    public synchronized long getNumberOfRecords() throws DataStoreException {
+<span class="nc" id="L197">        throwExceptionIfClosed();</span>
+<span class="nc bnc" id="L198" title="All 2 branches missed.">        if(size ==null){</span>
+<span class="nc" id="L199">            long count=0;</span>
+<span class="nc" id="L200">            StreamingIterator&lt;FastqRecord&gt; iter = iterator();</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">            while(iter.hasNext()){</span>
+<span class="nc" id="L202">                count++;</span>
+<span class="nc" id="L203">                iter.next();</span>
+            }
+<span class="nc" id="L205">            size = Long.valueOf(count);</span>
+        }
+<span class="nc" id="L207">        return size;</span>
+    }
+    
+    @Override
+    public synchronized StreamingIterator&lt;FastqRecord&gt; iterator() {
+<span class="nc" id="L212">        throwExceptionIfClosed();</span>
+<span class="nc" id="L213">        LargeFastqFileIterator iter = new LargeFastqFileIterator(filter);</span>
+<span class="nc" id="L214">    	iter.start();</span>
+    	
+<span class="nc" id="L216">    	return DataStoreStreamingIterator.create(this,iter);</span>
+  
+    }
+    
+    
+    private final class FastqIdIterator extends AbstractBlockingStreamingIterator&lt;String&gt; implements StreamingIterator&lt;String&gt;{
+
+    	private final DataStoreFilter filter;
+    	
+
+<span class="nc" id="L226">    	public FastqIdIterator(DataStoreFilter filter) {</span>
+<span class="nc" id="L227">			this.filter = filter;</span>
+<span class="nc" id="L228">		}</span>
+
+
+		@Override
+    	protected void backgroundThreadRunMethod() {
+    		try {
+    			
+<span class="nc" id="L235">    			FastqVisitor visitor = new FastqVisitor() {</span>
+					
+					@Override
+					public void visitEnd() {
+						//no-op						
+<span class="nc" id="L240">					}</span>
+					@Override
+					public void halted(){
+						//no-op
+<span class="nc" id="L244">			    	}</span>
+					@Override
+					public FastqRecordVisitor visitDefline(final FastqVisitorCallback callback,
+							String id, String optionalComment) {
+<span class="nc bnc" id="L248" title="All 2 branches missed.">						if(FastqIdIterator.this.isClosed()){</span>
+<span class="nc" id="L249">							callback.haltParsing();							</span>
+						}
+<span class="nc bnc" id="L251" title="All 2 branches missed.">						if (filter.accept(id)) {</span>
+<span class="nc" id="L252">							blockingPut(id);</span>
+						}
+<span class="nc bnc" id="L254" title="All 2 branches missed.">						if(FastqIdIterator.this.isClosed()){</span>
+<span class="nc" id="L255">							callback.haltParsing();							</span>
+						}
+<span class="nc" id="L257">						return null;</span>
+					}
+				};
+    			
+<span class="nc" id="L261">                FastqFileParser.create(fastQFile).accept(visitor);</span>
+<span class="nc" id="L262">           } catch (IOException e) {</span>
+                
+                //should never happen
+<span class="nc" id="L265">                throw new RuntimeException(e);</span>
+<span class="nc" id="L266">            }</span>
+    		
+<span class="nc" id="L268">    	}</span>
+    }
+    
+    /**
+     * {@code LargeFastQFileIterator} is an Iterator of {@link FastqRecord}s meant for large
+     * fastq files (although small fastqs will work too).
+     * @author dkatzel
+     *
+     *
+     */
+    private final class LargeFastqFileIterator extends AbstractBlockingStreamingIterator&lt;FastqRecord&gt; implements StreamingIterator&lt;FastqRecord&gt;{
+
+    	private final DataStoreFilter filter;
+    	
+
+<span class="nc" id="L283">    	public LargeFastqFileIterator(DataStoreFilter filter) {</span>
+<span class="nc" id="L284">			this.filter = filter;</span>
+<span class="nc" id="L285">		}</span>
+
+
+		@Override
+    	protected void backgroundThreadRunMethod() {
+    		try {
+    			
+<span class="nc" id="L292">    			FastqVisitor visitor = new FastqVisitor() {</span>
+					
+					@Override
+					public void visitEnd() {
+						//no-op						
+<span class="nc" id="L297">					}</span>
+					@Override
+					public void halted(){
+						//no-op
+<span class="nc" id="L301">			    	}</span>
+					@Override
+					public FastqRecordVisitor visitDefline(final FastqVisitorCallback callback,
+							String id, String optionalComment) {
+<span class="nc bnc" id="L305" title="All 2 branches missed.">						if(LargeFastqFileIterator.this.isClosed()){</span>
+<span class="nc" id="L306">							callback.haltParsing();</span>
+<span class="nc" id="L307">							return null;</span>
+						}
+<span class="nc bnc" id="L309" title="All 2 branches missed.">						if (filter.accept(id)) {</span>
+<span class="nc" id="L310">							return new AbstractFastqRecordVisitor(id,optionalComment,qualityCodec) {</span>
+								
+								@Override
+								protected void visitRecord(FastqRecord record) {
+<span class="nc" id="L314">									blockingPut(record);</span>
+<span class="nc bnc" id="L315" title="All 2 branches missed.">									if(LargeFastqFileIterator.this.isClosed()){</span>
+<span class="nc" id="L316">										callback.haltParsing();</span>
+									}
+<span class="nc" id="L318">								}</span>
+							};
+						}
+<span class="nc" id="L321">						return null;</span>
+					}
+				};
+    			
+<span class="nc" id="L325">                FastqFileParser.create(fastQFile).accept(visitor);</span>
+<span class="nc" id="L326">           } catch (IOException e) {</span>
+                
+                //should never happen
+<span class="nc" id="L329">                throw new RuntimeException(e);</span>
+<span class="nc" id="L330">            }</span>
+    		
+<span class="nc" id="L332">    	}</span>
+    }
+  
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

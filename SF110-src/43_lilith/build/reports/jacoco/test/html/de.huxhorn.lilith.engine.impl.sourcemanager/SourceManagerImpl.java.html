@@ -1,0 +1,233 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SourceManagerImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">43_lilith</a> &gt; <a href="index.source.html" class="el_package">de.huxhorn.lilith.engine.impl.sourcemanager</a> &gt; <span class="el_source">SourceManagerImpl.java</span></div><h1>SourceManagerImpl.java</h1><pre class="source lang-java linenums">/*
+ * Lilith - a log event viewer.
+ * Copyright (C) 2007-2009 Joern Huxhorn
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see &lt;http://www.gnu.org/licenses/&gt;.
+ */
+package de.huxhorn.lilith.engine.impl.sourcemanager;
+
+import de.huxhorn.lilith.data.eventsource.EventWrapper;
+import de.huxhorn.lilith.data.eventsource.SourceIdentifier;
+import de.huxhorn.lilith.engine.EventConsumer;
+import de.huxhorn.lilith.engine.EventProducer;
+import de.huxhorn.lilith.engine.EventSource;
+import de.huxhorn.lilith.engine.EventSourceListener;
+import de.huxhorn.lilith.engine.EventSourceProducer;
+import de.huxhorn.lilith.engine.SourceManager;
+import de.huxhorn.sulky.buffers.BlockingCircularBuffer;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.beans.PropertyChangeListener;
+import java.beans.PropertyChangeSupport;
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+public class SourceManagerImpl&lt;T extends Serializable&gt;
+	implements SourceManager&lt;T&gt;
+{
+<span class="nc" id="L46">	private final Logger logger = LoggerFactory.getLogger(SourceManagerImpl.class);</span>
+
+	private BlockingCircularBuffer&lt;EventWrapper&lt;T&gt;&gt; queue;
+	private Set&lt;EventSourceListener&lt;T&gt;&gt; listeners;
+	private PropertyChangeSupport changeSupport;
+	private List&lt;EventSource&lt;T&gt;&gt; sources;
+	private Map&lt;SourceIdentifier, EventProducer&gt; eventProducers;
+	private EventPoller&lt;T&gt; eventPoller;
+
+	private static final String NUMBER_OF_SOURCES = &quot;numberOfSources&quot;;
+	private List&lt;EventSourceProducer&lt;T&gt;&gt; eventSourceProducers;
+
+	public SourceManagerImpl(BlockingCircularBuffer&lt;EventWrapper&lt;T&gt;&gt; queue)
+<span class="nc" id="L59">	{</span>
+<span class="nc" id="L60">		this.queue = queue;</span>
+<span class="nc" id="L61">		this.eventPoller = new EventPoller&lt;T&gt;(queue);</span>
+<span class="nc" id="L62">		eventProducers = new HashMap&lt;SourceIdentifier, EventProducer&gt;();</span>
+<span class="nc" id="L63">		eventSourceProducers = new ArrayList&lt;EventSourceProducer&lt;T&gt;&gt;();</span>
+<span class="nc" id="L64">		listeners = new HashSet&lt;EventSourceListener&lt;T&gt;&gt;();</span>
+<span class="nc" id="L65">		changeSupport = new PropertyChangeSupport(this);</span>
+<span class="nc" id="L66">		sources = new ArrayList&lt;EventSource&lt;T&gt;&gt;();</span>
+<span class="nc" id="L67">	}</span>
+
+	public void addSource(EventSource&lt;T&gt; source)
+	{
+		//SourceIdentifier si=source.getSourceIdentifier();
+<span class="nc" id="L72">		int oldSize = sources.size();</span>
+<span class="nc bnc" id="L73" title="All 2 branches missed.">		if(!sources.contains(source))</span>
+		{
+<span class="nc" id="L75">			sources.add(source);</span>
+<span class="nc" id="L76">			int newSize = sources.size();</span>
+<span class="nc" id="L77">			changeSupport.firePropertyChange(NUMBER_OF_SOURCES, oldSize, newSize);</span>
+<span class="nc" id="L78">			fireAddSource(source);</span>
+<span class="nc bnc" id="L79" title="All 2 branches missed.">			if(logger.isInfoEnabled()) logger.info(&quot;Added source {}.&quot;, source);</span>
+		}
+<span class="nc" id="L81">	}</span>
+
+
+	public void removeSource(SourceIdentifier source)
+	{
+<span class="nc" id="L86">		int oldSize = sources.size();</span>
+<span class="nc" id="L87">		List&lt;EventSource&lt;T&gt;&gt; removedSources = new ArrayList&lt;EventSource&lt;T&gt;&gt;();</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">		for(EventSource&lt;T&gt; src : sources)</span>
+		{
+<span class="nc bnc" id="L90" title="All 2 branches missed.">			if(source.equals(src.getSourceIdentifier()))</span>
+			{
+<span class="nc" id="L92">				removedSources.add(src);</span>
+			}
+<span class="nc" id="L94">		}</span>
+<span class="nc" id="L95">		sources.removeAll(removedSources);</span>
+<span class="nc" id="L96">		int newSize = sources.size();</span>
+<span class="nc" id="L97">		changeSupport.firePropertyChange(NUMBER_OF_SOURCES, oldSize, newSize);</span>
+<span class="nc bnc" id="L98" title="All 2 branches missed.">		for(EventSource&lt;T&gt; src : removedSources)</span>
+		{
+<span class="nc" id="L100">			fireRemoveSource(src);</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">			if(logger.isInfoEnabled()) logger.info(&quot;Removed source {}.&quot;, src);</span>
+<span class="nc" id="L102">		}</span>
+
+<span class="nc" id="L104">	}</span>
+
+	private void fireAddSource(EventSource&lt;T&gt; source)
+	{
+<span class="nc bnc" id="L108" title="All 2 branches missed.">		for(EventSourceListener&lt;T&gt; listener : listeners)</span>
+		{
+<span class="nc" id="L110">			listener.eventSourceAdded(source);</span>
+<span class="nc" id="L111">		}</span>
+<span class="nc" id="L112">	}</span>
+
+	private void fireRemoveSource(EventSource&lt;T&gt; source)
+	{
+<span class="nc bnc" id="L116" title="All 2 branches missed.">		for(EventSourceListener&lt;T&gt; listener : listeners)</span>
+		{
+<span class="nc" id="L118">			listener.eventSourceRemoved(source);</span>
+<span class="nc" id="L119">		}</span>
+<span class="nc" id="L120">	}</span>
+
+	public List&lt;EventSource&lt;T&gt;&gt; getSources()
+	{
+<span class="nc" id="L124">		return new ArrayList&lt;EventSource&lt;T&gt;&gt;(sources);</span>
+	}
+
+
+	public int getNumberOfSources()
+	{
+<span class="nc" id="L130">		return sources.size();</span>
+	}
+
+	public void addEventSourceProducer(EventSourceProducer&lt;T&gt; producer)
+	{
+<span class="nc" id="L135">		producer.setQueue(queue);</span>
+<span class="nc" id="L136">		producer.setSourceManager(this);</span>
+<span class="nc" id="L137">		eventSourceProducers.add(producer);</span>
+<span class="nc" id="L138">	}</span>
+
+	public void addEventProducer(EventProducer producer)
+	{
+<span class="nc" id="L142">		SourceIdentifier id = producer.getSourceIdentifier();</span>
+<span class="nc" id="L143">		EventProducer previous = eventProducers.put(id, producer);</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">		if(previous != null)</span>
+		{
+<span class="nc" id="L146">			previous.close();</span>
+		}
+		//producer.start();
+<span class="nc bnc" id="L149" title="All 2 branches missed.">		if(logger.isDebugEnabled()) logger.debug(&quot;Started {}.&quot;, producer);</span>
+<span class="nc" id="L150">	}</span>
+
+	public void removeEventProducer(SourceIdentifier id)
+	{
+<span class="nc" id="L154">		EventProducer producer = eventProducers.remove(id);</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">		if(producer != null)</span>
+		{
+<span class="nc" id="L157">			producer.close();</span>
+		}
+<span class="nc" id="L159">	}</span>
+
+	public void setEventConsumers(List&lt;EventConsumer&lt;T&gt;&gt; consumers)
+	{
+<span class="nc" id="L163">		eventPoller.setConsumers(consumers);</span>
+<span class="nc" id="L164">	}</span>
+
+	public List&lt;EventConsumer&lt;T&gt;&gt; getEventConsumers()
+	{
+<span class="nc" id="L168">		return eventPoller.getConsumers();</span>
+	}
+
+
+	public void addEventSourceListener(EventSourceListener&lt;T&gt; listener)
+	{
+<span class="nc bnc" id="L174" title="All 2 branches missed.">		if(!listeners.contains(listener))</span>
+		{
+<span class="nc" id="L176">			listeners.add(listener);</span>
+		}
+<span class="nc" id="L178">	}</span>
+
+	public void removeEventSourceListener(EventSourceListener&lt;T&gt; listener)
+	{
+<span class="nc bnc" id="L182" title="All 2 branches missed.">		if(listeners.contains(listener))</span>
+		{
+<span class="nc" id="L184">			listeners.remove(listener);</span>
+		}
+<span class="nc" id="L186">	}</span>
+
+	public void addPropertyChangeListener(PropertyChangeListener listener)
+	{
+<span class="nc" id="L190">		changeSupport.addPropertyChangeListener(listener);</span>
+<span class="nc" id="L191">	}</span>
+
+	public void removePropertyChangeListener(PropertyChangeListener listener)
+	{
+<span class="nc" id="L195">		changeSupport.removePropertyChangeListener(listener);</span>
+<span class="nc" id="L196">	}</span>
+
+	public void start()
+	{
+		// start poller...
+		{
+<span class="nc" id="L202">			Thread t = new Thread(eventPoller, &quot;EventPoller&quot;);</span>
+<span class="nc" id="L203">			t.setDaemon(true);</span>
+<span class="nc" id="L204">			t.start();</span>
+		}
+
+		// start consumer if necessary...
+<span class="nc bnc" id="L208" title="All 2 branches missed.">		for(EventConsumer&lt;T&gt; consumer : getEventConsumers())</span>
+		{
+<span class="nc bnc" id="L210" title="All 2 branches missed.">			if(consumer instanceof Runnable)</span>
+			{
+<span class="nc" id="L212">				Thread t = new Thread((Runnable) consumer, &quot;Consumer-Thread&quot;);</span>
+<span class="nc" id="L213">				t.setDaemon(true);</span>
+<span class="nc" id="L214">				t.start();</span>
+<span class="nc bnc" id="L215" title="All 2 branches missed.">				if(logger.isInfoEnabled()) logger.info(&quot;Started {}.&quot;, t);</span>
+			}
+<span class="nc" id="L217">		}</span>
+
+		// start event source producers if necessary...
+<span class="nc bnc" id="L220" title="All 2 branches missed.">		for(EventSourceProducer current : eventSourceProducers)</span>
+		{
+<span class="nc bnc" id="L222" title="All 2 branches missed.">			if(current instanceof Runnable)</span>
+			{
+<span class="nc" id="L224">				Thread t = new Thread((Runnable) current, &quot;Producer-Thread-&quot; + current);</span>
+<span class="nc" id="L225">				t.setDaemon(true);</span>
+<span class="nc" id="L226">				t.start();</span>
+<span class="nc bnc" id="L227" title="All 2 branches missed.">				if(logger.isInfoEnabled()) logger.info(&quot;Started {}.&quot;, t);</span>
+			}
+<span class="nc" id="L229">		}</span>
+
+<span class="nc" id="L231">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

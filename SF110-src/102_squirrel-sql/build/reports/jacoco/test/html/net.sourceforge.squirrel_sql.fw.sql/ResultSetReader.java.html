@@ -1,0 +1,638 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ResultSetReader.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.fw.sql</a> &gt; <span class="el_source">ResultSetReader.java</span></div><h1>ResultSetReader.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.fw.sql;
+/*
+ * Copyright (C) 2001-2004 Colin Bell
+ * colbell@users.sourceforge.net
+ * Copyright (C) 2001-2004 Johan Compagner
+ * jcompagner@j-com.nl
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+import java.math.BigDecimal;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Types;
+
+import net.sourceforge.squirrel_sql.fw.datasetviewer.ColumnDisplayDefinition;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.CellComponentFactory;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.DataTypeBlob;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.DataTypeClob;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.DataTypeDate;
+import net.sourceforge.squirrel_sql.fw.dialects.DialectType;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+public class ResultSetReader
+{
+	/** Logger for this class. */
+<span class="nc" id="L42">	private final static ILogger s_log =</span>
+<span class="nc" id="L43">		LoggerController.createLogger(ResultSetReader.class);</span>
+
+	/** Internationalized strings for this class. */
+<span class="nc" id="L46">	private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L47">		StringManagerFactory.getStringManager(ResultSetReader.class);</span>
+
+	/** The &lt;TT&gt;ResultSet&lt;/TT&gt; being read. */
+	private final ResultSet _rs;
+
+	/**
+	 * The indices into the &lt;TT&gt;ResultSet that we want to read, starting from
+	 * 1 (not 0). If this contains {1, 5, 6} then only columns 1, 5, and 6 will
+	 * be read. If &lt;TT&gt;null or empty then all columns are read.
+	 */
+	private final int[] _columnIndices;
+
+
+	/**
+	 * The number of columns to read. This may or may not be the same as the
+	 * number of columns in the &lt;TT&gt;ResultSet&lt;/TT&gt;. @see _columnIndices.
+	 */
+	private int _columnCount;
+
+	/** &lt;TT&gt;true&lt;/TT&gt; if an error occured reading a column in th previous row. */
+<span class="nc" id="L67">	private boolean _errorOccured = false;</span>
+
+	/** Metadata for the &lt;TT&gt;ResultSet&lt;/TT&gt;. */
+	private ResultSetMetaData _rsmd;
+
+    /** whether or not the user requested to cancel the query */
+<span class="nc" id="L73">   private volatile boolean _stopExecution = false; </span>
+
+   /** the type of dialect used to obtain the ResultSet to be read */ 
+<span class="nc" id="L76">   private DialectType _dialectType = null;</span>
+   
+	/**
+    * Constructor
+    * 
+    * @param rs
+    *           the ResultSet to read
+    * @param dialectType
+    *           the DialectType
+    * @throws SQLException
+    */
+	public ResultSetReader(ResultSet rs, DialectType dialectType)
+		throws SQLException
+	{
+<span class="nc" id="L90">		this(rs, null, dialectType);</span>
+<span class="nc" id="L91">	}</span>
+
+
+
+	/**
+	 * @param rs
+	 * @param columnIndices
+	 * @param dialectType
+	 * @throws SQLException
+	 */
+	public ResultSetReader(ResultSet rs, int[] columnIndices,
+         DialectType dialectType) throws SQLException
+	{
+<span class="nc" id="L104">		super();</span>
+<span class="nc bnc" id="L105" title="All 2 branches missed.">		if (rs == null)</span>
+		{
+<span class="nc" id="L107">			throw new IllegalArgumentException(&quot;ResultSet == null&quot;);</span>
+		}
+<span class="nc" id="L109">		_dialectType = dialectType;</span>
+<span class="nc" id="L110">		_rs = rs;</span>
+
+<span class="nc bnc" id="L112" title="All 4 branches missed.">		if (columnIndices != null &amp;&amp; columnIndices.length == 0)</span>
+		{
+<span class="nc" id="L114">			columnIndices = null;</span>
+		}
+<span class="nc" id="L116">		_columnIndices = columnIndices;</span>
+
+<span class="nc" id="L118">		_rsmd = rs.getMetaData();</span>
+
+<span class="nc bnc" id="L120" title="All 2 branches missed.">		_columnCount = columnIndices != null ? columnIndices.length</span>
+<span class="nc" id="L121">            : _rsmd.getColumnCount();</span>
+<span class="nc" id="L122">	}</span>
+
+	/**
+	 * Read the next row from the &lt;TT&gt;ResultSet&lt;/TT&gt;. If no more rows then
+	 * &lt;TT&gt;null&lt;/TT&gt; will be returned, otherwise an &lt;TT&gt;Object[]&lt;/TT&gt; will be
+	 * returned where each element of the array is an object representing
+	 * the contents of the column. These objects could be of type &lt;TT&gt;String&lt;/TT&gt;,
+	 * &lt;TT&gt;BigDecimal&lt;/TT&gt; etc.
+	 *
+	 * &lt;P&gt;If an error occurs calling &lt;TT&gt;next()&lt;/TT&gt; on the &lt;TT&gt;ResultSet&lt;/TT&gt;
+	 * then an &lt;TT&gt;SQLException will be thrown, however if an error occurs
+	 * retrieving the data for a column an error msg will be placed in that
+	 * element of the array, but no exception will be thrown. To see if an
+	 * error occured retrieving column data you can call
+	 * &lt;TT&gt;getColumnErrorInPreviousRow&lt;/TT&gt; after the call to &lt;TT&gt;readRow()&lt;/TT&gt;.
+	 *
+	 * @throws	SQLException	Error occured on &lt;TT&gt;ResultSet.next()&lt;/TT&gt;.
+	 */
+	public Object[] readRow() throws SQLException
+	{
+<span class="nc" id="L142">		_errorOccured = false;</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">		if (_rs.next())</span>
+		{
+<span class="nc" id="L145">			return doRead();</span>
+		}
+<span class="nc" id="L147">		return null;</span>
+	}
+
+	/**
+	 * Read the next row from the &lt;TT&gt;ResultSet&lt;/TT&gt; for use in the ContentTab.
+	 * This is different from readRow() in that data is put into the Object array
+	 * in a form controlled by the DataType objects, and may be used for editing
+	 * the data and updating the DB. If no more rows then
+	 * &lt;TT&gt;null&lt;/TT&gt; will be returned, otherwise an &lt;TT&gt;Object[]&lt;/TT&gt; will be
+	 * returned where each element of the array is an object representing
+	 * the contents of the column. These objects could be of type &lt;TT&gt;String&lt;/TT&gt;,
+	 * &lt;TT&gt;BigDecimal&lt;/TT&gt; etc.
+	 *
+	 * &lt;P&gt;If an error occurs calling &lt;TT&gt;next()&lt;/TT&gt; on the &lt;TT&gt;ResultSet&lt;/TT&gt;
+	 * then an &lt;TT&gt;SQLException will be thrown, however if an error occurs
+	 * retrieving the data for a column an error msg will be placed in that
+	 * element of the array, but no exception will be thrown. To see if an
+	 * error occured retrieving column data you can call
+	 * &lt;TT&gt;getColumnErrorInPreviousRow&lt;/TT&gt; after the call to &lt;TT&gt;readRow()&lt;/TT&gt;.
+	 *
+	 * @throws	SQLException	Error occured on &lt;TT&gt;ResultSet.next()&lt;/TT&gt;.
+	 */
+	public Object[] readRow(ColumnDisplayDefinition colDefs[]) throws SQLException
+	{
+<span class="nc" id="L171">		_errorOccured = false;</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">		if (_rs.next())</span>
+		{
+<span class="nc" id="L174">			return doContentTabRead(colDefs);</span>
+		}
+<span class="nc" id="L176">		return null;</span>
+	}
+
+	/**
+	 * Retrieve whether an error occured reading a column in the previous row.
+	 *
+	 * @return	&lt;TT&gt;true&lt;/TT&gt; if error occured.
+	 */
+	public boolean getColumnErrorInPreviousRow()
+	{
+<span class="nc" id="L186">		return _errorOccured;</span>
+	}
+
+	/**
+     * Attempt to get the column type name - for some drivers this results in an
+     * SQLException. Log an INFO message if this is unavailable.
+     * 
+     * @param idx
+     *        the column index to get the type name for.
+     * 
+     * @return the type name of the column, or the Java class, or &quot;Unavailable&quot;
+     *         if neither are available.
+     */
+	private String safelyGetColumnTypeName(int idx) {
+<span class="nc" id="L200">	    String columnTypeName = null;</span>
+        try
+        {
+           /*
+            * Fails on DB2 8.1 for Linux 
+            * However, Windows 8.1 fixpak 14 driver (2.10.52) works without 
+            * exception
+            * Also, Linux 9.0.1 server with 3.1.57 driver works fine as well
+            */ 
+<span class="nc" id="L209">           columnTypeName = _rsmd.getColumnTypeName(idx);</span>
+        }
+<span class="nc" id="L211">        catch (SQLException e)</span>
+        {
+<span class="nc bnc" id="L213" title="All 2 branches missed.">           if (s_log.isInfoEnabled()) {</span>
+<span class="nc" id="L214">               s_log.info(&quot;doRead: ResultSetMetaData.getColumnTypeName(&quot;+</span>
+<span class="nc" id="L215">                   idx+&quot;) threw an unexpected exception - &quot;+e.getMessage());</span>
+<span class="nc" id="L216">               s_log.info(&quot;Unable to determine column type name so &quot; +</span>
+                    &quot;any custom types provided by plugins will be &quot; +
+                    &quot;unavailable.  This is a driver bug.&quot;);
+           }
+<span class="nc" id="L220">        }</span>
+<span class="nc bnc" id="L221" title="All 2 branches missed.">        if (columnTypeName == null) {</span>
+            try {
+<span class="nc" id="L223">                columnTypeName = _rsmd.getColumnClassName(idx);</span>
+<span class="nc" id="L224">            } catch (SQLException e) {</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">                if (s_log.isInfoEnabled()) {</span>
+<span class="nc" id="L226">                    s_log.info(&quot;doRead: ResultSetMetaData.getColumnClassName(&quot;+</span>
+<span class="nc" id="L227">                        idx+&quot;) threw an unexpected exception - &quot;+e.getMessage());</span>
+                    
+                }
+<span class="nc" id="L230">            }</span>
+        }
+<span class="nc bnc" id="L232" title="All 2 branches missed.">        if (columnTypeName == null) {</span>
+<span class="nc" id="L233">            columnTypeName = &quot;Unavailable&quot;;</span>
+        }
+<span class="nc" id="L235">        return columnTypeName;</span>
+	}
+	
+	/**
+    * Method used to read data for all Tabs except the ContentsTab, where the
+    * data is used only for reading. The only data read in the non-ContentsTab
+    * tabs is Meta-data about the DB, which means that there should be no BLOBs,
+    * CLOBs, or unknown fields.
+    */
+   private Object[] doRead()
+	{
+<span class="nc" id="L246">		Object[] row = new Object[_columnCount];</span>
+<span class="nc bnc" id="L247" title="All 4 branches missed.">		for (int i = 0; i &lt; _columnCount &amp;&amp; !_stopExecution; ++i)</span>
+		{
+<span class="nc bnc" id="L249" title="All 2 branches missed.">			int idx = _columnIndices != null ? _columnIndices[i] : i + 1;</span>
+			try
+			{
+<span class="nc" id="L252">				int columnType = _rsmd.getColumnType(idx);</span>
+<span class="nc" id="L253">				String columnTypeName = safelyGetColumnTypeName(idx);</span>
+
+            /*
+             * See if there is a plugin-registered DataTypeComponent that can
+             * handle this column.
+             */
+<span class="nc" id="L259">            row[i] = </span>
+<span class="nc" id="L260">                CellComponentFactory.readResultWithPluginRegisteredDataType(_rs, </span>
+                                                             columnType, 
+                                                             columnTypeName, 
+                                                             idx,
+                                                             _dialectType);
+<span class="nc bnc" id="L265" title="All 2 branches missed.">            if (row[i] == null) {</span>
+				
+<span class="nc bnc" id="L267" title="All 16 branches missed.">               switch (columnType) {</span>
+               case Types.NULL:
+<span class="nc" id="L269">                  row[i] = null;</span>
+<span class="nc" id="L270">                  break;</span>
+
+               case Types.BIT:
+               case Types.BOOLEAN:
+<span class="nc" id="L274">                  row[i] = readBoolean(idx);</span>
+<span class="nc" id="L275">                  break;</span>
+
+               case Types.TIME:
+<span class="nc" id="L278">                  row[i] = _rs.getTime(idx);</span>
+<span class="nc" id="L279">                  break;</span>
+
+               case Types.DATE:
+<span class="nc" id="L282">                  row[i] = readDate(idx);</span>
+<span class="nc" id="L283">                  break;</span>
+
+               case Types.TIMESTAMP:
+               case -101: // Oracle's 'TIMESTAMP WITH TIME ZONE' == -101
+               case -102: // Oracle's 'TIMESTAMP WITH LOCAL TIME ZONE' ==
+                  // -102
+<span class="nc" id="L289">                  row[i] = _rs.getTimestamp(idx);</span>
+<span class="nc" id="L290">                  break;</span>
+
+               case Types.BIGINT:
+<span class="nc" id="L293">                  row[i] = readBigint(idx);</span>
+<span class="nc" id="L294">                  break;</span>
+
+               case Types.DOUBLE:
+               case Types.FLOAT:
+               case Types.REAL:
+<span class="nc" id="L299">                  row[i] = readFloat(idx);</span>
+<span class="nc" id="L300">                  break;</span>
+
+               case Types.DECIMAL:
+               case Types.NUMERIC:
+<span class="nc" id="L304">                  row[i] = readNumeric(idx);</span>
+<span class="nc" id="L305">                  break;</span>
+
+               case Types.INTEGER:
+               case Types.SMALLINT:
+               case Types.TINYINT:
+<span class="nc" id="L310">                  row[i] = readInt(idx, columnTypeName);</span>
+<span class="nc" id="L311">                  break;</span>
+               case Types.CHAR:
+               case Types.NCHAR:
+               case Types.VARCHAR:
+               case Types.NVARCHAR:
+               case Types.LONGVARCHAR:
+               case Types.LONGNVARCHAR:
+               case Types.ROWID:
+<span class="nc" id="L319">                  row[i] = _rs.getString(idx);</span>
+<span class="nc bnc" id="L320" title="All 2 branches missed.">                  if (_rs.wasNull()) {</span>
+<span class="nc" id="L321">                     row[i] = null;</span>
+                  }
+                  break;
+
+               case Types.BINARY:
+               case Types.VARBINARY:
+               case Types.LONGVARBINARY:
+<span class="nc" id="L328">                  row[i] = _rs.getString(idx);</span>
+<span class="nc" id="L329">                  break;</span>
+
+               case Types.BLOB:
+                  // Since we are reading Meta-data about the DB, we should
+                  // never see a BLOB. If we do, the contents are not
+                  // interpretable
+                  // by Squirrel, so just tell the user that it is a BLOB and
+                  // that it
+                  // has data.
+
+<span class="nc" id="L339">                  row[i] = DataTypeBlob.staticReadResultSet(_rs, idx);</span>
+
+<span class="nc" id="L341">                  break;</span>
+
+               case Types.CLOB:
+                  // Since we are reading Meta-data about the DB, we should
+                  // never see a CLOB. However, if we do we assume that
+                  // it is printable text and that the user wants to see it, so
+                  // read in the entire thing.
+<span class="nc" id="L348">                  row[i] = DataTypeClob.staticReadResultSet(_rs, idx);</span>
+
+<span class="nc" id="L350">                  break;</span>
+
+               // TODO: ResultSet has it's own NCLOB support (rs.getNClob(i)).  It is probably not valid to 
+               // call getClob on an NClob column ??  So, may need to implement new DataTypeNClob type 
+               // component (see below):  
+               // 
+               //case Types.NCLOB:
+               //  row[i] = DataTypeNClob.staticReadResultSet(_rs, idx);
+                  
+               // Add begin
+               case Types.JAVA_OBJECT:
+<span class="nc" id="L361">                  row[i] = readObject(idx);</span>
+<span class="nc" id="L362">                  break;</span>
+               // Add end
+
+               case Types.OTHER:
+<span class="nc" id="L366">                  row[i] = readOther(idx);</span>
+<span class="nc" id="L367">                  break;</span>
+
+               default:
+<span class="nc bnc" id="L370" title="All 2 branches missed.">                  if (row[i] == null) {</span>
+<span class="nc" id="L371">                     Integer colTypeInteger = Integer.valueOf(columnType);</span>
+<span class="nc" id="L372">                     row[i] = s_stringMgr.getString(&quot;ResultSetReader.unknown&quot;,</span>
+                                                    colTypeInteger);
+                  }
+               }
+            }
+			}
+<span class="nc" id="L378">			catch (Throwable th)</span>
+			{
+                // Don't bother the user with details about where the result fetch
+                // failed if they cancelled the query.
+<span class="nc bnc" id="L382" title="All 2 branches missed.">                if (!_stopExecution) {</span>
+<span class="nc" id="L383">                    _errorOccured = true;</span>
+<span class="nc" id="L384">                    row[i] = s_stringMgr.getString(&quot;ResultSetReader.error&quot;);</span>
+<span class="nc" id="L385">                    StringBuffer msg = new StringBuffer(&quot;Error reading column data&quot;);</span>
+<span class="nc" id="L386">                    msg.append(&quot;, column index = &quot;).append(idx);</span>
+<span class="nc" id="L387">                    s_log.error(msg.toString(), th);</span>
+                }
+<span class="nc" id="L389">			}</span>
+		}
+
+<span class="nc" id="L392">		return row;</span>
+	}
+
+   private Object readNumeric(int columnIdx) throws SQLException {
+<span class="nc" id="L396">      Object result = _rs.getObject(columnIdx);</span>
+<span class="nc bnc" id="L397" title="All 4 branches missed.">      if (result != null &amp;&amp; !(result instanceof BigDecimal)) {</span>
+<span class="nc bnc" id="L398" title="All 2 branches missed.">         if (result instanceof Number) {</span>
+<span class="nc" id="L399">            Number nbr = (Number) result;</span>
+<span class="nc" id="L400">            result = new BigDecimal(nbr.doubleValue());</span>
+<span class="nc" id="L401">         } else {</span>
+<span class="nc" id="L402">            result = new BigDecimal(result.toString());</span>
+         }
+      }
+<span class="nc" id="L405">      return result;</span>
+   }
+   
+   private Object readOther(int columnIdx) throws SQLException {
+         // Since we are reading Meta-data, there really should
+         // never be
+       // a field with SQL type Other (1111).
+       // If there is, we REALLY do not know how to handle it,
+       // so do not attempt to read.
+      // ?? if (_largeObjInfo.getReadSQLOther())
+      // ?? {
+      // ?? // Running getObject on a java class attempts
+      // ?? // to load the class in memory which we don't want.
+      // ?? // getString() just gets the value without loading
+      // ?? // the class (at least under PostgreSQL).
+      // ?? //row[i] = _rs.getObject(idx);
+      // ?? row[i] = _rs.getString(idx);
+      // ?? }
+      // ?? else
+      // ?? {
+<span class="nc" id="L425">      return s_stringMgr.getString(&quot;ResultSetReader.other&quot;);</span>
+      //      ?? }
+      
+   }
+   
+   private Object readObject(int columnIdx) throws SQLException {
+<span class="nc" id="L431">      Object result = _rs.getObject(columnIdx);</span>
+<span class="nc bnc" id="L432" title="All 2 branches missed.">      if (_rs.wasNull()) {</span>
+<span class="nc" id="L433">         result = null;</span>
+      }
+<span class="nc" id="L435">      return result;</span>
+   }
+   
+   /**
+	 * Reads the specified column from the resultset field.
+	 * 
+	 * @param columnIdx
+	 *           the index of the column
+	 * @param columnTypeName
+	 *           the type name of the column according to the ResultSetMetaData
+	 * @return an appropriate object for the value that was read
+	 * @throws SQLException
+	 *            if an exception occurs.
+	 */
+   private Object readInt(int columnIdx, String columnTypeName) throws SQLException {
+<span class="nc" id="L450">      Object result = _rs.getObject(columnIdx);</span>
+<span class="nc bnc" id="L451" title="All 2 branches missed.">      if (_rs.wasNull()) {</span>
+<span class="nc" id="L452">         return null;</span>
+      }
+      
+      /*
+		 * Bug 1968270 (Displaying unsigned INT as signed INT in column?)
+		 * 
+		 * If we are working with a signed integer, then it should be ok to store in a Java integer which is 
+		 * always signed.  However, if we are working with an unsigned integer type, Java doesn't have this so 
+		 * use a long instead. Or if the type of the object is Long then use that instead of Integer.
+		 */
+<span class="nc bnc" id="L462" title="All 2 branches missed.">      if (result instanceof Long) {</span>
+<span class="nc" id="L463">      	return result;</span>
+      }
+<span class="nc bnc" id="L465" title="All 2 branches missed.">      if (&quot;INTEGER UNSIGNED&quot;.equalsIgnoreCase(columnTypeName)) {</span>
+<span class="nc" id="L466">      	return Long.valueOf(result.toString());</span>
+      }
+      
+<span class="nc bnc" id="L469" title="All 2 branches missed.">      if (result instanceof Integer) {</span>
+<span class="nc" id="L470">      	return result;</span>
+      }
+<span class="nc bnc" id="L472" title="All 2 branches missed.">      if (result instanceof Number) {</span>
+<span class="nc" id="L473">         	Number resultNumber = (Number)result;</span>
+<span class="nc" id="L474">         	int intValue = resultNumber.intValue();</span>
+<span class="nc" id="L475">            return Integer.valueOf( intValue );</span>
+      } 
+      
+<span class="nc" id="L478">      return Integer.valueOf(result.toString());</span>
+   }
+   
+   private Object readFloat(int columnIdx) throws SQLException {
+<span class="nc" id="L482">      Object result = _rs.getObject(columnIdx);</span>
+<span class="nc bnc" id="L483" title="All 4 branches missed.">      if (result != null &amp;&amp; !(result instanceof Double)) {</span>
+<span class="nc bnc" id="L484" title="All 2 branches missed.">         if (result instanceof Number) {</span>
+<span class="nc" id="L485">            Number nbr = (Number) result;</span>
+<span class="nc" id="L486">            result = new Double(nbr.doubleValue());</span>
+<span class="nc" id="L487">         } else {</span>
+<span class="nc" id="L488">            result = new Double(result.toString());</span>
+         }
+      }
+<span class="nc" id="L491">      return result;</span>
+   }
+   
+   private Object readDate(int columnIdx) throws SQLException {
+<span class="nc" id="L495">      Object result = null;</span>
+<span class="nc bnc" id="L496" title="All 2 branches missed.">      if (DataTypeDate.getReadDateAsTimestamp()) {</span>
+<span class="nc" id="L497">         result = _rs.getTimestamp(columnIdx);</span>
+      } else {
+<span class="nc" id="L499">         result = DataTypeDate.staticReadResultSet(_rs, columnIdx, false);</span>
+      }
+<span class="nc" id="L501">      return result;</span>
+   }
+   
+   private Object readBigint(int columnIdx) throws SQLException {
+<span class="nc" id="L505">      Object result = _rs.getObject(columnIdx);</span>
+<span class="nc bnc" id="L506" title="All 4 branches missed.">      if (result != null</span>
+         &amp;&amp; !(result instanceof Long))
+      {
+<span class="nc bnc" id="L509" title="All 2 branches missed.">         if (result instanceof Number)</span>
+         {
+<span class="nc" id="L511">            result = Long.valueOf(((Number)result).longValue());</span>
+         }
+         else
+         {
+<span class="nc" id="L515">            result = Long.valueOf(result.toString());</span>
+         }
+      }
+<span class="nc" id="L518">      return result;</span>
+   }
+   
+   private Object readBoolean(int columnIdx) throws SQLException {
+<span class="nc" id="L522">      Object result = null;</span>
+<span class="nc" id="L523">      result = _rs.getObject(columnIdx);</span>
+
+<span class="nc bnc" id="L525" title="All 4 branches missed.">      if (result != null &amp;&amp; !(result instanceof Boolean)) {</span>
+<span class="nc bnc" id="L526" title="All 2 branches missed.">         if (result instanceof Number) {</span>
+<span class="nc bnc" id="L527" title="All 2 branches missed.">            if (((Number) result).intValue() == 0) {</span>
+<span class="nc" id="L528">               result = Boolean.FALSE;</span>
+            } else {
+<span class="nc" id="L530">               result = Boolean.TRUE;</span>
+            }
+         } else {
+<span class="nc" id="L533">            result = Boolean.valueOf(result.toString());</span>
+         }
+      }
+<span class="nc" id="L536">      return result;</span>
+   }
+   
+	/**
+    * Method used to read data for the ContentsTab, where the data is used for
+    * both reading and editing.
+    */
+	private Object[] doContentTabRead(ColumnDisplayDefinition colDefs[])
+	{
+<span class="nc" id="L545">		Object[] row = new Object[_columnCount];</span>
+<span class="nc bnc" id="L546" title="All 4 branches missed.">		for (int i = 0; i &lt; _columnCount &amp;&amp; !_stopExecution; ++i)</span>
+		{
+<span class="nc bnc" id="L548" title="All 2 branches missed.">			int idx = _columnIndices != null ? _columnIndices[i] : i + 1;</span>
+			try
+			{
+<span class="nc" id="L551">				final int columnType = _rsmd.getColumnType(idx);</span>
+				//final String columnClassName = _rsmd.getColumnClassName(idx);
+<span class="nc bnc" id="L553" title="All 2 branches missed.">				switch (columnType)</span>
+				{
+					case Types.NULL:
+<span class="nc" id="L556">						row[i] = null;</span>
+<span class="nc" id="L557">						break;</span>
+
+					// all of the following have been converted to use the DataType objects
+                    // So, why not just have case Types.NULL and default??? (this seems pointless)
+                    // RMM 20070726
+					case Types.BIT:
+					case Types.BOOLEAN:
+
+					case Types.DECIMAL:
+					case Types.NUMERIC:
+
+					case Types.INTEGER:
+					case Types.SMALLINT:
+					case Types.TINYINT:
+					case Types.BIGINT :
+
+					case Types.DOUBLE:
+					case Types.FLOAT:
+					case Types.REAL:
+
+					case Types.DATE :
+					case Types.TIME :
+					case Types.TIMESTAMP :
+
+					// TODO: Hard coded -. JDBC/ODBC bridge JDK1.4
+					// brings back -9 for nvarchar columns in
+					// MS SQL Server tables.
+					// -8 is ROWID in Oracle.
+					case Types.CHAR:
+					case Types.VARCHAR:
+					case Types.LONGVARCHAR:
+					case -9:
+					case -8:
+
+					// binary types
+					case Types.BINARY:
+					case Types.VARBINARY:
+					case Types.LONGVARBINARY:
+
+					case Types.CLOB:
+					case Types.BLOB:
+
+					case Types.OTHER:
+
+					default:
+<span class="nc" id="L602">						row[i] = CellComponentFactory.readResultSet(</span>
+								colDefs[i], _rs, idx, true);
+
+						break;
+
+				}
+			}
+<span class="nc" id="L609">			catch (Throwable th)</span>
+			{
+<span class="nc" id="L611">				_errorOccured = true;</span>
+<span class="nc" id="L612">				row[i] = s_stringMgr.getString(&quot;ResultSetReader.error&quot;);</span>
+<span class="nc bnc" id="L613" title="All 2 branches missed.">                if (!_stopExecution) {</span>
+<span class="nc" id="L614">                    StringBuffer msg = new StringBuffer(&quot;Error reading column data&quot;);</span>
+<span class="nc" id="L615">                    msg.append(&quot;, column index = &quot;).append(idx);</span>
+<span class="nc" id="L616">                    s_log.error(msg.toString(), th);</span>
+                }
+<span class="nc" id="L618">			}</span>
+		}
+
+<span class="nc" id="L621">		return row;</span>
+	}
+
+    /**
+     * @param _stopExecution The _stopExecution to set.
+     */
+    public void setStopExecution(boolean _stopExecution) {
+<span class="nc" id="L628">        this._stopExecution = _stopExecution;</span>
+<span class="nc" id="L629">    }</span>
+
+    /**
+     * @return Returns the _stopExecution.
+     */
+    public boolean isStopExecution() {
+<span class="nc" id="L635">        return _stopExecution;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

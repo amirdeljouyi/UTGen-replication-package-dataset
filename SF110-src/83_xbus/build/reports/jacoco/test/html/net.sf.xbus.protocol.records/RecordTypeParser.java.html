@@ -1,0 +1,1161 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RecordTypeParser.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.protocol.records</a> &gt; <span class="el_source">RecordTypeParser.java</span></div><h1>RecordTypeParser.java</h1><pre class="source lang-java linenums">package net.sf.xbus.protocol.records;
+
+import java.text.SimpleDateFormat;
+import java.util.Hashtable;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Vector;
+
+import net.sf.xbus.base.bytearraylist.ByteArrayConverter;
+import net.sf.xbus.base.bytearraylist.ByteArrayConverterFactory;
+import net.sf.xbus.base.bytearraylist.ByteArrayList;
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.core.bytearrays.XByteArraySupport;
+import net.sf.xbus.base.core.config.Configuration;
+import net.sf.xbus.base.core.strings.CardinalityStrings;
+import net.sf.xbus.base.xml.XDomSupport;
+
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+
+/**
+ * The class &lt;code&gt;RecordTypeParser&lt;/code&gt; implements parsing records from a
+ * string or a list of byte arrays.
+ * &lt;p&gt;
+ * The parsed structure is described by a xml file - in particular the contained
+ * record types, their order within the string and how to identify them during
+ * parsing. Such describing files are of document type
+ * &lt;code&gt;InterfaceSpec&lt;/code&gt; declared in &quot;InterfaceSpec.dtd&quot;.
+ * &lt;/p&gt;
+ * &lt;p&gt;
+ * The parsing result is a DOM tree with the following structure:
+ * &lt;/p&gt;
+ * &lt;p&gt;
+ * &amp;lt;+ &lt;i&gt;InterfaceName &lt;/i&gt;+&amp;gt; &lt;dir&gt;&amp;lt;+ &lt;i&gt;HeaderName &lt;/i&gt;+&amp;gt;
+ * &lt;dir&gt;&amp;lt;+ &lt;i&gt;FieldName &lt;/i&gt;+&amp;gt;+ &lt;b&gt;FieldValue &lt;/b&gt;+&amp;lt;/+ &lt;i&gt;FieldName
+ * &lt;/i&gt;+&amp;gt; &lt;br&gt;
+ * ... &lt;/dir&gt; &amp;lt;/+ &lt;i&gt;HeaderName &lt;/i&gt;+&amp;gt; &lt;br&gt;
+ * &amp;lt;Records&amp;gt; &lt;dir&gt;&amp;lt;RecordGroup&amp;gt; &lt;dir&gt;&amp;lt;+ &lt;i&gt;RecordType &lt;/i&gt;+&amp;gt;
+ * &lt;dir&gt;&amp;lt;+ &lt;i&gt;FieldName &lt;/i&gt;+&amp;gt;+ &lt;b&gt;FieldValue &lt;/b&gt;+&amp;lt;/+ &lt;i&gt;FieldName
+ * &lt;/i&gt;+&amp;gt; &lt;br&gt;
+ * ... &lt;/dir&gt; &amp;lt;/+ &lt;i&gt;RecordType &lt;/i&gt;+&amp;gt; &lt;br&gt;
+ * ... &lt;/dir&gt; &amp;lt;/RecordGroup&amp;gt; &lt;br&gt;
+ * ... &lt;/dir&gt; &amp;lt;/Records&amp;gt; &lt;br&gt;
+ * &amp;lt;+ &lt;i&gt;TrailerName &lt;/i&gt;+&amp;gt; &lt;dir&gt;&amp;lt;+ &lt;i&gt;FieldName &lt;/i&gt;+&amp;gt;+
+ * &lt;b&gt;FieldValue &lt;/b&gt;+&amp;lt;/+ &lt;i&gt;FieldName &lt;/i&gt;+&amp;gt; &lt;br&gt;
+ * ... &lt;/dir&gt; &amp;lt;/+ &lt;i&gt;TrailerName &lt;/i&gt;+&amp;gt; &lt;/dir&gt; &amp;lt;/+ &lt;i&gt;InterfaceName
+ * &lt;/i&gt;+&amp;gt;
+ * &lt;/p&gt;
+ * &lt;p&gt;
+ * Header and trailer are optional. &lt;br&gt;
+ * The &amp;lt;RecordGroup&amp;gt; structure is only used if records of different types
+ * are grouped together in the string (RecordOrder=Structured for the
+ * &amp;lt;Lines&amp;gt; specification in the structure description). Otherwise records
+ * are listed immediately below the &amp;lt;Records&amp;gt; level.
+ * &lt;/p&gt;
+ * &lt;p&gt;
+ * There is no DTD for the parsing result since the used tags depend on the
+ * document structure of the parsed file (tags indicated by +'s above). But it
+ * can be derived from the structure description taking the name attributes for
+ * interface type, header, record types, fields and trailer as tags.
+ * &lt;/p&gt;
+ * &lt;p&gt;
+ * The &quot;ordinary&quot; working mode is parsing records from a string. But due to
+ * special problems with some character encoding and line breaks within record
+ * fields, byte-array-oriented parsing is available, too. In this case each
+ * record is stored in its own byte array.
+ * &lt;/p&gt;
+ * 
+ * @author Stephan Duwel
+ */
+public class RecordTypeParser extends RecordTypeManipulator
+{
+
+	// //////////////////////
+	// Static fields
+	// //////////////////////
+
+	/**
+	 * &lt;code&gt;instances&lt;/code&gt; stores the instances by thread, the interface
+	 * name and the representation type (&lt;code&gt;String&lt;/code&gt; or
+	 * {@link net.sf.xbus.base.bytearraylist.ByteArrayList}).
+	 */
+<span class="nc" id="L86">	private static Hashtable instances = new Hashtable();</span>
+<span class="nc" id="L87">	private static final Object classLock = RecordTypeParser.class;</span>
+
+	// //////////////////////
+	// Member fields
+	// //////////////////////
+
+	/**
+	 * Flag if record lines are cut off after the last non-whitespace character.
+	 */
+<span class="nc" id="L96">	private boolean lineCutting = false;</span>
+
+	// //////////////////////
+	// Constructors
+	// //////////////////////
+
+	/**
+	 * Just the standard constructor.
+	 */
+	private RecordTypeParser() throws XException
+	{
+<span class="nc" id="L107">		super();</span>
+<span class="nc" id="L108">	} // RecordTypeParser()</span>
+
+	// //////////////////////
+	// Static methods
+	// //////////////////////
+
+	/**
+	 * &lt;code&gt;getInstance()&lt;/code&gt; retrieves the an instance of
+	 * &lt;code&gt;RecordTypeParser&lt;/code&gt;.
+	 * 
+	 * @param sourceType the name for the parsed structure as it is derived from
+	 *            a
+	 *            {@link net.sf.xbus.protocol.records.RecordTypeMessage RecordTypeMessage}
+	 * @param interfaceContentClass Working mode: sting or byte array list
+	 * @throws XException in case of missing &lt;code&gt;sourceType&lt;/code&gt;
+	 */
+	public static RecordTypeParser getInstance(String sourceType,
+			int interfaceContentClass) throws XException
+	{
+<span class="nc" id="L127">		synchronized (classLock)</span>
+		{
+<span class="nc bnc" id="L129" title="All 4 branches missed.">			if (sourceType == null || sourceType.length() == 0)</span>
+<span class="nc" id="L130">				throw new XException(Constants.LOCATION_INTERN,</span>
+						Constants.LAYER_PROTOCOL,
+						Constants.PACKAGE_PROTOCOL_RECORDS, &quot;98&quot;);
+
+<span class="nc" id="L134">			RecordTypeParser instance = (RecordTypeParser) instances.get(Thread</span>
+<span class="nc" id="L135">					.currentThread().getName()</span>
+					+ sourceType + interfaceContentClass);
+<span class="nc bnc" id="L137" title="All 2 branches missed.">			if (instance == null)</span>
+			{ // no suitable instance available yet
+<span class="nc" id="L139">				instance = new RecordTypeParser();</span>
+<span class="nc" id="L140">				instances.put(Thread.currentThread().getName() + sourceType</span>
+						+ interfaceContentClass, instance);
+			} // if (instance==null)
+<span class="nc" id="L143">			return instance;</span>
+		} // synchronized (classLock)
+	} // getInstance(String sourceType, int interfaceContentClass)
+
+	/**
+	 * &lt;code&gt;getByteArrayConverter&lt;/code&gt; retrieves a byte array converter
+	 * object which is convenient for the interface from which the records are
+	 * to parse.
+	 * 
+	 * @return an appropriate converter object
+	 */
+	protected ByteArrayConverter getByteArrayConverter() throws XException
+	{
+		// Get the byte the byte array converter for the interface specified
+		// in the underlying message.
+<span class="nc" id="L158">		return ByteArrayConverterFactory.getConverter(sourceType);</span>
+	} // getByteArrayConverter()
+
+	// /////////////////////////////////////////
+	// Parsing the contents
+	// /////////////////////////////////////////
+
+	/**
+	 * &lt;code&gt;parse&lt;/code&gt; parses a string due to the record type definition.
+	 * 
+	 * @param interfaceContent the string to parse
+	 * @param resultDoc The parsing result - an empty DOM tree which will be
+	 *            filled.
+	 * @throws XException in case that the interface structure description is
+	 *             not loaded or in case of an unexpected value or end of
+	 *             string/byte array/byte array list
+	 */
+	public void parse(Object interfaceContent, Document resultDoc)
+			throws XException
+	{
+<span class="nc bnc" id="L178" title="All 2 branches missed.">		if (interfaceStructure == null)</span>
+<span class="nc" id="L179">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;99&quot;);
+
+		// May ending white spaces in the record lines be ommitted?
+<span class="nc" id="L184">		lineCutting = Configuration.getInstance().getValueAsBooleanOptional(</span>
+				&quot;System&quot;, sourceType, &quot;LineCutting&quot;);
+
+		// The root element has the content type as xml tag.
+<span class="nc" id="L188">		Element root = resultDoc.createElement(contentType);</span>
+<span class="nc" id="L189">		resultDoc.appendChild(root);</span>
+
+		// Parsing position
+<span class="nc" id="L192">		int stringPos = 0;</span>
+		// Position in string or in the complete byte array list (byte count)
+
+<span class="nc" id="L195">		int line[] =</span>
+		{0};
+		// Index of list element in a byte array list, array for call by
+		// reference
+
+		try
+		// for casting to XException
+		{
+			// Determine the length of content to parse ...
+<span class="nc bnc" id="L204" title="All 2 branches missed.">			if (interfaceContentClass == Constants.IFCONTENTCLASS_STRING)</span>
+				// ... as number of characters for a parsed string
+<span class="nc" id="L206">				interfaceContentLength = ((String) interfaceContent).length();</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">			else if (interfaceContentClass == Constants.IFCONTENTCLASS_BYTEARRAYLIST)</span>
+				// ... as number of bytes in case of a parsed byte array list
+<span class="nc" id="L209">				interfaceContentLength = ((ByteArrayList) interfaceContent)</span>
+<span class="nc" id="L210">						.length();</span>
+			else
+<span class="nc" id="L212">				throw new XException(Constants.LOCATION_INTERN,</span>
+						Constants.LAYER_PROTOCOL,
+						Constants.PACKAGE_PROTOCOL_RECORDS, &quot;100&quot;);
+		} // try
+<span class="nc" id="L216">		catch (ClassCastException e)</span>
+		{
+<span class="nc" id="L218">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;0&quot;, e);
+<span class="nc" id="L221">		} // catch (ClassCastException e)</span>
+
+<span class="nc" id="L223">		Element[] headerNode =</span>
+		{null};
+		// for building up the header node (array for call by reference)
+<span class="nc bnc" id="L226" title="All 2 branches missed.">		if (headerSpec != null)</span>
+<span class="nc" id="L227">			stringPos = parseHeader(interfaceContent, stringPos, line,</span>
+					resultDoc, headerNode);
+<span class="nc bnc" id="L229" title="All 4 branches missed.">		if (headerNode.length == 1 &amp;&amp; headerNode[0] != null</span>
+<span class="nc bnc" id="L230" title="All 2 branches missed.">				&amp;&amp; headerNode[0].hasChildNodes())</span>
+			// header successfully parsed
+<span class="nc" id="L232">			root.appendChild(headerNode[0]);</span>
+
+<span class="nc" id="L234">		Element[] recordsNode =</span>
+		{null};
+		// for building up the records section (array for call by reference)
+<span class="nc" id="L237">		stringPos = parseRecords(interfaceContent, stringPos, line, resultDoc,</span>
+				recordsNode);
+<span class="nc bnc" id="L239" title="All 4 branches missed.">		if (recordsNode.length == 1 &amp;&amp; recordsNode[0] != null</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">				&amp;&amp; recordsNode[0].hasChildNodes())</span>
+			// records successfully parsed
+<span class="nc" id="L242">			root.appendChild(recordsNode[0]);</span>
+
+<span class="nc" id="L244">		Element[] trailerNode =</span>
+		{null};
+		// For building up the trailer node (array for call by reference)
+<span class="nc bnc" id="L247" title="All 2 branches missed.">		if (trailerSpec != null)</span>
+<span class="nc" id="L248">			stringPos = parseTrailer(interfaceContent, stringPos, line,</span>
+					resultDoc, trailerNode);
+<span class="nc bnc" id="L250" title="All 4 branches missed.">		if (trailerNode.length == 1 &amp;&amp; trailerNode[0] != null</span>
+<span class="nc bnc" id="L251" title="All 2 branches missed.">				&amp;&amp; trailerNode[0].hasChildNodes())</span>
+			// trailer successfully parsed
+<span class="nc" id="L253">			root.appendChild(trailerNode[0]);</span>
+<span class="nc" id="L254">	} // parse(String interfaceContent, Document resultDoc)</span>
+
+	/**
+	 * &lt;code&gt;parseHeader&lt;/code&gt; parses the header.
+	 * 
+	 * @param interfaceContent the (whole) string to parse
+	 * @param stringPos the position to start parsing from in the string or in
+	 *            the complete byte array list (byte count)
+	 * @param line index of the byte array to parse, array for call by
+	 *            reference, because it is augmented, ignored when parsing a
+	 *            string
+	 * @param doc the total result document - necessary for creating nodes
+	 * @param headerNode the resulting header node (array to have call by
+	 *            reference)
+	 * @return the string or byte array position to start the next part's
+	 *         parsing from
+	 * @throws XException in case of an unexpected value or end of string
+	 */
+	private int parseHeader(Object interfaceContent, int stringPos, int[] line,
+			Document doc, Element[] headerNode) throws XException
+	{
+<span class="nc bnc" id="L275" title="All 2 branches missed.">		if (stringPos &lt; interfaceContentLength)</span>
+		{ // There is some content to parse
+<span class="nc" id="L277">			headerNode[0] = doc.createElement(headerSpec.getAttribute(&quot;Name&quot;));</span>
+			// The header owns its specific name to use as tag.
+
+			// The contained fields and groups
+<span class="nc" id="L281">			stringPos = parseFieldsAndGroups(interfaceContent, stringPos, line,</span>
+					doc, headerNode[0], headerSpec);
+
+			// Jump over line break if necessary
+<span class="nc bnc" id="L285" title="All 2 branches missed.">			if (interfaceContentClass == Constants.IFCONTENTCLASS_STRING</span>
+<span class="nc bnc" id="L286" title="All 2 branches missed.">					&amp;&amp; ((String) interfaceContent).startsWith(</span>
+							Constants.LINE_SEPERATOR, stringPos))
+<span class="nc" id="L288">				stringPos += Constants.LINE_SEPERATOR.length();</span>
+			// Next line (Value is always incremented because in case of string
+			// parsing it is ignoed anyway.)
+<span class="nc" id="L291">			line[0]++;</span>
+		} // if (stringPos&lt;interfaceContent.length())
+<span class="nc" id="L293">		return stringPos;</span>
+	} // parseHeader(Object interfaceContent, int stringPos, int[] line,
+	// Document doc, Element[] headerNode)
+
+	/**
+	 * &lt;code&gt;parseRecords&lt;/code&gt; parses the record types.
+	 * 
+	 * @param interfaceContent the (whole) string to parse
+	 * @param stringPos the position to start parsing from in the string or in
+	 *            the complete byte array list (byte count)
+	 * @param line index of the byte array to parse, array for call by
+	 *            reference, because it is augmented, ignored when parsing a
+	 *            string
+	 * @param doc the total result document - necessary for creating nodes
+	 * @param recordsNode the resulting Record Types node (array to have call by
+	 *            reference)
+	 * @return the string or byte array position to start the next part's
+	 *         parsing from
+	 * @throws XException in case of an unexpected value or end of string
+	 */
+	private int parseRecords(Object interfaceContent, int stringPos,
+			int[] line, Document doc, Element[] recordsNode) throws XException
+	{
+		// Determine end of record parsing
+<span class="nc" id="L317">		int recordsSectionEnd = interfaceContentLength;</span>
+
+<span class="nc bnc" id="L319" title="All 2 branches missed.">		if (trailerSpec != null)</span>
+			// If there is a trailer, record parsing must already end before the
+			// string end.
+<span class="nc" id="L322">			recordsSectionEnd -= RecordTypeDescriptionChecker</span>
+<span class="nc" id="L323">					.computeRecordLength(trailerSpec, groupsSpec);</span>
+
+<span class="nc bnc" id="L325" title="All 2 branches missed.">		if (stringPos &lt; recordsSectionEnd)</span>
+			// something to parse left
+<span class="nc" id="L327">			recordsNode[0] = doc.createElement(&quot;Records&quot;);</span>
+
+<span class="nc" id="L329">		Element insertionNode = recordsNode[0];</span>
+		// node to insert the records below - &lt;Records&gt; or &lt;RecordType&gt;
+<span class="nc" id="L331">		Element recordType = null;</span>
+<span class="nc" id="L332">		int recordCount = 0;</span>
+		// counter for subsequent records of the same type
+<span class="nc" id="L334">		Element nextRecord = null;</span>
+		// To create record nodes.
+		// The last created is used to determine the next record type.
+<span class="nc bnc" id="L337" title="All 2 branches missed.">		while (stringPos &lt; recordsSectionEnd)</span>
+		{ // loop over content string
+			// Determining the next record type really drives the loop.
+<span class="nc" id="L340">			Element nextRecordType = determineNextRecordType(interfaceContent,</span>
+					stringPos, line, recordType, recordCount, nextRecord);
+
+<span class="nc bnc" id="L343" title="All 2 branches missed.">			if (recordType == null</span>
+<span class="nc bnc" id="L344" title="All 2 branches missed.">					|| !XDomSupport.getTrimedNodeText(nextRecordType).equals(</span>
+<span class="nc" id="L345">							XDomSupport.getTrimedNodeText(recordType)))</span>
+			{ // First record type or record type change.
+<span class="nc" id="L347">				recordCount = 0;</span>
+<span class="nc" id="L348">				recordType = nextRecordType;</span>
+			} // if (recordType==null ||
+			// !XDomSupport.getTrimedElementValue(nextRecordType).equals(XDomSupport.getTrimedElementValue(recordType)))
+
+<span class="nc bnc" id="L352" title="All 2 branches missed.">			if (recOrder.equals(&quot;Structured&quot;)</span>
+<span class="nc bnc" id="L353" title="All 2 branches missed.">					&amp;&amp; getRecordTypePositionInLines(nextRecordType) == 0)</span>
+			{ // first record in a group
+<span class="nc" id="L355">				insertionNode = doc.createElement(&quot;RecordGroup&quot;);</span>
+<span class="nc" id="L356">				recordsNode[0].appendChild(insertionNode);</span>
+			} // if (recOrder.equals(&quot;Structured&quot;) &amp;&amp; nextRecordTypePos==0)
+
+<span class="nc" id="L359">			String nextRecordTypeName = XDomSupport</span>
+<span class="nc" id="L360">					.getTrimedNodeText(nextRecordType);</span>
+<span class="nc" id="L361">			nextRecord = doc.createElement(nextRecordTypeName);</span>
+			// the record node
+
+			// Search for the record type specification.
+<span class="nc" id="L365">			List nextRecordTypeSpecCandidates = XDomSupport</span>
+<span class="nc" id="L366">					.getChildNodesByAttrValue(recordTypesSpec, &quot;Name&quot;,</span>
+							nextRecordTypeName, &quot;RecordTypeSpec&quot;);
+<span class="nc bnc" id="L368" title="All 2 branches missed.">			if (nextRecordTypeSpecCandidates.size() != 1)</span>
+			{
+<span class="nc" id="L370">				List params = new Vector();</span>
+<span class="nc" id="L371">				params.add(nextRecordTypeName);</span>
+<span class="nc" id="L372">				params.add(new Integer(line[0] + 1));</span>
+<span class="nc" id="L373">				throw new XException(Constants.LOCATION_INTERN,</span>
+						Constants.LAYER_PROTOCOL,
+						Constants.PACKAGE_PROTOCOL_RECORDS, &quot;102&quot;, params);
+			} // if (nextRecordTypeSpecCandidates.size() != 1)
+
+			// Parse the record content: the fields
+<span class="nc" id="L379">			stringPos = parseFieldsAndGroups(interfaceContent, stringPos, line,</span>
+<span class="nc" id="L380">					doc, nextRecord, (Node) nextRecordTypeSpecCandidates.get(0));</span>
+<span class="nc bnc" id="L381" title="All 2 branches missed.">			if (nextRecord.hasChildNodes())</span>
+			{ // some content found
+<span class="nc" id="L383">				insertionNode.appendChild(nextRecord);</span>
+				// insert record into tree
+<span class="nc" id="L385">				recordCount++;</span>
+			} // if (nextRecord.hasChildNodes())
+
+			// Jump over line break if necessary
+<span class="nc bnc" id="L389" title="All 2 branches missed.">			if (interfaceContentClass == Constants.IFCONTENTCLASS_STRING</span>
+<span class="nc bnc" id="L390" title="All 2 branches missed.">					&amp;&amp; ((String) interfaceContent).startsWith(</span>
+							Constants.LINE_SEPERATOR, stringPos))
+<span class="nc" id="L392">				stringPos += Constants.LINE_SEPERATOR.length();</span>
+			// Next line (Value is always incremented because in case of string
+			// parsing it is ignored anyway.)
+<span class="nc" id="L395">			line[0]++;</span>
+<span class="nc" id="L396">		} // while (stringPos&lt;recordsSectionEnd)</span>
+<span class="nc" id="L397">		return stringPos;</span>
+	} // parseRecords(Object interfaceContent, int stringPos, int[] line,
+	// Document doc, Element[] recordsNode)
+
+	/**
+	 * &lt;code&gt;parseTrailer&lt;/code&gt; parses the trailer.
+	 * 
+	 * @param interfaceContent the (whole) string to parse
+	 * @param stringPos the position to start parsing from in the string or in
+	 *            the complete byte array list (byte count)
+	 * @param line index of the byte array to parse, array for call by
+	 *            reference, because it is augmented, ignored when parsing a
+	 *            string
+	 * @param doc the total result document - necessary for creating nodes
+	 * @param trailerNode the resulting header node (array to have call by
+	 *            reference)
+	 * @return the string or byte array position to start the next part's
+	 *         parsing from
+	 * @throws XException in case of an unexpected value or end of string
+	 */
+	private int parseTrailer(Object interfaceContent, int stringPos,
+			int[] line, Document doc, Element[] trailerNode) throws XException
+	{
+<span class="nc bnc" id="L420" title="All 2 branches missed.">		if (stringPos &lt; interfaceContentLength)</span>
+		{ // There is some content to parse
+<span class="nc" id="L422">			trailerNode[0] = doc</span>
+<span class="nc" id="L423">					.createElement(trailerSpec.getAttribute(&quot;Name&quot;));</span>
+			// The trailer has its specific name to use as tag.
+
+			// The contained fields and groups
+<span class="nc" id="L427">			stringPos = parseFieldsAndGroups(interfaceContent, stringPos, line,</span>
+					doc, trailerNode[0], trailerSpec);
+
+			// Jump over line break if necessary
+<span class="nc bnc" id="L431" title="All 2 branches missed.">			if (interfaceContentClass == Constants.IFCONTENTCLASS_STRING</span>
+<span class="nc bnc" id="L432" title="All 2 branches missed.">					&amp;&amp; ((String) interfaceContent).startsWith(</span>
+							Constants.LINE_SEPERATOR, stringPos))
+<span class="nc" id="L434">				stringPos += Constants.LINE_SEPERATOR.length();</span>
+			// Next line (Value is always incremented because in case of string
+			// parsing it is ignored anyway.)
+<span class="nc" id="L437">			line[0]++;</span>
+		} // if (stringPos&lt;interfaceContent.length())
+<span class="nc" id="L439">		return stringPos;</span>
+	} // parseTrailer(Object interfaceContent, int stringPos, int[] line,
+	// Document doc, Element[] trailerNode)
+
+	/**
+	 * &lt;code&gt;parseFieldsAndGroups&lt;/code&gt; parses the fields and group
+	 * references within a record type - including header and trailer.
+	 * 
+	 * @param interfaceContent the (whole) string to parse
+	 * @param stringPos the position to start parsing from in the string or in
+	 *            the complete byte array list (byte count)
+	 * @param line index of the byte array to parse, array for call by
+	 *            reference, because it is augmented, ignored when parsing a
+	 *            string
+	 * @param doc the total result document - necessary for creating nodes
+	 * @param parent the record node in the result DOM tree to attach the field
+	 *            nodes to
+	 * @param parentSpec the record type node in the structure descrition to get
+	 *            the field specs from
+	 * @return the string or byte array position to start the next part's
+	 *         parsing from
+	 * @throws XException in case of an unexpected value or end of string
+	 */
+	private int parseFieldsAndGroups(Object interfaceContent, int stringPos,
+			int[] line, Document doc, Node parent, Node parentSpec)
+			throws XException
+	{
+<span class="nc bnc" id="L466" title="All 2 branches missed.">		if (interfaceContentClass == Constants.IFCONTENTCLASS_STRING)</span>
+<span class="nc" id="L467">			stringPos = parseFieldsAndGroupsSingleByteArray(interfaceContent,</span>
+					stringPos, line, doc, parent, parentSpec);
+		else
+<span class="nc" id="L470">			stringPos = parseFieldsAndGroupsSingleByteArray(</span>
+<span class="nc" id="L471">					((ByteArrayList) interfaceContent).get(line[0]), stringPos,</span>
+					line, doc, parent, parentSpec);
+<span class="nc" id="L473">		return stringPos;</span>
+	} // parseFieldsAndGroups(Object interfaceContent, int stringPos, int[]
+	// line, Document doc, Node parent, Node parentSpec)
+
+	/**
+	 * @param interfaceContent
+	 * @param stringPos
+	 * @param line
+	 * @param doc
+	 * @param lastRecord
+	 * @param parentSpec
+	 * @return
+	 */
+	private int parseFieldsAndGroupsSingleByteArray(Object interfaceContent,
+			int stringPos, int[] line, Document doc, Node parent,
+			Node parentSpec) throws XException
+	{
+<span class="nc" id="L490">		int lineEnd = 0;</span>
+
+		// Calculate line length
+<span class="nc bnc" id="L493" title="All 2 branches missed.">		if (interfaceContentClass == Constants.IFCONTENTCLASS_STRING)</span>
+		{
+<span class="nc" id="L495">			lineEnd = ((String) interfaceContent).indexOf(</span>
+					Constants.LINE_SEPERATOR, stringPos);
+<span class="nc bnc" id="L497" title="All 2 branches missed.">			if (lineEnd == -1)</span>
+<span class="nc" id="L498">				lineEnd = interfaceContentLength;</span>
+		} // then (interfaceContentClass == Constants.IFCONTENTCLASS_STRING)
+		else
+<span class="nc" id="L501">			lineEnd = stringPos + ((byte[]) interfaceContent).length;</span>
+
+<span class="nc" id="L503">		NodeList fieldSpecs = parentSpec.getChildNodes();</span>
+<span class="nc" id="L504">		int linePos[] =</span>
+		{0};
+		// position in the actual byte array, ignored during string parsing
+<span class="nc bnc" id="L507" title="All 2 branches missed.">		for (int i = 0; i &lt; fieldSpecs.getLength(); i++)</span>
+		{ // Loop over all fields and group references
+<span class="nc" id="L509">			Element fieldSpec = (Element) fieldSpecs.item(i);</span>
+<span class="nc" id="L510">			LinkedList fields = new LinkedList();</span>
+			// For the result of field parsing (multiple fields in case of a
+			// group)
+<span class="nc bnc" id="L513" title="All 2 branches missed.">			if (fieldSpec.getNodeName().equals(&quot;Field&quot;))</span>
+
+				// a single field
+<span class="nc" id="L516">				stringPos = parseField(interfaceContent, stringPos, line,</span>
+						lineEnd, linePos, doc, fields, fieldSpec);
+
+<span class="nc bnc" id="L519" title="All 2 branches missed.">			else if (fieldSpec.getNodeName().equals(&quot;Group&quot;))</span>
+
+				// a field group
+<span class="nc" id="L522">				stringPos = parseGroup(interfaceContent, stringPos, line,</span>
+						lineEnd, linePos, doc, fields, fieldSpec);
+
+			// Now append the result to the record node.
+<span class="nc bnc" id="L526" title="All 2 branches missed.">			for (int j = 0; j &lt; fields.size(); j++)</span>
+<span class="nc" id="L527">				parent.appendChild((Node) fields.get(j));</span>
+		} // for (int i=0; i&lt;fieldSpecs.getLength(); i++)
+<span class="nc" id="L529">		return stringPos;</span>
+	}
+
+	/**
+	 * &lt;code&gt;parseGroup&lt;/code&gt; parses a group when a group reference was
+	 * found.
+	 * 
+	 * @param interfaceContent the (whole) string to parse
+	 * @param stringPos the position to start parsing from in the string or in
+	 *            the complete byte array list (byte count)
+	 * @param line index of the byte array to parse, array for call by
+	 *            reference, because it is augmented, ignored when parsing a
+	 *            string
+	 * @param lineEnd the ending position of the current line
+	 * @param linePos position in the actual byte array, ignored when parsing a
+	 *            string
+	 * @param doc the total result document - necessary for creating nodes
+	 * @param fields the parsing result - similar to
+	 *            {@link #parseField(Object, int, int[], int, int[], Document, LinkedList, Element) parseField})
+	 * @param groupRef the found group reference
+	 * @return the string or byte array position to start the next part's
+	 *         parsing from
+	 * @throws XException in case of an unexpected value or end of string
+	 */
+	private int parseGroup(Object interfaceContent, int stringPos, int[] line,
+			int lineEnd, int[] linePos, Document doc, LinkedList fields,
+			Element groupRef) throws XException
+	{
+		try
+		// for casting to XException
+		{ // Get the specification of included fields
+<span class="nc" id="L560">			NodeList fieldSpecs = RecordTypeDescriptionChecker.getGroupSpec(</span>
+<span class="nc" id="L561">					groupRef.getAttribute(&quot;Name&quot;), groupsSpec).getChildNodes();</span>
+			// fields in the group
+<span class="nc bnc" id="L563" title="All 2 branches missed.">			for (int i = 0; i &lt; fieldSpecs.getLength(); i++)</span>
+			{ // Loop over all group fields
+<span class="nc" id="L565">				Element fieldSpec = (Element) fieldSpecs.item(i);</span>
+<span class="nc" id="L566">				LinkedList field = new LinkedList();</span>
+				// For the result of field parsing (list for call by reference)
+
+				// the single field
+<span class="nc" id="L570">				stringPos = parseField(interfaceContent, stringPos, line,</span>
+						lineEnd, linePos, doc, field, fieldSpec);
+
+<span class="nc bnc" id="L573" title="All 2 branches missed.">				if (field.size() == 1)</span>
+<span class="nc" id="L574">					fields.add(field.get(0));</span>
+			} // for (int i=0; i&lt;fieldSpecs.getLength(); i++)
+		} // try
+<span class="nc" id="L577">		catch (ClassCastException e)</span>
+		{
+<span class="nc" id="L579">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;0&quot;, e);
+<span class="nc" id="L582">		} // catch</span>
+<span class="nc" id="L583">		return stringPos;</span>
+	} // parseGroup(Object interfaceContent, int stringPos, int[] line, int
+	// lineEnd, int[] linePos, Document doc, LinkedList fields, Element
+	// groupRef)
+
+	/**
+	 * &lt;code&gt;parseField&lt;/code&gt; parses a single field.
+	 * 
+	 * @param interfaceContent the (whole) string to parse
+	 * @param stringPos the position to start parsing from in the string or in
+	 *            the complete byte array list (byte count)
+	 * @param line index of the byte array to parse, array for call by
+	 *            reference, because it is augmented, ignored when parsing a
+	 *            string
+	 * @param lineEnd the ending position of the current line
+	 * @param linePos position in the actual byte array, ignored when parsing a
+	 *            string
+	 * @param doc the total result document - necessary for creating nodes
+	 * @param fields the parsing result (list for call by reference - similar to
+	 *            {@link #parseGroup(Object, int, int[], int, int[], Document, LinkedList, Element) parseGroup})
+	 * @param fieldSpec the field specification as DOM node
+	 * @return the string or byte array position to start the next part's
+	 *         parsing from
+	 * @throws XException in case of an unexpected value or end of string
+	 */
+	private int parseField(Object interfaceContent, int stringPos, int[] line,
+			int lineEnd, int[] linePos, Document doc, LinkedList fields,
+			Element fieldSpec) throws XException
+	{
+		try
+		// for casting to XException
+		{
+<span class="nc" id="L615">			int length = Integer.parseInt(fieldSpec.getAttribute(&quot;Length&quot;));</span>
+			// How many characters?
+<span class="nc bnc" id="L617" title="All 2 branches missed.">			if (stringPos + length &gt; lineEnd)</span>
+			{
+<span class="nc bnc" id="L619" title="All 2 branches missed.">				if (lineCutting)</span>
+<span class="nc" id="L620">					length = lineEnd - stringPos;</span>
+				else
+				{
+<span class="nc" id="L623">					List params = new Vector();</span>
+<span class="nc" id="L624">					params.add(((Element) fieldSpec.getParentNode())</span>
+<span class="nc" id="L625">							.getAttribute(&quot;Name&quot;));</span>
+<span class="nc" id="L626">					params.add(fieldSpec.getAttribute(&quot;Name&quot;));</span>
+<span class="nc" id="L627">					params.add(new Integer(line[0] + 1));</span>
+<span class="nc" id="L628">					throw new XException(Constants.LOCATION_INTERN,</span>
+							Constants.LAYER_PROTOCOL,
+							Constants.PACKAGE_PROTOCOL_RECORDS, &quot;104&quot;, params);
+				} // else (lineCutting)
+			} // if (stringPos + length &gt; lineEnd)
+
+			// Extract the value ...
+<span class="nc" id="L635">			String value = null;</span>
+<span class="nc bnc" id="L636" title="All 2 branches missed.">			if (interfaceContentClass == Constants.IFCONTENTCLASS_STRING)</span>
+				// ... from string
+<span class="nc" id="L638">				value = ((String) interfaceContent).substring(stringPos,</span>
+						stringPos + length);
+			else
+				// ... from byte array
+<span class="nc" id="L642">				value = extractSubString((byte[]) interfaceContent, linePos[0],</span>
+						length);
+
+<span class="nc bnc" id="L645" title="All 2 branches missed.">			if (fieldSpec.getAttribute(&quot;Format&quot;).equals(&quot;blank&quot;))</span>
+			{ // A filler may only contain blanks.
+<span class="nc" id="L647">				boolean onlyBlanks = true;</span>
+<span class="nc bnc" id="L648" title="All 4 branches missed.">				for (int i = 0; i &lt; value.length() &amp;&amp; onlyBlanks; i++)</span>
+<span class="nc bnc" id="L649" title="All 2 branches missed.">					onlyBlanks = (value.charAt(i) == ' ');</span>
+<span class="nc bnc" id="L650" title="All 2 branches missed.">				if (!onlyBlanks)</span>
+				{
+<span class="nc" id="L652">					List params = new Vector();</span>
+<span class="nc" id="L653">					params.add(((Element) fieldSpec.getParentNode())</span>
+<span class="nc" id="L654">							.getAttribute(&quot;Name&quot;));</span>
+<span class="nc" id="L655">					params.add(fieldSpec.getAttribute(&quot;Name&quot;));</span>
+<span class="nc" id="L656">					params.add(new Integer(line[0] + 1));</span>
+<span class="nc" id="L657">					throw new XException(Constants.LOCATION_INTERN,</span>
+							Constants.LAYER_PROTOCOL,
+							Constants.PACKAGE_PROTOCOL_RECORDS, &quot;105&quot;, params);
+				} // if (!onlyBlanks)
+<span class="nc" id="L661">			} // then (fieldSpec.getAttribute(&quot;Format&quot;).equals(&quot;blank&quot;))</span>
+			else
+			{ // not just a blank filler
+<span class="nc bnc" id="L664" title="All 2 branches missed.">				if (fieldSpec.getAttribute(&quot;Format&quot;).equals(&quot;const&quot;)</span>
+<span class="nc bnc" id="L665" title="All 2 branches missed.">						&amp;&amp; !value.equals(fieldSpec.getAttribute(&quot;Value&quot;)))</span>
+				{ // constant fields must have the specified value
+<span class="nc" id="L667">					List params = new Vector();</span>
+<span class="nc" id="L668">					params.add(((Element) fieldSpec.getParentNode())</span>
+<span class="nc" id="L669">							.getAttribute(&quot;Name&quot;));</span>
+<span class="nc" id="L670">					params.add(fieldSpec.getAttribute(&quot;Name&quot;));</span>
+<span class="nc" id="L671">					params.add(new Integer(line[0] + 1));</span>
+<span class="nc" id="L672">					throw new XException(Constants.LOCATION_INTERN,</span>
+							Constants.LAYER_PROTOCOL,
+							Constants.PACKAGE_PROTOCOL_RECORDS, &quot;106&quot;, params);
+				} // then (fieldSpec.getAttribute(&quot;Format&quot;).equals(&quot;const&quot;) &amp;&amp;
+				// !value.equals(fieldSpec.getAttribute(&quot;Value&quot;)))
+<span class="nc bnc" id="L677" title="All 2 branches missed.">				else if (fieldSpec.getAttribute(&quot;Format&quot;).equals(&quot;num&quot;))</span>
+				{ // Numeric fields must contain a number
+					// First character may be '+' or '-'
+<span class="nc" id="L680">					value = value.trim();</span>
+					// blanks permitted
+<span class="nc bnc" id="L682" title="All 2 branches missed.">					if (value.length() &gt; 0)</span>
+					{ // First look for a leading sign
+<span class="nc" id="L684">						String valueWithoutSign = value;</span>
+<span class="nc" id="L685">						String sign = &quot;&quot;;</span>
+<span class="nc bnc" id="L686" title="All 4 branches missed.">						if (value.charAt(0) == '+' || value.charAt(0) == '-')</span>
+						{
+<span class="nc" id="L688">							valueWithoutSign = value.substring(1);</span>
+<span class="nc" id="L689">							sign = value.substring(0, 1).trim();</span>
+						} // if (value.charAt(0)=='+' || value.charAt(0)=='-')
+
+						// Is an decimal point allowed, if yes which one?
+<span class="nc" id="L693">						String decimalPoint = fieldSpec</span>
+<span class="nc" id="L694">								.getAttribute(&quot;DecimalPoint&quot;);</span>
+<span class="nc" id="L695">						int decPointPos = -1;</span>
+<span class="nc" id="L696">						char decimalP = '.';</span>
+<span class="nc bnc" id="L697" title="All 4 branches missed.">						if (decimalPoint != null &amp;&amp; decimalPoint.length() &gt; 0)</span>
+						{ // decimal point expected
+							// which character - '.' or ','?
+<span class="nc bnc" id="L700" title="All 2 branches missed.">							if (decimalPoint.equals(&quot;comma&quot;))</span>
+<span class="nc" id="L701">								decimalP = ',';</span>
+<span class="nc bnc" id="L702" title="All 2 branches missed.">							else if (!decimalPoint.equals(&quot;dot&quot;))</span>
+							{
+<span class="nc" id="L704">								List params = new Vector();</span>
+<span class="nc" id="L705">								params</span>
+<span class="nc" id="L706">										.add(((Element) fieldSpec</span>
+<span class="nc" id="L707">												.getParentNode())</span>
+<span class="nc" id="L708">												.getAttribute(&quot;Name&quot;));</span>
+<span class="nc" id="L709">								params.add(fieldSpec.getAttribute(&quot;Name&quot;));</span>
+<span class="nc" id="L710">								throw new XException(Constants.LOCATION_INTERN,</span>
+										Constants.LAYER_PROTOCOL,
+										Constants.PACKAGE_PROTOCOL_RECORDS,
+										&quot;107&quot;, params);
+							} // if (!decimalPoint.equals(&quot;dot&quot;))
+							// decimal point position
+<span class="nc" id="L716">							decPointPos = valueWithoutSign.indexOf(decimalP);</span>
+						} // if (decimalPoint!=null &amp;&amp;
+							// decimalPoint.length()&gt;0)
+
+						// Check digits
+<span class="nc" id="L721">						int zeroBegin = -1;</span>
+<span class="nc" id="L722">						int zeroEnd = valueWithoutSign.length();</span>
+<span class="nc" id="L723">						boolean onlyZeros = true;</span>
+<span class="nc bnc" id="L724" title="All 2 branches missed.">						if (decPointPos &gt; -1)</span>
+						{ // Check digits before decimal point
+<span class="nc bnc" id="L726" title="All 2 branches missed.">							for (int i = 0; i &lt; decPointPos; i++)</span>
+							{
+<span class="nc bnc" id="L728" title="All 2 branches missed.">								if (!Character.isDigit(valueWithoutSign</span>
+<span class="nc" id="L729">										.charAt(i)))</span>
+								{
+<span class="nc" id="L731">									List params = new Vector();</span>
+<span class="nc" id="L732">									params.add(((Element) fieldSpec</span>
+<span class="nc" id="L733">											.getParentNode())</span>
+<span class="nc" id="L734">											.getAttribute(&quot;Name&quot;));</span>
+<span class="nc" id="L735">									params.add(fieldSpec.getAttribute(&quot;Name&quot;));</span>
+<span class="nc" id="L736">									params.add(new Integer(line[0] + 1));</span>
+<span class="nc" id="L737">									params.add(value);</span>
+<span class="nc" id="L738">									throw new XException(</span>
+											Constants.LOCATION_INTERN,
+											Constants.LAYER_PROTOCOL,
+											Constants.PACKAGE_PROTOCOL_RECORDS,
+											&quot;108&quot;, params);
+								} // if
+								// (!Character.isDigit(valueWithoutSign.charAt(i)))
+<span class="nc bnc" id="L745" title="All 2 branches missed.">								if (onlyZeros</span>
+<span class="nc bnc" id="L746" title="All 2 branches missed.">										&amp;&amp; valueWithoutSign.charAt(i) == '0')</span>
+<span class="nc" id="L747">									zeroBegin = i;</span>
+								else
+<span class="nc" id="L749">									onlyZeros = false;</span>
+							} // for (int i=0; i&lt;decPointPos; i++)
+
+							// Check digits behind decimal point
+<span class="nc" id="L753">							onlyZeros = true;</span>
+<span class="nc bnc" id="L754" title="All 2 branches missed.">							for (int i = valueWithoutSign.length() - 1; i &gt; decPointPos; i--)</span>
+							{
+<span class="nc bnc" id="L756" title="All 2 branches missed.">								if (!Character.isDigit(valueWithoutSign</span>
+<span class="nc" id="L757">										.charAt(i)))</span>
+								{
+<span class="nc" id="L759">									List params = new Vector();</span>
+<span class="nc" id="L760">									params.add(((Element) fieldSpec</span>
+<span class="nc" id="L761">											.getParentNode())</span>
+<span class="nc" id="L762">											.getAttribute(&quot;Name&quot;));</span>
+<span class="nc" id="L763">									params.add(fieldSpec.getAttribute(&quot;Name&quot;));</span>
+<span class="nc" id="L764">									params.add(new Integer(line[0] + 1));</span>
+<span class="nc" id="L765">									throw new XException(</span>
+											Constants.LOCATION_INTERN,
+											Constants.LAYER_PROTOCOL,
+											Constants.PACKAGE_PROTOCOL_RECORDS,
+											&quot;108&quot;, params);
+								} // if
+								// (!Character.isDigit(valueWithoutSign.charAt(i)))
+<span class="nc bnc" id="L772" title="All 2 branches missed.">								if (onlyZeros</span>
+<span class="nc bnc" id="L773" title="All 2 branches missed.">										&amp;&amp; valueWithoutSign.charAt(i) == '0')</span>
+<span class="nc" id="L774">									zeroEnd = i;</span>
+								else
+<span class="nc" id="L776">									onlyZeros = false;</span>
+							} // for (int i=valueWithoutSign.length()-1;
+							// i&gt;decPointPos; i--)
+						} // then (decPointPos&gt;-1)
+
+						else
+							// no decimal point
+<span class="nc bnc" id="L783" title="All 2 branches missed.">							for (int i = 0; i &lt; valueWithoutSign.length(); i++)</span>
+							{
+<span class="nc bnc" id="L785" title="All 2 branches missed.">								if (!Character.isDigit(valueWithoutSign</span>
+<span class="nc" id="L786">										.charAt(i)))</span>
+								{
+<span class="nc" id="L788">									List params = new Vector();</span>
+<span class="nc" id="L789">									params.add(((Element) fieldSpec</span>
+<span class="nc" id="L790">											.getParentNode())</span>
+<span class="nc" id="L791">											.getAttribute(&quot;Name&quot;));</span>
+<span class="nc" id="L792">									params.add(fieldSpec.getAttribute(&quot;Name&quot;));</span>
+<span class="nc" id="L793">									params.add(new Integer(line[0] + 1));</span>
+<span class="nc" id="L794">									throw new XException(</span>
+											Constants.LOCATION_INTERN,
+											Constants.LAYER_PROTOCOL,
+											Constants.PACKAGE_PROTOCOL_RECORDS,
+											&quot;108&quot;, params);
+								} // if
+								// (!Character.isDigit(valueWithoutSign.charAt(i)))
+<span class="nc bnc" id="L801" title="All 2 branches missed.">								if (onlyZeros</span>
+<span class="nc bnc" id="L802" title="All 2 branches missed.">										&amp;&amp; valueWithoutSign.charAt(i) == '0')</span>
+<span class="nc" id="L803">									zeroBegin = i;</span>
+								else
+<span class="nc" id="L805">									onlyZeros = false;</span>
+							} // for (int i=0; i&lt;valueWithoutSign.length();
+								// i++)
+
+<span class="nc bnc" id="L809" title="All 2 branches missed.">						if (zeroEnd &lt; valueWithoutSign.length())</span>
+<span class="nc" id="L810">							valueWithoutSign = valueWithoutSign.substring(0,</span>
+									zeroEnd);
+<span class="nc bnc" id="L812" title="All 2 branches missed.">						if (zeroBegin &gt; -1)</span>
+<span class="nc" id="L813">							valueWithoutSign = valueWithoutSign</span>
+<span class="nc" id="L814">									.substring(zeroBegin + 1);</span>
+<span class="nc bnc" id="L815" title="All 2 branches missed.">						if (valueWithoutSign.length() == 0</span>
+<span class="nc bnc" id="L816" title="All 2 branches missed.">								|| valueWithoutSign.length() == 1</span>
+<span class="nc bnc" id="L817" title="All 2 branches missed.">								&amp;&amp; valueWithoutSign.charAt(0) == decimalP)</span>
+<span class="nc" id="L818">							value = &quot;0&quot;;</span>
+						else
+<span class="nc" id="L820">							value = sign + valueWithoutSign;</span>
+<span class="nc" id="L821">					} // if (value.length()&gt;0)</span>
+				} // then (fieldSpec.getAttribute(&quot;Format&quot;).equals(&quot;num&quot;))
+<span class="nc bnc" id="L823" title="All 2 branches missed.">				else if (fieldSpec.getAttribute(&quot;Format&quot;).equals(&quot;date&quot;))</span>
+				{
+<span class="nc" id="L825">					value = value.trim();</span>
+<span class="nc bnc" id="L826" title="All 2 branches missed.">					if (value.length() &gt; 0)</span>
+					{ // a date given
+						try
+						{
+<span class="nc" id="L830">							SimpleDateFormat sdf = new SimpleDateFormat(</span>
+<span class="nc" id="L831">									fieldSpec.getAttribute(&quot;DateFormat&quot;));</span>
+<span class="nc" id="L832">							sdf.parse(value);</span>
+						} // try
+<span class="nc" id="L834">						catch (Exception e)</span>
+						{
+<span class="nc" id="L836">							throw new XException(Constants.LOCATION_INTERN,</span>
+									Constants.LAYER_PROTOCOL,
+									Constants.PACKAGE_PROTOCOL_RECORDS, &quot;0&quot;, e);
+<span class="nc" id="L839">						} // catch</span>
+					} // if (value.trim().length()&gt;0)
+				} // if (fieldSpec.getAttribute(&quot;Format&quot;).equals(&quot;date&quot;))
+
+				// Everthing ok, thus create a node.
+<span class="nc" id="L844">				Element field = doc.createElement(fieldSpec</span>
+<span class="nc" id="L845">						.getAttribute(&quot;Name&quot;));</span>
+<span class="nc" id="L846">				field.appendChild(doc.createTextNode(value));</span>
+<span class="nc" id="L847">				fields.add(field);</span>
+			} // else (fieldSpec.getAttribute(&quot;Format&quot;).equals(&quot;blank&quot;))
+
+			// Update position in actual byte array
+<span class="nc" id="L851">			linePos[0] += length;</span>
+
+			// New global position
+<span class="nc" id="L854">			return stringPos + length;</span>
+		} // try
+<span class="nc" id="L856">		catch (NumberFormatException e)</span>
+		{
+<span class="nc" id="L858">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;0&quot;, e);
+		} // catch (NumberFormatException e)
+	} // parseField(Object interfaceContent, int stringPos, int[] line, int
+	// lineEnd, int[] linePos, Document doc, LinkedList fields, Element
+	// fieldSpec)
+
+	/**
+	 * &lt;code&gt;determineNextRecordType&lt;/code&gt; computes the nexet record type due
+	 * to the actual position in the parsed string, the interface structure
+	 * description, the last record type and the last record.
+	 * 
+	 * @param interfaceContent interfaceContent the (whole) string to parse
+	 * @param stringPos the position to start parsing the next record from in
+	 *            the string or in the complete byte array list (byte count)
+	 * @param line index of the next byte array to parse, array for call by
+	 *            reference, because it is augmented, ignored when parsing a
+	 *            string
+	 * @param recordType the last record type as its declaration node in the
+	 *            interface structure description -&lt;code&gt;null&lt;/code&gt; if no
+	 *            record was parsed before
+	 * @param recordCount the number of subsequent records of the last type
+	 * @param lastRecord the last parsed record as node in the result DOM tree -
+	 *            &lt;code&gt;null&lt;/code&gt; if no record was parsed before
+	 * @return the next record type as declaration node in the lines section of
+	 *         the interface structure description
+	 */
+	private Element determineNextRecordType(Object interfaceContent,
+			int stringPos, int[] line, Element recordType, int recordCount,
+			Element lastRecord) throws XException
+	{
+<span class="nc" id="L890">		Element nextRecordType = null;</span>
+<span class="nc bnc" id="L891" title="All 2 branches missed.">		if (interfaceContentClass == Constants.IFCONTENTCLASS_STRING)</span>
+<span class="nc" id="L892">			nextRecordType = determineNextRecordTypeSingleByteArray(</span>
+					interfaceContent, stringPos, line, recordType, recordCount,
+					lastRecord);
+		else
+<span class="nc" id="L896">			nextRecordType = determineNextRecordTypeSingleByteArray(</span>
+<span class="nc" id="L897">					((ByteArrayList) interfaceContent).get(line[0]), stringPos,</span>
+					line, recordType, recordCount, lastRecord);
+<span class="nc" id="L899">		return nextRecordType;</span>
+	} // determineNextRecordType(Object interfaceContent, int stringPos, int[]
+	// line, Element recordType, int recordCount, Element lastRecord)
+
+	/**
+	 * @param interfaceContent
+	 * @param stringPos
+	 * @param line
+	 * @param recordType
+	 * @param recordCount
+	 * @param lastRecord
+	 * @return
+	 */
+	private Element determineNextRecordTypeSingleByteArray(
+			Object interfaceContent, int stringPos, int[] line,
+			Element recordType, int recordCount, Element lastRecord)
+			throws XException
+	{
+<span class="nc" id="L917">		Element nextRecordType = null;</span>
+		// for the result
+		try
+		// for casting to XException
+		{
+<span class="nc bnc" id="L922" title="All 2 branches missed.">			if (recIdentMethod.equals(&quot;TypeIdentifier&quot;))</span>
+			{ // With a type identifier the next record type is simply derived
+				// from the interface content, just read the correct substring
+				// to get its id.
+<span class="nc" id="L926">				int idPos = Integer.parseInt(linesSpec</span>
+<span class="nc" id="L927">						.getAttribute(&quot;IdentifierPos&quot;));</span>
+<span class="nc" id="L928">				int idLength = Integer.parseInt(linesSpec</span>
+<span class="nc" id="L929">						.getAttribute(&quot;IdentifierLength&quot;));</span>
+				// Get the declaration by the id.
+<span class="nc bnc" id="L931" title="All 2 branches missed.">				if (interfaceContentClass == Constants.IFCONTENTCLASS_STRING)</span>
+					// ... from string
+<span class="nc" id="L933">					nextRecordType = getRecordTypeById(((String) interfaceContent)</span>
+<span class="nc" id="L934">							.substring(stringPos + idPos, stringPos + idPos</span>
+									+ idLength));
+				else
+					// ... from byte array
+<span class="nc" id="L938">					nextRecordType = getRecordTypeById(extractSubString(</span>
+							(byte[]) interfaceContent, idPos, idPos + idLength));
+<span class="nc" id="L940">			} // if (recIdentMethod.equals(&quot;TypeIdentifier&quot;)</span>
+<span class="nc bnc" id="L941" title="All 2 branches missed.">			else if (recordType == null)</span>
+				// First record.
+<span class="nc bnc" id="L943" title="All 2 branches missed.">				if (recOrder.equals(&quot;Structured&quot;))</span>
+					// Get the first record type of the first record group
+<span class="nc" id="L945">					nextRecordType = (Element) linesSpec.getFirstChild()</span>
+<span class="nc" id="L946">							.getFirstChild();</span>
+				else
+					// Just get the first record type - there are no record
+					// groups.
+<span class="nc" id="L950">					nextRecordType = (Element) linesSpec.getFirstChild();</span>
+			else
+			{ // Not the first record and no type identifier.
+<span class="nc" id="L953">				boolean lookAtNext = true;</span>
+				// Still searching?
+<span class="nc" id="L955">				nextRecordType = recordType;</span>
+				// Start with the last record type.
+<span class="nc bnc" id="L957" title="All 4 branches missed.">				while (lookAtNext &amp;&amp; nextRecordType != null)</span>
+				{ // loop until found or end of record type list reached
+<span class="nc" id="L959">					String card = nextRecordType.getAttribute(&quot;Occurrences&quot;);</span>
+<span class="nc" id="L960">					int cardNum = -1;</span>
+<span class="nc" id="L961">					int cardLow = -1;</span>
+<span class="nc" id="L962">					int cardHigh = -1;</span>
+
+<span class="nc bnc" id="L964" title="All 2 branches missed.">					if (CardinalityStrings.isCardinalityInterval(card, true))</span>
+					{ // The cardinality is specified as an interval.
+<span class="nc" id="L966">						cardLow = CardinalityStrings.getCardinalityLow(card,</span>
+								true);
+<span class="nc" id="L968">						cardHigh = CardinalityStrings.getCardinalityHigh(card,</span>
+								true);
+<span class="nc bnc" id="L970" title="All 2 branches missed.">						if (recordCount &lt; cardLow)</span>
+							// minimal cardinality not yet reached, thus take
+							// this record type.
+<span class="nc" id="L973">							lookAtNext = false;</span>
+						else
+						{ // minimal cardinality already reached before
+<span class="nc bnc" id="L976" title="All 2 branches missed.">							if (cardHigh &gt; recordCount)</span>
+							{ // maximal cardinality not yet reached
+<span class="nc bnc" id="L978" title="All 2 branches missed.">								if (linesSpec.getChildNodes().getLength() == 1)</span>
+								{ // only one record type
+<span class="nc" id="L980">									lookAtNext = false;</span>
+								} // then
+								// (linesSpec.getChildNodes().getLength()==1)
+								else
+								{
+									// Look for the existance indicator.
+<span class="nc" id="L986">									String existanceIndField = nextRecordType</span>
+<span class="nc" id="L987">											.getAttribute(&quot;ExistIndicatorField&quot;);</span>
+<span class="nc" id="L988">									String existanceIndValue = nextRecordType</span>
+<span class="nc" id="L989">											.getAttribute(&quot;ExistIndicatorValue&quot;);</span>
+									// Find the field in the last record.
+<span class="nc" id="L991">									NodeList existInds = lastRecord</span>
+<span class="nc" id="L992">											.getElementsByTagName(existanceIndField);</span>
+<span class="nc bnc" id="L993" title="All 2 branches missed.">									if (existInds.getLength() != 1)</span>
+									{
+<span class="nc" id="L995">										List params = new Vector();</span>
+<span class="nc" id="L996">										params</span>
+<span class="nc" id="L997">												.add(XDomSupport</span>
+<span class="nc" id="L998">														.getTrimedNodeText(nextRecordType));</span>
+<span class="nc" id="L999">										params.add(existanceIndField);</span>
+<span class="nc" id="L1000">										params.add(XDomSupport</span>
+<span class="nc" id="L1001">												.getTrimedNodeText(recordType));</span>
+<span class="nc" id="L1002">										throw new XException(</span>
+												Constants.LOCATION_INTERN,
+												Constants.LAYER_PROTOCOL,
+												Constants.PACKAGE_PROTOCOL_RECORDS,
+												&quot;113&quot;, params);
+									} // if (existInds.getLength() != 1)
+									// The existance indicator is set in the
+									// last record, the next record type is
+									// found.
+<span class="nc bnc" id="L1011" title="All 2 branches missed.">									if (existanceIndValue.equals(XDomSupport</span>
+<span class="nc" id="L1012">											.getTrimedNodeText(existInds</span>
+<span class="nc" id="L1013">													.item(0))))</span>
+<span class="nc" id="L1014">										lookAtNext = false;</span>
+<span class="nc" id="L1015">								} // else</span>
+								// (linesSpec.getChildNodes().getLength()==1)
+							} // if (cardHigh&gt;recordCount)
+						} // else (cardLow&lt;recordCount)
+					} // then (isCardinalityInterval(card,true))
+					else
+					{ // Cardinality is just a single value.
+<span class="nc" id="L1022">						cardNum = Integer.parseInt(card);</span>
+						// Cardinality already reached?
+<span class="nc bnc" id="L1024" title="All 2 branches missed.">						if (cardNum &lt; recordCount)</span>
+<span class="nc" id="L1025">							lookAtNext = false;</span>
+					} // else (isCardinalityInterval(card,true))
+
+<span class="nc bnc" id="L1028" title="All 2 branches missed.">					if (lookAtNext)</span>
+					{ // Still searching
+<span class="nc" id="L1030">						nextRecordType = (Element) nextRecordType</span>
+<span class="nc" id="L1031">								.getNextSibling();</span>
+<span class="nc" id="L1032">						recordCount = 0;</span>
+					} // if (lookAtNext)
+<span class="nc" id="L1034">				} // while (lookAtNext &amp;&amp; nextRecordType!=null)</span>
+
+<span class="nc bnc" id="L1036" title="All 2 branches missed.">				if (lookAtNext)</span>
+					// At the end of record type list next record type not
+					// found.
+<span class="nc bnc" id="L1039" title="All 2 branches missed.">					if (recOrder.equals(&quot;Structured&quot;))</span>
+						// In case of grouped records, just a new group starts.
+<span class="nc" id="L1041">						nextRecordType = (Element) linesSpec.getFirstChild()</span>
+<span class="nc" id="L1042">								.getFirstChild();</span>
+					// Take the first record type of the first record group
+					// because there is only one
+					// (recIdentMethod!=&quot;TypeIdentifier&quot;).
+					else
+					{
+<span class="nc" id="L1048">						List params = new Vector();</span>
+<span class="nc" id="L1049">						params.add(XDomSupport.getTrimedNodeText(recordType));</span>
+<span class="nc" id="L1050">						params.add(new Integer(line[0] + 1));</span>
+<span class="nc" id="L1051">						throw new XException(Constants.LOCATION_INTERN,</span>
+								Constants.LAYER_PROTOCOL,
+								Constants.PACKAGE_PROTOCOL_RECORDS, &quot;114&quot;,
+								params);
+					}
+			} // else (recordType==null)
+		} // try
+<span class="nc" id="L1058">		catch (IndexOutOfBoundsException e)</span>
+		{
+<span class="nc" id="L1060">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;0&quot;, e);
+		} // catch (IndexOutOfBoundsException e)
+<span class="nc" id="L1064">		catch (NumberFormatException e)</span>
+		{
+<span class="nc" id="L1066">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;0&quot;, e);
+		} // catch (NumberFormatException e)
+<span class="nc" id="L1070">		catch (ClassCastException e)</span>
+		{
+<span class="nc" id="L1072">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;0&quot;, e);
+<span class="nc" id="L1075">		} // catch (ClassCastException e)</span>
+<span class="nc" id="L1076">		return nextRecordType;</span>
+	}
+
+	/**
+	 * @param inRecord
+	 * @param doc
+	 */
+	public int parseSingleRecord(byte[] inRecord, Document doc,
+			Element[] recordType, int recordCount) throws XException
+	{
+<span class="nc" id="L1086">		int line[] =</span>
+		{0};
+<span class="nc" id="L1088">		Element lastRecord = null;</span>
+<span class="nc bnc" id="L1089" title="All 2 branches missed.">		if (doc.hasChildNodes())</span>
+<span class="nc" id="L1090">			lastRecord = doc.getDocumentElement();</span>
+
+<span class="nc" id="L1092">		Element nextRecordType = determineNextRecordTypeSingleByteArray(</span>
+				inRecord, 0, line, recordType[0], recordCount, lastRecord);
+
+<span class="nc bnc" id="L1095" title="All 2 branches missed.">		if (recordType[0] == null</span>
+<span class="nc bnc" id="L1096" title="All 2 branches missed.">				|| !XDomSupport.getTrimedNodeText(nextRecordType).equals(</span>
+<span class="nc" id="L1097">						XDomSupport.getTrimedNodeText(recordType[0])))</span>
+		{ // First record type or record type change.
+<span class="nc" id="L1099">			recordCount = 0;</span>
+<span class="nc" id="L1100">			recordType[0] = nextRecordType;</span>
+		} // if (recordType==null ||
+		// !XDomSupport.getTrimedElementValue(nextRecordType).equals(XDomSupport.getTrimedElementValue(recordType)))
+
+<span class="nc" id="L1104">		String nextRecordTypeName = XDomSupport</span>
+<span class="nc" id="L1105">				.getTrimedNodeText(nextRecordType);</span>
+<span class="nc" id="L1106">		Element nextRecord = doc.createElement(nextRecordTypeName);</span>
+		// the record node
+
+		// Search for the record type specification.
+<span class="nc" id="L1110">		List nextRecordTypeSpecCandidates = XDomSupport</span>
+<span class="nc" id="L1111">				.getChildNodesByAttrValue(recordTypesSpec, &quot;Name&quot;,</span>
+						nextRecordTypeName, &quot;RecordTypeSpec&quot;);
+<span class="nc bnc" id="L1113" title="All 2 branches missed.">		if (nextRecordTypeSpecCandidates.size() != 1)</span>
+		{
+<span class="nc" id="L1115">			List params = new Vector();</span>
+<span class="nc" id="L1116">			params.add(nextRecordTypeName);</span>
+<span class="nc" id="L1117">			params.add(new Integer(line[0] + 1));</span>
+<span class="nc" id="L1118">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;102&quot;, params);
+		} // if (nextRecordTypeSpecCandidates.size() != 1)
+
+		// Parse the record content: the fields
+<span class="nc" id="L1124">		parseFieldsAndGroupsSingleByteArray(inRecord, 0, line, doc, nextRecord,</span>
+<span class="nc" id="L1125">				(Node) nextRecordTypeSpecCandidates.get(0));</span>
+<span class="nc bnc" id="L1126" title="All 2 branches missed.">		if (nextRecord.hasChildNodes())</span>
+		{ // some content found
+<span class="nc bnc" id="L1128" title="All 2 branches missed.">			if (doc.hasChildNodes())</span>
+<span class="nc" id="L1129">				doc.removeChild(doc.getFirstChild());</span>
+<span class="nc" id="L1130">			doc.appendChild(nextRecord);</span>
+			// insert record into tree
+<span class="nc" id="L1132">			recordCount++;</span>
+		} // if (nextRecord.hasChildNodes())
+
+<span class="nc" id="L1135">		return recordCount;</span>
+	}
+
+	/**
+	 * &lt;code&gt;extractSubString&lt;/code&gt; extracts a field value as string from a
+	 * specific position in a byte array. The extraction is done in two steps:
+	 * &lt;ol&gt;
+	 * &lt;li&gt;Extraction of bytes due to position and length&lt;/li&gt;
+	 * &lt;li&gt;Conversion to string by the preloaded byte array converter&lt;/li&gt;
+	 * &lt;/ol&gt;
+	 * 
+	 * @param array the byte array to extract the field value from
+	 * @param pos the field starting position in the array (byte count)
+	 * @param length the field length (byte count)
+	 * @return the field value converted to a string
+	 * @throws XException in case of unpossible &lt;code&gt;pos&lt;/code&gt; or
+	 *             &lt;code&gt;length&lt;/code&gt; values
+	 */
+	protected String extractSubString(byte[] array, int pos, int length)
+			throws XException
+	{
+<span class="nc" id="L1156">		byte[] subArr = XByteArraySupport.subArray(array, pos, length);</span>
+<span class="nc" id="L1157">		return byteArrayConverter.byteArrayToString(subArr);</span>
+	} // extractSubString(byte[] array, int pos, int length)
+
+} // RecordTypeParser
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

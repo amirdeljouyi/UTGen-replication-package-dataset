@@ -1,0 +1,731 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LagoonProcessor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">52_lagoon</a> &gt; <a href="index.source.html" class="el_package">nu.staldal.lagoon.core</a> &gt; <span class="el_source">LagoonProcessor.java</span></div><h1>LagoonProcessor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2001-2004, Mikael St�ldal
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ * notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ * notice, this list of conditions and the following disclaimer in the
+ * documentation and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of the author nor the names of its contributors
+ * may be used to endorse or promote products derived from this software
+ * without specific prior written permission.
+ *
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ *
+ * Note: This is known as &quot;the modified BSD license&quot;. It's an approved
+ * Open Source and Free Software license, see
+ * http://www.opensource.org/licenses/
+ * and
+ * http://www.gnu.org/philosophy/license-list.html
+ */
+
+package nu.staldal.lagoon.core;
+
+import java.io.*;
+import java.util.*;
+
+import nu.staldal.xtree.*;
+import nu.staldal.util.Utils;
+
+
+/**
+ * The main worker class of the Lagoon core.
+ *
+ * Initialized with the sitemap,
+ * a source dir and a target storage URL.
+ * Then building the website may be done several times,
+ * until destroy() is invoked.
+ *
+ * This class is not thread-safe. The methods must not
+ * be invoked concurrently from different threads.
+ */
+public class LagoonProcessor implements LagoonContext
+{
+	private static final boolean DEBUG = false;
+
+    private final String targetURL;
+    private final FileStorage targetLocation;
+    private File repositoryDir;
+	private File tempDir;
+	private File classDir;
+	private File sourceRootDir;
+	private java.net.URL[] classLoaderURLs;
+	private ClassLoader repositoryClassLoader;
+
+    private final Hashtable classDict;
+    private final Hashtable paramDict;
+    private final Hashtable filestorageDict;
+
+    private Sitemap sitemap;
+	
+	PrintWriter log;
+	PrintWriter err;
+
+
+    /**
+     * Constructs and initializes a LagoonProcessor.
+     *
+     * @param targetURL  where to put the generated files,
+	 *                   must be an absolute URL or a local file path
+     * @param sitemapTree  the Sitemap as an XTree
+     * @param sourceDir  where the source files are
+     * @param password  password to access the target storage, or
+     *                  &lt;code&gt;null&lt;/code&gt; if not nessesary.
+	 * @param log  where to write progress messages.
+	 * @param err  where to write error messages.
+     */
+    public LagoonProcessor(String targetURL, Element sitemapTree, 
+						   File sourceDir, String password, 
+						   PrintWriter log, PrintWriter err)
+        throws IOException, LagoonException, AuthenticationException, 
+			AuthenticationMissingException
+<span class="nc" id="L101">    {</span>
+<span class="nc" id="L102">        this.targetURL = targetURL;</span>
+<span class="nc" id="L103">		this.log = log;</span>
+<span class="nc" id="L104">		this.err = err;</span>
+
+<span class="nc" id="L106">        classDict = new Hashtable();</span>
+<span class="nc" id="L107">        paramDict = new Hashtable();</span>
+<span class="nc" id="L108">        filestorageDict = new Hashtable();</span>
+
+<span class="nc" id="L110">        targetLocation = createFileStorage(targetURL);</span>
+		
+<span class="nc bnc" id="L112" title="All 2 branches missed.">		if (targetLocation == null)</span>
+<span class="nc" id="L113">			throw new LagoonException(&quot;Cannot find FileStorage for URL &quot;</span>
+				+ targetURL);
+		
+<span class="nc bnc" id="L116" title="All 4 branches missed.">		if (targetLocation.needPassword() &amp;&amp; (password == null))</span>
+		{
+<span class="nc" id="L118">			throw new AuthenticationMissingException();	</span>
+		}
+		
+<span class="nc" id="L121">		String absPath = sourceDir.getAbsolutePath();</span>
+<span class="nc" id="L122">        this.sourceRootDir = new File(absPath);</span>
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        if (!this.sourceRootDir.isDirectory())</span>
+<span class="nc" id="L124">            throw new LagoonException(</span>
+                &quot;sourceDir must be an existing directory: &quot; + sourceDir);
+				
+<span class="nc" id="L127">		sitemap = new Sitemap(this, sitemapTree, sourceRootDir);</span>
+
+<span class="nc" id="L129">		File workDir = new File(System.getProperty(&quot;user.home&quot;), &quot;.lagoon&quot;);</span>
+		
+<span class="nc bnc" id="L131" title="All 2 branches missed.">		if (!workDir.exists())</span>
+		{
+<span class="nc bnc" id="L133" title="All 2 branches missed.">			if (!workDir.mkdir())</span>
+<span class="nc" id="L134">				throw new IOException(&quot;Unable to create directory: &quot;</span>
+					+ workDir);
+		}
+		else
+		{
+<span class="nc bnc" id="L139" title="All 2 branches missed.">			if (!workDir.isDirectory())</span>
+			{
+<span class="nc" id="L141">				throw new IOException(</span>
+					&quot;Unable to create directory (a file with that name exists): &quot;
+					+ workDir);
+			}
+		}
+		
+<span class="nc bnc" id="L147" title="All 2 branches missed.">		if (sitemap.getSiteName() != null)</span>
+		{
+<span class="nc" id="L149">			repositoryDir = new File(workDir, sitemap.getSiteName());</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">			if (!repositoryDir.exists())</span>
+			{
+<span class="nc bnc" id="L152" title="All 2 branches missed.">				if (!repositoryDir.mkdir())</span>
+<span class="nc" id="L153">					throw new IOException(&quot;Unable to create directory: &quot;</span>
+						+ repositoryDir);
+			}
+			else
+			{
+<span class="nc bnc" id="L158" title="All 2 branches missed.">				if (!repositoryDir.isDirectory())</span>
+				{
+<span class="nc" id="L160">					throw new IOException(</span>
+						&quot;Unable to create directory (a file with that name exists): &quot;
+						+ repositoryDir);
+				}
+			}
+		}
+		else
+		{
+<span class="nc" id="L168">			repositoryDir = null;	</span>
+		}
+
+<span class="nc bnc" id="L171" title="All 2 branches missed.">		if (repositoryDir != null)</span>
+		{
+<span class="nc" id="L173">			tempDir = new File(repositoryDir, &quot;temp&quot;);</span>
+<span class="nc" id="L174">			classDir = new File(repositoryDir, &quot;classes&quot;);</span>
+		}
+		else
+		{
+<span class="nc" id="L178">			tempDir = new File(workDir, &quot;temp&quot;);</span>
+		}
+<span class="nc bnc" id="L180" title="All 2 branches missed.">		if (!tempDir.exists())</span>
+		{
+<span class="nc bnc" id="L182" title="All 2 branches missed.">			if (!tempDir.mkdir())</span>
+<span class="nc" id="L183">				throw new IOException(&quot;Unable to create directory: &quot;</span>
+					+ tempDir);
+		}
+		else
+		{
+<span class="nc bnc" id="L188" title="All 2 branches missed.">			if (!tempDir.isDirectory())</span>
+			{
+<span class="nc" id="L190">				throw new IOException(</span>
+					&quot;Unable to create directory (a file with that name exists): &quot;
+					+ tempDir);
+			}
+		}
+		
+<span class="nc bnc" id="L196" title="All 2 branches missed.">		if (classDir == null)</span>
+		{
+<span class="nc" id="L198">			classDir = new File(tempDir, &quot;classes&quot;);	</span>
+		}
+		
+<span class="nc bnc" id="L201" title="All 2 branches missed.">		if (!classDir.exists())</span>
+		{
+<span class="nc bnc" id="L203" title="All 2 branches missed.">			if (!classDir.mkdir())</span>
+<span class="nc" id="L204">				throw new IOException(&quot;Unable to create directory: &quot;</span>
+					+ classDir);
+		}
+		else
+		{
+<span class="nc bnc" id="L209" title="All 2 branches missed.">			if (!classDir.isDirectory())</span>
+			{
+<span class="nc" id="L211">				throw new IOException(</span>
+					&quot;Unable to create directory (a file with that name exists): &quot;
+					+ classDir);
+			}
+		}
+		
+<span class="nc" id="L217">		classLoaderURLs = new java.net.URL[] { classDir.toURL() };</span>
+<span class="nc" id="L218">		reloadClasses();</span>
+					
+<span class="nc" id="L220">		sitemap.init();</span>
+				
+<span class="nc" id="L222">        targetLocation.open(targetURL, this, password);</span>
+<span class="nc" id="L223">    }</span>
+
+	
+	/**
+	 * Get the Sitemap.
+	 *
+	 * @return the Sitemap.
+	 */
+	Sitemap getSitemap()
+	{
+<span class="nc" id="L233">		return sitemap;</span>
+	}
+
+
+	/**
+	 * Get the target location.
+	 *
+	 * @return the target location.
+	 */
+	FileStorage getTargetLocation()
+	{
+<span class="nc" id="L244">		return targetLocation;</span>
+	}
+
+	
+    /**
+     * Perform the building of the website.
+     * May be invoked multiple times.
+     * Synchronous, returns when the building is complete.
+     *
+     * @param force force a rebuild of all files, otherwise dependency
+     *        checking is used to check which files that needs rebuilding.
+	 *
+	 * @return true if successful, false if any non-fatal error occured
+	 * @throws IOException  if any fatal error occur
+     */
+    public boolean build(boolean force)
+        throws IOException
+    {
+<span class="nc" id="L262">		boolean success = true;</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">        for (Enumeration e = sitemap.getEntries(); e.hasMoreElements(); )</span>
+        {
+<span class="nc" id="L265">            SitemapEntry ent = (SitemapEntry)e.nextElement();</span>
+<span class="nc" id="L266">            ent.beforeBuild(force);</span>
+<span class="nc" id="L267">        }</span>
+<span class="nc bnc" id="L268" title="All 2 branches missed.">        for (Enumeration e = sitemap.getEntries(); e.hasMoreElements(); )</span>
+        {
+<span class="nc" id="L270">            SitemapEntry ent = (SitemapEntry)e.nextElement();</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">            if (!ent.build(force)) success = false;</span>
+<span class="nc" id="L272">        }</span>
+<span class="nc bnc" id="L273" title="All 2 branches missed.">        for (Enumeration e = sitemap.getEntries(); e.hasMoreElements(); )</span>
+        {
+<span class="nc" id="L275">            SitemapEntry ent = (SitemapEntry)e.nextElement();</span>
+<span class="nc" id="L276">            ent.afterBuild(force);</span>
+<span class="nc" id="L277">        }</span>
+<span class="nc" id="L278">		return success;</span>
+    }
+
+	/**
+	 * Dispose this object and release any resources it holds.
+	 * This causes the FileStorage to be closed.
+	 */
+	public void destroy()
+        throws IOException
+	{
+<span class="nc" id="L288">        sitemap.destroy();</span>
+        
+<span class="nc" id="L290">		targetLocation.close();</span>
+		
+<span class="nc" id="L292">		repositoryClassLoader = null;</span>
+		
+<span class="nc bnc" id="L294" title="All 2 branches missed.">		if (repositoryDir == null)</span>
+		{
+<span class="nc" id="L296">			File[] classFiles = classDir.listFiles();</span>
+<span class="nc bnc" id="L297" title="All 2 branches missed.">			for (int i = 0; i&lt;classFiles.length; i++)</span>
+			{
+<span class="nc" id="L299">				classFiles[i].delete();	</span>
+			}
+		}
+<span class="nc" id="L302">	}</span>
+
+	public File getTempDir()
+	{
+<span class="nc" id="L306">		return tempDir;</span>
+	}
+	
+	
+    public InputStream readFileFromRepository(String key)
+    {
+<span class="nc" id="L312">        return readFileFromRepository(null, key);</span>
+    }
+
+    InputStream readFileFromRepository(String dir, String key)
+    {
+<span class="nc bnc" id="L317" title="All 2 branches missed.">		if (repositoryDir == null) return null;</span>
+		
+<span class="nc bnc" id="L319" title="All 2 branches missed.">        File theDir = (dir == null)</span>
+                    ? repositoryDir
+                    : new File(repositoryDir, dir);
+					
+<span class="nc" id="L323">		File theFile = new File(theDir, key);</span>
+		
+		if (DEBUG) System.out.println(&quot;readFileFromRepository: &quot; + theFile);			
+
+        try {
+<span class="nc" id="L328">            return new FileInputStream(theFile);</span>
+        }
+<span class="nc" id="L330">        catch (FileNotFoundException e)</span>
+        {
+<span class="nc" id="L332">            return null;</span>
+        }
+    }
+
+    public OutputStream storeFileInRepository(String key)
+        throws IOException
+    {
+<span class="nc" id="L339">        return storeFileInRepository(null, key);</span>
+    }
+
+    OutputStream storeFileInRepository(String dir, String key)
+        throws IOException
+    {
+<span class="nc bnc" id="L345" title="All 2 branches missed.">		if (repositoryDir == null) return null;</span>
+
+<span class="nc bnc" id="L347" title="All 2 branches missed.">        File theDir = (dir == null)</span>
+                    ? repositoryDir
+                    : new File(repositoryDir, dir);
+<span class="nc" id="L350">        theDir.mkdir();</span>
+
+<span class="nc" id="L352">		File theFile = new File(theDir, key);</span>
+		
+		if (DEBUG) System.out.println(&quot;storeFileInRepository: &quot; + theFile);			
+		
+<span class="nc" id="L356">        return new FileOutputStream(theFile);</span>
+    }
+
+
+    public Class loadClassFromRepository(String className)
+        throws ClassNotFoundException
+    {
+		if (DEBUG) System.out.println(&quot;loadClassFromRepository: &quot;
+			+ className);
+		
+        try {
+<span class="nc" id="L367">			return Class.forName(className, true, repositoryClassLoader);</span>
+		}
+<span class="nc" id="L369">		catch (ClassFormatError e)</span>
+		{
+<span class="nc" id="L371">			File classFile = new File(classDir, className + &quot;.class&quot;);</span>
+<span class="nc" id="L372">			classFile.delete();</span>
+<span class="nc" id="L373">			err.println(e.toString());</span>
+<span class="nc" id="L374">			throw new ClassNotFoundException(className + &quot; is malformed&quot;);</span>
+		}
+<span class="nc" id="L376">		catch (VerifyError e)</span>
+		{
+<span class="nc" id="L378">			File classFile = new File(classDir, className + &quot;.class&quot;);</span>
+<span class="nc" id="L379">			classFile.delete();</span>
+<span class="nc" id="L380">			err.println(e.toString());</span>
+<span class="nc" id="L381">			throw new ClassNotFoundException(className + &quot; does not verify&quot;);</span>
+		}
+    }
+	
+
+    public OutputStream storeClassInRepository(String className)
+        throws IOException
+    {
+<span class="nc bnc" id="L389" title="All 2 branches missed.">		if (classDir == null) return null;</span>
+		
+<span class="nc" id="L391">		File theFile = new File(classDir, className+&quot;.class&quot;);</span>
+		
+		if (DEBUG) System.out.println(&quot;storeClassInRepository: &quot; + theFile);			
+		
+<span class="nc" id="L395">        return new FileOutputStream(theFile);				</span>
+    }
+	
+	
+    public void deleteClassInRepository(String className)
+        throws IOException
+    {
+<span class="nc bnc" id="L402" title="All 2 branches missed.">		if (classDir == null) return;</span>
+		
+<span class="nc" id="L404">		File theFile = new File(classDir, className+&quot;.class&quot;);</span>
+		
+		if (DEBUG) System.out.println(&quot;deleteClassInRepository: &quot; + theFile);			
+		
+<span class="nc bnc" id="L408" title="All 4 branches missed.">        if (theFile.isFile() &amp;&amp; !theFile.delete())</span>
+<span class="nc" id="L409">			throw new IOException(&quot;Unable to delete file: &quot; + theFile);				</span>
+<span class="nc" id="L410">    }</span>
+
+
+	public void reloadClasses()
+	{
+<span class="nc" id="L415">		repositoryClassLoader = new java.net.URLClassLoader(classLoaderURLs);</span>
+<span class="nc" id="L416">	}</span>
+
+	
+    public Object getObjectFromRepository(String key)
+        throws IOException
+    {
+<span class="nc" id="L422">        return getObjectFromRepository(null, key);</span>
+    }
+	
+
+    Object getObjectFromRepository(String dir, String key)
+        throws IOException
+    {
+<span class="nc" id="L429">        InputStream is = readFileFromRepository(dir, key);</span>
+<span class="nc bnc" id="L430" title="All 2 branches missed.">        if (is == null) return null;</span>
+
+<span class="nc" id="L432">        ObjectInputStream ois = new ObjectInputStream(is);</span>
+        try {
+<span class="nc" id="L434">            return ois.readObject();</span>
+        }
+<span class="nc" id="L436">        catch (ClassNotFoundException e)</span>
+        {
+            if (DEBUG) System.out.println(e);
+<span class="nc" id="L439">            return null;</span>
+        }
+<span class="nc" id="L441">        catch (ObjectStreamException e)</span>
+        {
+            if (DEBUG) System.out.println(e);
+<span class="nc" id="L444">            return null;</span>
+        }
+<span class="nc" id="L446">        catch (ClassCastException e)</span>
+        {
+            if (DEBUG) System.out.println(e);
+<span class="nc" id="L449">            return null;</span>
+        }
+<span class="nc" id="L451">        catch (EOFException e)</span>
+        {
+            if (DEBUG) System.out.println(e);
+<span class="nc" id="L454">            return null;</span>
+        }
+		finally
+		{
+<span class="nc" id="L458">			is.close();	</span>
+		}
+    }
+
+    public boolean putObjectIntoRepository(String key, Object obj)
+        throws IOException
+    {
+<span class="nc" id="L465">        return putObjectIntoRepository(null, key, obj);</span>
+    }
+
+    boolean putObjectIntoRepository(String dir, String key, Object obj)
+        throws IOException
+    {
+<span class="nc" id="L471">        OutputStream os = storeFileInRepository(dir, key);</span>
+		
+<span class="nc bnc" id="L473" title="All 2 branches missed.">		if (os == null) return false;</span>
+
+<span class="nc" id="L475">        ObjectOutputStream oos = new ObjectOutputStream(os);</span>
+        try {
+<span class="nc" id="L477">			oos.writeObject(obj);</span>
+<span class="nc" id="L478">			return true;</span>
+		}
+		finally
+		{
+<span class="nc" id="L482">			oos.close();</span>
+		}
+    }
+
+
+    /**
+     * Create a new producer.
+     *
+     * @param cat  the producer category (format, transform, source,
+	 *             read, parse or process).
+     * @param type the producer type, use &quot;&quot; for default.
+     *
+     * @return  a new Producer
+     *          or &lt;code&gt;null&lt;/code&gt; if it cannot be found.
+     */
+    Producer createProducer(String cat, String type)
+        throws LagoonException
+    {
+<span class="nc" id="L500">        Class cls = (Class)classDict.get(cat + &quot;:&quot; + type);</span>
+
+<span class="nc bnc" id="L502" title="All 2 branches missed.">        if (cls == null)</span>
+        try
+        {
+<span class="nc bnc" id="L505" title="All 2 branches missed.">			String fileName = &quot;/nu/staldal/lagoon/producer/&quot; + cat</span>
+				+ ((type == &quot;&quot;) ? &quot;&quot; : (&quot;-&quot; + type));
+
+<span class="nc" id="L508">			InputStream is = getClass().getResourceAsStream(fileName);</span>
+
+<span class="nc bnc" id="L510" title="All 2 branches missed.">			if (is == null) return null;</span>
+
+<span class="nc" id="L512">			BufferedReader br = new BufferedReader(new InputStreamReader(is));</span>
+<span class="nc" id="L513">			String className = br.readLine();</span>
+<span class="nc bnc" id="L514" title="All 2 branches missed.">			if (className == null)</span>
+<span class="nc" id="L515">				throw new LagoonException(</span>
+					&quot;Illegal Producer config file: &quot; + fileName);
+
+<span class="nc" id="L518">			String baseClassName =</span>
+				&quot;nu.staldal.lagoon.core.&quot; +
+<span class="nc" id="L520">				Character.toUpperCase(cat.charAt(0)) + cat.substring(1);</span>
+
+			try {
+<span class="nc" id="L523">				cls = Class.forName(className);</span>
+<span class="nc bnc" id="L524" title="All 2 branches missed.">				if (!Class.forName(baseClassName).isAssignableFrom(cls))</span>
+<span class="nc" id="L525">					throw new LagoonException(</span>
+						cat + &quot; class must derive from &quot; + baseClassName);
+
+<span class="nc" id="L528">				classDict.put(cat + &quot;:&quot; + type, cls);</span>
+			}
+<span class="nc" id="L530">			catch (ClassNotFoundException e)</span>
+			{
+<span class="nc" id="L532">				throw new LagoonException(</span>
+<span class="nc" id="L533">					&quot;Producer class cannot be found:&quot; + e.getMessage());</span>
+<span class="nc" id="L534">			}</span>
+
+<span class="nc" id="L536">			Hashtable params = new Hashtable();</span>
+
+			for (;;)
+			{
+<span class="nc" id="L540">				String s = br.readLine();</span>
+<span class="nc bnc" id="L541" title="All 2 branches missed.">				if (s == null) break;</span>
+
+<span class="nc" id="L543">				int colon = s.indexOf(':');</span>
+<span class="nc bnc" id="L544" title="All 2 branches missed.">				if (colon &lt; 1)</span>
+<span class="nc" id="L545">					throw new LagoonException(</span>
+						&quot;Illegal producer config file: &quot; + fileName);
+
+<span class="nc" id="L548">				String paramName = s.substring(0, colon).trim();</span>
+<span class="nc" id="L549">				String paramValue = s.substring(colon+1).trim();</span>
+
+<span class="nc" id="L551">				params.put(paramName, paramValue);</span>
+<span class="nc" id="L552">			}</span>
+<span class="nc" id="L553">			br.close();</span>
+
+<span class="nc" id="L555">			paramDict.put(cat + &quot;:&quot; + type, params);</span>
+		}
+<span class="nc" id="L557">        catch (IOException e)</span>
+        {
+<span class="nc" id="L559">            throw new LagoonException(</span>
+<span class="nc" id="L560">                &quot;Unable to read producer config file: &quot; + e.toString());</span>
+<span class="nc" id="L561">        }</span>
+
+        try {
+<span class="nc" id="L564">            Producer prod = (Producer)cls.newInstance();</span>
+
+<span class="nc" id="L566">            Hashtable params = (Hashtable)paramDict.get(cat + &quot;:&quot; + type);</span>
+
+<span class="nc bnc" id="L568" title="All 2 branches missed.">            for (Enumeration e = params.keys(); e.hasMoreElements(); )</span>
+            {
+<span class="nc" id="L570">                String name = (String)e.nextElement();</span>
+<span class="nc" id="L571">                String value = (String)params.get(name);</span>
+<span class="nc" id="L572">                prod.addParam(name, value);</span>
+<span class="nc" id="L573">            }</span>
+
+<span class="nc" id="L575">            return prod;</span>
+        }
+<span class="nc" id="L577">        catch (IllegalAccessException e)</span>
+        {
+<span class="nc" id="L579">            throw new LagoonException(</span>
+                &quot;Unable to instantiate producer class (illegal access): &quot; +
+<span class="nc" id="L581">                e.getMessage());</span>
+        }
+<span class="nc" id="L583">        catch (InstantiationException e)</span>
+        {
+<span class="nc" id="L585">            throw new LagoonException(</span>
+                &quot;Unable to instantiate producer class (instantiation failed): &quot; +
+<span class="nc" id="L587">                e.getMessage());</span>
+        }
+    }
+
+
+    /**
+     * Create a new file storage
+     *
+     * @param url  the URL
+     *
+     * @return  a new FileStorage
+     *          or &lt;code&gt;null&lt;/code&gt; if it cannot be found.
+     */
+    FileStorage createFileStorage(String url)
+        throws LagoonException
+    {
+<span class="nc" id="L603">        Class cls = null;</span>
+
+        String prefix;
+<span class="nc" id="L606">        int colon = url.indexOf(':');</span>
+<span class="nc bnc" id="L607" title="All 2 branches missed.">        if (colon &lt; 1)</span>
+        {
+<span class="nc" id="L609">			prefix = &quot;&quot;;</span>
+<span class="nc" id="L610">            cls = (Class)filestorageDict.get(&quot;&quot;);</span>
+        }
+        else
+        {
+<span class="nc" id="L614">            prefix = url.substring(0, colon);</span>
+<span class="nc" id="L615">            cls = (Class)filestorageDict.get(prefix);</span>
+<span class="nc bnc" id="L616" title="All 2 branches missed.">            if (cls == null)</span>
+            {
+<span class="nc" id="L618">                cls = (Class)filestorageDict.get(&quot;&quot;);</span>
+            }
+        }
+
+<span class="nc bnc" id="L622" title="All 2 branches missed.">        if (cls == null)</span>
+        try
+        {
+<span class="nc bnc" id="L625" title="All 2 branches missed.">			String fileName = &quot;/nu/staldal/lagoon/filestorage/FileStorage&quot;</span>
+				+ ((prefix == &quot;&quot;) ? &quot;&quot; : (&quot;-&quot; + prefix));
+
+<span class="nc" id="L628">			InputStream is = getClass().getResourceAsStream(fileName);</span>
+
+<span class="nc bnc" id="L630" title="All 2 branches missed.">			if (is == null)</span>
+			{
+<span class="nc" id="L632">				fileName = &quot;/nu/staldal/lagoon/filestorage/FileStorage&quot;;</span>
+
+<span class="nc" id="L634">				is = getClass().getResourceAsStream(fileName);</span>
+
+<span class="nc" id="L636">				prefix = &quot;&quot;;</span>
+			}
+
+<span class="nc bnc" id="L639" title="All 2 branches missed.">			if (is == null) return null;</span>
+
+<span class="nc" id="L641">			BufferedReader br = new BufferedReader(new InputStreamReader(is));</span>
+<span class="nc" id="L642">			String className = br.readLine();</span>
+<span class="nc" id="L643">			br.close();</span>
+<span class="nc bnc" id="L644" title="All 2 branches missed.">			if (className == null)</span>
+<span class="nc" id="L645">				throw new LagoonException(</span>
+					&quot;Illegal FileStorage config file: &quot; + fileName);
+
+<span class="nc" id="L648">			String baseClassName = &quot;nu.staldal.lagoon.core.FileStorage&quot;;</span>
+
+			try {
+<span class="nc" id="L651">				cls = Class.forName(className);</span>
+<span class="nc bnc" id="L652" title="All 2 branches missed.">				if (!Class.forName(baseClassName).isAssignableFrom(cls))</span>
+<span class="nc" id="L653">					throw new LagoonException(</span>
+						&quot;file storage class must derive from &quot;
+						+ baseClassName);
+
+<span class="nc" id="L657">				filestorageDict.put(prefix, cls);</span>
+			}
+<span class="nc" id="L659">			catch (ClassNotFoundException e)</span>
+			{
+<span class="nc" id="L661">				throw new LagoonException(</span>
+<span class="nc" id="L662">					&quot;FileStorage class cannot be found:&quot; + e.getMessage());</span>
+<span class="nc" id="L663">			}</span>
+		}
+<span class="nc" id="L665">        catch (IOException e)</span>
+        {
+<span class="nc" id="L667">            throw new LagoonException(</span>
+<span class="nc" id="L668">                &quot;Unable to read producer config file: &quot; + e.toString());</span>
+<span class="nc" id="L669">        }</span>
+
+        try {
+<span class="nc" id="L672">            return (FileStorage)cls.newInstance();</span>
+        }
+<span class="nc" id="L674">        catch (IllegalAccessException e)</span>
+        {
+<span class="nc" id="L676">            throw new LagoonException(</span>
+                &quot;Unable to instantiate file storage class (illegal access): &quot;
+<span class="nc" id="L678">                + e.getMessage());</span>
+        }
+<span class="nc" id="L680">        catch (InstantiationException e)</span>
+        {
+<span class="nc" id="L682">            throw new LagoonException(</span>
+                &quot;Unable to instantiate file storage class (instantiation failed): &quot;
+<span class="nc" id="L684">                + e.getMessage());</span>
+        }
+    }
+
+
+	public boolean canCheckFileHasBeenUpdated(String url)
+	{
+<span class="nc bnc" id="L691" title="All 2 branches missed.">		return !Utils.absoluteURL(url) </span>
+<span class="nc bnc" id="L692" title="All 2 branches missed.">			|| url.startsWith(&quot;part:&quot;)</span>
+<span class="nc bnc" id="L693" title="All 2 branches missed.">			|| url.startsWith(&quot;file:&quot;)</span>
+<span class="nc bnc" id="L694" title="All 2 branches missed.">			|| url.startsWith(&quot;res:&quot;);</span>
+	}
+
+
+    public File getSourceRootDir()
+	{
+<span class="nc" id="L700">		return sourceRootDir;		</span>
+	}
+
+	
+	public String getFileURLRelativeTo(String url, String base)
+    {
+<span class="nc bnc" id="L706" title="All 4 branches missed.">        if (Utils.absoluteURL(url) || Utils.pseudoAbsoluteURL(url))</span>
+		{
+<span class="nc" id="L708">            return url;</span>
+		}
+        else
+        {
+<span class="nc bnc" id="L712" title="All 2 branches missed.">            if (!Utils.pseudoAbsoluteURL(base))</span>
+<span class="nc" id="L713">                throw new IllegalArgumentException(</span>
+					&quot;base must be a pseudo-absolute URL&quot;);
+
+<span class="nc" id="L716">            int slash = base.lastIndexOf('/');</span>
+<span class="nc" id="L717">            String baseDir = base.substring(0, slash+1);</span>
+
+<span class="nc" id="L719">            return baseDir + url;</span>
+        }
+    }
+
+	
+	public String getProperty(String key)
+	{
+<span class="nc" id="L726">		return sitemap.getProperty(key);	</span>
+	}
+	
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

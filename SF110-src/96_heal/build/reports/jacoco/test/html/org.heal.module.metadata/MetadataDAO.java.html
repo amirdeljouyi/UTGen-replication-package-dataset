@@ -1,0 +1,1786 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MetadataDAO.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">96_heal</a> &gt; <a href="index.source.html" class="el_package">org.heal.module.metadata</a> &gt; <span class="el_source">MetadataDAO.java</span></div><h1>MetadataDAO.java</h1><pre class="source lang-java linenums">package org.heal.module.metadata;
+
+import com.ora.jsp.sql.NoSuchColumnException;
+import com.ora.jsp.sql.Row;
+import com.ora.jsp.sql.SQLCommandBean;
+import com.ora.jsp.sql.UnsupportedConversionException;
+import com.ora.jsp.sql.UnsupportedTypeException;
+import com.ora.jsp.sql.value.BooleanValue;
+import com.ora.jsp.sql.value.StringValue;
+import com.ora.jsp.sql.value.TimestampValue;
+
+import org.heal.util.CommonDAO;
+import org.heal.util.FileLocator;
+
+import javax.sql.DataSource;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.Serializable;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.Vector;
+import java.util.List;
+
+/**
+ * This DAO was created by Grace, its content came from original MetadataServicesBean.java.
+ * This contains the metadata access database functionality of
+ * saving metadata as well as looking up short and IMS
+ * records.  It also supports generating a metadata
+ * collection in XML (for NSDL support) as well as
+ * generating a list of content IDs for the NSDL.
+ *
+ * @author Seth Wright
+ * @author Grace Yang
+ */
+
+public class MetadataDAO implements Serializable {
+<span class="nc" id="L46">    public MetadataDAO() {</span>
+<span class="nc" id="L47">    }</span>
+
+    private DataSource dataSource;
+<span class="nc" id="L50">    private CommonDAO cd = new CommonDAO();</span>
+<span class="nc" id="L51">    private FileLocator fileLocator = null;</span>
+
+    private static final String METADATAINSERTSQL = &quot;INSERT INTO Metadata (FileName, FileSize, Title, Location, SourceCollection, SourceCollectionID, ContributeUserID, ContributeDate, Annotated, Inappropriate, Archived, Private, Description, PublicationId, SubmissionAgreement, LearningResourceType, SpecimenType, RadiographType, Orientation, Magnification, ClinicalHistory, FileWidth, FileHeight, Duration, ApproveDate, CatalogDate, RejectDate, CreationDate, LanguageType) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)&quot;;
+    private static final String METADATAUPDATESQL = &quot;UPDATE Metadata SET FileName = ?, FileSize = ?, Title = ?, Location = ?, SourceCollection = ?, SourceCollectionID = ?, ContributeUserID = ?, ContributeDate = ?, Annotated = ?, Inappropriate = ?, Archived = ?, Private = ?, Description = ?, PublicationId = ?, SubmissionAgreement = ?, LearningResourceType = ?, SpecimenType = ?, RadiographType = ?, Orientation = ?, Magnification = ?, ClinicalHistory = ?, FileWidth = ?, FileHeight = ?, Duration = ?, ApproveDate = ?, CatalogDate = ?, RejectDate = ?, CreationDate = ? WHERE MetadataID = ?&quot;;
+
+    private static final String PUBLICATIONINSERTSQL = &quot;INSERT INTO Publications (Name, PublicationDate) VALUES (?, ?)&quot;;
+    private static final String PUBLICATIONUPDATESQL = &quot;UPDATE Publications SET Name = ?, PublicationDate = ? WHERE PublicationId = ?&quot;;
+
+    private static final String METAMETADATA_IDENTIFIER_INSERT_SQL = &quot;INSERT INTO MetametadataIdentifiers (MetadataID, Catalogue, Entry, MetadataSchema) VALUES (?, ?, ?, ?)&quot;;
+    private static final String METAMETADATA_IDENTIFIER_UPDATE_SQL = &quot;UPDATE MetametadataIdentifiers SET MetadataID = ?, Catalogue = ?, Entry = ?, MetadataSchema = ? WHERE MetametadataIdentifierID = ?&quot;;
+
+    private static final String METAMETADATA_CONTRIBUTOR_INSERT_SQL = &quot;INSERT INTO MetametadataContributors (MetadataID, Role, ContributeDate, ContributeDateDescription, vCardID) VALUES (?, ?, ?, ?, ?)&quot;;
+    private static final String METAMETADATA_CONTRIBUTOR_UPDATE_SQL = &quot;UPDATE MetametadataContributors SET MetadataID = ?, Role = ?, ContributeDate = ?, ContributeDateDescription = ?, vCardID = ? WHERE MetametadataContributorID = ?&quot;;
+
+    /**
+     * Sets the dataSource property value.
+     */
+    public void setDataSource(DataSource dataSource) {
+<span class="nc" id="L69">        this.dataSource = dataSource;</span>
+<span class="nc" id="L70">    }</span>
+
+    public void setFileLocator(FileLocator newFileLocator) {
+<span class="nc" id="L73">        fileLocator = newFileLocator;</span>
+<span class="nc" id="L74">    }</span>
+
+    /**
+     * Returns a MetadataBean initialized with the information
+     * found in the database specified by the given metadataId,
+     * or null if the metadataId is not found in the database.
+     */
+    public MetadataBean getMetadata(String metadataId)
+            throws SQLException {
+<span class="nc" id="L83">        Connection conn = dataSource.getConnection();</span>
+<span class="nc" id="L84">        MetadataBean metaBean = null;</span>
+        try {
+<span class="nc" id="L86">            metaBean = cd.getMetadata(metadataId, conn);</span>
+        } finally {
+            try {
+<span class="nc" id="L89">                conn.close();</span>
+<span class="nc" id="L90">            } catch(SQLException ex) {</span>
+                //ignore...
+<span class="nc" id="L92">            }</span>
+        }
+<span class="nc" id="L94">        return metaBean;</span>
+    }
+
+    /**
+     * Inserts the information about the specified metadata, or
+     * updates the information if it is already defined in the
+     * database.
+     */
+    public void saveMetadata(MetadataBean metadataInfo) throws SQLException {
+        // Save the metadata info from the database
+<span class="nc" id="L104">        Connection conn = dataSource.getConnection();</span>
+<span class="nc" id="L105">        conn.setAutoCommit(false);</span>
+        try {
+<span class="nc" id="L107">            saveMetadata(metadataInfo, conn);</span>
+<span class="nc" id="L108">            conn.commit();</span>
+        } finally {
+            try {
+<span class="nc" id="L111">                conn.setAutoCommit(true);</span>
+<span class="nc" id="L112">                conn.close();</span>
+<span class="nc" id="L113">            } catch(SQLException e) {</span>
+<span class="nc" id="L114">            } // Ignore</span>
+        }
+<span class="nc" id="L116">    }</span>
+
+    /**
+     * Inserts the information about the specified metadata,
+     * or updates the information if it's already defined in the
+     * database.
+     */
+    public void saveMetadata(MetadataBean metadata, Connection conn) throws SQLException {
+<span class="nc bnc" id="L124" title="All 2 branches missed.">        if(metadata == null) {</span>
+<span class="nc" id="L125">            return;</span>
+        }
+
+        String sql;
+<span class="nc" id="L129">        MetadataBean dbInfo = cd.getMetadata(metadata.getMetadataId(), conn);</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">        if(dbInfo == null) {</span>
+            // Use INSERT statement
+<span class="nc" id="L132">            sql = METADATAINSERTSQL;</span>
+        } else {
+<span class="nc" id="L134">            sql = METADATAUPDATESQL;</span>
+        }
+
+        // Inserts the publication first in case we need the id
+<span class="nc bnc" id="L138" title="All 4 branches missed.">        if(null != metadata.getPublicationName() || null != metadata.getPublicationId()</span>
+<span class="nc bnc" id="L139" title="All 2 branches missed.">                || null != metadata.getPublicationDate()) {</span>
+<span class="nc" id="L140">            final int publicationId = savePublication(metadata.getPublicationId(), metadata.getPublicationName(), metadata.getPublicationDate());</span>
+<span class="nc" id="L141">            metadata.setPublicationId(String.valueOf(publicationId));</span>
+        }
+
+<span class="nc" id="L144">        SQLCommandBean sqlCommandBean = new SQLCommandBean();</span>
+<span class="nc" id="L145">        sqlCommandBean.setConnection(conn);</span>
+<span class="nc" id="L146">        sqlCommandBean.setSqlValue(sql);</span>
+<span class="nc" id="L147">        Vector values = new Vector();</span>
+<span class="nc" id="L148">        values.addElement(new StringValue(metadata.getFileName()));</span>
+<span class="nc" id="L149">        values.addElement(cd.getLongValue(metadata.getFileSize()));</span>
+<span class="nc" id="L150">        values.addElement(new StringValue(metadata.getTitle()));</span>
+<span class="nc" id="L151">        values.addElement(new StringValue(metadata.getLocation()));</span>
+<span class="nc" id="L152">        values.addElement(new StringValue(metadata.getSourceCollection()));</span>
+<span class="nc" id="L153">        values.addElement(new StringValue(metadata.getSourceCollectionId()));</span>
+<span class="nc" id="L154">        values.addElement(cd.getIntValue(metadata.getContributeUserId()));</span>
+<span class="nc" id="L155">        values.addElement(cd.getTimestampValue(metadata.getContributeDate()));</span>
+<span class="nc" id="L156">        values.addElement(new BooleanValue(metadata.isAnnotated()));</span>
+<span class="nc" id="L157">        values.addElement(new BooleanValue(metadata.isInappropriate()));</span>
+<span class="nc" id="L158">        values.addElement(new BooleanValue(metadata.isArchived()));</span>
+<span class="nc" id="L159">        values.addElement(new BooleanValue(metadata.isPrivate()));</span>
+<span class="nc" id="L160">        values.addElement(new StringValue(metadata.getDescription()));</span>
+<span class="nc" id="L161">        values.addElement(new StringValue(metadata.getPublicationId()));</span>
+<span class="nc" id="L162">        values.addElement(new StringValue(metadata.getSubmissionAgreement()));</span>
+<span class="nc" id="L163">        values.addElement(new StringValue(metadata.getLearningResourceType()));</span>
+<span class="nc" id="L164">        values.addElement(new StringValue(metadata.getSpecimenType()));</span>
+<span class="nc" id="L165">        values.addElement(new StringValue(metadata.getRadiographType()));</span>
+<span class="nc" id="L166">        values.addElement(new StringValue(metadata.getOrientation()));</span>
+<span class="nc" id="L167">        values.addElement(new StringValue(metadata.getMagnification()));</span>
+<span class="nc" id="L168">        values.addElement(new StringValue(metadata.getClinicalHistory()));</span>
+<span class="nc" id="L169">        values.addElement(cd.getIntValue(metadata.getFileWidth()));</span>
+<span class="nc" id="L170">        values.addElement(cd.getIntValue(metadata.getFileHeight()));</span>
+<span class="nc" id="L171">        values.addElement(cd.getIntValue(metadata.getDuration()));</span>
+<span class="nc" id="L172">        values.addElement(cd.getTimestampValue(metadata.getApproveDate()));</span>
+<span class="nc" id="L173">        values.addElement(cd.getTimestampValue(metadata.getCatalogDate()));</span>
+<span class="nc" id="L174">        values.addElement(cd.getTimestampValue(metadata.getRejectDate()));</span>
+<span class="nc" id="L175">        values.addElement(cd.getTimestampValue(metadata.getCreationDate()));</span>
+<span class="nc" id="L176">        values.addElement(new StringValue(metadata.getLanguageType()));</span>
+<span class="nc bnc" id="L177" title="All 2 branches missed.">        if(dbInfo != null) {</span>
+<span class="nc" id="L178">            values.addElement(new StringValue(metadata.getMetadataId()));</span>
+        }
+<span class="nc" id="L180">        sqlCommandBean.setValues(values);</span>
+<span class="nc" id="L181">        sqlCommandBean.executeUpdate();</span>
+<span class="nc" id="L182">    }</span>
+
+    /**
+     * Returns the short record for the specified metadata in XML format.
+     */
+    public String getShortRecord(String metadataId)
+            throws SQLException, IOException {
+<span class="nc" id="L189">        ShortMetadataBean metaInfo = getShortMetadata(metadataId);</span>
+<span class="nc" id="L190">        ByteArrayOutputStream stream = new ByteArrayOutputStream();</span>
+<span class="nc" id="L191">        HealMetadataXMLConverter.shortMetadataToXML(metaInfo, stream);</span>
+<span class="nc" id="L192">        return stream.toString();</span>
+    }
+
+    public ShortMetadataBean getShortMetadata(String metadataId)
+            throws SQLException {
+<span class="nc" id="L197">        Connection conn = dataSource.getConnection();</span>
+        // Get the metadata info from the database
+<span class="nc" id="L199">        Row metadataRow = cd.getMetadataProperty(metadataId,</span>
+                &quot;MetadataID, GlobalID, &quot; +
+                &quot;FileName, &quot; +
+                &quot;FileSize, Title, &quot; +
+                &quot;Description, Location, &quot; +
+                &quot;SourceCollection, &quot; +
+                &quot;FileWidth, FileHeight, &quot; +
+                &quot;ContributeUserID,&quot; +
+                &quot;LearningResourceType&quot;,
+                &quot;Metadata&quot;,
+                conn);
+
+<span class="nc bnc" id="L211" title="All 2 branches missed.">        if(metadataRow == null) {</span>
+<span class="nc" id="L212">            return null;</span>
+        }
+
+<span class="nc" id="L215">        ShortMetadataBean metadataInfo = new ShortMetadataBean();</span>
+        try {
+<span class="nc" id="L217">            String sc = (String)metadataRow.getString(&quot;SourceCollection&quot;);</span>
+<span class="nc" id="L218">            metadataInfo.setMetadataId(metadataRow.getString(&quot;MetadataID&quot;));</span>
+<span class="nc" id="L219">            metadataInfo.setGlobalId(metadataRow.getString(&quot;GlobalID&quot;));</span>
+<span class="nc" id="L220">            metadataInfo.setFileName(metadataRow.getString(&quot;FileName&quot;));</span>
+<span class="nc" id="L221">            metadataInfo.setFileSize(metadataRow.getString(&quot;FileSize&quot;));</span>
+<span class="nc" id="L222">            metadataInfo.setTitle(metadataRow.getString(&quot;Title&quot;));</span>
+<span class="nc" id="L223">            metadataInfo.setDescription(metadataRow.getString(&quot;Description&quot;));</span>
+<span class="nc" id="L224">            metadataInfo.setLocation(metadataRow.getString(&quot;Location&quot;));</span>
+<span class="nc" id="L225">            metadataInfo.setSourceCollection(metadataRow.getString(&quot;SourceCollection&quot;));</span>
+<span class="nc" id="L226">            metadataInfo.setFileWidth(metadataRow.getString(&quot;FileWidth&quot;));</span>
+<span class="nc" id="L227">            metadataInfo.setFileHeight(metadataRow.getString(&quot;FileHeight&quot;));</span>
+<span class="nc" id="L228">            metadataInfo.setContributeUserId(metadataRow.getString(&quot;ContributeUserID&quot;));</span>
+<span class="nc" id="L229">            metadataInfo.setLearningResourceType(metadataRow.getString(&quot;LearningResourceType&quot;));</span>
+<span class="nc" id="L230">            metadataInfo.setCollectionBean(cd.getSCollectionBean(sc, conn));</span>
+<span class="nc" id="L231">            metadataInfo.setThumbnail(cd.getThumbnail(metadataId, conn));</span>
+<span class="nc" id="L232">            String format = cd.getMetadataPropertyAsString(metadataId, &quot;Format&quot;, &quot;Formats&quot;, conn);</span>
+<span class="nc" id="L233">            metadataInfo.setFormat(format);</span>
+            /*        } catch (UnsupportedConversionException uce) {
+                  throw new SQLException(uce.toString());
+            */
+<span class="nc" id="L237">        } catch(NoSuchColumnException nsce) {</span>
+<span class="nc" id="L238">            throw new SQLException(nsce.toString());</span>
+        } finally {
+            try {
+<span class="nc" id="L241">                conn.close();</span>
+<span class="nc" id="L242">            } catch(SQLException ex) {</span>
+                //ignore...
+<span class="nc" id="L244">            }</span>
+        }
+
+<span class="nc" id="L247">        return metadataInfo;</span>
+    }
+
+    /**
+     * Returns the IMS record for the specified metadata in XML format.
+     * XXX Is the parameter here the global id or the metadata id?
+     */
+    public String getIMSRecord(String metadataId) throws SQLException, IOException {
+<span class="nc" id="L255">        CompleteMetadataBean metaInfo = getCompleteMetadata(metadataId);</span>
+<span class="nc" id="L256">        ByteArrayOutputStream stream = new ByteArrayOutputStream();</span>
+<span class="nc" id="L257">        HealMetadataXMLConverter.metadataToIMSXML(metaInfo, fileLocator, stream);</span>
+<span class="nc" id="L258">        return stream.toString();</span>
+    }
+
+    /**
+     * Returns information about the HEAL system as a whole.  This is to be
+     * returned to the NSDL, but the spec isn't out yet, so we don't know
+     * what to include here.
+     */
+    public String getCollectionMetadata() {
+<span class="nc" id="L267">        throw new UnsupportedOperationException(&quot;getCollectionMetadata not implemented&quot;);</span>
+    }
+
+
+    public CompleteMetadataBean getCompleteMetadata(String metadataId) throws SQLException {
+<span class="nc" id="L272">        Connection conn = dataSource.getConnection();</span>
+        CompleteMetadataBean result;
+        try {
+<span class="nc" id="L275">            result = getCompleteMetadata(metadataId, conn);</span>
+        } finally {
+            try {
+<span class="nc" id="L278">                conn.close();</span>
+<span class="nc" id="L279">            } catch(SQLException ex2) {</span>
+                //ignore
+<span class="nc" id="L281">            }</span>
+        }
+<span class="nc" id="L283">        return result;</span>
+    }
+
+    public CompleteMetadataBean getCompleteMetadata(String metadataId, Connection conn) throws SQLException {
+<span class="nc" id="L287">        CompleteMetadataBean result = new CompleteMetadataBean();</span>
+        try {
+<span class="nc" id="L289">            result.setMetadataId(metadataId);</span>
+<span class="nc" id="L290">            MetadataBean m = cd.getMetadata(metadataId, conn);</span>
+<span class="nc" id="L291">            String name= m.getSourceCollection();</span>
+<span class="nc" id="L292">            result.setMetadata(m);</span>
+<span class="nc" id="L293">            result.setDiseaseDiagnoses(getDiseaseDiagnoses(metadataId, conn));</span>
+<span class="nc" id="L294">            result.setCopyrights(getCopyrights(metadataId, conn));</span>
+<span class="nc" id="L295">            result.setTaxonPaths(getTaxonPaths(metadataId, conn));</span>
+<span class="nc" id="L296">            result.setCopyrightHolders(getCopyrightHolders(metadataId, conn));</span>
+<span class="nc" id="L297">            result.setContextURLs(getContextURLs(metadataId, conn));</span>
+<span class="nc" id="L298">            result.setRequirements(getRequirements(metadataId, conn));</span>
+<span class="nc" id="L299">            result.setContributors(getContributors(metadataId, conn));</span>
+<span class="nc" id="L300">            result.setRelations(getRelations(metadataId, conn));</span>
+<span class="nc" id="L301">            result.setKeywords(getKeywords(metadataId, conn));</span>
+<span class="nc" id="L302">            result.setTargetUserGroups(getTargetUserGroups(metadataId, conn));</span>
+<span class="nc" id="L303">            result.setFormats(getFormats(metadataId, conn));</span>
+<span class="nc" id="L304">            result.setThumbnail(cd.getThumbnail(metadataId, conn));</span>
+<span class="nc" id="L305">            result.setCollectionBean(cd.getSCollectionBean(name, conn));</span>
+<span class="nc" id="L306">            result.setMetametadataIdentifiers(cd.getMetametadataIdentifiers(metadataId, conn));</span>
+<span class="nc" id="L307">            result.setMetametadataContributors(cd.getMetametadataContributors(metadataId, conn));</span>
+<span class="nc" id="L308">        } catch(NoSuchColumnException ex) {</span>
+<span class="nc" id="L309">            throw new SQLException(ex.toString());</span>
+<span class="nc" id="L310">        }</span>
+<span class="nc" id="L311">        return result;</span>
+    }
+
+    /**
+     * @param metadataId The metadataId of the target user groups to look up.
+     * @param conn The connection to the database to query.
+     *
+     * @return Am ArrayList of {@link org.heal.module.metadata.TargetUserGroupBean TargetUserGroupBeans}.
+     *         This method will never return &lt;code&gt;null&lt;/code&gt;, but may return an empty
+     *         list if no target user groups are found for the given metadataId.
+     *
+     * @throws SQLException Thrown when a database error occurs.
+     */
+    private ArrayList getTargetUserGroups(String metadataId, Connection conn)
+            throws SQLException {
+<span class="nc" id="L326">        ArrayList ret = new ArrayList();</span>
+<span class="nc" id="L327">        Vector rows = cd.getMetadataProperties(metadataId, &quot;*&quot;, &quot;TargetUserGroups&quot;, conn);</span>
+<span class="nc bnc" id="L328" title="All 2 branches missed.">        if(null != rows) {</span>
+<span class="nc bnc" id="L329" title="All 2 branches missed.">            for(Iterator iter = rows.iterator(); iter.hasNext();) {</span>
+<span class="nc" id="L330">                Row row = (Row)iter.next();</span>
+
+                try {
+<span class="nc" id="L333">                    TargetUserGroupBean tug = new TargetUserGroupBean();</span>
+<span class="nc" id="L334">                    tug.setMetadataId(metadataId);</span>
+<span class="nc" id="L335">                    tug.setTargetUserGroup(row.getString(&quot;TargetUserGroup&quot;));</span>
+<span class="nc" id="L336">                    ret.add(tug);</span>
+<span class="nc" id="L337">                } catch(NoSuchColumnException e) {</span>
+<span class="nc" id="L338">                    throw new RuntimeException(e);</span>
+                    // TODO logging?
+<span class="nc" id="L340">                }</span>
+<span class="nc" id="L341">            }</span>
+        }
+<span class="nc" id="L343">        return ret;</span>
+    }
+
+
+    /**
+     * Saves a CompleteMetadataBean.  Only non-null properties are stored in
+     * the database.  For all properties except the MetadataBean, if the
+     * properties ID (i.e. TaxonID for a TaxonBean) is not null, an update
+     * will be performed for that entry.  If the ID is null, then an insert
+     * will be performed.
+     * If a set of data (for example the keywords) is null or empty, then no
+     * changes are made to those entries in the database.  If it is not
+     * null, then the keywords are added to the database, but the previous
+     * keywords stored in the database are not removed.  If you want to have
+     * the previous settings for the complete metadata bean fields removed,
+     * use updateCompleteMetadata.
+     */
+    public void saveCompleteMetadata(CompleteMetadataBean cmb) throws SQLException {
+<span class="nc" id="L361">        Connection conn = dataSource.getConnection();</span>
+<span class="nc" id="L362">        conn.setAutoCommit(false);</span>
+        try {
+<span class="nc" id="L364">            saveCompleteMetadata(cmb, conn);</span>
+<span class="nc" id="L365">            conn.commit();</span>
+        } finally {
+            try {
+<span class="nc" id="L368">                conn.setAutoCommit(true);</span>
+<span class="nc" id="L369">                conn.close();</span>
+<span class="nc" id="L370">            } catch(SQLException ex2) {</span>
+                //ignore
+<span class="nc" id="L372">            }</span>
+        }
+<span class="nc" id="L374">    }</span>
+
+    /**
+     * If the {@link CompleteMetadataBean} does not have a metadataId (for
+     * example if it represents a new record not yet in the database), then
+     * the &lt;code&gt;Connection&lt;/code&gt; &lt;em&gt;must&lt;/em&gt; be commited during the
+     * execution of this method.  However if a metadataId &lt;em&gt;does&lt;/em&gt; exist,
+     * then the transactional state of the &lt;code&gt;Connection&lt;/code&gt; will not
+     * be modified here.
+     *
+     * @see #saveCompleteMetadata(CompleteMetadataBean)
+     */
+    public void saveCompleteMetadata(CompleteMetadataBean cmb, Connection conn) throws SQLException {
+        List elems;
+        Iterator elemIterator;
+
+<span class="nc" id="L390">        saveMetadata(cmb, conn);</span>
+
+<span class="nc" id="L392">        String metadataId = cmb.getMetadataId();</span>
+<span class="nc bnc" id="L393" title="All 2 branches missed.">        if(metadataId == null) {</span>
+<span class="nc" id="L394">            conn.commit(); //we need to store the metadata</span>
+            //now we look it up via the location so that we can get the id.
+<span class="nc" id="L396">            metadataId = getMetadataIdFromProperty(cmb.getLocation(),</span>
+                    &quot;Location&quot;,
+                    conn);
+        }
+
+<span class="nc" id="L401">        cmb.setMetadataId(metadataId);</span>
+<span class="nc" id="L402">        elems = cmb.getDiseaseDiagnoses();</span>
+<span class="nc bnc" id="L403" title="All 2 branches missed.">        if(elems != null) {</span>
+<span class="nc" id="L404">            elemIterator = elems.iterator();</span>
+            DiseaseDiagnosisBean elem;
+<span class="nc bnc" id="L406" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L407">                elem = (DiseaseDiagnosisBean)elemIterator.next();</span>
+<span class="nc" id="L408">                elem.setMetadataId(metadataId);</span>
+<span class="nc" id="L409">                cd.saveDiseaseDiagnosis(elem, conn);</span>
+            }
+        }
+
+<span class="nc" id="L413">        elems = cmb.getCopyrights();</span>
+<span class="nc bnc" id="L414" title="All 2 branches missed.">        if(elems != null) {</span>
+<span class="nc" id="L415">            elemIterator = elems.iterator();</span>
+            CopyrightBean elem;
+<span class="nc bnc" id="L417" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L418">                elem = (CopyrightBean)elemIterator.next();</span>
+<span class="nc" id="L419">                elem.setMetadataId(metadataId);</span>
+<span class="nc" id="L420">                cd.saveCopyright(elem, conn);</span>
+            }
+        }
+
+<span class="nc" id="L424">        elems = cmb.getTaxonPaths();</span>
+<span class="nc bnc" id="L425" title="All 2 branches missed.">        if(elems != null) {</span>
+<span class="nc" id="L426">            elemIterator = elems.iterator();</span>
+            TaxonPathBean elem;
+<span class="nc bnc" id="L428" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L429">                elem = (TaxonPathBean)elemIterator.next();</span>
+<span class="nc" id="L430">                elem.setMetadataId(metadataId);</span>
+<span class="nc" id="L431">                cd.saveTaxonPath(elem, conn);</span>
+            }
+        }
+<span class="nc" id="L434">        elems = cmb.getCopyrightHolders();</span>
+<span class="nc bnc" id="L435" title="All 2 branches missed.">        if(elems != null) {</span>
+<span class="nc" id="L436">            elemIterator = elems.iterator();</span>
+            CopyrightHolderBean elem;
+<span class="nc bnc" id="L438" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L439">                elem = (CopyrightHolderBean)elemIterator.next();</span>
+<span class="nc" id="L440">                elem.setMetadataId(metadataId);</span>
+<span class="nc" id="L441">                cd.saveCopyrightHolder(elem, conn);</span>
+            }
+        }
+<span class="nc" id="L444">        elems = cmb.getContextURLs();</span>
+<span class="nc bnc" id="L445" title="All 2 branches missed.">        if(elems != null) {</span>
+<span class="nc" id="L446">            elemIterator = elems.iterator();</span>
+            ContextURLBean elem;
+<span class="nc bnc" id="L448" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L449">                elem = (ContextURLBean)elemIterator.next();</span>
+<span class="nc" id="L450">                elem.setMetadataId(metadataId);</span>
+<span class="nc" id="L451">                cd.saveContextURL(elem, conn);</span>
+            }
+        }
+<span class="nc" id="L454">        elems = cmb.getRequirements();</span>
+<span class="nc bnc" id="L455" title="All 2 branches missed.">        if(elems != null) {</span>
+<span class="nc" id="L456">            elemIterator = elems.iterator();</span>
+            RequirementBean elem;
+<span class="nc bnc" id="L458" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L459">                elem = (RequirementBean)elemIterator.next();</span>
+<span class="nc" id="L460">                elem.setMetadataId(metadataId);</span>
+<span class="nc" id="L461">                cd.saveRequirement(elem, conn);</span>
+            }
+        }
+
+<span class="nc" id="L465">        TreeMap contributors = cmb.getContributors();</span>
+<span class="nc" id="L466">        Iterator contributorsIterator = contributors.values().iterator();</span>
+<span class="nc bnc" id="L467" title="All 2 branches missed.">        while(contributorsIterator.hasNext()) {</span>
+<span class="nc" id="L468">            elems = (ArrayList)contributorsIterator.next();</span>
+<span class="nc bnc" id="L469" title="All 2 branches missed.">            if(elems != null) {</span>
+<span class="nc" id="L470">                elemIterator = elems.iterator();</span>
+                ContributorBean elem;
+<span class="nc bnc" id="L472" title="All 2 branches missed.">                while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L473">                    elem = (ContributorBean)elemIterator.next();</span>
+<span class="nc" id="L474">                    elem.setMetadataId(metadataId);</span>
+<span class="nc" id="L475">                    cd.saveContributor(elem, conn);</span>
+                }
+<span class="nc" id="L477">            }</span>
+        }
+
+<span class="nc" id="L480">        elems = cmb.getRelations();</span>
+<span class="nc bnc" id="L481" title="All 2 branches missed.">        if(elems != null) {</span>
+<span class="nc" id="L482">            elemIterator = elems.iterator();</span>
+            RelationBean elem;
+<span class="nc bnc" id="L484" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L485">                elem = (RelationBean)elemIterator.next();</span>
+<span class="nc" id="L486">                elem.setMetadataId(metadataId);</span>
+<span class="nc" id="L487">                cd.saveRelation(elem, conn);</span>
+            }
+        }
+<span class="nc" id="L490">        elems = cmb.getKeywords();</span>
+<span class="nc bnc" id="L491" title="All 2 branches missed.">        if(elems != null) {</span>
+<span class="nc" id="L492">            elemIterator = elems.iterator();</span>
+            KeywordBean elem;
+<span class="nc bnc" id="L494" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L495">                elem = (KeywordBean)elemIterator.next();</span>
+<span class="nc" id="L496">                elem.setMetadataId(metadataId);</span>
+<span class="nc" id="L497">                cd.saveKeyword(elem, conn);</span>
+            }
+        }
+
+<span class="nc" id="L501">        elems = cmb.getTargetUserGroups();</span>
+<span class="nc bnc" id="L502" title="All 2 branches missed.">        if(null != elems) {</span>
+            TargetUserGroupBean elem;
+<span class="nc" id="L504">            elemIterator = elems.iterator();</span>
+<span class="nc bnc" id="L505" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L506">                elem = (TargetUserGroupBean)elemIterator.next();</span>
+<span class="nc" id="L507">                elem.setMetadataId(metadataId);</span>
+<span class="nc" id="L508">                cd.saveTargetUserGroup(elem, conn);</span>
+            }
+        }
+
+<span class="nc" id="L512">        elems = cmb.getFormats();</span>
+<span class="nc bnc" id="L513" title="All 2 branches missed.">        if(elems != null) {</span>
+<span class="nc" id="L514">            elemIterator = elems.iterator();</span>
+            FormatBean elem;
+<span class="nc bnc" id="L516" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L517">                elem = (FormatBean)elemIterator.next();</span>
+<span class="nc" id="L518">                elem.setMetadataId(metadataId);</span>
+<span class="nc" id="L519">                cd.saveFormat(elem, conn);</span>
+            }
+        }
+<span class="nc" id="L522">        ThumbnailBean thumbnail = cmb.getThumbnail();</span>
+<span class="nc bnc" id="L523" title="All 2 branches missed.">        if(thumbnail != null) {</span>
+<span class="nc" id="L524">            thumbnail.setMetadataId(metadataId);</span>
+<span class="nc" id="L525">            cd.saveThumbnail(thumbnail, conn);</span>
+        }
+
+<span class="nc" id="L528">        elems = cmb.getMetametadataIdentifiers();</span>
+<span class="nc bnc" id="L529" title="All 2 branches missed.">        if(null != elems) {</span>
+            MetametadataIdentifierBean mib;
+<span class="nc" id="L531">            elemIterator = elems.listIterator();</span>
+<span class="nc bnc" id="L532" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L533">                mib = (MetametadataIdentifierBean)elemIterator.next();</span>
+<span class="nc" id="L534">                mib.setMetadataId(metadataId);</span>
+<span class="nc" id="L535">                saveMetametadataIdentifier(mib, conn);</span>
+            }
+        }
+
+<span class="nc" id="L539">        elems = cmb.getMetametadataContributors();</span>
+<span class="nc bnc" id="L540" title="All 2 branches missed.">        if(null != elems) {</span>
+            MetametadataContributorBean mcb;
+<span class="nc" id="L542">            elemIterator = elems.listIterator();</span>
+<span class="nc bnc" id="L543" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L544">                mcb = (MetametadataContributorBean)elemIterator.next();</span>
+<span class="nc" id="L545">                mcb.setMetadataId(metadataId);</span>
+<span class="nc" id="L546">                saveMetametadataContributor(mcb, conn);</span>
+            }
+        }
+<span class="nc" id="L549">    }</span>
+
+    /**
+     * Updates a CompleteMetadataBean.
+     * This differs from the saveCompleteMetadata method in that
+     * it will remove entries in the database that do not show up
+     * in the complete metadata parameter.
+     */
+    public void updateCompleteMetadata(CompleteMetadataBean cmb)
+            throws SQLException {
+<span class="nc" id="L559">        Connection conn = dataSource.getConnection();</span>
+<span class="nc" id="L560">        conn.setAutoCommit(false);</span>
+        try {
+<span class="nc" id="L562">            updateCompleteMetadata(cmb, conn);</span>
+<span class="nc" id="L563">            conn.commit();</span>
+        } finally {
+            try {
+<span class="nc" id="L566">                conn.setAutoCommit(true);</span>
+<span class="nc" id="L567">                conn.close();</span>
+<span class="nc" id="L568">            } catch(SQLException ex2) {</span>
+                //ignore
+<span class="nc" id="L570">            }</span>
+        }
+<span class="nc" id="L572">    }</span>
+
+
+    /**
+     * Updates a CompleteMetadataBean.
+     * See updateCompleteMetadata(cmb)
+     */
+    public void updateCompleteMetadata(CompleteMetadataBean cmb,
+                                       Connection conn)
+            throws SQLException {
+<span class="nc bnc" id="L582" title="All 2 branches missed.">        if(cmb == null ||</span>
+<span class="nc bnc" id="L583" title="All 4 branches missed.">                cmb.getMetadataId() == null ||</span>
+                conn == null) {
+<span class="nc" id="L585">            return;</span>
+        }
+<span class="nc" id="L587">        String metadataId = cmb.getMetadataId();</span>
+        /* STRATEGY ALERT: (by Seth Wright)
+         * In the interest of finishing this portion of the project on time
+         * I am taking a slight shortcut.  Rather than determining the
+         * difference between the current database settings and the one we
+         * want, I am simply deleting all old entries and adding new ones.
+         * This could result in a large growth in the id numbers of
+         * such tables as keywords entries.
+         * So, here is what we do, we remove all settings from the database
+         * that are one to many relations and then call saveCompleteMetadata
+         * The fields with multiple entries are:
+         * taxons/taxonpaths
+         * relations
+         * requirements
+         * keywords
+         * formats
+         * disease diagnoses
+         * copyright holders
+         * contexturls
+         * contributors
+         * copyrights/copyrighttexts
+         */
+<span class="nc" id="L609">        cd.removeMetadataFromTable(metadataId, &quot;Relations&quot;, conn);</span>
+<span class="nc" id="L610">        cd.removeMetadataFromTable(metadataId, &quot;Requirements&quot;, conn);</span>
+<span class="nc" id="L611">        cd.removeMetadataFromTable(metadataId, &quot;Keywords&quot;, conn);</span>
+<span class="nc" id="L612">        cd.removeMetadataFromTable(metadataId, &quot;Formats&quot;, conn);</span>
+<span class="nc" id="L613">        cd.removeMetadataFromTable(metadataId, &quot;DiseaseDiagnoses&quot;, conn);</span>
+<span class="nc" id="L614">        cd.removeMetadataFromTable(metadataId, &quot;CopyrightHolders&quot;, conn);</span>
+<span class="nc" id="L615">        cd.removeMetadataFromTable(metadataId, &quot;ContextURLs&quot;, conn);</span>
+<span class="nc" id="L616">        cd.removeMetadataFromTable(metadataId, &quot;Contributors&quot;, conn);</span>
+<span class="nc" id="L617">        cd.removeMetadataFromTable(metadataId, &quot;TargetUserGroups&quot;, conn);</span>
+<span class="nc" id="L618">        cd.removeTaxonPaths(metadataId, conn);</span>
+<span class="nc" id="L619">        cd.removeCopyrights(metadataId, conn);</span>
+<span class="nc" id="L620">        doUpdateHack(cmb);</span>
+<span class="nc" id="L621">        saveCompleteMetadata(cmb, conn);</span>
+<span class="nc" id="L622">    }</span>
+
+    /**
+     * The update hack is where the IDs (such as
+     * KeywordId) are stripped from the complete metadata bean.
+     * This is done so that saveCompleteMetadata works correctly.
+     */
+    private void doUpdateHack(CompleteMetadataBean cmb) {
+        ArrayList elems;
+        Iterator elemIterator;
+        /* change log
+        elems = cmb.getDiseaseDiagnoses();
+        if (elems != null) {
+            elemIterator = elems.iterator();
+            DiseaseDiagnosisBean elem;
+            while (elemIterator.hasNext()) {
+            elem = (DiseaseDiagnosisBean)elemIterator.next();
+            elem.setDiseaseDiagnosisId(null);
+            }
+        }*/
+
+<span class="nc" id="L643">        elems = cmb.getCopyrights();</span>
+<span class="nc bnc" id="L644" title="All 2 branches missed.">        if(elems != null) {</span>
+<span class="nc" id="L645">            elemIterator = elems.iterator();</span>
+            CopyrightBean elem;
+<span class="nc bnc" id="L647" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L648">                elem = (CopyrightBean)elemIterator.next();</span>
+<span class="nc" id="L649">                elem.setCopyrightId(null);</span>
+            }
+        }
+
+<span class="nc" id="L653">        elems = cmb.getTaxonPaths();</span>
+<span class="nc bnc" id="L654" title="All 2 branches missed.">        if(elems != null) {</span>
+<span class="nc" id="L655">            elemIterator = elems.iterator();</span>
+            TaxonPathBean elem;
+<span class="nc bnc" id="L657" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L658">                elem = (TaxonPathBean)elemIterator.next();</span>
+<span class="nc" id="L659">                elem.setTaxonPathId(null);</span>
+            }
+        }
+<span class="nc" id="L662">        elems = cmb.getCopyrightHolders();</span>
+<span class="nc bnc" id="L663" title="All 2 branches missed.">        if(elems != null) {</span>
+<span class="nc" id="L664">            elemIterator = elems.iterator();</span>
+            CopyrightHolderBean elem;
+<span class="nc bnc" id="L666" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L667">                elem = (CopyrightHolderBean)elemIterator.next();</span>
+<span class="nc" id="L668">                elem.setCopyrightHolderId(null);</span>
+            }
+        }
+<span class="nc" id="L671">        elems = cmb.getContextURLs();</span>
+<span class="nc bnc" id="L672" title="All 2 branches missed.">        if(elems != null) {</span>
+<span class="nc" id="L673">            elemIterator = elems.iterator();</span>
+            ContextURLBean elem;
+<span class="nc bnc" id="L675" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L676">                elem = (ContextURLBean)elemIterator.next();</span>
+<span class="nc" id="L677">                elem.setContextURLId(null);</span>
+            }
+        }
+<span class="nc" id="L680">        elems = cmb.getRequirements();</span>
+<span class="nc bnc" id="L681" title="All 2 branches missed.">        if(elems != null) {</span>
+<span class="nc" id="L682">            elemIterator = elems.iterator();</span>
+            RequirementBean elem;
+<span class="nc bnc" id="L684" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L685">                elem = (RequirementBean)elemIterator.next();</span>
+<span class="nc" id="L686">                elem.setRequirementId(null);</span>
+            }
+        }
+
+<span class="nc" id="L690">        TreeMap contributors = cmb.getContributors();</span>
+<span class="nc" id="L691">        Iterator contributorsIterator = contributors.values().iterator();</span>
+<span class="nc bnc" id="L692" title="All 2 branches missed.">        while(contributorsIterator.hasNext()) {</span>
+<span class="nc" id="L693">            elems = (ArrayList)contributorsIterator.next();</span>
+<span class="nc bnc" id="L694" title="All 2 branches missed.">            if(elems != null) {</span>
+<span class="nc" id="L695">                elemIterator = elems.iterator();</span>
+                ContributorBean elem;
+<span class="nc bnc" id="L697" title="All 2 branches missed.">                while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L698">                    elem = (ContributorBean)elemIterator.next();</span>
+<span class="nc" id="L699">                    elem.setContributorId(null);</span>
+                }
+<span class="nc" id="L701">            }</span>
+        }
+
+<span class="nc" id="L704">        elems = cmb.getRelations();</span>
+<span class="nc bnc" id="L705" title="All 2 branches missed.">        if(elems != null) {</span>
+<span class="nc" id="L706">            elemIterator = elems.iterator();</span>
+            RelationBean elem;
+<span class="nc bnc" id="L708" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L709">                elem = (RelationBean)elemIterator.next();</span>
+<span class="nc" id="L710">                elem.setRelationId(null);</span>
+            }
+        }
+<span class="nc" id="L713">        elems = cmb.getKeywords();</span>
+<span class="nc bnc" id="L714" title="All 2 branches missed.">        if(elems != null) {</span>
+<span class="nc" id="L715">            elemIterator = elems.iterator();</span>
+            KeywordBean elem;
+<span class="nc bnc" id="L717" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L718">                elem = (KeywordBean)elemIterator.next();</span>
+<span class="nc" id="L719">                elem.setKeywordId(null);</span>
+            }
+        }
+
+<span class="nc" id="L723">        elems = cmb.getFormats();</span>
+<span class="nc bnc" id="L724" title="All 2 branches missed.">        if(elems != null) {</span>
+<span class="nc" id="L725">            elemIterator = elems.iterator();</span>
+            FormatBean elem;
+<span class="nc bnc" id="L727" title="All 2 branches missed.">            while(elemIterator.hasNext()) {</span>
+<span class="nc" id="L728">                elem = (FormatBean)elemIterator.next();</span>
+<span class="nc" id="L729">                elem.setFormatId(null);</span>
+            }
+        }
+<span class="nc" id="L732">    }</span>
+
+    /**
+     * Given a metadataId, creates an entry for that metadata in the
+     * DeletedItems table with information from the current Metadata
+     * table and the provided comment.  The DeleteDate will be set
+     * as the current date.
+     * Returns true if no problems occured, false otherwise.
+     */
+    public boolean moveToDeletedItems(String metadataId, String comment, Connection conn)
+            throws SQLException {
+<span class="nc" id="L743">        boolean success = false;</span>
+<span class="nc" id="L744">        MetadataBean metadata = cd.getMetadata(metadataId, conn);</span>
+<span class="nc" id="L745">        cd.addToDeletedItems(metadata, comment, conn);</span>
+<span class="nc" id="L746">        success = cd.deleteMetadataReferences(metadataId, conn);</span>
+<span class="nc" id="L747">        cd.removeMetadataFromTable(metadataId, &quot;Metadata&quot;, conn);</span>
+<span class="nc" id="L748">        return success;</span>
+    }
+
+    /**
+     * Returns a ArrayList of DiseaseDiagnosisBeans associated with the
+     * given metadataId.
+     * If no diagnoses are found or an error occurs, an empty
+     * ArrayList is returned.
+     */
+    public ArrayList getDiseaseDiagnoses(String metadataId, Connection conn) throws SQLException, NoSuchColumnException {
+<span class="nc" id="L758">        ArrayList results = new ArrayList();</span>
+<span class="nc bnc" id="L759" title="All 2 branches missed.">        if(metadataId != null) {</span>
+<span class="nc" id="L760">            Vector rows = cd.getMetadataProperties(metadataId, &quot;DiseaseDiagnosisID, &quot; + &quot;DiseaseDiagnosis&quot;, &quot;DiseaseDiagnoses&quot;, conn);</span>
+<span class="nc bnc" id="L761" title="All 4 branches missed.">            if(rows != null &amp;&amp; rows.size() &gt; 0) {</span>
+<span class="nc" id="L762">                Iterator rowIterator = rows.iterator();</span>
+                Row row;
+                DiseaseDiagnosisBean dd;
+                String id;
+                String ddString;
+<span class="nc bnc" id="L767" title="All 2 branches missed.">                while(rowIterator.hasNext()) {</span>
+<span class="nc" id="L768">                    row = (Row)rowIterator.next();</span>
+<span class="nc" id="L769">                    dd = new DiseaseDiagnosisBean();</span>
+<span class="nc" id="L770">                    id = row.getString(&quot;DiseaseDiagnosisID&quot;);</span>
+<span class="nc" id="L771">                    ddString = row.getString(&quot;DiseaseDiagnosis&quot;);</span>
+<span class="nc" id="L772">                    dd.setDiseaseDiagnosisId(id);</span>
+<span class="nc" id="L773">                    dd.setMetadataId(metadataId);</span>
+<span class="nc" id="L774">                    dd.setDiseaseDiagnosis(ddString);</span>
+<span class="nc" id="L775">                    results.add(dd);</span>
+                }
+            }
+        }
+<span class="nc" id="L779">        return results;</span>
+    }
+
+    /**
+     * Returns a ArrayList of CopyrightBeans associated with the
+     * given metadataId.
+     * If no copyrightss are found or an error occurs, an empty
+     * ArrayList is returned.
+     */
+    public ArrayList getCopyrights(String metadataId, Connection conn) throws SQLException, NoSuchColumnException {
+<span class="nc" id="L789">        ArrayList results = new ArrayList();</span>
+<span class="nc bnc" id="L790" title="All 2 branches missed.">        if(metadataId != null) {</span>
+<span class="nc" id="L791">            Vector rows = cd.getMetadataProperties(metadataId, &quot;CopyrightID, CopyrightTextID&quot;, &quot;Copyrights&quot;, conn);</span>
+<span class="nc bnc" id="L792" title="All 4 branches missed.">            if(rows != null &amp;&amp; rows.size() &gt; 0) {</span>
+<span class="nc" id="L793">                Iterator rowIterator = rows.iterator();</span>
+                Row row;
+                CopyrightBean copyright;
+                CopyrightTextBean copyrightText;
+                String copyrightTextString;
+                String copyrightId;
+                String copyrightTextId;
+<span class="nc" id="L800">                SQLCommandBean sqlCommandBean = new SQLCommandBean();</span>
+<span class="nc" id="L801">                sqlCommandBean.setConnection(conn);</span>
+<span class="nc" id="L802">                sqlCommandBean.setSqlValue(&quot;SELECT CopyrightText FROM CopyrightTexts WHERE CopyrightTextID = ?&quot;);</span>
+<span class="nc" id="L803">                Vector values = new Vector();</span>
+<span class="nc" id="L804">                Vector copyrighttextrows = null;</span>
+<span class="nc bnc" id="L805" title="All 2 branches missed.">                while(rowIterator.hasNext()) {</span>
+<span class="nc" id="L806">                    row = (Row)rowIterator.next();</span>
+<span class="nc" id="L807">                    copyright = new CopyrightBean();</span>
+<span class="nc" id="L808">                    copyrightId = row.getString(&quot;CopyrightID&quot;);</span>
+<span class="nc" id="L809">                    copyrightTextId = row.getString(&quot;CopyrightTextID&quot;);</span>
+<span class="nc" id="L810">                    copyright.setCopyrightId(copyrightId);</span>
+<span class="nc" id="L811">                    copyright.setMetadataId(metadataId);</span>
+<span class="nc" id="L812">                    copyrightText = null;</span>
+<span class="nc" id="L813">                    values.clear();</span>
+<span class="nc" id="L814">                    values.addElement(new StringValue(copyrightTextId));</span>
+<span class="nc" id="L815">                    sqlCommandBean.setValues(values);</span>
+                    try {
+<span class="nc" id="L817">                        copyrighttextrows = sqlCommandBean.executeQuery();</span>
+<span class="nc" id="L818">                    } catch(UnsupportedTypeException e) {</span>
+<span class="nc" id="L819">                        throw new SQLException(e.toString());</span>
+<span class="nc" id="L820">                    }</span>
+<span class="nc bnc" id="L821" title="All 4 branches missed.">                    if(copyrighttextrows != null &amp;&amp; copyrighttextrows.size() &gt; 0) {</span>
+<span class="nc" id="L822">                        row = (Row)copyrighttextrows.firstElement();</span>
+<span class="nc" id="L823">                        copyrightTextString = row.getString(&quot;CopyrightText&quot;);</span>
+<span class="nc" id="L824">                        copyrightText = new CopyrightTextBean();</span>
+<span class="nc" id="L825">                        copyrightText.setCopyrightTextId(copyrightTextId);</span>
+<span class="nc" id="L826">                        copyrightText.setCopyrightText(copyrightTextString);</span>
+                    }
+<span class="nc" id="L828">                    copyright.setCopyrightText(copyrightText);</span>
+<span class="nc" id="L829">                    results.add(copyright);</span>
+                }
+            }
+        }
+<span class="nc" id="L833">        return results;</span>
+    }
+
+    /**
+     * Returns a ArrayList of CopyrightHolderBeans associated with the
+     * given metadataId.
+     * If no copyright holders are found or an error occurs, an empty
+     * ArrayList is returned.
+     */
+    public ArrayList getCopyrightHolders(String metadataId, Connection conn) throws SQLException, NoSuchColumnException {
+<span class="nc" id="L843">        ArrayList results = new ArrayList();</span>
+<span class="nc bnc" id="L844" title="All 2 branches missed.">        if(metadataId != null) {</span>
+            // queries the database
+            Vector rows;
+<span class="nc" id="L847">            SQLCommandBean sqlCommandBean = new SQLCommandBean();</span>
+<span class="nc" id="L848">            sqlCommandBean.setConnection(conn);</span>
+<span class="nc" id="L849">            StringBuffer sql = new StringBuffer();</span>
+<span class="nc" id="L850">            sql.append(&quot;SELECT a.CopyrightHolderID, b.vCard &quot;);</span>
+<span class="nc" id="L851">            sql.append(&quot;FROM  CopyrightHolders a INNER JOIN&quot;);</span>
+<span class="nc" id="L852">            sql.append(&quot;  vCards b ON a.vCardID = b.vCardID &quot;);</span>
+<span class="nc" id="L853">            sql.append(&quot;WHERE  (a.MetadataID = ?)&quot;);</span>
+<span class="nc" id="L854">            sqlCommandBean.setSqlValue(sql.toString());</span>
+<span class="nc" id="L855">            Vector values = new Vector();</span>
+<span class="nc" id="L856">            values.addElement(new StringValue(metadataId));</span>
+<span class="nc" id="L857">            sqlCommandBean.setValues(values);</span>
+            try {
+<span class="nc" id="L859">                rows = sqlCommandBean.executeQuery();</span>
+<span class="nc" id="L860">            } catch(UnsupportedTypeException e) {</span>
+<span class="nc" id="L861">                throw new SQLException(e.toString());</span>
+<span class="nc" id="L862">            }</span>
+<span class="nc bnc" id="L863" title="All 4 branches missed.">            if(rows != null &amp;&amp; rows.size() &gt; 0) {</span>
+<span class="nc" id="L864">                Iterator rowIterator = rows.iterator();</span>
+                Row row;
+                CopyrightHolderBean ch;
+                String id;
+                String chString;
+<span class="nc bnc" id="L869" title="All 2 branches missed.">                while(rowIterator.hasNext()) {</span>
+<span class="nc" id="L870">                    row = (Row)rowIterator.next();</span>
+<span class="nc" id="L871">                    ch = new CopyrightHolderBean();</span>
+<span class="nc" id="L872">                    id = row.getString(&quot;CopyrightHolderID&quot;);</span>
+<span class="nc" id="L873">                    chString = row.getString(&quot;VCard&quot;);</span>
+<span class="nc" id="L874">                    ch.setCopyrightHolderId(id);</span>
+<span class="nc" id="L875">                    ch.setMetadataId(metadataId);</span>
+<span class="nc" id="L876">                    ch.setVCard(chString);</span>
+<span class="nc" id="L877">                    results.add(ch);</span>
+                }
+            }
+        }
+<span class="nc" id="L881">        return results;</span>
+    }
+
+
+    /**
+     * Returns a ArrayList of TaxonPathBeans associated with the given
+     * metadataId.
+     * If no taxonPathss are found or an error occurs, an empty
+     * ArrayList is returned.
+     */
+
+    public ArrayList getTaxonPaths(String metadataId) throws SQLException{
+<span class="nc" id="L893">        Connection conn = dataSource.getConnection();</span>
+        try{
+<span class="nc" id="L895">          return getTaxonPaths(metadataId, conn);</span>
+        }
+<span class="nc" id="L897">        catch(NoSuchColumnException ex) {</span>
+<span class="nc" id="L898">          throw new SQLException(ex.toString());</span>
+        }
+    }
+
+
+    /**
+     * Returns a ArrayList of TaxonPathBeans associated with the given
+     * metadataId.
+     * If no taxonPathss are found or an error occurs, an empty
+     * ArrayList is returned.
+     */
+    public ArrayList getTaxonPaths(String metadataId, Connection conn) throws SQLException, NoSuchColumnException {
+<span class="nc" id="L910">        ArrayList results = new ArrayList();</span>
+<span class="nc bnc" id="L911" title="All 2 branches missed.">        if(metadataId != null) {</span>
+<span class="nc" id="L912">            Vector rows = cd.getMetadataProperties(metadataId, &quot;TaxonPathID, Source&quot;, &quot;TaxonPaths&quot;, conn);</span>
+<span class="nc bnc" id="L913" title="All 4 branches missed.">            if(rows != null &amp;&amp; rows.size() &gt; 0) {</span>
+<span class="nc" id="L914">                Iterator rowIterator = rows.iterator();</span>
+                Row row;
+                TaxonPathBean taxonPath;
+                String taxonPathId;
+                String taxonPathSource;
+<span class="nc" id="L919">                TaxonBean taxon = null;</span>
+                String taxonId, id, entry;
+<span class="nc" id="L921">                SQLCommandBean sqlCommandBean = new SQLCommandBean();</span>
+<span class="nc" id="L922">                sqlCommandBean.setConnection(conn);</span>
+<span class="nc" id="L923">                sqlCommandBean.setSqlValue(&quot;SELECT TaxonID, ID, Entry FROM Taxons WHERE TaxonPathID = ?&quot;);</span>
+<span class="nc" id="L924">                Vector values = new Vector();</span>
+<span class="nc" id="L925">                Vector taxonrows = null;</span>
+<span class="nc bnc" id="L926" title="All 2 branches missed.">                while(rowIterator.hasNext()) {</span>
+<span class="nc" id="L927">                    row = (Row)rowIterator.next();</span>
+<span class="nc" id="L928">                    taxonPath = new TaxonPathBean();</span>
+<span class="nc" id="L929">                    taxonPathId = row.getString(&quot;TaxonPathID&quot;);</span>
+<span class="nc" id="L930">                    taxonPathSource = row.getString(&quot;Source&quot;);</span>
+<span class="nc" id="L931">                    taxonPath.setTaxonPathId(taxonPathId);</span>
+<span class="nc" id="L932">                    taxonPath.setMetadataId(metadataId);</span>
+<span class="nc" id="L933">                    taxonPath.setSource(taxonPathSource);</span>
+<span class="nc" id="L934">                    values.clear();</span>
+<span class="nc" id="L935">                    values.addElement(new StringValue(taxonPathId));</span>
+<span class="nc" id="L936">                    sqlCommandBean.setValues(values);</span>
+                    try {
+<span class="nc" id="L938">                        taxonrows = sqlCommandBean.executeQuery();</span>
+<span class="nc" id="L939">                    } catch(UnsupportedTypeException e) {</span>
+<span class="nc" id="L940">                        throw new SQLException(e.toString());</span>
+<span class="nc" id="L941">                    }</span>
+<span class="nc bnc" id="L942" title="All 4 branches missed.">                    if(taxonrows != null &amp;&amp; taxonrows.size() &gt; 0) {</span>
+<span class="nc" id="L943">                        Iterator taxonIterator = taxonrows.iterator();</span>
+<span class="nc bnc" id="L944" title="All 2 branches missed.">                        while(taxonIterator.hasNext()) {</span>
+<span class="nc" id="L945">                            row = (Row)taxonIterator.next();</span>
+<span class="nc" id="L946">                            taxon = new TaxonBean();</span>
+<span class="nc" id="L947">                            taxonId = row.getString(&quot;TaxonID&quot;);</span>
+<span class="nc" id="L948">                            id = row.getString(&quot;ID&quot;);</span>
+<span class="nc" id="L949">                            entry = row.getString(&quot;Entry&quot;);</span>
+<span class="nc" id="L950">                            taxon.setTaxonId(taxonId);</span>
+<span class="nc" id="L951">                            taxon.setTaxonPathId(taxonPathId);</span>
+<span class="nc" id="L952">                            taxon.setId(id);</span>
+<span class="nc" id="L953">                            taxon.setEntry(entry);</span>
+<span class="nc" id="L954">                            taxonPath.addTaxon(taxon);</span>
+                        }
+                    }
+<span class="nc" id="L957">                    results.add(taxonPath);</span>
+                }
+            }
+        }
+<span class="nc" id="L961">        return results;</span>
+    }
+
+    /**
+     * Returns a ArrayList of ContextURLBeans associated with the given
+     * If no contextURLs are found or an error occurs, an empty
+     * ArrayList is returned.
+     */
+    public ArrayList getContextURLs(String metadataId, Connection conn) throws SQLException, NoSuchColumnException {
+<span class="nc" id="L970">        ArrayList results = new ArrayList();</span>
+<span class="nc bnc" id="L971" title="All 2 branches missed.">        if(metadataId != null) {</span>
+<span class="nc" id="L972">            Vector rows = cd.getMetadataProperties(metadataId, &quot;ContextURLID, ContextURL, ContextURLDescription&quot;, &quot;ContextURLs&quot;, conn);</span>
+<span class="nc bnc" id="L973" title="All 4 branches missed.">            if(rows != null &amp;&amp; rows.size() &gt; 0) {</span>
+<span class="nc" id="L974">                Iterator rowIterator = rows.iterator();</span>
+                Row row;
+                ContextURLBean contextURL;
+                String contextURLId;
+                String contextURLString;
+                String contextURLDescription;
+<span class="nc bnc" id="L980" title="All 2 branches missed.">                while(rowIterator.hasNext()) {</span>
+<span class="nc" id="L981">                    row = (Row)rowIterator.next();</span>
+<span class="nc" id="L982">                    contextURL = new ContextURLBean();</span>
+<span class="nc" id="L983">                    contextURLId = row.getString(&quot;ContextURLID&quot;);</span>
+<span class="nc" id="L984">                    contextURLString = row.getString(&quot;ContextURL&quot;);</span>
+<span class="nc" id="L985">                    contextURLDescription = row.getString(&quot;ContextURLDescription&quot;);</span>
+<span class="nc" id="L986">                    contextURL.setContextURLId(contextURLId);</span>
+<span class="nc" id="L987">                    contextURL.setMetadataId(metadataId);</span>
+<span class="nc" id="L988">                    contextURL.setContextURL(contextURLString);</span>
+<span class="nc" id="L989">                    contextURL.setContextURLDescription(contextURLDescription);</span>
+<span class="nc" id="L990">                    results.add(contextURL);</span>
+                }
+            }
+        }
+<span class="nc" id="L994">        return results;</span>
+    }
+
+    /**
+     * Returns a ArrayList of RequirementBeans associated with the
+     * given metadataId.
+     * If no requirements are found or an error occurs, an empty
+     * ArrayList is returned.
+     */
+    public ArrayList getRequirements(String metadataId, Connection conn) throws SQLException, NoSuchColumnException {
+<span class="nc" id="L1004">        ArrayList results = new ArrayList();</span>
+<span class="nc bnc" id="L1005" title="All 2 branches missed.">        if(metadataId != null) {</span>
+<span class="nc" id="L1006">            Vector rows = cd.getMetadataProperties(metadataId, &quot;RequirementID, &quot; + &quot;RequirementType, &quot; + &quot;RequirementName&quot;, &quot;Requirements&quot;, conn);</span>
+<span class="nc bnc" id="L1007" title="All 4 branches missed.">            if(rows != null &amp;&amp; rows.size() &gt; 0) {</span>
+<span class="nc" id="L1008">                Iterator rowIterator = rows.iterator();</span>
+                Row row;
+                RequirementBean rb;
+                String id;
+                String requirementType, requirementName;
+<span class="nc bnc" id="L1013" title="All 2 branches missed.">                while(rowIterator.hasNext()) {</span>
+<span class="nc" id="L1014">                    row = (Row)rowIterator.next();</span>
+<span class="nc" id="L1015">                    rb = new RequirementBean();</span>
+<span class="nc" id="L1016">                    id = row.getString(&quot;RequirementID&quot;);</span>
+<span class="nc" id="L1017">                    requirementType = row.getString(&quot;RequirementType&quot;);</span>
+<span class="nc" id="L1018">                    requirementName = row.getString(&quot;RequirementName&quot;);</span>
+<span class="nc" id="L1019">                    rb.setRequirementId(id);</span>
+<span class="nc" id="L1020">                    rb.setMetadataId(metadataId);</span>
+<span class="nc" id="L1021">                    rb.setRequirementType(requirementType);</span>
+<span class="nc" id="L1022">                    rb.setRequirementName(requirementName);</span>
+<span class="nc" id="L1023">                    results.add(rb);</span>
+                }
+            }
+        }
+<span class="nc" id="L1027">        return results;</span>
+    }
+
+    /**
+     * Returns a TreeMap of ContributorBeans associated with the
+     * given metadataId.
+     * If no contributors are found or an error occurs, an empty TreeMap is
+     * returned.
+     */
+    public TreeMap getContributors(String metadataId, Connection conn)
+            throws SQLException {
+<span class="nc" id="L1038">        TreeMap results = new TreeMap();</span>
+<span class="nc bnc" id="L1039" title="All 2 branches missed.">        if(metadataId != null) {</span>
+            // queries the database
+<span class="nc" id="L1041">            PreparedStatement ps = null;</span>
+<span class="nc" id="L1042">            ResultSet rs = null;</span>
+
+            try {
+<span class="nc" id="L1045">                StringBuffer sql = new StringBuffer();</span>
+<span class="nc" id="L1046">                sql.append(&quot;SELECT a.ContributorID, a.Role, a.ContributeDate,&quot;)</span>
+<span class="nc" id="L1047">                        .append(&quot; a.ContributeDateDescription, b.vCard &quot;);</span>
+<span class="nc" id="L1048">                sql.append(&quot;FROM  Contributors a INNER JOIN&quot;);</span>
+<span class="nc" id="L1049">                sql.append(&quot;  vCards b ON a.VCardID = b.vCardID &quot;);</span>
+<span class="nc" id="L1050">                sql.append(&quot;WHERE  (a.MetadataID = ?)&quot;);</span>
+<span class="nc" id="L1051">                ps = conn.prepareStatement(sql.toString());</span>
+<span class="nc" id="L1052">                ps.setString(1, metadataId);</span>
+<span class="nc" id="L1053">                rs = ps.executeQuery();</span>
+<span class="nc bnc" id="L1054" title="All 2 branches missed.">                while(rs.next()) {</span>
+<span class="nc" id="L1055">                    ContributorBean cb = new ContributorBean();</span>
+<span class="nc" id="L1056">                    final String id = rs.getString(1);</span>
+<span class="nc" id="L1057">                    final String role = rs.getString(2);</span>
+<span class="nc" id="L1058">                    final Date contributeDate = rs.getDate(3);</span>
+<span class="nc" id="L1059">                    final String contributeDateDescription = rs.getString(4);</span>
+<span class="nc" id="L1060">                    final String vCard = rs.getString(5);</span>
+<span class="nc" id="L1061">                    cb.setContributorId(id);</span>
+<span class="nc" id="L1062">                    cb.setRole(role);</span>
+<span class="nc" id="L1063">                    cb.setDate(contributeDate);</span>
+<span class="nc" id="L1064">                    cb.setDateDescription(contributeDateDescription);</span>
+<span class="nc" id="L1065">                    cb.setVCard(vCard);</span>
+
+<span class="nc" id="L1067">                    List roles = (List)results.get(role);</span>
+<span class="nc bnc" id="L1068" title="All 2 branches missed.">                    if(null == roles) {</span>
+<span class="nc" id="L1069">                        roles = new ArrayList();</span>
+<span class="nc" id="L1070">                        results.put(role, roles);</span>
+                    }
+<span class="nc" id="L1072">                    roles.add(cb);</span>
+<span class="nc" id="L1073">                }</span>
+            } finally {
+<span class="nc bnc" id="L1075" title="All 2 branches missed.">                if(null != rs) {</span>
+<span class="nc" id="L1076">                    rs.close();</span>
+                }
+<span class="nc bnc" id="L1078" title="All 2 branches missed.">                if(null != ps) {</span>
+<span class="nc" id="L1079">                    ps.close();</span>
+                }
+            }
+        }
+<span class="nc" id="L1083">        return results;</span>
+    }
+
+    /**
+     * Returns a ArrayList of RelationBeans associated with the
+     * given metadataId.
+     * If no relations are found or an error occurs, an empty ArrayList
+     * is returned.
+     */
+    public ArrayList getRelations(String metadataId, Connection conn) throws SQLException, NoSuchColumnException {
+<span class="nc" id="L1093">        ArrayList results = new ArrayList();</span>
+<span class="nc bnc" id="L1094" title="All 2 branches missed.">        if(metadataId != null) {</span>
+<span class="nc" id="L1095">            Vector rows = cd.getMetadataProperties(metadataId, &quot;RelationID, &quot; + &quot;Resource, Kind, Description&quot;, &quot;Relations&quot;, conn);</span>
+<span class="nc bnc" id="L1096" title="All 4 branches missed.">            if(rows != null &amp;&amp; rows.size() &gt; 0) {</span>
+<span class="nc" id="L1097">                Iterator rowIterator = rows.iterator();</span>
+                Row row;
+                RelationBean rb;
+                String id;
+                String resource, kind, description;
+<span class="nc bnc" id="L1102" title="All 2 branches missed.">                while(rowIterator.hasNext()) {</span>
+<span class="nc" id="L1103">                    row = (Row)rowIterator.next();</span>
+<span class="nc" id="L1104">                    rb = new RelationBean();</span>
+<span class="nc" id="L1105">                    id = row.getString(&quot;RelationID&quot;);</span>
+<span class="nc" id="L1106">                    resource = row.getString(&quot;Resource&quot;);</span>
+<span class="nc" id="L1107">                    kind = row.getString(&quot;Kind&quot;);</span>
+<span class="nc" id="L1108">                    description = row.getString(&quot;Description&quot;);</span>
+<span class="nc" id="L1109">                    rb.setRelationId(id);</span>
+<span class="nc" id="L1110">                    rb.setMetadataId(metadataId);</span>
+<span class="nc" id="L1111">                    rb.setResource(resource);</span>
+<span class="nc" id="L1112">                    rb.setKind(kind);</span>
+<span class="nc" id="L1113">                    rb.setDescription(description);</span>
+<span class="nc" id="L1114">                    results.add(rb);</span>
+                }
+            }
+        }
+<span class="nc" id="L1118">        return results;</span>
+    }
+
+    /**
+     * Returns an ArrayList of KeywordBeans associated with the
+     * given metadataId.
+     * If no keywords are found or an error occurs, an empty
+     * ArrayList is returned.
+     */
+    public ArrayList getKeywords(String metadataId, Connection conn) throws SQLException, NoSuchColumnException {
+<span class="nc" id="L1128">        ArrayList results = new ArrayList();</span>
+<span class="nc bnc" id="L1129" title="All 2 branches missed.">        if(metadataId != null) {</span>
+<span class="nc" id="L1130">            Vector rows = cd.getMetadataProperties(metadataId, &quot;KeywordID, Keyword&quot;, &quot;Keywords&quot;, conn);</span>
+<span class="nc bnc" id="L1131" title="All 4 branches missed.">            if(rows != null &amp;&amp; rows.size() &gt; 0) {</span>
+<span class="nc" id="L1132">                Iterator rowIterator = rows.iterator();</span>
+                Row row;
+                KeywordBean keyword;
+                String keywordId;
+                String keywordString;
+<span class="nc bnc" id="L1137" title="All 2 branches missed.">                while(rowIterator.hasNext()) {</span>
+<span class="nc" id="L1138">                    row = (Row)rowIterator.next();</span>
+<span class="nc" id="L1139">                    keyword = new KeywordBean();</span>
+<span class="nc" id="L1140">                    keywordId = row.getString(&quot;KeywordID&quot;);</span>
+<span class="nc" id="L1141">                    keywordString = row.getString(&quot;Keyword&quot;);</span>
+<span class="nc" id="L1142">                    keyword.setKeywordId(keywordId);</span>
+<span class="nc" id="L1143">                    keyword.setMetadataId(metadataId);</span>
+<span class="nc" id="L1144">                    keyword.setKeyword(keywordString);</span>
+<span class="nc" id="L1145">                    results.add(keyword);</span>
+                }
+            }
+        }
+<span class="nc" id="L1149">        return results;</span>
+    }
+
+    /**
+     * Returns an ArrayList of FormatBeans associated with the given
+     * metadataId.
+     * If no format is found or an error occurs, an empty ArrayList
+     * is returned.
+     */
+    public ArrayList getFormats(String metadataId, Connection conn) throws SQLException, NoSuchColumnException {
+<span class="nc" id="L1159">        ArrayList results = new ArrayList();</span>
+<span class="nc bnc" id="L1160" title="All 2 branches missed.">        if(metadataId != null) {</span>
+<span class="nc" id="L1161">            Vector rows = cd.getMetadataProperties(metadataId, &quot;FormatID, Format&quot;, &quot;Formats&quot;, conn);</span>
+<span class="nc bnc" id="L1162" title="All 4 branches missed.">            if(rows != null &amp;&amp; rows.size() &gt; 0) {</span>
+<span class="nc" id="L1163">                Iterator rowIterator = rows.iterator();</span>
+                Row row;
+                FormatBean format;
+                String formatId;
+                String formatString;
+<span class="nc bnc" id="L1168" title="All 2 branches missed.">                while(rowIterator.hasNext()) {</span>
+<span class="nc" id="L1169">                    row = (Row)rowIterator.next();</span>
+<span class="nc" id="L1170">                    format = new FormatBean();</span>
+<span class="nc" id="L1171">                    formatId = row.getString(&quot;FormatID&quot;);</span>
+<span class="nc" id="L1172">                    formatString = row.getString(&quot;Format&quot;);</span>
+<span class="nc" id="L1173">                    format.setFormatId(formatId);</span>
+<span class="nc" id="L1174">                    format.setMetadataId(metadataId);</span>
+<span class="nc" id="L1175">                    format.setFormat(formatString);</span>
+<span class="nc" id="L1176">                    results.add(format);</span>
+                }
+            }
+        }
+<span class="nc" id="L1180">        return results;</span>
+    }
+
+
+    /**
+     * Returns the first metadataId returned when the Metadata table is
+     * queried for all entries with the given value for the given column.
+     */
+    public String getMetadataIdFromProperty(String columnValue, String columnName, Connection conn)
+            throws SQLException {
+<span class="nc bnc" id="L1190" title="All 4 branches missed.">        if(columnName == null || columnValue == null) {</span>
+<span class="nc" id="L1191">            return null;</span>
+        }
+<span class="nc" id="L1193">        SQLCommandBean sqlCommandBean = new SQLCommandBean();</span>
+<span class="nc" id="L1194">        sqlCommandBean.setConnection(conn);</span>
+<span class="nc" id="L1195">        StringBuffer sql = new StringBuffer();</span>
+<span class="nc" id="L1196">        sql.append(&quot;SELECT MetadataID FROM Metadata &quot;)</span>
+<span class="nc" id="L1197">                .append(&quot;WHERE &quot; + columnName + &quot; = ? ORDER BY MetadataID DESC&quot;);</span>
+<span class="nc" id="L1198">        sqlCommandBean.setSqlValue(sql.toString());</span>
+<span class="nc" id="L1199">        Vector values = new Vector();</span>
+<span class="nc" id="L1200">        values.addElement(new StringValue(columnValue));</span>
+<span class="nc" id="L1201">        sqlCommandBean.setValues(values);</span>
+<span class="nc" id="L1202">        Vector rows = null;</span>
+        try {
+<span class="nc" id="L1204">            rows = sqlCommandBean.executeQuery();</span>
+<span class="nc" id="L1205">        } catch(UnsupportedTypeException e) {</span>
+<span class="nc" id="L1206">            throw new SQLException(e.toString());</span>
+<span class="nc" id="L1207">        }</span>
+<span class="nc bnc" id="L1208" title="All 4 branches missed.">        if(rows == null || rows.size() == 0) {</span>
+            // nothing found
+<span class="nc" id="L1210">            return null;</span>
+        }
+<span class="nc" id="L1212">        Row aRow = (Row)rows.firstElement();</span>
+        try {
+<span class="nc" id="L1214">            String metadataId = aRow.getString(&quot;MetadataID&quot;);</span>
+<span class="nc" id="L1215">            return metadataId;</span>
+<span class="nc" id="L1216">        } catch(NoSuchColumnException nsce) {</span>
+<span class="nc" id="L1217">            throw new SQLException(nsce.toString());</span>
+        }
+    }
+
+    /**
+     * Returns the first metadataId returned when the Metadata table is
+     * queried for all entries with the given value for the given column.
+     */
+    public String getMetadataIdFromProperty(String columnValue, String columnName) throws SQLException {
+<span class="nc" id="L1226">        Connection conn = dataSource.getConnection();</span>
+<span class="nc" id="L1227">        String metadataId = null;</span>
+        try {
+<span class="nc" id="L1229">            metadataId = getMetadataIdFromProperty(columnValue, columnName, conn);</span>
+        } finally {
+            try {
+<span class="nc" id="L1232">                conn.close();</span>
+<span class="nc" id="L1233">            } catch(SQLException ex2) {</span>
+                //ignore
+<span class="nc" id="L1235">            }</span>
+        }
+<span class="nc" id="L1237">        return metadataId;</span>
+    }
+
+    /**
+     * Returns a list of content Ids in an ArrayList.  The parameter specifies
+     * a date used to request all new metadata since the given time.
+     * If the provided date is null, all content Ids are returned.
+     */
+    public ArrayList getPointerListArrayList(java.util.Date lastReceivedDate) throws SQLException {
+<span class="nc" id="L1246">        return getPointerList(lastReceivedDate, false);</span>
+    }
+
+    /**
+     * Returns a list of content Ids in XML format.  The parameter specifies
+     * a date used to request all new metadata since the given time.
+     * If the provided date is null, all content Ids are returned.
+     */
+    public String getPointerList(java.util.Date lastReceivedDate) throws SQLException, IOException {
+<span class="nc" id="L1255">        ArrayList ids = getPointerList(lastReceivedDate, false);</span>
+<span class="nc" id="L1256">        return HealMetadataXMLConverter.getPointerListXML(ids);</span>
+    }
+
+    /**
+     * Returns a list of content Ids in an ArrayList.  The parameter specifies
+     * a date used to request all new metadata since the given time.
+     * If the provided date is null, all content Ids are returned.
+     * If the includeHidden parameter is set to true, all metadata Ids are
+     * returned, not just those set as visible.  If the parameter
+     * set to false, then only those set as &quot;visible&quot; will be returned.
+     */
+    public ArrayList getPointerListArrayList(java.util.Date lastReceivedDate, boolean includeHidden)
+            throws SQLException {
+<span class="nc" id="L1269">        return getPointerList(lastReceivedDate, includeHidden);</span>
+    }
+
+    /**
+     * Returns a list of content Ids in an ArrayList.  The parameter specifies
+     * a date used to request all new metadata since the given time.
+     * If the provided date is null, all content Ids are returned.
+     * Depending upon the second parameter, this method will return a list
+     * containing only metadata not marked as hidden if false, and all
+     * metadata Ids if the includeHidden parameter is set to true.
+     */
+    public ArrayList getPointerList(java.util.Date lastReceivedDate, boolean includeHidden) throws SQLException {
+<span class="nc" id="L1281">        ArrayList ids = null;</span>
+<span class="nc" id="L1282">        Connection conn = dataSource.getConnection();</span>
+<span class="nc" id="L1283">        SQLCommandBean sqlCommandBean = new SQLCommandBean();</span>
+<span class="nc" id="L1284">        sqlCommandBean.setConnection(conn);</span>
+<span class="nc" id="L1285">        StringBuffer sql = new StringBuffer();</span>
+<span class="nc" id="L1286">        sql.append(&quot;SELECT MetadataID FROM Metadata&quot;);</span>
+<span class="nc" id="L1287">        Vector values = new Vector();</span>
+<span class="nc bnc" id="L1288" title="All 2 branches missed.">        if(lastReceivedDate != null) {</span>
+<span class="nc" id="L1289">            Timestamp lastReceivedTimestamp = new Timestamp(lastReceivedDate.getTime());</span>
+<span class="nc" id="L1290">            values.addElement(new TimestampValue(lastReceivedTimestamp));</span>
+<span class="nc bnc" id="L1291" title="All 2 branches missed.">            if(!includeHidden) {</span>
+<span class="nc" id="L1292">                sql.append(&quot; WHERE CatalogDate &gt;= ? AND Private = ?&quot;);</span>
+<span class="nc" id="L1293">                values.addElement(new BooleanValue(includeHidden));</span>
+            } else {
+                //if we want to show all, then don't filter Private setting
+<span class="nc" id="L1296">                sql.append(&quot; WHERE CatalogDate &gt;= ?&quot;);</span>
+            }
+<span class="nc" id="L1298">            sqlCommandBean.setValues(values);</span>
+<span class="nc bnc" id="L1299" title="All 2 branches missed.">        } else if(!includeHidden) {</span>
+            //we only want to screen if we are EXCLUDING ids(don't show hidden)
+<span class="nc" id="L1301">            sql.append(&quot; WHERE Private = ?&quot;);</span>
+<span class="nc" id="L1302">            values.addElement(new BooleanValue(includeHidden));</span>
+<span class="nc" id="L1303">            sqlCommandBean.setValues(values);</span>
+        }
+<span class="nc" id="L1305">        sqlCommandBean.setSqlValue(sql.toString());</span>
+<span class="nc" id="L1306">        Vector rows = null;</span>
+        try {
+<span class="nc" id="L1308">            rows = sqlCommandBean.executeQuery();</span>
+<span class="nc bnc" id="L1309" title="All 4 branches missed.">            if(rows != null &amp;&amp; rows.size() &gt; 0) {</span>
+<span class="nc" id="L1310">                ids = new ArrayList();</span>
+<span class="nc" id="L1311">                Iterator rowIter = rows.iterator();</span>
+<span class="nc bnc" id="L1312" title="All 2 branches missed.">                while(rowIter.hasNext()) {</span>
+<span class="nc" id="L1313">                    String id = ((Row)rowIter.next()).getString(&quot;MetadataID&quot;);</span>
+<span class="nc" id="L1314">                    ids.add(id);</span>
+<span class="nc" id="L1315">                }</span>
+            }
+<span class="nc" id="L1317">        } catch(UnsupportedTypeException e) {</span>
+<span class="nc" id="L1318">            throw new SQLException(e.toString());</span>
+<span class="nc" id="L1319">        } catch(NoSuchColumnException e2) {</span>
+<span class="nc" id="L1320">            throw new SQLException(e2.toString());</span>
+        } // Can not happen here
+        finally {
+            try {
+<span class="nc" id="L1324">                conn.close();</span>
+<span class="nc" id="L1325">            } catch(SQLException e) {</span>
+<span class="nc" id="L1326">            } // Ignore</span>
+        }
+<span class="nc bnc" id="L1328" title="All 4 branches missed.">        if(rows == null || rows.size() == 0) {</span>
+            // Metadata not found
+<span class="nc" id="L1330">            return null;</span>
+        }
+        //cycle through all of the rows and pull out the MetadataIDs
+<span class="nc" id="L1333">        return ids;</span>
+    }
+
+    /**
+     * Used by {@link org.heal.servlet.cataloger.SaveMetadataAction SaveMetadataAction}
+     * so that we can manage a database transaction when updating old records.  This method
+     * is somewhat specific to SaveMetadataAction.
+     *
+     * @param cmb The {@link org.heal.module.metadata.CompleteMetadataBean CompleteMetadataBean}
+     * generated from form data.
+     */
+    public void saveEditMetadataForm(CompleteMetadataBean cmb) throws SQLException {
+<span class="nc" id="L1345">        final String metadataId = cmb.getMetadataId();</span>
+
+<span class="nc" id="L1347">        Set contextURLExcludes = new HashSet();</span>
+<span class="nc bnc" id="L1348" title="All 2 branches missed.">        for(Iterator iter = cmb.getContextURLs().iterator(); iter.hasNext();) {</span>
+<span class="nc" id="L1349">            final ContextURLBean cub = (ContextURLBean)iter.next();</span>
+<span class="nc bnc" id="L1350" title="All 4 branches missed.">            if(null != cub &amp;&amp; null != cub.getContextURLId()) {</span>
+<span class="nc" id="L1351">                contextURLExcludes.add(cub.getContextURLId());</span>
+            }
+<span class="nc" id="L1353">        }</span>
+
+<span class="nc" id="L1355">        Set contributorExcludes = new HashSet();</span>
+<span class="nc bnc" id="L1356" title="All 2 branches missed.">        for(Iterator iter = cmb.getContributorList().iterator(); iter.hasNext();) {</span>
+<span class="nc" id="L1357">            final ContributorBean cb = (ContributorBean)iter.next();</span>
+<span class="nc bnc" id="L1358" title="All 2 branches missed.">            if(null != cb.getContributorId()) {</span>
+<span class="nc" id="L1359">                contributorExcludes.add(cb.getContributorId());</span>
+            }
+<span class="nc" id="L1361">        }</span>
+
+<span class="nc" id="L1363">        Set copyrightHolderExcludes = new HashSet();</span>
+<span class="nc bnc" id="L1364" title="All 2 branches missed.">        for(Iterator iter = cmb.getCopyrightHolders().iterator(); iter.hasNext();) {</span>
+<span class="nc" id="L1365">            final CopyrightHolderBean chb = (CopyrightHolderBean)iter.next();</span>
+<span class="nc bnc" id="L1366" title="All 2 branches missed.">            if(null != chb.getCopyrightHolderId()) {</span>
+<span class="nc" id="L1367">                copyrightHolderExcludes.add(chb.getCopyrightHolderId());</span>
+            }
+<span class="nc" id="L1369">        }</span>
+
+<span class="nc" id="L1371">        Set taxonPathExcludes = new HashSet();</span>
+<span class="nc bnc" id="L1372" title="All 2 branches missed.">        for(Iterator iter = cmb.getTaxonPaths().iterator(); iter.hasNext();) {</span>
+<span class="nc" id="L1373">            final TaxonPathBean tpb = (TaxonPathBean)iter.next();</span>
+<span class="nc bnc" id="L1374" title="All 2 branches missed.">            if(null != tpb.getTaxonPathId()) {</span>
+<span class="nc" id="L1375">                taxonPathExcludes.add(tpb.getTaxonPathId());</span>
+            }
+<span class="nc" id="L1377">        }</span>
+
+<span class="nc" id="L1379">        Set requirementExcludes = new HashSet();</span>
+<span class="nc bnc" id="L1380" title="All 2 branches missed.">        for(Iterator iter = cmb.getRequirements().iterator(); iter.hasNext();) {</span>
+<span class="nc" id="L1381">            final RequirementBean rb = (RequirementBean)iter.next();</span>
+<span class="nc bnc" id="L1382" title="All 2 branches missed.">            if(null != rb.getRequirementId()) {</span>
+<span class="nc" id="L1383">                requirementExcludes.add(rb.getRequirementId());</span>
+            }
+<span class="nc" id="L1385">        }</span>
+
+<span class="nc" id="L1387">        Set relationExcludes = new HashSet();</span>
+<span class="nc bnc" id="L1388" title="All 2 branches missed.">        for(Iterator iter = cmb.getRelations().iterator(); iter.hasNext();) {</span>
+<span class="nc" id="L1389">            final RelationBean rb = (RelationBean)iter.next();</span>
+<span class="nc bnc" id="L1390" title="All 2 branches missed.">            if(null != rb.getRelationId()) {</span>
+<span class="nc" id="L1391">                relationExcludes.add(rb.getRelationId());</span>
+            }
+<span class="nc" id="L1393">        }</span>
+
+<span class="nc" id="L1395">        Set mmIdentifierExcludes = new HashSet();</span>
+<span class="nc bnc" id="L1396" title="All 2 branches missed.">        for(Object o : cmb.getMetametadataIdentifiers()) {</span>
+<span class="nc" id="L1397">            final MetametadataIdentifierBean mib = (MetametadataIdentifierBean)o;</span>
+<span class="nc bnc" id="L1398" title="All 2 branches missed.">            if(null != mib.getMetametadataIdentifierId()) {</span>
+<span class="nc" id="L1399">                mmIdentifierExcludes.add(mib.getMetametadataIdentifierId());</span>
+            }
+<span class="nc" id="L1401">        }</span>
+
+<span class="nc" id="L1403">        Set mmContributorExcludes = new HashSet();</span>
+<span class="nc bnc" id="L1404" title="All 2 branches missed.">        for(Object o : cmb.getMetametadataContributors()) {</span>
+<span class="nc" id="L1405">            final MetametadataContributorBean mcb = (MetametadataContributorBean)o;</span>
+<span class="nc bnc" id="L1406" title="All 2 branches missed.">            if(null != mcb.getMetametadataContributorId()) {</span>
+<span class="nc" id="L1407">                mmContributorExcludes.add(mcb.getMetametadataContributorId());</span>
+            }
+<span class="nc" id="L1409">        }</span>
+
+<span class="nc" id="L1411">        Connection conn = dataSource.getConnection();</span>
+<span class="nc" id="L1412">        conn.setAutoCommit(false);</span>
+        try {
+<span class="nc bnc" id="L1414" title="All 2 branches missed.">            if(null != metadataId) {</span>
+                // If this is an existing metadata record, we must
+                // change the values in the database currently to
+                // match the CompleteMetadataBean submitted from the
+                // edit page
+<span class="nc" id="L1419">                cd.removeMetadataFromTable(metadataId, &quot;Keywords&quot;, conn);</span>
+<span class="nc" id="L1420">                cd.removeMetadataFromTable(metadataId, &quot;Formats&quot;, conn);</span>
+<span class="nc" id="L1421">                cd.removeMetadataFromTable(metadataId, &quot;DiseaseDiagnoses&quot;, conn);</span>
+<span class="nc" id="L1422">                cd.removeMetadataFromTable(metadataId, &quot;TargetUserGroups&quot;, conn);</span>
+<span class="nc" id="L1423">                cd.removeMetadataFromTable(metadataId, &quot;Thumbnails&quot;, conn);</span>
+<span class="nc" id="L1424">                cd.removeMetadataFromTable(metadataId, &quot;Copyrights&quot;, conn);</span>
+<span class="nc" id="L1425">                deleteForeignKeyRecordsNotInSet(&quot;ContextURLs&quot;, &quot;MetadataID&quot;, &quot;ContextURLID&quot;,</span>
+                        metadataId, contextURLExcludes, conn);
+<span class="nc" id="L1427">                deleteForeignKeyRecordsNotInSet(&quot;Contributors&quot;, &quot;MetadataID&quot;, &quot;ContributorID&quot;,</span>
+                        metadataId, contributorExcludes, conn);
+<span class="nc" id="L1429">                deleteForeignKeyRecordsNotInSet(&quot;CopyrightHolders&quot;, &quot;MetadataID&quot;,</span>
+                        &quot;CopyrightHolderID&quot;, metadataId, copyrightHolderExcludes, conn);
+<span class="nc" id="L1431">                deleteForeignKeyRecordsNotInSet(&quot;TaxonPaths&quot;, &quot;MetadataID&quot;, &quot;TaxonPathID&quot;,</span>
+                        metadataId, taxonPathExcludes, conn);
+<span class="nc" id="L1433">                deleteForeignKeyRecordsNotInSet(&quot;Requirements&quot;, &quot;MetadataID&quot;, &quot;RequirementID&quot;,</span>
+                        metadataId, requirementExcludes, conn);
+<span class="nc" id="L1435">                deleteForeignKeyRecordsNotInSet(&quot;Relations&quot;, &quot;MetadataID&quot;, &quot;RelationID&quot;,</span>
+                        metadataId, relationExcludes, conn);
+<span class="nc" id="L1437">                deleteForeignKeyRecordsNotInSet(&quot;MetametadataIdentifiers&quot;, &quot;MetadataID&quot;,</span>
+                        &quot;MetametadataIdentifierID&quot;, metadataId, mmIdentifierExcludes, conn);
+<span class="nc" id="L1439">                deleteForeignKeyRecordsNotInSet(&quot;MetametadataContributors&quot;, &quot;MetadataID&quot;,</span>
+                        &quot;MetametadataContributorID&quot;, metadataId, mmContributorExcludes, conn);
+<span class="nc bnc" id="L1441" title="All 2 branches missed.">                for(Iterator iter = cmb.getTaxonPaths().iterator(); iter.hasNext();) {</span>
+<span class="nc" id="L1442">                    final TaxonPathBean tpb = (TaxonPathBean)iter.next();</span>
+<span class="nc" id="L1443">                    final String taxonPathId = tpb.getTaxonPathId();</span>
+<span class="nc bnc" id="L1444" title="All 2 branches missed.">                    if(null != taxonPathId) {</span>
+<span class="nc" id="L1445">                        Set taxonExcludes = new HashSet();</span>
+<span class="nc bnc" id="L1446" title="All 2 branches missed.">                        for(Iterator iterTwo = tpb.getTaxons().iterator(); iterTwo.hasNext();) {</span>
+<span class="nc" id="L1447">                            final TaxonBean tb = (TaxonBean)iterTwo.next();</span>
+<span class="nc bnc" id="L1448" title="All 2 branches missed.">                            if(null != tb.getTaxonId()) {</span>
+<span class="nc" id="L1449">                                taxonExcludes.add(tb.getTaxonId());</span>
+                            }
+<span class="nc" id="L1451">                        }</span>
+
+<span class="nc" id="L1453">                        deleteForeignKeyRecordsNotInSet(&quot;Taxons&quot;, &quot;TaxonPathID&quot;, &quot;TaxonID&quot;,</span>
+                                taxonPathId, taxonExcludes, conn);
+                    }
+<span class="nc" id="L1456">                }</span>
+            }
+
+            // Cleaning up pieces of the metadata which are empty, and therefor
+            // should be null when inserted in the database...
+<span class="nc bnc" id="L1461" title="All 2 branches missed.">            if(isEmpty(cmb.getGlobalId())) {</span>
+<span class="nc" id="L1462">                cmb.setGlobalId(null);</span>
+            }
+<span class="nc bnc" id="L1464" title="All 2 branches missed.">            if(isEmpty(cmb.getSpecimenType())) {</span>
+<span class="nc" id="L1465">                cmb.setSpecimenType(null);</span>
+            }
+<span class="nc bnc" id="L1467" title="All 2 branches missed.">            if(isEmpty(cmb.getRadiographType())) {</span>
+<span class="nc" id="L1468">                cmb.setRadiographType(null);</span>
+            }
+<span class="nc bnc" id="L1470" title="All 2 branches missed.">            if(isEmpty(cmb.getOrientation())) {</span>
+<span class="nc" id="L1471">                cmb.setOrientation(null);</span>
+            }
+<span class="nc bnc" id="L1473" title="All 2 branches missed.">            if(isEmpty(cmb.getMagnification())) {</span>
+<span class="nc" id="L1474">                cmb.setMagnification(null);</span>
+            }
+<span class="nc bnc" id="L1476" title="All 2 branches missed.">            if(isEmpty(cmb.getClinicalHistory())) {</span>
+<span class="nc" id="L1477">                cmb.setClinicalHistory(null);</span>
+            }
+<span class="nc bnc" id="L1479" title="All 2 branches missed.">            if(null != cmb.getThumbnail()) {</span>
+<span class="nc" id="L1480">                final ThumbnailBean tb = cmb.getThumbnail();</span>
+<span class="nc bnc" id="L1481" title="All 6 branches missed.">                if(isEmpty(tb.getFileHeight()) &amp;&amp; isEmpty(tb.getFileWidth()) &amp;&amp; isEmpty(tb.getLocation())) {</span>
+<span class="nc" id="L1482">                    cmb.setThumbnail(null);</span>
+                }
+            }
+
+<span class="nc" id="L1486">            saveCompleteMetadata(cmb, conn);</span>
+<span class="nc" id="L1487">            conn.commit();</span>
+<span class="nc" id="L1488">        } catch(SQLException e) {</span>
+<span class="nc" id="L1489">            conn.rollback();</span>
+<span class="nc" id="L1490">            throw e;</span>
+        } finally {
+<span class="nc" id="L1492">            conn.close();</span>
+        }
+<span class="nc" id="L1494">    }</span>
+
+    private static boolean isEmpty(String str) {
+<span class="nc" id="L1497">        boolean empty = false;</span>
+<span class="nc bnc" id="L1498" title="All 4 branches missed.">        if(null == str || str.trim().length() == 0) {</span>
+<span class="nc" id="L1499">            empty = true;</span>
+        }
+<span class="nc" id="L1501">        return empty;</span>
+    }
+
+
+    /**
+     * Deletes records from a table that match a given foreign key and which
+     * do not have ids that are found in a &lt;code&gt;Set&lt;/code&gt;.
+     *
+     * @param tableName The name of the table to delete records from.
+     * @param foreignKeyFieldName The name of the field which acts as a foreign key in the table.
+     * @param excludeFieldName The name of the field to match id's to exclude from the deletion.
+     * @param foreignKey The foreign key value associated with the records to delete.
+     * @param excludes A set of Strings representing ids of records that should
+     * not be deleted.
+     * @param conn The &lt;code&gt;Connection&lt;/code&gt; to the database.
+     *
+     * @throws SQLException
+     */
+    public void deleteForeignKeyRecordsNotInSet(String tableName, String foreignKeyFieldName,
+                                                String excludeFieldName, String foreignKey,
+                                                Set excludes, Connection conn)
+            throws SQLException {
+        String sql;
+<span class="nc bnc" id="L1524" title="All 2 branches missed.">        if(0 &lt; excludes.size()) {</span>
+<span class="nc" id="L1525">            StringBuffer exclude = new StringBuffer(&quot;(&quot;);</span>
+<span class="nc bnc" id="L1526" title="All 2 branches missed.">            for(int i = 0; i &lt; excludes.size(); ++i) {</span>
+<span class="nc" id="L1527">                exclude.append(&quot;?&quot;);</span>
+<span class="nc bnc" id="L1528" title="All 2 branches missed.">                if(i &lt; (excludes.size() - 1)) {</span>
+<span class="nc" id="L1529">                    exclude.append(&quot;, &quot;);</span>
+                }
+            }
+<span class="nc" id="L1532">            exclude.append(&quot;)&quot;);</span>
+<span class="nc" id="L1533">            sql = &quot;DELETE FROM &quot; + tableName + &quot; WHERE &quot; + foreignKeyFieldName + &quot; = ? AND &quot;</span>
+<span class="nc" id="L1534">                    + excludeFieldName + &quot; NOT IN &quot; + exclude.toString();</span>
+<span class="nc" id="L1535">        } else {</span>
+<span class="nc" id="L1536">            sql = &quot;DELETE FROM &quot; + tableName + &quot; WHERE &quot; + foreignKeyFieldName + &quot;= ?&quot;;</span>
+        }
+
+<span class="nc" id="L1539">        PreparedStatement ps = conn.prepareStatement(sql);</span>
+        try {
+<span class="nc" id="L1541">            ps.setInt(1, Integer.parseInt(foreignKey));</span>
+<span class="nc" id="L1542">            int nextParameter = 2;</span>
+<span class="nc bnc" id="L1543" title="All 2 branches missed.">            for(Iterator iter = excludes.iterator(); iter.hasNext();) {</span>
+<span class="nc" id="L1544">                final String exclude = (String)iter.next();</span>
+<span class="nc" id="L1545">                ps.setInt(nextParameter, Integer.parseInt(exclude));</span>
+<span class="nc" id="L1546">                ++nextParameter;</span>
+<span class="nc" id="L1547">            }</span>
+<span class="nc" id="L1548">            ps.executeUpdate();</span>
+        } finally {
+<span class="nc" id="L1550">            ps.close();</span>
+        }
+<span class="nc" id="L1552">    }</span>
+
+    public int savePublication(String id, String name, Date publicationDate) throws SQLException {
+<span class="nc" id="L1555">        int ret = 0;</span>
+<span class="nc" id="L1556">        Connection conn = dataSource.getConnection();</span>
+        try {
+<span class="nc" id="L1558">            ret = savePublication(id, name, publicationDate, dataSource.getConnection());</span>
+        } finally {
+<span class="nc bnc" id="L1560" title="All 2 branches missed.">            if(null != conn) {</span>
+<span class="nc" id="L1561">                conn.close();</span>
+            }
+        }
+<span class="nc" id="L1564">        return ret;</span>
+    }
+
+    public int savePublication(String id, String name, Date publicationDate, Connection conn) throws SQLException {
+<span class="nc" id="L1568">        Integer ret = null;</span>
+        try {
+<span class="nc" id="L1570">            ret = new Integer(Integer.parseInt(id));</span>
+<span class="nc" id="L1571">        } catch(NumberFormatException e) {</span>
+            // does nothing
+<span class="nc" id="L1573">        }</span>
+
+        String sql;
+<span class="nc bnc" id="L1576" title="All 2 branches missed.">        if(null == ret) {</span>
+<span class="nc" id="L1577">            sql = PUBLICATIONINSERTSQL;</span>
+        } else {
+<span class="nc" id="L1579">            sql = PUBLICATIONUPDATESQL;</span>
+        }
+
+<span class="nc" id="L1582">        java.sql.Date publicationSqlDate = null;</span>
+<span class="nc bnc" id="L1583" title="All 2 branches missed.">        if(null != publicationDate) {</span>
+<span class="nc" id="L1584">            publicationSqlDate = new java.sql.Date(publicationDate.getTime());</span>
+        }
+
+<span class="nc" id="L1587">        PreparedStatement ps = null;</span>
+<span class="nc" id="L1588">        ResultSet rs = null;</span>
+        try {
+<span class="nc" id="L1590">            ps = conn.prepareStatement(sql);</span>
+<span class="nc" id="L1591">            ps.setString(1, name);</span>
+<span class="nc" id="L1592">            ps.setDate(2, publicationSqlDate);</span>
+<span class="nc bnc" id="L1593" title="All 2 branches missed.">            if(null != ret) {</span>
+<span class="nc" id="L1594">                ps.setInt(3, ret.intValue());</span>
+            }
+<span class="nc" id="L1596">            ps.executeUpdate();</span>
+
+<span class="nc bnc" id="L1598" title="All 2 branches missed.">            if(null == ret) {</span>
+<span class="nc" id="L1599">                ps.close();</span>
+<span class="nc" id="L1600">                ps = conn.prepareStatement(&quot;SELECT MAX(PublicationId) AS uid FROM Publications&quot;);</span>
+<span class="nc" id="L1601">                rs = ps.executeQuery();</span>
+<span class="nc bnc" id="L1602" title="All 2 branches missed.">                if(rs.next()) {</span>
+<span class="nc" id="L1603">                    ret = new Integer(rs.getInt(1));</span>
+                }
+            }
+        } finally {
+<span class="nc bnc" id="L1607" title="All 2 branches missed.">            if(null != rs) {</span>
+<span class="nc" id="L1608">                rs.close();</span>
+            }
+<span class="nc bnc" id="L1610" title="All 2 branches missed.">            if(null != ps) {</span>
+<span class="nc" id="L1611">                ps.close();</span>
+            }
+        }
+<span class="nc bnc" id="L1614" title="All 2 branches missed.">        if(null == ret) {</span>
+<span class="nc" id="L1615">            throw new RuntimeException(&quot;Unable to save publication: ('&quot; + id + &quot;', '&quot; + name + &quot;', '&quot; + publicationDate.toString() + &quot;')&quot;);</span>
+        }
+
+<span class="nc" id="L1618">        return ret.intValue();</span>
+    }
+
+    public void saveMetametadataIdentifier(MetametadataIdentifierBean mib, Connection conn) throws SQLException {
+        final String sql;
+<span class="nc bnc" id="L1623" title="All 2 branches missed.">        if(null == mib.getMetametadataIdentifierId()) {</span>
+<span class="nc" id="L1624">            sql = METAMETADATA_IDENTIFIER_INSERT_SQL;</span>
+        } else {
+<span class="nc" id="L1626">            sql = METAMETADATA_IDENTIFIER_UPDATE_SQL;</span>
+        }
+<span class="nc" id="L1628">        PreparedStatement ps = null;</span>
+<span class="nc" id="L1629">        ResultSet rs = null;</span>
+        try {
+<span class="nc" id="L1631">            ps = conn.prepareStatement(sql);</span>
+<span class="nc" id="L1632">            ps.setString(1, mib.getMetadataId());</span>
+<span class="nc" id="L1633">            ps.setString(2, mib.getCatalog());</span>
+<span class="nc" id="L1634">            ps.setString(3, mib.getEntry());</span>
+<span class="nc" id="L1635">            ps.setString(4, mib.getMetadataSchema());</span>
+
+<span class="nc bnc" id="L1637" title="All 2 branches missed.">            if(null != mib.getMetametadataIdentifierId()) {</span>
+<span class="nc" id="L1638">                ps.setString(5, mib.getMetametadataIdentifierId());</span>
+            }
+<span class="nc" id="L1640">            ps.executeUpdate();</span>
+
+<span class="nc bnc" id="L1642" title="All 2 branches missed.">            if(null == mib.getMetametadataIdentifierId()) {</span>
+<span class="nc" id="L1643">                ps.close();</span>
+<span class="nc" id="L1644">                ps = conn.prepareStatement(&quot;SELECT @@Identity AS ID&quot;);</span>
+<span class="nc" id="L1645">                rs = ps.executeQuery();</span>
+<span class="nc" id="L1646">                rs.next();</span>
+<span class="nc" id="L1647">                mib.setMetametadataIdentifierId(rs.getString(1));</span>
+            }
+        } finally {
+<span class="nc bnc" id="L1650" title="All 2 branches missed.">            if(null != rs) {</span>
+<span class="nc" id="L1651">                rs.close();</span>
+            }
+<span class="nc bnc" id="L1653" title="All 2 branches missed.">            if(null != ps) {</span>
+<span class="nc" id="L1654">                ps.close();</span>
+            }
+        }
+<span class="nc" id="L1657">    }</span>
+
+    public void saveMetametadataContributor(MetametadataContributorBean mcb) throws SQLException {
+        // Save the metadata info from the database
+<span class="nc" id="L1661">        Connection conn = dataSource.getConnection();</span>
+<span class="nc" id="L1662">        conn.setAutoCommit(false);</span>
+        try {
+<span class="nc" id="L1664">            saveMetametadataContributor(mcb, conn);</span>
+<span class="nc" id="L1665">            conn.commit();</span>
+        } finally {
+<span class="nc" id="L1667">            conn.setAutoCommit(true);</span>
+<span class="nc" id="L1668">            conn.close();</span>
+        }
+<span class="nc" id="L1670">    }</span>
+
+    public void saveMetametadataIdentifier(MetametadataIdentifierBean mcb) throws SQLException {
+        // Save the metadata info from the database
+<span class="nc" id="L1674">        Connection conn = dataSource.getConnection();</span>
+<span class="nc" id="L1675">        conn.setAutoCommit(false);</span>
+        try {
+<span class="nc" id="L1677">            saveMetametadataIdentifier(mcb, conn);</span>
+<span class="nc" id="L1678">            conn.commit();</span>
+        } finally {
+<span class="nc" id="L1680">            conn.setAutoCommit(true);</span>
+<span class="nc" id="L1681">            conn.close();</span>
+        }
+<span class="nc" id="L1683">    }</span>
+
+
+    /**
+     * May have the side-effect of saving a vcard to the vCards table.
+     *
+     * @param mcb
+     * @param conn
+     * @throws SQLException
+     */
+    public void saveMetametadataContributor(MetametadataContributorBean mcb, Connection conn) throws SQLException {
+        final String sql;
+<span class="nc bnc" id="L1695" title="All 2 branches missed.">        if(null == mcb.getMetametadataContributorId()) {</span>
+<span class="nc" id="L1696">            sql = METAMETADATA_CONTRIBUTOR_INSERT_SQL;</span>
+        } else {
+<span class="nc" id="L1698">            sql = METAMETADATA_CONTRIBUTOR_UPDATE_SQL;</span>
+        }
+<span class="nc" id="L1700">        PreparedStatement ps = null;</span>
+<span class="nc" id="L1701">        ResultSet rs = null;</span>
+        try {
+<span class="nc" id="L1703">            String vcardId = cd.saveVCard(mcb.getvCard(), conn);</span>
+
+<span class="nc" id="L1705">            java.sql.Date date = null;</span>
+<span class="nc bnc" id="L1706" title="All 2 branches missed.">            if(null != mcb.getDate()) {</span>
+<span class="nc" id="L1707">                date = new java.sql.Date(mcb.getDate().getTime());</span>
+            }
+
+<span class="nc" id="L1710">            ps = conn.prepareStatement(sql);</span>
+<span class="nc" id="L1711">            ps.setString(1, mcb.getMetadataId());</span>
+<span class="nc" id="L1712">            ps.setString(2, mcb.getRole());</span>
+<span class="nc" id="L1713">            ps.setDate(3, date);</span>
+<span class="nc" id="L1714">            ps.setString(4, mcb.getDateDescription());</span>
+<span class="nc" id="L1715">            ps.setString(5, vcardId);</span>
+
+<span class="nc bnc" id="L1717" title="All 2 branches missed.">            if(null != mcb.getMetametadataContributorId()) {</span>
+<span class="nc" id="L1718">                ps.setString(6, mcb.getMetametadataContributorId());</span>
+            }
+
+<span class="nc" id="L1721">            ps.executeUpdate();</span>
+
+<span class="nc bnc" id="L1723" title="All 2 branches missed.">            if(null == mcb.getMetametadataContributorId()) {</span>
+<span class="nc" id="L1724">                ps.close();</span>
+<span class="nc" id="L1725">                ps = conn.prepareStatement(&quot;SELECT @@Identity AS ID&quot;);</span>
+<span class="nc" id="L1726">                rs = ps.executeQuery();</span>
+<span class="nc" id="L1727">                rs.next();</span>
+<span class="nc" id="L1728">                mcb.setMetametadataContributorId(rs.getString(1));</span>
+            }
+
+
+        } finally {
+<span class="nc bnc" id="L1733" title="All 2 branches missed.">            if(null != rs) {</span>
+<span class="nc" id="L1734">                rs.close();</span>
+            }
+<span class="nc bnc" id="L1736" title="All 2 branches missed.">            if(null != ps) {</span>
+<span class="nc" id="L1737">                ps.close();</span>
+            }
+        }
+<span class="nc" id="L1740">    }</span>
+
+   /**
+     * Returns the count of total resources in the database
+     * Returns null on an error or if no entries exist in the
+     * database.
+     */
+    public int getCountOfResources() throws SQLException {
+        //Get the usernames from the database
+<span class="nc" id="L1749">        Connection conn = dataSource.getConnection();</span>
+<span class="nc" id="L1750">                int count = 0;</span>
+        try {
+<span class="nc" id="L1752">            SQLCommandBean sqlCommandBean = new SQLCommandBean();</span>
+<span class="nc" id="L1753">            sqlCommandBean.setConnection(conn);</span>
+<span class="nc" id="L1754">            String sql = &quot;SELECT Count(metadataId) as Expr1 FROM Metadata where private = 0&quot;;</span>
+<span class="nc" id="L1755">            sqlCommandBean.setSqlValue(sql);</span>
+            try {
+<span class="nc" id="L1757">                            Vector rows = null;</span>
+<span class="nc" id="L1758">                            Row row = null;</span>
+<span class="nc" id="L1759">                            rows = sqlCommandBean.executeQuery();</span>
+<span class="nc" id="L1760">                            Iterator rowIterator = rows.iterator();</span>
+<span class="nc bnc" id="L1761" title="All 2 branches missed.">                            while (rowIterator.hasNext())</span>
+                            {
+<span class="nc" id="L1763">                                row = (Row) rowIterator.next();</span>
+<span class="nc" id="L1764">                                count = row.getInt(&quot;Expr1&quot;);</span>
+                            }
+<span class="nc" id="L1766">            } catch (UnsupportedTypeException e) {</span>
+<span class="nc" id="L1767">                throw new SQLException(e.toString());</span>
+<span class="nc" id="L1768">            } catch (NoSuchColumnException e2) {</span>
+<span class="nc" id="L1769">                throw new SQLException(e2.toString());</span>
+            }
+<span class="nc" id="L1771">                             catch (UnsupportedConversionException ex)</span>
+                        {
+<span class="nc" id="L1773">                                throw new SQLException(ex.toString());</span>
+<span class="nc" id="L1774">                        }</span>
+        } finally {
+            try {
+<span class="nc" id="L1777">                conn.close();</span>
+<span class="nc" id="L1778">            } catch (SQLException e) {</span>
+<span class="nc" id="L1779">            } // Ignore</span>
+        }
+<span class="nc" id="L1781">        return count;</span>
+    }
+
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

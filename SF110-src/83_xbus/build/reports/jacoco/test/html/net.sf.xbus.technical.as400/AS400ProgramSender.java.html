@@ -1,0 +1,775 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AS400ProgramSender.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.technical.as400</a> &gt; <span class="el_source">AS400ProgramSender.java</span></div><h1>AS400ProgramSender.java</h1><pre class="source lang-java linenums">package net.sf.xbus.technical.as400;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Vector;
+
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.core.config.Configuration;
+import net.sf.xbus.base.core.strings.XStringSupport;
+import net.sf.xbus.base.core.trace.Trace;
+import net.sf.xbus.base.xbussystem.XBUSSystem;
+import net.sf.xbus.base.xml.XMLHelper;
+import net.sf.xbus.technical.ObjectSender;
+import net.sf.xbus.technical.Sender;
+
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NamedNodeMap;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+
+import com.ibm.as400.access.AS400;
+import com.ibm.as400.access.CharConverter;
+import com.ibm.as400.access.ProgramParameter;
+
+/**
+ * The &lt;code&gt;AS400ProgramSender&lt;/code&gt; calls a program on an AS400 and gives
+ * back the result.
+ * &lt;p&gt;
+ */
+public class AS400ProgramSender extends AS400FileBase
+		implements
+			Sender,
+			ObjectSender
+{
+	public static final String CALLTYPE_SINGLE = &quot;Single&quot;;
+	public static final String CALLTYPE_MULTI = &quot;Multi&quot;;
+
+	private static final String TAG_INPUT = &quot;Input&quot;;
+	private static final String TAG_OUTPUT = &quot;Output&quot;;
+	private static final String TAG_FIELD = &quot;Field&quot;;
+
+	private static final String ATTRIBUTE_NAME = &quot;Name&quot;;
+	private static final String ATTRIBUTE_VALUE = &quot;Value&quot;;
+	private static final String ATTRIBUTE_FORMAT = &quot;Format&quot;;
+	private static final String ATTRIBUTE_LENGTH = &quot;Length&quot;;
+
+	private static final String FORMAT_ALPHA = &quot;alpha&quot;;
+	private static final String FORMAT_NUM = &quot;num&quot;;
+	private static final String FORMAT_DATE = &quot;date&quot;;
+
+	/**
+	 * Interface reference in the xBus
+	 */
+<span class="nc" id="L61">	private XBUSSystem mDestination = null;</span>
+
+	/**
+	 * Declaration of input parameters for program
+	 */
+<span class="nc" id="L66">	private List mInputFields = null;</span>
+
+	/**
+	 * Declaration of output parameters
+	 */
+<span class="nc" id="L71">	private List mOutputFields = null;</span>
+
+	/**
+	 * Length of output parameter string
+	 */
+<span class="nc" id="L76">	private int mOutputLength = 0;</span>
+
+	/**
+	 * Input parameter values lined up in a string
+	 */
+	private StringBuffer mInputParams;
+
+	/**
+	 * Length of counter field for call type &quot;multiple&quot;
+	 */
+	private int mCountLength;
+
+	/**
+	 * Constructs an &lt;code&gt;AS400ProgramSender&lt;/code&gt; for a given XBUSSystem
+	 * 
+	 * @param destination XBUSSystem which consists two informations:&lt;br&gt;
+	 *            &amp;nbsp;&amp;nbsp;-The name of the system is used to identify the
+	 *            system&lt;br&gt;
+	 *            &amp;nbsp;&amp;nbsp;-Additionally an adress might be available.
+	 */
+	public AS400ProgramSender(XBUSSystem destination)
+<span class="nc" id="L97">	{</span>
+<span class="nc" id="L98">		mDestination = destination;</span>
+<span class="nc" id="L99">	} // constructor AS400ProgramSender(XBUSSystem destination)</span>
+
+	/**
+	 * Performs the program call on the AS400. Steps to do this:
+	 * &lt;ul&gt;
+	 * &lt;li&gt;prepare input parameter&lt;/li&gt;
+	 * &lt;li&gt;call program with input parameters&lt;/li&gt;
+	 * &lt;li&gt;retrieve result and fromat output parameters
+	 * 
+	 * @param function the path of the called program
+	 * @param callData &lt;code&gt;org.w3c.Document&lt;/code&gt; containing input
+	 *            parameter structure and values and output parameter structure
+	 * @return &lt;code&gt;org.w3c.Document&lt;/code&gt; containing the output data of the
+	 *         AS400 program in the specied structure
+	 * @exception XException
+	 */
+	public Object execute(String function, Object callData) throws XException
+	{
+		// for result
+<span class="nc" id="L118">		Document response = null;</span>
+
+<span class="nc" id="L120">		Configuration config = Configuration.getInstance();</span>
+
+<span class="nc" id="L122">		AS400Connection as400Connection = AS400Connection.getInstance(config</span>
+<span class="nc" id="L123">				.getValue(Constants.CHAPTER_SYSTEM, mDestination.getName(),</span>
+						&quot;AS400Name&quot;));
+
+<span class="nc" id="L126">		int timeout = config.getValueAsIntOptional(Constants.CHAPTER_SYSTEM,</span>
+<span class="nc" id="L127">				mDestination.getName(), &quot;ProgramTimeout&quot;) * 1000;</span>
+<span class="nc bnc" id="L128" title="All 2 branches missed.">		if (timeout == 0)</span>
+		{
+<span class="nc" id="L130">			timeout = Integer.MAX_VALUE;</span>
+		}
+
+		/*
+		 * If there is no real AS400 available, then testdata will be used.
+		 */
+<span class="nc bnc" id="L136" title="All 2 branches missed.">		if (as400Connection.isTestSystem())</span>
+		{
+<span class="nc" id="L138">			return XMLHelper.parseXML(getTestData(function), null, null);</span>
+		}
+
+		// Conect to the iSeries
+<span class="nc" id="L142">		AS400 as400 = as400Connection.getSystem();</span>
+
+		// Character converter
+		try
+		{
+<span class="nc" id="L147">			mConverter = new CharConverter(as400.getCcsid());</span>
+		}
+<span class="nc" id="L149">		catch (UnsupportedEncodingException e)</span>
+		{
+<span class="nc" id="L151">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_AS400, &quot;0&quot;, e);
+<span class="nc" id="L154">		}</span>
+
+		// Determine how to operate
+<span class="nc" id="L157">		String callType = config.getValue(&quot;AS400Program&quot;, function, &quot;CallType&quot;);</span>
+
+<span class="nc bnc" id="L159" title="All 2 branches missed.">		if (!CALLTYPE_SINGLE.equals(callType)</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">				&amp;&amp; !CALLTYPE_MULTI.equals(callType))</span>
+		{
+<span class="nc" id="L162">			List params = new Vector();</span>
+<span class="nc" id="L163">			params.add(callType);</span>
+<span class="nc" id="L164">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_AS400, &quot;39&quot;, params);
+		} // if (!CALLTYPE_SINGLE.equals(callType) &amp;&amp;
+			// !CALLTYPE_MULTI.equals(callType))
+
+<span class="nc bnc" id="L170" title="All 2 branches missed.">		if (CALLTYPE_SINGLE.equals(callType))</span>
+		{ // Only one calling step, only one record wil be returned as result
+			// Read the name of the programm from the configuration
+<span class="nc" id="L173">			String programName = config.getValue(&quot;AS400Program&quot;, function,</span>
+					&quot;Program&quot;);
+
+			// Structure for input an (still empty) output parameters
+<span class="nc" id="L177">			ProgramParameter[] parameters = getParametersFromDocument(</span>
+					(Document) callData, callType, function, 1, 1);
+
+			// the program call itself
+<span class="nc" id="L181">			callAS400Program(as400, programName, parameters, timeout);</span>
+
+			// Get the output values.
+<span class="nc" id="L184">			List outputList = makeOutputFields(as400, parameters, 1);</span>
+			// Place output values in specified XML structure.
+<span class="nc" id="L186">			response = getResponseDocument(function, outputList);</span>
+<span class="nc" id="L187">		} // then (CALLTYPE_SINGLE.equals(callType))</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">		else if (CALLTYPE_MULTI.equals(callType))</span>
+		{ // Call multiple times to get entire list of output data
+			// First call will determine amount of returned records.
+			// Next phase is to call (another program) to get each time one
+			// record.
+
+			// Read the name of the output count determining program from the
+			// configuration
+<span class="nc" id="L196">			String programNameAmount = config.getValue(&quot;AS400Program&quot;,</span>
+					function, &quot;ProgramAmount&quot;);
+
+			// Read the e
+<span class="nc" id="L200">			String programNameData = config.getValue(&quot;AS400Program&quot;, function,</span>
+					&quot;ProgramData&quot;);
+
+			/*
+			 * First call of the AS400 program to get the amount of rows to be
+			 * retrieved.
+			 */
+			// Structure for input an (still empty) output parameters
+<span class="nc" id="L208">			ProgramParameter[] parameters = getParametersFromDocument(</span>
+					(Document) callData, callType, function, 1, 1);
+
+			// The first program call itself
+<span class="nc" id="L212">			callAS400Program(as400, programNameAmount, parameters, timeout);</span>
+
+			// Number of result records to retrieve in next calling phase
+<span class="nc" id="L215">			int recordAmount = getParameterAsInt(as400, parameters, 1);</span>
+
+			/*
+			 * Subsequent calls of the AS400 program to get all rows.
+			 */
+			// for the result records
+<span class="nc" id="L221">			List outputVector = new Vector();</span>
+			// Loop over all result records - count already known
+<span class="nc bnc" id="L223" title="All 2 branches missed.">			for (int row = 0; row &lt; recordAmount; row++)</span>
+			{
+				// Structure for input an (still empty) output parameters
+<span class="nc" id="L226">				parameters = getParametersFromDocument((Document) callData,</span>
+						callType, function, 2 + row, 1);
+
+				// The program call itself
+<span class="nc" id="L230">				callAS400Program(as400, programNameData, parameters, timeout);</span>
+
+				// Retrieve result record and add it to list
+<span class="nc" id="L233">				outputVector.addAll(makeOutputFields(as400, parameters, 1));</span>
+			} // for (int row=0; row&lt;recordAmount; row++)
+<span class="nc" id="L235">			response = getResponseDocument(function, outputVector);</span>
+		} // if (CALLTYPE_MULTI.equals(callType))
+
+		// Done with the server
+<span class="nc" id="L239">		as400.disconnectService(AS400.COMMAND);</span>
+
+<span class="nc" id="L241">		return response;</span>
+	} // execute(String function, Object callData)
+
+	/**
+	 * Gets one output parameter from the parameterlist as a string.
+	 */
+	private String getParameterAsString(AS400 as400,
+			ProgramParameter[] parameters, int position)
+	{
+<span class="nc" id="L250">		byte[] data = parameters[position].getOutputData();</span>
+<span class="nc" id="L251">		return mConverter.byteArrayToString(data);</span>
+	}
+
+	/**
+	 * Gets one output parameter from the parameterlist as an integer.
+	 */
+	private int getParameterAsInt(AS400 as400, ProgramParameter[] parameters,
+			int position) throws XException
+	{
+<span class="nc" id="L260">		int response = 0;</span>
+		try
+		{
+<span class="nc" id="L263">			response = Integer.parseInt(getParameterAsString(as400, parameters,</span>
+					position));
+		}
+<span class="nc" id="L266">		catch (NumberFormatException e)</span>
+		{
+<span class="nc" id="L268">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_AS400, &quot;0&quot;, e);
+<span class="nc" id="L271">		}</span>
+
+<span class="nc" id="L273">		return response;</span>
+	}
+
+	/**
+	 * A list of program parameters is created out of the given
+	 * &lt;code&gt;org.w3c.document&lt;/code&gt;.
+	 */
+	private ProgramParameter[] getParametersFromDocument(Document doc,
+			String callType, String function, int callNumber, int numOutputRows)
+			throws XException
+	{
+<span class="nc" id="L284">		ProgramParameter[] parameters = null;</span>
+
+<span class="nc" id="L286">		parameters = new ProgramParameter[numOutputRows + 1];</span>
+
+		/*
+		 * Filling the input parameter
+		 */
+<span class="nc bnc" id="L291" title="All 2 branches missed.">		if (callNumber == 1)</span>
+		{
+<span class="nc" id="L293">			NodeList input = doc.getElementsByTagName(TAG_INPUT);</span>
+<span class="nc bnc" id="L294" title="All 2 branches missed.">			if (input.getLength() != 1)</span>
+			{
+<span class="nc" id="L296">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_AS400, &quot;41&quot;);
+			}
+<span class="nc" id="L300">			mInputFields = getFields(input.item(0).getChildNodes());</span>
+
+<span class="nc" id="L302">			mInputParams = new StringBuffer();</span>
+<span class="nc" id="L303">			Field field = null;</span>
+<span class="nc bnc" id="L304" title="All 2 branches missed.">			for (Iterator it = mInputFields.iterator(); it.hasNext();)</span>
+			{
+<span class="nc" id="L306">				field = (Field) it.next();</span>
+
+<span class="nc bnc" id="L308" title="All 2 branches missed.">				if (FORMAT_ALPHA.equals(field.format))</span>
+				{
+<span class="nc bnc" id="L310" title="All 2 branches missed.">					if (field.length &lt; field.value.length())</span>
+					{
+<span class="nc" id="L312">						List params = new Vector();</span>
+<span class="nc" id="L313">						params.add(field.name);</span>
+<span class="nc" id="L314">						params.add(field.value);</span>
+<span class="nc" id="L315">						throw new XException(Constants.LOCATION_EXTERN,</span>
+								Constants.LAYER_TECHNICAL,
+								Constants.PACKAGE_TECHNICAL_AS400, &quot;42&quot;, params);
+					} // if (field.length &lt; field.value.length())
+<span class="nc" id="L319">					mInputParams.append(field.value);</span>
+					// Fill in blanks if the value is to short.
+<span class="nc bnc" id="L321" title="All 2 branches missed.">					for (int j = 0; j &lt; field.length - field.value.length(); j++)</span>
+					{
+<span class="nc" id="L323">						mInputParams.append(&quot; &quot;);</span>
+					} // for (int j = 0; j &lt; field.length -
+						// field.value.length(); j++)
+				} // if (FORMAT_ALPHA.equals(field.format))
+<span class="nc bnc" id="L327" title="All 2 branches missed.">				else if (FORMAT_NUM.equals(field.format))</span>
+				{
+					// Test if the value is an integer
+					try
+					{
+<span class="nc" id="L332">						Integer.parseInt(field.value);</span>
+					} // try
+<span class="nc" id="L334">					catch (NumberFormatException e)</span>
+					{
+<span class="nc" id="L336">						List params = new Vector();</span>
+<span class="nc" id="L337">						params.add(field.name);</span>
+<span class="nc" id="L338">						params.add(field.value);</span>
+<span class="nc" id="L339">						params.add(field.name);</span>
+<span class="nc" id="L340">						throw new XException(Constants.LOCATION_EXTERN,</span>
+								Constants.LAYER_TECHNICAL,
+								Constants.PACKAGE_TECHNICAL_AS400, &quot;43&quot;, params);
+<span class="nc" id="L343">					} // catch</span>
+<span class="nc bnc" id="L344" title="All 2 branches missed.">					if (field.length &lt; field.value.length())</span>
+					{
+<span class="nc" id="L346">						List params = new Vector();</span>
+<span class="nc" id="L347">						params.add(field.name);</span>
+<span class="nc" id="L348">						params.add(field.value);</span>
+<span class="nc" id="L349">						throw new XException(Constants.LOCATION_EXTERN,</span>
+								Constants.LAYER_TECHNICAL,
+								Constants.PACKAGE_TECHNICAL_AS400, &quot;42&quot;, params);
+					} // if (field.length &lt; field.value.length())
+					// Fill in trailing zeros if the value is too short
+<span class="nc bnc" id="L354" title="All 2 branches missed.">					for (int j = 0; j &lt; field.length - field.value.length(); j++)</span>
+					{
+<span class="nc" id="L356">						mInputParams.append(&quot;0&quot;);</span>
+					} // for (int j = 0; j &lt; field.length -
+						// field.value.length()
+
+<span class="nc" id="L360">					mInputParams.append(field.value);</span>
+				} // if (FORMAT_NUM.equals(field.format))
+<span class="nc bnc" id="L362" title="All 2 branches missed.">				else if (FORMAT_DATE.equals(field.format))</span>
+				{
+<span class="nc" id="L364">					if (field.value.length() != Constants.AS400_CALL_DATE_FORMAT</span>
+<span class="nc bnc" id="L365" title="All 2 branches missed.">							.length())</span>
+					{
+<span class="nc" id="L367">						List params = new Vector();</span>
+<span class="nc" id="L368">						params.add(field.name);</span>
+<span class="nc" id="L369">						params.add(field.value);</span>
+<span class="nc" id="L370">						throw new XException(Constants.LOCATION_EXTERN,</span>
+								Constants.LAYER_TECHNICAL,
+								Constants.PACKAGE_TECHNICAL_AS400, &quot;45&quot;, params);
+					}
+<span class="nc" id="L374">					mInputParams.append(field.value);</span>
+				} // then (FORMAT_DATE.equals(field.format))
+				else
+				{
+<span class="nc" id="L378">					List params = new Vector();</span>
+<span class="nc" id="L379">					params.add(field.name);</span>
+<span class="nc" id="L380">					params.add(field.format);</span>
+<span class="nc" id="L381">					throw new XException(Constants.LOCATION_EXTERN,</span>
+							Constants.LAYER_TECHNICAL,
+							Constants.PACKAGE_TECHNICAL_AS400, &quot;46&quot;, params);
+				} // (FORMAT_DATE.equals(field.format))
+			} // for (Iterator it = mInputFields.iterator(); it.hasNext();)
+<span class="nc" id="L386">		} // if (callNumber==1)</span>
+<span class="nc bnc" id="L387" title="All 2 branches missed.">		else if (callNumber == 2)</span>
+<span class="nc" id="L388">			mInputParams</span>
+<span class="nc" id="L389">					.append(XStringSupport.getNumberString(1, mCountLength));</span>
+		else
+		{
+<span class="nc" id="L392">			mInputParams.delete(mInputParams.lastIndexOf(XStringSupport</span>
+<span class="nc" id="L393">					.getNumberString(callNumber - 2, mCountLength)),</span>
+<span class="nc" id="L394">					mInputParams.length());</span>
+<span class="nc" id="L395">			mInputParams.append(XStringSupport.getNumberString(callNumber - 1,</span>
+					mCountLength));
+		}
+
+<span class="nc" id="L399">		parameters[0] = new ProgramParameter(mConverter</span>
+<span class="nc" id="L400">				.stringToByteArray(mInputParams.toString()));</span>
+
+		/*
+		 * Filling the output parameters
+		 */
+<span class="nc bnc" id="L405" title="All 2 branches missed.">		if (callNumber == 1)</span>
+		{
+<span class="nc" id="L407">			NodeList output = doc.getElementsByTagName(TAG_OUTPUT);</span>
+<span class="nc bnc" id="L408" title="All 2 branches missed.">			if (output.getLength() != 1)</span>
+			{
+<span class="nc" id="L410">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_AS400, &quot;47&quot;);
+			}
+<span class="nc" id="L414">			mOutputFields = getFields(output.item(0).getChildNodes());</span>
+		}
+<span class="nc bnc" id="L416" title="All 4 branches missed.">		if ((CALLTYPE_MULTI.equals(callType)) &amp;&amp; callNumber == 1)</span>
+		{
+<span class="nc" id="L418">			Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L419">			mCountLength = config.getValueAsInt(&quot;AS400Program&quot;, function,</span>
+					&quot;CounterLength&quot;);
+<span class="nc" id="L421">			parameters[1] = new ProgramParameter(mCountLength);</span>
+<span class="nc" id="L422">		}</span>
+		else
+		{
+<span class="nc bnc" id="L425" title="All 2 branches missed.">			if (callNumber &lt; 3)</span>
+			{
+<span class="nc" id="L427">				Field field = null;</span>
+<span class="nc bnc" id="L428" title="All 2 branches missed.">				for (Iterator it = mOutputFields.iterator(); it.hasNext();)</span>
+				{
+<span class="nc" id="L430">					field = (Field) it.next();</span>
+<span class="nc" id="L431">					mOutputLength = mOutputLength + field.length;</span>
+				}
+			}
+<span class="nc" id="L434">			parameters[1] = new ProgramParameter(mOutputLength);</span>
+		}
+<span class="nc" id="L436">		return parameters;</span>
+	}
+
+	/**
+	 * Makes a list of fields out of the output parameters of the given
+	 * parameter list.
+	 */
+	private List makeOutputFields(AS400 as400, ProgramParameter[] parameters,
+			int numRows) throws XException
+	{
+		/*
+		 * Since the first parameter is an input parameter, the length of the
+		 * parameters array must be larger than numRows
+		 */
+<span class="nc bnc" id="L450" title="All 2 branches missed.">		if (parameters.length &lt;= numRows)</span>
+		{
+<span class="nc" id="L452">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_AS400, &quot;66&quot;);
+		}
+
+<span class="nc" id="L457">		Vector response = new Vector();</span>
+<span class="nc" id="L458">		Vector row = null;</span>
+<span class="nc" id="L459">		Field field = null;</span>
+<span class="nc" id="L460">		int position = 0;</span>
+<span class="nc" id="L461">		String data = null;</span>
+<span class="nc bnc" id="L462" title="All 2 branches missed.">		for (int i = 1; i &lt;= numRows; i++)</span>
+		{
+<span class="nc" id="L464">			row = new Vector();</span>
+<span class="nc" id="L465">			data = getParameterAsString(as400, parameters, i);</span>
+
+<span class="nc bnc" id="L467" title="All 2 branches missed.">			for (Iterator it = mOutputFields.iterator(); it.hasNext();)</span>
+			{
+<span class="nc" id="L469">				field = (Field) ((Field) it.next()).clone();</span>
+<span class="nc" id="L470">				field.value = data.substring(position, position + field.length)</span>
+<span class="nc" id="L471">						.trim();</span>
+<span class="nc bnc" id="L472" title="All 2 branches missed.">				if (FORMAT_NUM.equals(field.format))</span>
+				{
+					try
+					{
+<span class="nc" id="L476">						field.value = String.valueOf(Integer</span>
+<span class="nc" id="L477">								.parseInt(field.value));</span>
+					}
+<span class="nc" id="L479">					catch (NumberFormatException e)</span>
+					{
+<span class="nc" id="L481">						throw new XException(Constants.LOCATION_EXTERN,</span>
+								Constants.LAYER_TECHNICAL,
+								Constants.PACKAGE_TECHNICAL_AS400, &quot;0&quot;, e);
+<span class="nc" id="L484">					}</span>
+				}
+<span class="nc" id="L486">				position = position + field.length;</span>
+<span class="nc" id="L487">				row.add(field);</span>
+			}
+<span class="nc" id="L489">			response.add(row);</span>
+		}
+<span class="nc" id="L491">		return response;</span>
+	}
+
+	/**
+	 * Creates an &lt;code&gt;org.w3c.Document&lt;/code&gt; out of the given list of
+	 * output fields
+	 */
+	private Document getResponseDocument(String function, List outputLists)
+			throws XException
+	{
+<span class="nc" id="L501">		Document response = getTemplateAsDocument();</span>
+
+<span class="nc" id="L503">		Element newFunction = response</span>
+<span class="nc" id="L504">				.createElement(Constants.XBUSXMLMESSAGE_FUNCTION);</span>
+<span class="nc" id="L505">		newFunction.appendChild(response.createTextNode(function));</span>
+<span class="nc" id="L506">		NodeList children = response</span>
+<span class="nc" id="L507">				.getElementsByTagName(Constants.XBUSXMLMESSAGE_FUNCTION);</span>
+<span class="nc bnc" id="L508" title="All 2 branches missed.">		if (children.getLength() &gt; 0)</span>
+		{
+<span class="nc" id="L510">			Node oldData = children.item(0);</span>
+<span class="nc" id="L511">			Node father = oldData.getParentNode();</span>
+<span class="nc" id="L512">			father.replaceChild(newFunction, oldData);</span>
+		}
+
+<span class="nc" id="L515">		Element newData = response.createElement(Constants.XBUSXMLMESSAGE_DATA);</span>
+
+<span class="nc" id="L517">		List fields = null;</span>
+<span class="nc" id="L518">		Field field = null;</span>
+<span class="nc" id="L519">		Element outputNode = null;</span>
+<span class="nc" id="L520">		Element fieldNode = null;</span>
+<span class="nc bnc" id="L521" title="All 2 branches missed.">		for (Iterator it1 = outputLists.iterator(); it1.hasNext();)</span>
+		{
+<span class="nc" id="L523">			fields = (List) it1.next();</span>
+<span class="nc" id="L524">			outputNode = response.createElement(TAG_OUTPUT);</span>
+<span class="nc" id="L525">			newData.appendChild(outputNode);</span>
+<span class="nc" id="L526">			outputNode.appendChild(response.createTextNode(&quot;\n&quot;));</span>
+<span class="nc bnc" id="L527" title="All 2 branches missed.">			for (Iterator it2 = fields.iterator(); it2.hasNext();)</span>
+			{
+<span class="nc" id="L529">				field = (Field) it2.next();</span>
+<span class="nc" id="L530">				fieldNode = response.createElement(TAG_FIELD);</span>
+<span class="nc" id="L531">				outputNode.appendChild(fieldNode);</span>
+<span class="nc" id="L532">				fieldNode.setAttribute(ATTRIBUTE_NAME, field.name);</span>
+<span class="nc" id="L533">				fieldNode.setAttribute(ATTRIBUTE_VALUE, field.value);</span>
+<span class="nc" id="L534">				fieldNode.setAttribute(ATTRIBUTE_FORMAT, field.format);</span>
+<span class="nc bnc" id="L535" title="All 2 branches missed.">				if (!FORMAT_DATE.equals(field.format))</span>
+				{
+<span class="nc" id="L537">					fieldNode.setAttribute(ATTRIBUTE_LENGTH, String</span>
+<span class="nc" id="L538">							.valueOf(field.length));</span>
+				}
+
+<span class="nc" id="L541">				outputNode.appendChild(response.createTextNode(&quot;\n&quot;));</span>
+			}
+		}
+
+<span class="nc" id="L545">		children = response.getElementsByTagName(Constants.XBUSXMLMESSAGE_DATA);</span>
+<span class="nc bnc" id="L546" title="All 2 branches missed.">		if (children.getLength() &gt; 0)</span>
+		{
+<span class="nc" id="L548">			Node oldData = children.item(0);</span>
+<span class="nc" id="L549">			Node father = oldData.getParentNode();</span>
+<span class="nc" id="L550">			father.replaceChild(newData, oldData);</span>
+		}
+
+<span class="nc" id="L553">		return response;</span>
+	}
+
+	/**
+	 * Makes a list of fields for either input or output parameters.
+	 */
+	private List getFields(NodeList nodes) throws XException
+	{
+<span class="nc" id="L561">		Vector fields = new Vector();</span>
+
+		Field field;
+		Node node, name, value, length, format;
+		NamedNodeMap attributes;
+<span class="nc bnc" id="L566" title="All 2 branches missed.">		for (int i = 0; i &lt; nodes.getLength(); i++)</span>
+		{
+<span class="nc" id="L568">			node = nodes.item(i);</span>
+
+<span class="nc bnc" id="L570" title="All 2 branches missed.">			if ((TAG_FIELD.equals(node.getNodeName()))</span>
+<span class="nc bnc" id="L571" title="All 2 branches missed.">					&amp;&amp; (node.getNodeType() == Node.ELEMENT_NODE))</span>
+			{
+<span class="nc" id="L573">				field = new Field();</span>
+<span class="nc" id="L574">				attributes = node.getAttributes();</span>
+
+<span class="nc" id="L576">				name = attributes.getNamedItem(ATTRIBUTE_NAME);</span>
+<span class="nc bnc" id="L577" title="All 2 branches missed.">				if (name != null)</span>
+				{
+<span class="nc" id="L579">					field.name = name.getNodeValue();</span>
+				}
+				else
+				{
+<span class="nc" id="L583">					throw new XException(Constants.LOCATION_EXTERN,</span>
+							Constants.LAYER_TECHNICAL,
+							Constants.PACKAGE_TECHNICAL_AS400, &quot;50&quot;);
+				}
+
+<span class="nc" id="L588">				value = attributes.getNamedItem(ATTRIBUTE_VALUE);</span>
+<span class="nc bnc" id="L589" title="All 2 branches missed.">				if (value != null)</span>
+				{
+<span class="nc" id="L591">					field.value = value.getNodeValue();</span>
+				}
+				else
+				{
+<span class="nc" id="L595">					field.value = null;</span>
+				}
+
+<span class="nc" id="L598">				format = attributes.getNamedItem(ATTRIBUTE_FORMAT);</span>
+<span class="nc bnc" id="L599" title="All 2 branches missed.">				if (format != null)</span>
+				{
+<span class="nc" id="L601">					field.format = format.getNodeValue();</span>
+				}
+				else
+				{
+<span class="nc" id="L605">					throw new XException(Constants.LOCATION_EXTERN,</span>
+							Constants.LAYER_TECHNICAL,
+							Constants.PACKAGE_TECHNICAL_AS400, &quot;51&quot;);
+				}
+
+<span class="nc bnc" id="L610" title="All 2 branches missed.">				if (FORMAT_DATE.equals(field.format))</span>
+				{
+<span class="nc" id="L612">					field.length = Constants.AS400_CALL_DATE_FORMAT.length();</span>
+				}
+				else
+				{
+<span class="nc" id="L616">					length = attributes.getNamedItem(ATTRIBUTE_LENGTH);</span>
+<span class="nc bnc" id="L617" title="All 2 branches missed.">					if (length != null)</span>
+					{
+						try
+						{
+<span class="nc" id="L621">							field.length = Integer.parseInt(length</span>
+<span class="nc" id="L622">									.getNodeValue());</span>
+						}
+<span class="nc" id="L624">						catch (NumberFormatException e)</span>
+						{
+<span class="nc" id="L626">							throw new XException(Constants.LOCATION_EXTERN,</span>
+									Constants.LAYER_TECHNICAL,
+									Constants.PACKAGE_TECHNICAL_AS400, &quot;0&quot;, e);
+<span class="nc" id="L629">						}</span>
+					}
+					else
+					{
+<span class="nc" id="L633">						throw new XException(Constants.LOCATION_EXTERN,</span>
+								Constants.LAYER_TECHNICAL,
+								Constants.PACKAGE_TECHNICAL_AS400, &quot;53&quot;);
+					}
+				}
+<span class="nc" id="L638">				fields.add(field);</span>
+
+			}
+		}
+
+<span class="nc" id="L643">		return fields;</span>
+	}
+
+	/**
+	 * Reads test data from a file, when there is no AS/400 available.
+	 */
+	private String getTestData(String function) throws XException
+	{
+<span class="nc" id="L651">		Trace.info(&quot;Entering AS400ProgramMessage.getTestData&quot;);</span>
+
+		String filename;
+<span class="nc bnc" id="L654" title="All 2 branches missed.">		if (&quot;StockCheck&quot;.equals(function))</span>
+		{
+<span class="nc" id="L656">			filename = Constants.XBUS_ETC + &quot;AS400Test&quot;</span>
+					+ Constants.FILE_SEPERATOR + &quot;StockCheck.xml&quot;;
+		}
+<span class="nc bnc" id="L659" title="All 2 branches missed.">		else if (&quot;OrderCheck&quot;.equals(function))</span>
+		{
+<span class="nc" id="L661">			filename = Constants.XBUS_ETC + &quot;AS400Test&quot;</span>
+					+ Constants.FILE_SEPERATOR + &quot;OrderCheck.xml&quot;;
+		}
+		else
+		{
+<span class="nc" id="L666">			List params = new Vector();</span>
+<span class="nc" id="L667">			params.add(function);</span>
+<span class="nc" id="L668">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_AS400, &quot;54&quot;, params);
+		}
+
+		String line;
+<span class="nc" id="L674">		StringBuffer testData = new StringBuffer();</span>
+
+		try
+		{
+<span class="nc" id="L678">			BufferedReader instream = new BufferedReader(new FileReader(</span>
+					new File(filename)));
+<span class="nc bnc" id="L680" title="All 2 branches missed.">			while ((line = instream.readLine()) != null)</span>
+			{
+<span class="nc" id="L682">				testData.append(line);</span>
+<span class="nc" id="L683">				testData.append(Constants.LINE_SEPERATOR);</span>
+			}
+<span class="nc" id="L685">			instream.close();</span>
+		}
+<span class="nc" id="L687">		catch (IOException e)</span>
+		{
+<span class="nc" id="L689">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_AS400, &quot;0&quot;, e);
+<span class="nc" id="L692">		}</span>
+
+<span class="nc" id="L694">		Trace.info(&quot;Leaving  AS400ProgramMessage.getTestData&quot;);</span>
+<span class="nc" id="L695">		return testData.toString();</span>
+	}
+
+	/**
+	 * Acts as a container for the information of one field of either an input
+	 * or an output parameter.
+	 */
+<span class="nc" id="L702">	class Field implements Cloneable</span>
+	{
+<span class="nc" id="L704">		public String name = null;</span>
+<span class="nc" id="L705">		public String value = null;</span>
+<span class="nc" id="L706">		public int length = 0;</span>
+<span class="nc" id="L707">		public String format = null;</span>
+
+		public Object clone()
+		{
+<span class="nc" id="L711">			Field field = new Field();</span>
+<span class="nc" id="L712">			field.name = this.name;</span>
+<span class="nc" id="L713">			field.value = this.value;</span>
+<span class="nc" id="L714">			field.length = this.length;</span>
+<span class="nc" id="L715">			field.format = this.format;</span>
+
+<span class="nc" id="L717">			return field;</span>
+		}
+	}
+
+	public String getType()
+	{
+<span class="nc" id="L723">		return Constants.TYPE_OBJECT;</span>
+	}
+
+	/**
+	 * Returns a XML string containing an empty AS400ProgramMessage
+	 */
+	static public String getTemplateAsString() throws XException
+	{
+<span class="nc" id="L731">		StringBuffer retString = new StringBuffer();</span>
+
+<span class="nc" id="L733">		retString.append(&quot;&lt;?xml version=\&quot;1.0\&quot; encoding=\&quot;&quot;);</span>
+<span class="nc" id="L734">		retString.append(Constants.getXMLEncoding());</span>
+<span class="nc" id="L735">		retString.append(&quot;\&quot;?&gt;&quot;);</span>
+<span class="nc" id="L736">		retString.append(Constants.LINE_SEPERATOR);</span>
+<span class="nc" id="L737">		retString.append(&quot;&lt;!DOCTYPE XBUS_Document SYSTEM \&quot;output.dtd\&quot;&gt;&quot;);</span>
+		// The hard-coded refernce to &quot;output.dtd&quot; is not correct because the
+		// interfaces were agreed to
+		// use their own specific DTD's (one for input, one for output).
+		// As long as the destination system does not check the validity of the
+		// output xml file against
+		// its DTD, the entry in the file is arbitrary. If it does, an error
+		// will be issued becasue the
+		// used DTD's contain the names of the fields.
+<span class="nc" id="L746">		retString.append(Constants.LINE_SEPERATOR);</span>
+<span class="nc" id="L747">		retString.append(&quot;&lt;&quot;).append(Constants.XBUSXMLMESSAGE_DOCUMENT).append(</span>
+				&quot;&gt;&quot;);
+<span class="nc" id="L749">		retString.append(Constants.LINE_SEPERATOR);</span>
+<span class="nc" id="L750">		retString.append(&quot;&lt;&quot;).append(Constants.XBUSXMLMESSAGE_CALL).append(&quot;&gt;&quot;);</span>
+<span class="nc" id="L751">		retString.append(Constants.LINE_SEPERATOR);</span>
+<span class="nc" id="L752">		retString.append(&quot;&lt;&quot;).append(Constants.XBUSXMLMESSAGE_FUNCTION).append(</span>
+				&quot; /&gt;&quot;);
+<span class="nc" id="L754">		retString.append(Constants.LINE_SEPERATOR);</span>
+<span class="nc" id="L755">		retString.append(&quot;&lt;/&quot;).append(Constants.XBUSXMLMESSAGE_CALL)</span>
+<span class="nc" id="L756">				.append(&quot;&gt;&quot;);</span>
+<span class="nc" id="L757">		retString.append(Constants.LINE_SEPERATOR);</span>
+<span class="nc" id="L758">		retString.append(&quot;&lt;&quot;).append(Constants.XBUSXMLMESSAGE_DATA).append(</span>
+				&quot; /&gt;&quot;);
+<span class="nc" id="L760">		retString.append(Constants.LINE_SEPERATOR);</span>
+<span class="nc" id="L761">		retString.append(&quot;&lt;/&quot;).append(Constants.XBUSXMLMESSAGE_DOCUMENT)</span>
+<span class="nc" id="L762">				.append(&quot;&gt;&quot;);</span>
+
+<span class="nc" id="L764">		return retString.toString();</span>
+	}
+
+	/**
+	 * Returns a W3C document containing an empty AS400ProgramMessage
+	 */
+	static public Document getTemplateAsDocument() throws XException
+	{
+<span class="nc" id="L772">		return XMLHelper.parseXML(getTemplateAsString(), null, null);</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

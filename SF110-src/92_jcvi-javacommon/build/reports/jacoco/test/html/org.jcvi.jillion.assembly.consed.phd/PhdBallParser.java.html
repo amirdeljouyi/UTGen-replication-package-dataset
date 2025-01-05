@@ -1,0 +1,538 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PhdBallParser.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.assembly.consed.phd</a> &gt; <span class="el_source">PhdBallParser.java</span></div><h1>PhdBallParser.java</h1><pre class="source lang-java linenums">package org.jcvi.jillion.assembly.consed.phd;
+
+import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.text.ParseException;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.StringTokenizer;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.jcvi.jillion.assembly.consed.phd.PhdBallVisitorCallback.PhdBallVisitorMemento;
+import org.jcvi.jillion.core.Range;
+import org.jcvi.jillion.core.io.IOUtil;
+import org.jcvi.jillion.core.qual.PhredQuality;
+import org.jcvi.jillion.core.residue.nt.Nucleotide;
+import org.jcvi.jillion.internal.core.io.OpenAwareInputStream;
+import org.jcvi.jillion.internal.core.io.RandomAccessFileInputStream;
+import org.jcvi.jillion.internal.core.io.TextLineParser;
+
+/**
+ * {@code PhdBallParser} can parse
+ * {@literal phd.ball} files and individual phd files.
+ * @author dkatzel
+ *
+ */
+public abstract class PhdBallParser {
+
+	 private static final String BEGIN_COMMENT = &quot;BEGIN_COMMENT&quot;;
+    private static final String END_SEQUENCE = &quot;END_SEQUENCE&quot;;
+    private static final String END_COMMENT = &quot;END_COMMENT&quot;;
+    
+    private static final String BEGIN_DNA = &quot;BEGIN_DNA&quot;;
+    private static final String END_DNA = &quot;END_DNA&quot;;
+    
+    private static final String BEGIN_TAG = &quot;BEGIN_TAG&quot;;
+    private static final String END_TAG = &quot;END_TAG&quot;;
+
+<span class="nc" id="L44">    private static final Pattern KEY_VALUE_PATTERN = Pattern.compile(&quot;^\\s*(\\w+):\\s+(.*?)$&quot;);</span>
+<span class="nc" id="L45">    private static final Pattern CALLED_INFO_PATTERN = Pattern.compile(&quot;^\\s*(\\w)\\s+(\\d+)\\s*(\\d+)?\\s*?&quot;);</span>
+<span class="nc" id="L46">    private static final Pattern BEGIN_SEQUENCE_PATTERN = Pattern.compile(&quot;BEGIN_SEQUENCE\\s+(\\S+)\\s*(\\d+)?\\s*$&quot;);</span>
+    private static final String BEGIN_WR = &quot;WR{&quot;;
+    private static final String END_WR = &quot;}&quot;;
+
+<span class="nc" id="L50">    private static final Pattern FILE_COMMENT_PATTERN = Pattern.compile(&quot;^#(.*)\\s*$&quot;);</span>
+	
+    
+<span class="nc" id="L53">    private static final Pattern RIGHT_TRIM_PATTERN = Pattern.compile(&quot;(.*)\\s+$&quot;);</span>
+	/**
+	 * 
+	 * @param phdBall
+	 * @return
+	 * @throws FileNotFoundException
+	 */
+	public static PhdBallParser create(File phdBall) throws FileNotFoundException{
+<span class="nc" id="L61">		return new FileBasedPhdBallParser(phdBall);</span>
+	}
+	public static PhdBallParser create(InputStream phdBallStream) throws FileNotFoundException{
+<span class="nc" id="L64">		return new InputStreamBasedPhdBallParser(phdBallStream);</span>
+	}
+
+	private PhdBallParser(){
+		//can not instantiate outside of this .java file
+	}
+	
+	
+	public abstract void accept(PhdBallVisitor visitor) throws IOException;
+	
+	
+	public abstract void accept(PhdBallVisitor visitor, PhdBallVisitorMemento memento) throws IOException;
+	
+	protected void accept(TextLineParser parser, PhdBallVisitor visitor) throws IOException{
+<span class="nc" id="L78">		ParserState parserState = new ParserState();</span>
+<span class="nc" id="L79">		boolean seenFileComment=false;</span>
+<span class="nc" id="L80">		 PhdVisitor phdVisitor =null;</span>
+<span class="nc bnc" id="L81" title="All 4 branches missed.">		while(parser.hasNextLine() &amp;&amp; parserState.keepParsing()){</span>
+			
+<span class="nc" id="L83">			long currentOffset = parser.getPosition();</span>
+<span class="nc" id="L84">			String line = parser.nextLine();</span>
+<span class="nc" id="L85">			Matcher beginSequenceMatcher = BEGIN_SEQUENCE_PATTERN.matcher(line);</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">			if(beginSequenceMatcher.matches()){</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">				if(phdVisitor !=null){</span>
+<span class="nc" id="L88">					phdVisitor.visitEnd();</span>
+				}
+				//if the previous phdVisitor's visitEnd()
+				//was just called, it may have used a callback
+				//to halt parsing so check flag to see 
+				//if we should still continue parsing/visiting
+<span class="nc bnc" id="L94" title="All 2 branches missed.">				if(!parserState.keepParsing()){</span>
+<span class="nc" id="L95">					phdVisitor=null; //set to null to avoid calling visitEnd() twice</span>
+<span class="nc" id="L96">					break;</span>
+				}
+<span class="nc" id="L98">				String readId = beginSequenceMatcher.group(1);</span>
+<span class="nc" id="L99">				String optionalVersion = beginSequenceMatcher.group(2);</span>
+<span class="nc" id="L100">				PhdBallVisitorCallback callback = createCallback(parserState,currentOffset);</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">				if(optionalVersion ==null){</span>
+<span class="nc" id="L102">					phdVisitor = visitor.visitPhd(callback, readId, null);</span>
+				}else{
+<span class="nc" id="L104">					phdVisitor =visitor.visitPhd(callback, readId, Integer.parseInt(optionalVersion));</span>
+				}
+<span class="nc bnc" id="L106" title="All 2 branches missed.">				if(phdVisitor ==null){</span>
+<span class="nc" id="L107">					skipSequence(parser);</span>
+				}else{
+<span class="nc" id="L109">					handleSequence(parserState, parser, phdVisitor);</span>
+				}
+<span class="nc" id="L111">			}else{				</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">				if(line.startsWith(BEGIN_WR)){</span>
+<span class="nc" id="L113">					handleWholeReadTag(parserState, parser, phdVisitor);</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">				}else if(!seenFileComment){</span>
+<span class="nc" id="L115">					Matcher fileCommentMatcher = FILE_COMMENT_PATTERN.matcher(line);</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">					if(fileCommentMatcher.matches()){</span>
+<span class="nc" id="L117">						seenFileComment=true;</span>
+<span class="nc" id="L118">						visitor.visitFileComment(fileCommentMatcher.group(1));</span>
+					}
+				}
+			}
+<span class="nc" id="L122">		}</span>
+<span class="nc bnc" id="L123" title="All 2 branches missed.">		if(parserState.keepParsing()){</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">			if(phdVisitor !=null){</span>
+<span class="nc" id="L125">				phdVisitor.visitEnd();</span>
+			}
+<span class="nc" id="L127">			visitor.visitEnd();</span>
+		}else{
+<span class="nc bnc" id="L129" title="All 2 branches missed.">			if(phdVisitor !=null){</span>
+<span class="nc" id="L130">				phdVisitor.halted();</span>
+			}
+<span class="nc" id="L132">			visitor.halted();</span>
+		}
+<span class="nc" id="L134">	}</span>
+	
+	private void skipSequence(TextLineParser parser) throws IOException {
+<span class="nc" id="L137">		boolean entireSequenceBlockRead=false;</span>
+<span class="nc bnc" id="L138" title="All 4 branches missed.">		while(entireSequenceBlockRead &amp;&amp; parser.hasNextLine()){</span>
+<span class="nc" id="L139">			String line = parser.nextLine();</span>
+<span class="nc" id="L140">			entireSequenceBlockRead = line.startsWith(END_SEQUENCE);</span>
+<span class="nc" id="L141">		}</span>
+		
+<span class="nc" id="L143">	}</span>
+
+
+	protected abstract  PhdBallVisitorCallback createCallback(ParserState parserState, long offset);
+
+	private void handleWholeReadTag(ParserState parserState,
+			TextLineParser parser, PhdVisitor visitor) throws IOException {
+		final PhdWholeReadItemVisitor itemVisitor;
+<span class="nc bnc" id="L151" title="All 2 branches missed.">		if(visitor ==null){</span>
+<span class="nc" id="L152">			itemVisitor=null;</span>
+		}else{
+<span class="nc" id="L154">			itemVisitor =visitor.visitWholeReadItem();</span>
+		}
+		
+<span class="nc bnc" id="L157" title="All 4 branches missed.">		while(parser.hasNextLine() &amp;&amp; parserState.keepParsing()){</span>
+<span class="nc" id="L158">			String line = parser.nextLine();</span>
+<span class="nc bnc" id="L159" title="All 2 branches missed.">			if(line.startsWith(END_WR)){</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">				if(itemVisitor!=null){</span>
+<span class="nc" id="L161">					itemVisitor.visitEnd();</span>
+				}
+				break;
+			}
+<span class="nc bnc" id="L165" title="All 2 branches missed.">			if(itemVisitor !=null){</span>
+<span class="nc" id="L166">				itemVisitor.visitLine(rightTrim(line));</span>
+			}
+<span class="nc" id="L168">		}</span>
+<span class="nc bnc" id="L169" title="All 4 branches missed.">		if(itemVisitor !=null &amp;&amp; !parserState.keepParsing()){</span>
+<span class="nc" id="L170">			visitor.halted();</span>
+		}
+<span class="nc" id="L172">	}</span>
+
+	private String rightTrim(String line){
+<span class="nc" id="L175">		Matcher matcher = RIGHT_TRIM_PATTERN.matcher(line);</span>
+<span class="nc" id="L176">		matcher.find();</span>
+<span class="nc" id="L177">		return matcher.group(1);</span>
+	}
+
+	private void handleSequence(ParserState parserState, TextLineParser parser,
+			PhdVisitor visitor) throws IOException {
+		//format of each sequence is:
+		//BEGIN_COMMENT
+		//&lt;comments&gt;
+		//END_COMMENT
+		//BEGIN_DNA
+		//&lt;lines of base qual pos&gt;
+		//pos is now optional as of Consed 20.0 ?
+		//END_DNA
+		//BEGIN_TAG
+		//&lt;tag data&gt;
+		//END_TAG
+		//..multiple tags allowed
+		//END_SEQUENCE
+		
+<span class="nc" id="L196">		parseCommentBlock(parser, visitor);</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">		if(!parserState.keepParsing()){</span>
+<span class="nc" id="L198">			visitor.halted();</span>
+<span class="nc" id="L199">			return;</span>
+		}
+<span class="nc" id="L201">		parseReadData(parserState, parser, visitor);</span>
+		
+<span class="nc bnc" id="L203" title="All 2 branches missed.">		if(!parserState.keepParsing()){</span>
+<span class="nc" id="L204">			visitor.halted();</span>
+<span class="nc" id="L205">			return;</span>
+		}
+<span class="nc" id="L207">		parseTags(parserState, parser, visitor);</span>
+<span class="nc bnc" id="L208" title="All 2 branches missed.">		if(!parserState.keepParsing()){</span>
+<span class="nc" id="L209">			visitor.halted();</span>
+<span class="nc" id="L210">			return;</span>
+		}
+		
+<span class="nc" id="L213">	}</span>
+
+	private void parseTags(ParserState parserState, TextLineParser parser,
+			PhdVisitor visitor) throws IOException {
+<span class="nc bnc" id="L217" title="All 4 branches missed.">		while(parser.hasNextLine() &amp;&amp; parserState.keepParsing()){</span>
+<span class="nc" id="L218">			String line = parser.nextLine();</span>
+<span class="nc bnc" id="L219" title="All 2 branches missed.">			if(line.startsWith(END_SEQUENCE)){</span>
+				//no tags
+<span class="nc" id="L221">				return;</span>
+			}
+<span class="nc bnc" id="L223" title="All 2 branches missed.">			if(line.startsWith(BEGIN_TAG)){</span>
+<span class="nc" id="L224">				parseSingleTag(parserState, parser, visitor.visitReadTag());</span>
+			}
+<span class="nc" id="L226">		}</span>
+		
+		
+		
+<span class="nc" id="L230">	}</span>
+
+
+	private void parseSingleTag(ParserState parserState, TextLineParser parser,
+			PhdReadTagVisitor visitor) throws IOException {
+<span class="nc" id="L235">		boolean inTag=true;</span>
+		do{
+<span class="nc" id="L237">			String line = parser.nextLine();</span>
+<span class="nc bnc" id="L238" title="All 2 branches missed.">			if(line.startsWith(END_TAG)){</span>
+<span class="nc" id="L239">				inTag=false;</span>
+			}else{
+<span class="nc" id="L241">				Matcher keyValueMatcher = KEY_VALUE_PATTERN.matcher(line);</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">				if(keyValueMatcher.matches()){</span>
+<span class="nc" id="L243">					String key = keyValueMatcher.group(1);</span>
+<span class="nc" id="L244">					String value = keyValueMatcher.group(2);</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">					if(&quot;TYPE&quot;.equals(key)){</span>
+<span class="nc" id="L246">						visitor.visitType(value);</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">					}else if(&quot;SOURCE&quot;.equals(key)){</span>
+<span class="nc" id="L248">						visitor.visitSource(value);</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">					}else if(&quot;UNPADDED_READ_POS&quot;.equals(key)){</span>
+						//use tokenizer instead of Scanner
+						//for performance improvement
+<span class="nc" id="L252">						StringTokenizer tokenizer = new StringTokenizer(value);						</span>
+<span class="nc" id="L253">						visitor.visitUngappedRange(Range.of(</span>
+								Range.CoordinateSystem.RESIDUE_BASED,
+<span class="nc" id="L255">								Integer.valueOf(tokenizer.nextToken()),</span>
+<span class="nc" id="L256">								Integer.valueOf(tokenizer.nextToken())));</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">					}else if(&quot;DATE&quot;.equals(key)){</span>
+						try {
+<span class="nc" id="L259">							visitor.visitDate(PhdUtil.parseReadTagDate(value));</span>
+<span class="nc" id="L260">						} catch (ParseException e) {</span>
+<span class="nc" id="L261">							throw new IOException(&quot;error parsing read tag date: &quot; + value, e);</span>
+<span class="nc" id="L262">						}</span>
+					}else{
+						//unrecognized key-value pair
+						//could be free-form misc data that happened to be in key:value format?
+<span class="nc" id="L266">						visitor.visitFreeFormData(rightTrim(line));</span>
+					}
+<span class="nc" id="L268">				}else{</span>
+					//not a key value pair
+<span class="nc bnc" id="L270" title="All 2 branches missed.">					if(line.startsWith(BEGIN_COMMENT)){</span>
+<span class="nc" id="L271">						visitor.visitComment( parseReadTagComment(parser));</span>
+					}else{
+						//free form misc data?
+<span class="nc" id="L274">						visitor.visitFreeFormData(rightTrim(line));</span>
+					}
+				}
+			}
+<span class="nc bnc" id="L278" title="All 6 branches missed.">		}while(inTag &amp;&amp; parser.hasNextLine() &amp;&amp; parserState.keepParsing());</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">		if(!parserState.keepParsing()){</span>
+<span class="nc" id="L280">			visitor.halted();</span>
+		}else{
+<span class="nc" id="L282">			visitor.visitEnd();</span>
+		}
+<span class="nc" id="L284">	}</span>
+
+	private String parseReadTagComment(TextLineParser parser) throws IOException{
+<span class="nc" id="L287">		boolean inCommentBlock=true;</span>
+<span class="nc" id="L288">		StringBuilder comment = new StringBuilder();</span>
+		do{
+<span class="nc" id="L290">			String line = parser.nextLine();</span>
+<span class="nc bnc" id="L291" title="All 2 branches missed.">			if(line.startsWith(END_COMMENT)){</span>
+<span class="nc" id="L292">				inCommentBlock=false;</span>
+			}else{
+<span class="nc" id="L294">				comment.append(line);</span>
+			}
+<span class="nc bnc" id="L296" title="All 4 branches missed.">		}while(inCommentBlock &amp;&amp; parser.hasNextLine());</span>
+<span class="nc" id="L297">		return comment.toString();</span>
+	}
+
+	private void parseReadData(ParserState parserState, TextLineParser parser, PhdVisitor visitor) throws IOException {
+<span class="nc" id="L301">		boolean inDnaBlock =false;</span>
+<span class="nc bnc" id="L302" title="All 4 branches missed.">		while(!inDnaBlock &amp;&amp; parser.hasNextLine()){</span>
+<span class="nc" id="L303">			String line = parser.nextLine();</span>
+<span class="nc" id="L304">			inDnaBlock = line.startsWith(BEGIN_DNA);</span>
+<span class="nc" id="L305">		}</span>
+		
+		do{
+<span class="nc" id="L308">			String line = parser.nextLine();</span>
+<span class="nc" id="L309">			Matcher matcher = CALLED_INFO_PATTERN.matcher(line);</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">			if(matcher.matches()){</span>
+<span class="nc" id="L311">				Nucleotide base = Nucleotide.parse(matcher.group(1).charAt(0));</span>
+<span class="nc" id="L312">				PhredQuality qual = PhredQuality.valueOf(Integer.parseInt(matcher.group(2)));</span>
+<span class="nc bnc" id="L313" title="All 2 branches missed.">				if(matcher.group(3)==null){</span>
+<span class="nc" id="L314">					visitor.visitBasecall(base, qual, null);</span>
+				}else{
+<span class="nc" id="L316">					visitor.visitBasecall(base, qual, Integer.parseInt(matcher.group(3)));</span>
+				}
+<span class="nc" id="L318">			}else{</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">				inDnaBlock = !line.startsWith(END_DNA);</span>
+			}
+<span class="nc bnc" id="L321" title="All 6 branches missed.">		}while(inDnaBlock &amp;&amp; parser.hasNextLine() &amp;&amp; parserState.keepParsing());</span>
+<span class="nc" id="L322">	}</span>
+
+
+	private void parseCommentBlock(TextLineParser parser, PhdVisitor visitor) throws IOException {
+<span class="nc" id="L326">		boolean inCommentBlock =false;</span>
+<span class="nc bnc" id="L327" title="All 4 branches missed.">		while(!inCommentBlock &amp;&amp; parser.hasNextLine()){</span>
+<span class="nc" id="L328">			String line = parser.nextLine();</span>
+<span class="nc" id="L329">			inCommentBlock = line.startsWith(BEGIN_COMMENT);</span>
+<span class="nc" id="L330">		}</span>
+<span class="nc" id="L331">		Map&lt;String, String&gt; comments = parseComments(parser);</span>
+		
+<span class="nc" id="L333">		visitor.visitComments(comments);</span>
+<span class="nc" id="L334">	}</span>
+
+
+	private Map&lt;String, String&gt; parseComments(TextLineParser parser) throws IOException {
+<span class="nc" id="L338">		boolean inCommentBlock=true;</span>
+<span class="nc" id="L339">		Map&lt;String, String&gt; comments = new LinkedHashMap&lt;String, String&gt;();</span>
+		do{
+<span class="nc" id="L341">			String line = parser.nextLine();</span>
+<span class="nc bnc" id="L342" title="All 2 branches missed.">			if(line.startsWith(END_COMMENT)){</span>
+<span class="nc" id="L343">				inCommentBlock=false;</span>
+			}else{
+<span class="nc" id="L345">				Matcher commentMatcher = KEY_VALUE_PATTERN.matcher(line);</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">	            if(commentMatcher.find()){</span>
+<span class="nc" id="L347">	            	comments.put(commentMatcher.group(1), commentMatcher.group(2));</span>
+	            }
+			}
+<span class="nc bnc" id="L350" title="All 4 branches missed.">		}while(inCommentBlock &amp;&amp; parser.hasNextLine());</span>
+<span class="nc" id="L351">		return comments;</span>
+	}
+
+	private static class ParserState{
+		private final AtomicBoolean keepParsing;
+		
+<span class="nc" id="L357">		public ParserState(){</span>
+<span class="nc" id="L358">			keepParsing = new AtomicBoolean(true);</span>
+<span class="nc" id="L359">		}</span>
+		
+		public boolean keepParsing(){
+<span class="nc" id="L362">			return keepParsing.get();</span>
+		}
+		
+		public void haltParsing(){
+<span class="nc" id="L366">			keepParsing.set(false);</span>
+<span class="nc" id="L367">		}</span>
+	}
+	
+	private static class MementoedPhdBallVisitorCallbackImpl implements PhdBallVisitorCallback{
+
+		private final long byteOffset;
+		private final ParserState parserState;
+		
+		public MementoedPhdBallVisitorCallbackImpl(long byteOffset,
+<span class="nc" id="L376">				ParserState parserState) {</span>
+<span class="nc" id="L377">			this.byteOffset = byteOffset;</span>
+<span class="nc" id="L378">			this.parserState = parserState;</span>
+<span class="nc" id="L379">		}</span>
+
+		@Override
+		public boolean canCreateMemento() {
+<span class="nc" id="L383">			return true;</span>
+		}
+
+		@Override
+		public PhdBallVisitorMemento createMemento() {
+<span class="nc" id="L388">			return new PhdBallVisitorMementoImpl(byteOffset);</span>
+		}
+
+		@Override
+		public void haltParsing() {
+<span class="nc" id="L393">			parserState.haltParsing();			</span>
+<span class="nc" id="L394">		}</span>
+		
+	}
+	
+	private static class NoMementoPhdBallVisitorCallbackImpl implements PhdBallVisitorCallback{
+
+		private final ParserState parserState;
+		
+<span class="nc" id="L402">		public NoMementoPhdBallVisitorCallbackImpl(ParserState parserState) {</span>
+<span class="nc" id="L403">			this.parserState = parserState;</span>
+<span class="nc" id="L404">		}</span>
+
+		@Override
+		public boolean canCreateMemento() {
+<span class="nc" id="L408">			return false;</span>
+		}
+
+		@Override
+		public PhdBallVisitorMemento createMemento() {
+<span class="nc" id="L413">			throw new UnsupportedOperationException(&quot;can not create mementos from inputstream&quot;);</span>
+		}
+
+		@Override
+		public void haltParsing() {
+<span class="nc" id="L418">			parserState.haltParsing();			</span>
+<span class="nc" id="L419">		}</span>
+		
+	}
+	
+	private static class PhdBallVisitorMementoImpl implements PhdBallVisitorMemento{
+		private final long offset;
+
+		
+<span class="nc" id="L427">		public PhdBallVisitorMementoImpl(long offset) {</span>
+<span class="nc" id="L428">			this.offset = offset;</span>
+<span class="nc" id="L429">		}</span>
+		
+		public final long getOffset() {
+<span class="nc" id="L432">			return offset;</span>
+		}
+
+	}
+	
+	private static class FileBasedPhdBallParser extends PhdBallParser{
+		private final File phdBall;
+		
+<span class="nc" id="L440">		private FileBasedPhdBallParser(File phdBall) throws FileNotFoundException{</span>
+<span class="nc bnc" id="L441" title="All 2 branches missed.">			if(phdBall ==null){</span>
+<span class="nc" id="L442">				throw new NullPointerException(&quot;phdball can not be null&quot;);</span>
+			}
+<span class="nc bnc" id="L444" title="All 2 branches missed.">			if(!phdBall.exists()){</span>
+<span class="nc" id="L445">				throw new FileNotFoundException(&quot;phdball must exist&quot;);</span>
+			}
+<span class="nc" id="L447">			this.phdBall = phdBall;</span>
+<span class="nc" id="L448">		}</span>
+		
+		public void accept(PhdBallVisitor visitor) throws IOException{
+<span class="nc bnc" id="L451" title="All 2 branches missed.">			if(visitor==null){</span>
+<span class="nc" id="L452">				throw new NullPointerException(&quot;visitor can not be null&quot;);</span>
+			}
+<span class="nc" id="L454">			TextLineParser parser =null;</span>
+			try{
+<span class="nc" id="L456">				parser = new TextLineParser(new BufferedInputStream(new FileInputStream(phdBall)));</span>
+<span class="nc" id="L457">				accept(parser, visitor);</span>
+			}finally{
+<span class="nc" id="L459">				IOUtil.closeAndIgnoreErrors(parser);</span>
+			}
+<span class="nc" id="L461">		}</span>
+		
+		
+		public void accept(PhdBallVisitor visitor, PhdBallVisitorMemento memento) throws IOException{
+<span class="nc bnc" id="L465" title="All 2 branches missed.">			if(visitor ==null){</span>
+<span class="nc" id="L466">	            throw new NullPointerException(&quot;visitor can not be null&quot;);</span>
+	        }
+<span class="nc bnc" id="L468" title="All 2 branches missed.">	        if(memento ==null){</span>
+<span class="nc" id="L469">	            throw new NullPointerException(&quot;memento can not be null&quot;);</span>
+	        }
+<span class="nc bnc" id="L471" title="All 2 branches missed.">		    if(!(memento instanceof PhdBallVisitorMementoImpl)){</span>
+<span class="nc" id="L472">		    	throw new IllegalArgumentException(&quot;unknown memento type &quot; + memento);</span>
+		    }
+<span class="nc" id="L474">		    long offset = ((PhdBallVisitorMementoImpl)memento).getOffset();</span>
+		    //TODO add check to make sure its the same parser object?
+<span class="nc" id="L476">	        TextLineParser parser=null;</span>
+	        try{
+<span class="nc" id="L478">		        InputStream in = new RandomAccessFileInputStream(phdBall, offset);</span>
+		        
+<span class="nc" id="L480">		        parser = new TextLineParser(in, offset);</span>
+<span class="nc" id="L481">		        accept(parser, visitor);</span>
+	        }finally{
+<span class="nc" id="L483">	        	IOUtil.closeAndIgnoreErrors(parser);</span>
+	        }
+<span class="nc" id="L485">		}</span>
+		
+		protected PhdBallVisitorCallback createCallback(ParserState parserState, long offset) {
+<span class="nc" id="L488">			return new MementoedPhdBallVisitorCallbackImpl(offset, parserState);</span>
+		}
+	}
+	
+	private static final class InputStreamBasedPhdBallParser extends PhdBallParser{
+
+		private final OpenAwareInputStream in;
+    	
+<span class="nc" id="L496">		public InputStreamBasedPhdBallParser(InputStream in) {</span>
+<span class="nc bnc" id="L497" title="All 2 branches missed.">			if(in ==null){</span>
+<span class="nc" id="L498">				throw new NullPointerException(&quot;input stream can not be null&quot;);</span>
+			}
+<span class="nc" id="L500">			this.in = new OpenAwareInputStream(new BufferedInputStream(in));</span>
+<span class="nc" id="L501">		}</span>
+
+		@Override
+		public void accept(PhdBallVisitor visitor) throws IOException {
+<span class="nc bnc" id="L505" title="All 2 branches missed.">			if(visitor==null){</span>
+<span class="nc" id="L506">				throw new NullPointerException(&quot;visitor can not be null&quot;);</span>
+			}
+<span class="nc bnc" id="L508" title="All 2 branches missed.">			if(!in.isOpen()){</span>
+<span class="nc" id="L509">				throw new IllegalStateException(&quot;inputstream has been closed&quot;);</span>
+			}
+<span class="nc" id="L511">			TextLineParser parser =null;</span>
+			try{
+<span class="nc" id="L513">				parser = new TextLineParser(in);</span>
+<span class="nc" id="L514">				accept(parser, visitor);</span>
+			}finally{
+<span class="nc" id="L516">				IOUtil.closeAndIgnoreErrors(parser);</span>
+			}
+			
+<span class="nc" id="L519">		}</span>
+
+		@Override
+		public void accept(PhdBallVisitor visitor,
+				PhdBallVisitorMemento memento) throws IOException {
+<span class="nc" id="L524">			throw new UnsupportedOperationException(&quot;mementos not supported&quot;);</span>
+			
+		}
+
+		@Override
+		protected PhdBallVisitorCallback createCallback(
+				ParserState parserState, long offset) {
+<span class="nc" id="L531">			return new NoMementoPhdBallVisitorCallbackImpl(parserState);</span>
+		}
+		
+		
+		
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

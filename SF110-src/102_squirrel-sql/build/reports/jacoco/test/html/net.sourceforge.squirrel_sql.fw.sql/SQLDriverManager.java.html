@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SQLDriverManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.fw.sql</a> &gt; <span class="el_source">SQLDriverManager.java</span></div><h1>SQLDriverManager.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.fw.sql;
+/*
+ * Copyright (C) 2001-2003 Colin Bell
+ * colbell@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+import java.beans.PropertyChangeEvent;
+import java.beans.PropertyChangeListener;
+import java.net.MalformedURLException;
+import java.sql.Connection;
+import java.sql.Driver;
+import java.sql.SQLException;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Properties;
+
+import net.sourceforge.squirrel_sql.fw.id.IIdentifier;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.StringUtilities;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+/**
+ * This class replaces the standard Java class &lt;TT&gt;java.ql.DriverManager&lt;/TT&gt;.
+ * The main reason for replacing it is that &lt;TT&gt;java.ql.DriverManager&lt;/TT&gt;
+ * won't handle JDBC driver classes that were loaded by a custom classloader.
+ *
+ * @author &lt;A HREF=&quot;mailto:colbell@users.sourceforge.net&quot;&gt;Colin Bell&lt;/A&gt;
+ */
+<span class="nc" id="L43">public class SQLDriverManager</span>
+{
+	/** Internationalized strings for this class. */
+<span class="nc" id="L46">	private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L47">		StringManagerFactory.getStringManager(SQLDriverManager.class);</span>
+
+<span class="nc" id="L49">	private static final ILogger s_log =</span>
+<span class="nc" id="L50">		LoggerController.createLogger(SQLDriverManager.class);</span>
+
+	/**
+	 * Collection of instances of &lt;TT&gt;java.sql.Driver&lt;/TT&gt; objects keyed
+	 * by the &lt;TT&gt;SQLDriver.getIdentifier()&lt;/TT&gt;.
+	 */
+<span class="nc" id="L56">	private Map&lt;IIdentifier, Driver&gt; _driverInfo = </span>
+        new HashMap&lt;IIdentifier, Driver&gt;();
+
+	/**
+	 * Collection of the &lt;TT&gt;SQLDriverClassLoader&lt;/TT&gt; class loaders used for
+	 * each driver. keyed by &lt;TT&gt;SQLDriver.getIdentifier()&lt;/TT&gt;.
+	 */
+<span class="nc" id="L63">	private Map&lt;IIdentifier, SQLDriverClassLoader&gt; _classLoaders = </span>
+        new HashMap&lt;IIdentifier, SQLDriverClassLoader&gt;();
+
+<span class="nc" id="L66">	private MyDriverListener _myDriverListener = new MyDriverListener();</span>
+
+	public synchronized void registerSQLDriver(ISQLDriver sqlDriver)
+		throws IllegalAccessException, InstantiationException,
+					ClassNotFoundException, MalformedURLException
+	{
+<span class="nc" id="L72">		unregisterSQLDriver(sqlDriver);</span>
+<span class="nc" id="L73">		sqlDriver.addPropertyChangeListener(_myDriverListener);</span>
+<span class="nc" id="L74">        SQLDriverClassLoader loader = new SQLDriverClassLoader(sqlDriver);</span>
+<span class="nc" id="L75">		Driver driver = </span>
+<span class="nc" id="L76">            (Driver)(Class.forName(sqlDriver.getDriverClassName(), </span>
+                                   false, 
+<span class="nc" id="L78">                                   loader).newInstance());</span>
+<span class="nc" id="L79">		_driverInfo.put(sqlDriver.getIdentifier(), driver);</span>
+<span class="nc" id="L80">		_classLoaders.put(sqlDriver.getIdentifier(), loader);</span>
+<span class="nc" id="L81">		sqlDriver.setJDBCDriverClassLoaded(true);</span>
+<span class="nc" id="L82">	}</span>
+
+	public synchronized void unregisterSQLDriver(ISQLDriver sqlDriver)
+	{
+<span class="nc" id="L86">		sqlDriver.setJDBCDriverClassLoaded(false);</span>
+<span class="nc" id="L87">		sqlDriver.removePropertyChangeListener(_myDriverListener);</span>
+<span class="nc" id="L88">		_driverInfo.remove(sqlDriver.getIdentifier());</span>
+<span class="nc" id="L89">		_classLoaders.remove(sqlDriver.getIdentifier());</span>
+<span class="nc" id="L90">	}</span>
+
+	public ISQLConnection getConnection(ISQLDriver sqlDriver, ISQLAlias alias,
+											String user, String pw)
+		throws ClassNotFoundException, IllegalAccessException,
+				InstantiationException, MalformedURLException, SQLException
+	{
+<span class="nc" id="L97">		return getConnection(sqlDriver, alias, user, pw, null);</span>
+	}
+
+	public synchronized SQLConnection getConnection(ISQLDriver sqlDriver,
+											ISQLAlias alias, String user,
+											String pw,
+											SQLDriverPropertyCollection props)
+		throws ClassNotFoundException, IllegalAccessException,
+			InstantiationException, MalformedURLException, SQLException
+	{
+<span class="nc" id="L107">		Properties myProps = new Properties();</span>
+<span class="nc bnc" id="L108" title="All 2 branches missed.">		if (props != null)</span>
+		{
+<span class="nc" id="L110">			props.applyTo(myProps);</span>
+		}
+<span class="nc bnc" id="L112" title="All 2 branches missed.">		if (user != null)</span>
+		{
+<span class="nc" id="L114">			myProps.put(&quot;user&quot;, user);</span>
+		}
+<span class="nc bnc" id="L116" title="All 2 branches missed.">		if (pw != null)</span>
+		{
+<span class="nc" id="L118">			myProps.put(&quot;password&quot;, pw);</span>
+		}
+
+<span class="nc" id="L121">		Driver driver = _driverInfo.get(sqlDriver.getIdentifier());</span>
+<span class="nc bnc" id="L122" title="All 2 branches missed.">		if (driver == null)</span>
+		{
+            // TODO: Why shouldn't we call registerSQLDriver here? RMM 20070401
+<span class="nc" id="L125">			s_log.debug(&quot;Loading driver that wasn't registered: &quot; +</span>
+<span class="nc" id="L126">							sqlDriver.getDriverClassName());</span>
+<span class="nc" id="L127">			ClassLoader loader = new SQLDriverClassLoader(sqlDriver);</span>
+<span class="nc" id="L128">            driver = (Driver)(Class.forName(sqlDriver.getDriverClassName(), </span>
+                                            false, 
+<span class="nc" id="L130">                                            loader).newInstance());</span>
+
+		}
+<span class="nc" id="L133">		Connection jdbcConn = driver.connect(alias.getUrl(), myProps);</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">		if (jdbcConn == null)</span>
+		{
+<span class="nc" id="L136">			throw new SQLException(s_stringMgr.getString(&quot;SQLDriverManager.error.noconnection&quot;));</span>
+		}
+<span class="nc" id="L138">		return new SQLConnection(jdbcConn, props, sqlDriver);</span>
+	}
+
+	/**
+	 * Return the &lt;TT&gt;java.sql.Driver&lt;/TT&gt; being used for the passed
+	 * &lt;TT&gt;ISQLDriver.getIdentifier()&lt;/TT&gt; or &lt;TT&gt;null&lt;/TT&gt; if none found.
+	 *
+	 * @return	the &lt;TT&gt;java.sql.Driver&lt;/TT&gt; being used for the passed
+	 * 			&lt;TT&gt;ISQLDriver.getIdentifier()&lt;/TT&gt; or &lt;TT&gt;null if none found.
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if &lt;TT&gt;null&lt;/TT&gt; IIdentifier&lt;/TT&gt; passed.
+	 */
+	public Driver getJDBCDriver(IIdentifier id)
+	{
+<span class="nc bnc" id="L153" title="All 2 branches missed.">		if (id == null)</span>
+		{
+<span class="nc" id="L155">			throw new IllegalArgumentException(&quot;IIdentifier == null&quot;);</span>
+		}
+
+<span class="nc" id="L158">		return _driverInfo.get(id);</span>
+	}
+
+	/**
+	 * Return the &lt;TT&gt;SQLDriverClassLoader&lt;/TT&gt; used for the passed driver.
+	 *
+	 * @param	sqlDriver	Driver to find class loader for.
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;SQLDriverClassLoader&lt;/TT&gt; passed.
+	 *
+	 * @return	ClassLoader or null.
+	 */
+	public SQLDriverClassLoader getSQLDriverClassLoader(ISQLDriver driver)
+	{
+<span class="nc bnc" id="L173" title="All 2 branches missed.">		if (driver == null)</span>
+		{
+<span class="nc" id="L175">			throw new IllegalArgumentException(&quot;SQLDriverClassLoader == null&quot;);</span>
+		}
+
+<span class="nc" id="L178">		return _classLoaders.get(driver.getIdentifier());</span>
+	}
+
+<span class="nc" id="L181">	private final class MyDriverListener implements PropertyChangeListener</span>
+	{
+		public void propertyChange(PropertyChangeEvent evt)
+		{
+<span class="nc" id="L185">			final String propName = evt.getPropertyName();</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">			if (propName == null</span>
+<span class="nc bnc" id="L187" title="All 2 branches missed.">				|| propName.equals(ISQLDriver.IPropertyNames.DRIVER_CLASS)</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">				|| propName.equals(ISQLDriver.IPropertyNames.JARFILE_NAMES))</span>
+			{
+<span class="nc" id="L190">				Object obj = evt.getSource();</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">				if (obj instanceof ISQLDriver)</span>
+				{
+<span class="nc" id="L193">					ISQLDriver driver = (ISQLDriver) obj;</span>
+<span class="nc" id="L194">					SQLDriverManager.this.unregisterSQLDriver(driver);</span>
+					try
+					{
+<span class="nc" id="L197">						SQLDriverManager.this.registerSQLDriver(driver);</span>
+					}
+<span class="nc" id="L199">					catch (IllegalAccessException ex)</span>
+					{
+<span class="nc" id="L201">						s_log.error(&quot;Unable to create instance of Class &quot;</span>
+<span class="nc" id="L202">										+ driver.getDriverClassName()</span>
+										+ &quot; for JDBC driver &quot;
+<span class="nc" id="L204">										+ driver.getName(), ex);</span>
+					}
+<span class="nc" id="L206">					catch (InstantiationException ex)</span>
+					{
+<span class="nc" id="L208">						s_log.error(&quot;Unable to create instance of Class &quot;</span>
+<span class="nc" id="L209">								+ driver.getDriverClassName()</span>
+								+ &quot; for JDBC driver &quot;
+<span class="nc" id="L211">								+ driver.getName(), ex);</span>
+					}
+<span class="nc" id="L213">					catch (MalformedURLException ex)</span>
+					{
+<span class="nc" id="L215">						s_log.error(&quot;Unable to create instance of Class &quot;</span>
+<span class="nc" id="L216">								+ driver.getDriverClassName()</span>
+								+ &quot; for JDBC driver &quot;
+<span class="nc" id="L218">								+ driver.getName(), ex);</span>
+					}
+<span class="nc" id="L220">					catch (ClassNotFoundException ex)</span>
+					{
+<span class="nc" id="L222">                        String[] jars = driver.getJarFileNames();</span>
+<span class="nc" id="L223">                        String jarFileList = &quot;&lt;empty list&gt;&quot;; </span>
+<span class="nc bnc" id="L224" title="All 2 branches missed.">                        if (jars != null) {</span>
+<span class="nc" id="L225">                            jarFileList = </span>
+<span class="nc" id="L226">                                &quot;[ &quot; + StringUtilities.join(jars, &quot;, &quot;) + &quot; ]&quot;;</span>
+                        }
+                       
+<span class="nc" id="L229">						s_log.error(&quot;Unable to find Driver Class &quot;</span>
+<span class="nc" id="L230">								+ driver.getDriverClassName()</span>
+								+ &quot; for JDBC driver &quot;
+<span class="nc" id="L232">								+ driver.getName()</span>
+                                + &quot;; jar filenames = &quot;+jarFileList);
+<span class="nc" id="L234">					}</span>
+<span class="nc" id="L235">				}</span>
+				else
+				{
+<span class="nc" id="L238">					s_log.error(&quot;SqlDriverManager.MyDriverListener is listening to a non-ISQLDriver&quot;);</span>
+				}
+			}
+<span class="nc" id="L241">		}</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

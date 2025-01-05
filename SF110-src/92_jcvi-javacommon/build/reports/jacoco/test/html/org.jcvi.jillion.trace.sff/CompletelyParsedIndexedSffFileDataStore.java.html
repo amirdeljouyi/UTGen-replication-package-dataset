@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CompletelyParsedIndexedSffFileDataStore.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.trace.sff</a> &gt; <span class="el_source">CompletelyParsedIndexedSffFileDataStore.java</span></div><h1>CompletelyParsedIndexedSffFileDataStore.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+package org.jcvi.jillion.trace.sff;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import org.jcvi.jillion.core.datastore.DataStoreClosedException;
+import org.jcvi.jillion.core.datastore.DataStoreException;
+import org.jcvi.jillion.core.datastore.DataStoreFilter;
+import org.jcvi.jillion.core.datastore.DataStoreFilters;
+import org.jcvi.jillion.core.residue.nt.NucleotideSequence;
+import org.jcvi.jillion.core.util.iter.IteratorUtil;
+import org.jcvi.jillion.core.util.iter.StreamingIterator;
+import org.jcvi.jillion.internal.core.datastore.DataStoreIterator;
+import org.jcvi.jillion.trace.sff.SffFileParserCallback.SffFileMemento;
+
+
+
+/**
+ * {@code IndexedSffFileDataStore} is an implementation 
+ * of {@link SffFileDataStore} that only stores an index containing
+ * byte offsets to the various {@link SffFlowgram}s contained
+ * in a single sff file.  This allows for large files to provide
+ * random access without taking up much memory. The down side is each flowgram
+ * must be re-parsed each time and the sff file must exist and not
+ * get altered during the entire lifetime of this object.
+ * @author dkatzel
+ *
+ */
+class CompletelyParsedIndexedSffFileDataStore {
+	
+	private CompletelyParsedIndexedSffFileDataStore(){
+		//can not instantiate
+	}
+	/**
+	 * Create a new {@link SffFileDataStore} instance which only indexes
+	 * byte offsets for each read.
+	 * @param sffFile the sff file to create a datastore for.
+	 * @return a new {@link SffFileDataStore} instance; never null.
+	 * @throws IOException if there is a problem reading the file.
+	 * @throws IllegalArgumentException if the given sffFile
+	 * has more than {@link Integer#MAX_VALUE} reads.
+	 * @throws NullPointerException if sffFile is null.
+	 * @throws IllegalArgumentException if sffFile does not exist.
+	 */
+	public static SffFileDataStore create(File sffFile) throws IOException{
+<span class="nc" id="L68">		return create(sffFile, DataStoreFilters.alwaysAccept());</span>
+	}
+	/**
+	 * Create a new {@link SffFileDataStore} instance which only indexes
+	 * byte offsets for each read that is accepted by the given {@link DataStoreFilter}.
+	 * @param sffFile the sff file to create a datastore for.
+	 * @return a new {@link SffFileDataStore} instance; never null.
+	 * @throws IOException if there is a problem reading the file.
+	 * @throws IllegalArgumentException if the given sffFile
+	 * has more than {@link Integer#MAX_VALUE} reads.
+	 * @throws NullPointerException if sffFile is null.
+	 * @throws IllegalArgumentException if sffFile does not exist.
+	 */
+	public static SffFileDataStore create(File sffFile, DataStoreFilter filter) throws IOException{
+<span class="nc" id="L82">		Visitor visitor = new Visitor(filter);</span>
+<span class="nc" id="L83">		SffFileParser parser = SffFileParser.create(sffFile);</span>
+<span class="nc" id="L84">		parser.accept(visitor);</span>
+		
+<span class="nc" id="L86">		return visitor.build(parser);</span>
+	}
+	
+	
+	
+	private static final class Visitor implements SffFileVisitor{
+		private Map&lt;String, SffFileMemento&gt; mementos;
+		
+		private final DataStoreFilter filter;
+		private NucleotideSequence keySequence,flowSequence;
+		
+<span class="nc" id="L97">		public Visitor(DataStoreFilter filter) {</span>
+<span class="nc" id="L98">			this.filter = filter;</span>
+<span class="nc" id="L99">		}</span>
+
+		@Override
+		public void visitHeader(SffFileParserCallback callback,
+				SffCommonHeader header) {
+<span class="nc" id="L104">			mementos = new LinkedHashMap&lt;String,SffFileMemento&gt;((int)header.getNumberOfReads());</span>
+<span class="nc" id="L105">			keySequence = header.getKeySequence();</span>
+<span class="nc" id="L106">			flowSequence = header.getFlowSequence();</span>
+<span class="nc" id="L107">		}</span>
+
+		@Override
+		public SffFileReadVisitor visitRead(SffFileParserCallback callback,
+				final SffReadHeader readHeader) {
+<span class="nc bnc" id="L112" title="All 2 branches missed.">			if(filter.accept(readHeader.getId())){</span>
+<span class="nc" id="L113">				mementos.put(readHeader.getId(), callback.createMemento());</span>
+			}
+			//always skip read data we'll read it later
+<span class="nc" id="L116">			return null;</span>
+		}
+
+		@Override
+		public void end() {
+			//no-op
+			
+<span class="nc" id="L123">		}</span>
+	
+		SffFileDataStore build(SffFileParser parser){
+<span class="nc" id="L126">			return new DataStoreImpl(parser, keySequence, flowSequence, mementos);</span>
+		}
+		
+	}
+	
+	
+	private static class DataStoreImpl implements SffFileDataStore{
+		private final SffFileParser parser; //parser has the file ref
+<span class="nc" id="L134">		private volatile boolean closed=false;</span>
+		private final NucleotideSequence keySequence,flowSequence;
+		private final Map&lt;String, SffFileMemento&gt; mementos;
+
+		public DataStoreImpl(SffFileParser parser,
+				NucleotideSequence keySequence, NucleotideSequence flowSequence,
+<span class="nc" id="L140">				Map&lt;String, SffFileMemento&gt; mementos) {</span>
+<span class="nc" id="L141">			this.parser = parser;</span>
+<span class="nc" id="L142">			this.mementos = mementos;</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">			if(keySequence ==null){</span>
+<span class="nc" id="L144">				throw new NullPointerException(&quot;key sequence can not be null&quot;);</span>
+			}
+<span class="nc bnc" id="L146" title="All 2 branches missed.">			if(flowSequence ==null){</span>
+<span class="nc" id="L147">				throw new NullPointerException(&quot;flow sequence can not be null&quot;);</span>
+			}
+<span class="nc" id="L149">			this.keySequence = keySequence;</span>
+<span class="nc" id="L150">			this.flowSequence = flowSequence;</span>
+<span class="nc" id="L151">		}</span>
+		
+		@Override
+		public NucleotideSequence getKeySequence() {
+<span class="nc" id="L155">			return keySequence;</span>
+		}
+
+		@Override
+		public NucleotideSequence getFlowSequence() {
+<span class="nc" id="L160">			return flowSequence;</span>
+		}
+		@Override
+		public StreamingIterator&lt;String&gt; idIterator() throws DataStoreException {
+<span class="nc" id="L164">			checkNotYetClosed();</span>
+<span class="nc" id="L165">			return IteratorUtil.createStreamingIterator(mementos.keySet().iterator());</span>
+		}
+
+		@Override
+		public SffFlowgram get(String id) throws DataStoreException {
+<span class="nc" id="L170">			checkNotYetClosed();</span>
+<span class="nc" id="L171">			SffFileMemento momento = mementos.get(id);</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">			if(momento == null){</span>
+<span class="nc" id="L173">				return null;</span>
+			}
+<span class="nc" id="L175">			SingleRecordVisitor visitor = new SingleRecordVisitor();</span>
+			try {
+<span class="nc" id="L177">				parser.accept(visitor, momento);</span>
+<span class="nc" id="L178">			} catch (IOException e) {</span>
+<span class="nc" id="L179">				throw new DataStoreException(&quot;error reparsing file&quot;, e);</span>
+<span class="nc" id="L180">			}</span>
+<span class="nc" id="L181">			return visitor.getFlowgram();</span>
+		}
+
+		@Override
+		public boolean contains(String id) throws DataStoreException {
+<span class="nc" id="L186">			checkNotYetClosed();</span>
+<span class="nc" id="L187">			return mementos.containsKey(id);</span>
+		}
+
+		@Override
+		public long getNumberOfRecords() throws DataStoreException {
+<span class="nc" id="L192">			checkNotYetClosed();</span>
+<span class="nc" id="L193">			return mementos.size();</span>
+		}
+
+		@Override
+		public boolean isClosed() {
+<span class="nc" id="L198">			return closed;</span>
+		}
+
+		@Override
+		public StreamingIterator&lt;SffFlowgram&gt; iterator() throws DataStoreException {
+<span class="nc" id="L203">			checkNotYetClosed();</span>
+			// too lazy to write faster implementation for now
+<span class="nc" id="L205">			return new DataStoreIterator&lt;SffFlowgram&gt;(this);</span>
+		}
+
+		@Override
+		public void close() throws IOException {
+<span class="nc" id="L210">			closed=true;</span>
+			
+<span class="nc" id="L212">		}</span>
+		
+		private void checkNotYetClosed(){
+<span class="nc bnc" id="L215" title="All 2 branches missed.">			if(closed){</span>
+<span class="nc" id="L216">				throw new DataStoreClosedException(&quot;datastore is closed&quot;);</span>
+			}
+<span class="nc" id="L218">		}</span>
+		
+		
+		
+	}
+	
+	private static class SingleRecordVisitor implements SffFileVisitor{
+		private SffFlowgram flowgram;
+		@Override
+		public void visitHeader(SffFileParserCallback callback,
+				SffCommonHeader header) {
+			//no-op
+			
+<span class="nc" id="L231">		}</span>
+
+		@Override
+		public SffFileReadVisitor visitRead(final SffFileParserCallback callback,
+				final SffReadHeader readHeader) {
+			//we should only see the read we care about
+<span class="nc" id="L237">			return new SffFileReadVisitor(){</span>
+
+				@Override
+				public void visitReadData(SffReadData readData) {
+<span class="nc" id="L241">					flowgram =SffFlowgramImpl.create(readHeader, readData);</span>
+					
+<span class="nc" id="L243">				}</span>
+
+				@Override
+				public void visitEnd() {
+<span class="nc" id="L247">					callback.stopParsing();</span>
+					
+<span class="nc" id="L249">				}</span>
+				
+			};
+		}
+
+		@Override
+		public void end() {
+			//no-op
+			
+<span class="nc" id="L258">		}</span>
+
+		public final SffFlowgram getFlowgram() {
+<span class="nc" id="L261">			return flowgram;</span>
+		}
+		
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

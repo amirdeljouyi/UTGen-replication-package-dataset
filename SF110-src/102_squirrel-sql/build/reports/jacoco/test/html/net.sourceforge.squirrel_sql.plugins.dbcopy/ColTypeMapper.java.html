@@ -1,0 +1,278 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ColTypeMapper.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.plugins.dbcopy</a> &gt; <span class="el_source">ColTypeMapper.java</span></div><h1>ColTypeMapper.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (C) 2005 Rob Manning
+ * manningr@users.sourceforge.net
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ */
+package net.sourceforge.squirrel_sql.plugins.dbcopy;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Types;
+
+import javax.swing.JFrame;
+
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.fw.dialects.DialectFactory;
+import net.sourceforge.squirrel_sql.fw.dialects.HibernateDialect;
+import net.sourceforge.squirrel_sql.fw.dialects.UserCancelledOperationException;
+import net.sourceforge.squirrel_sql.fw.sql.JDBCTypeMapper;
+import net.sourceforge.squirrel_sql.fw.sql.SQLUtilities;
+import net.sourceforge.squirrel_sql.fw.sql.TableColumnInfo;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.util.DBUtil;
+
+import org.hibernate.MappingException;
+
+/**
+ * This class uses column type defintions from the source session table column
+ * and uses that information to determine the correct column definition in the 
+ * destination database using Hibernate.
+ */
+<span class="nc" id="L45">public class ColTypeMapper {</span>
+
+    /** Logger for this class. */
+<span class="nc" id="L48">    private final static ILogger s_log = </span>
+<span class="nc" id="L49">        LoggerController.createLogger(ColTypeMapper.class);</span>
+            
+    /**
+     * Returns null if the user cancelled picking the dialect.
+     * 
+     * @param sourceSession
+     * @param destSession
+     * @param TableColumnInfo
+     * @param sourceTableName the name of the table we are copying from.  This
+     *                        might include the schema prefix
+     * @param destTableName the name of the table we are copying to.  This 
+     *                      might include the schema prefix                      
+     * @return
+     */
+    public static String mapColType(ISession sourceSession, 
+                                    ISession destSession,
+                                    TableColumnInfo colInfo,
+                                    String sourceTableName,
+                                    String destTableName) 
+        throws UserCancelledOperationException, MappingException  
+    {
+<span class="nc" id="L70">        int colJdbcType = colInfo.getDataType();</span>
+
+        // If source column is type 1111 (OTHER), try to use the 
+        // column type name to find a type that isn't 1111.        
+<span class="nc" id="L74">        colJdbcType = DBUtil.replaceOtherDataType(colInfo, sourceSession);</span>
+        
+        // If the source column is DISTINCT and the session is PostgreSQL, try to get the underlying type.
+<span class="nc" id="L77">        colJdbcType = DBUtil.replaceDistinctDataType(colJdbcType, colInfo, sourceSession);</span>
+        
+        // Oracle can only store DECIMAL type numbers.  Since regular non-decimal
+        // numbers appear as &quot;decimal&quot;, Oracle's decimal numbers can be rather 
+        // large compared to other databases (precision up to 38).  Other 
+        // databases can only handle this large precision in BIGINT fields, not
+        // decimal, so try to figure out if Oracle is really storing a BIGINT
+        // and claiming it is a DECIMAL.  If so, convert the type to BIGINT before
+        // going any further.
+<span class="nc bnc" id="L86" title="All 4 branches missed.">        if (DialectFactory.isOracle(sourceSession.getMetaData())</span>
+                &amp;&amp; colJdbcType ==Types.DECIMAL) 
+        {
+            // No decimal digits strongly suggests an INTEGER of some type.
+            // Since it's not real easy to tell what kind of int (int2, int4, int8)
+            // just make it an int8 (i.e. BIGINT)
+<span class="nc bnc" id="L92" title="All 2 branches missed.">            if (colInfo.getDecimalDigits() == 0) {</span>
+<span class="nc" id="L93">                colJdbcType = Types.BIGINT;</span>
+            }
+        }
+        // For char or date types this is the maximum number of characters, for 
+        // numeric or decimal types this is precision.
+<span class="nc" id="L98">        int size = getColumnLength(sourceSession, colInfo, sourceTableName);</span>
+                        
+<span class="nc bnc" id="L100" title="All 4 branches missed.">        if (DialectFactory.isPointbase(destSession.getMetaData()) &amp;&amp; size &lt;= 0) {</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">            if (DBUtil.isBinaryType(colInfo)) { </span>
+                // For PointBase, if type maps to Pointbase &quot;BLOB&quot;, and the size
+                // isn't valid (PB requires size for BLOBS) then set it to something
+                // reasonably large, like 16MB. 1 is the default size if no size
+                // is specified.  That's practically useless :)
+<span class="nc" id="L106">                size = 16777215; </span>
+            } else {
+<span class="nc" id="L108">                size = 20; // Numbers and such.</span>
+            }
+        }
+<span class="nc bnc" id="L111" title="All 2 branches missed.">        if (DialectFactory.isFirebird(destSession.getMetaData())) {</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">            if (colJdbcType == java.sql.Types.DECIMAL) {</span>
+<span class="nc bnc" id="L113" title="All 2 branches missed.">                if (size &gt; 18) {</span>
+<span class="nc" id="L114">                    size = 18;</span>
+                }
+            }
+        }
+<span class="nc" id="L118">        String result = null;</span>
+<span class="nc" id="L119">        JFrame mainFrame = destSession.getApplication().getMainFrame();</span>
+<span class="nc" id="L120">        HibernateDialect destDialect = </span>
+<span class="nc" id="L121">            DialectFactory.getDialect(DialectFactory.DEST_TYPE, </span>
+                                      mainFrame, 
+<span class="nc" id="L123">                                      destSession.getMetaData());</span>
+
+<span class="nc bnc" id="L125" title="All 2 branches missed.">        if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L126">            s_log.debug(</span>
+                    &quot;ColTypeMapper.mapColType: using dialect type: &quot;+
+<span class="nc" id="L128">                    destDialect.getClass().getName()+&quot; to find name for column &quot;+</span>
+<span class="nc" id="L129">                    colInfo.getColumnName()+&quot; in table &quot;+destTableName+</span>
+                    &quot; with type id=&quot;+colJdbcType+&quot; (&quot;+
+<span class="nc" id="L131">                    JDBCTypeMapper.getJdbcTypeName(colJdbcType)+&quot;)&quot;);</span>
+        }
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        if (destDialect != null) {</span>
+<span class="nc" id="L134">            HibernateDialect sourceDialect = </span>
+<span class="nc" id="L135">                DialectFactory.getDialect(DialectFactory.SOURCE_TYPE, </span>
+                                          mainFrame, 
+<span class="nc" id="L137">                                          sourceSession.getMetaData());</span>
+            
+<span class="nc" id="L139">            int precision = sourceDialect.getPrecisionDigits(size, colJdbcType);</span>
+            
+<span class="nc bnc" id="L141" title="All 2 branches missed.">            if (precision &gt; destDialect.getMaxPrecision(colJdbcType)) {</span>
+<span class="nc" id="L142">                precision = destDialect.getMaxPrecision(colJdbcType);</span>
+            }
+<span class="nc" id="L144">            int scale = colInfo.getDecimalDigits();</span>
+<span class="nc bnc" id="L145" title="All 2 branches missed.">            if (scale &gt; destDialect.getMaxScale(colJdbcType)) {</span>
+<span class="nc" id="L146">                scale = destDialect.getMaxScale(colJdbcType);</span>
+            }
+            // OK, this is a hack.  Currently, when precision == scale, I have 
+            // no way to determine if this is valid for the actual data.  The
+            // problem comes when the source db's precision/scale are greater - 
+            // or reported to be greater - than the precision/scale of the 
+            // destination db.  In this case, it maximimizes both for the 
+            // destination, causing a definition that allows 0 digits to the 
+            // left of the decimal.  Trouble is, without looking at the actual
+            // data, there is no way to tell if this is valid - in some cases
+            // it will be ok (0.0000000789) in others it will not be ok (100.123).
+            // So for now, make the scale be approx. one-half of the precision
+            // to accomodate the most digits to the left and right of the decimal
+            // and hopefully that covers the majority of cases.
+<span class="nc bnc" id="L160" title="All 2 branches missed.">            if (precision &lt;= scale) {</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">                if (precision &lt; scale) {</span>
+<span class="nc" id="L162">                    precision = scale;</span>
+                }
+<span class="nc" id="L164">                scale = precision / 2;</span>
+<span class="nc" id="L165">                s_log.debug(</span>
+                    &quot;Precision == scale (&quot;+precision+&quot;) for the destination &quot; +
+                    &quot;database column def.  This is most likely incorrect, so &quot; +
+                    &quot;setting the scale to a more reasonable value: &quot;+scale);
+                
+            }
+            // Some dbs (like McKoi) make -1 the default for scale.  Apply the 
+            // same hack as above.
+<span class="nc bnc" id="L173" title="All 2 branches missed.">            if (scale &lt; 0) {</span>
+<span class="nc" id="L174">                scale = precision / 2;</span>
+<span class="nc" id="L175">                s_log.debug(</span>
+                        &quot;scale is less than 0 for the destination &quot; +
+                        &quot;database column def.  This is most likely incorrect, so &quot; +
+                        &quot;setting the scale to a more reasonable value: &quot;+scale);                
+            }
+<span class="nc" id="L180">            result = destDialect.getTypeName(colJdbcType, size, precision, scale);</span>
+        } 
+<span class="nc" id="L182">        return result;</span>
+    }
+    
+    /**
+     * Gets the declared length of the column, or if the length is less than or
+     * equal to 0, get the max length of the actual data in the column from the
+     * database.  In the case of Firebird with certain BLOB types it always 
+     * reports 0, so 2GB is hard-coded.  In the case of Oracle for CLOBs always
+     * use the maximum value of the column or 4000 whichever is greatest.(Oracle
+     * BLOBs/CLOBs always report 4000 as the column size, even when column 
+     * values exceed this length) 
+     *  
+     * @param sourceSession
+     * @param colInfo
+     * @param tableName
+     * @return
+     */
+    public static int getColumnLength(ISession sourceSession, 
+                                      TableColumnInfo colInfo,
+                                      String tableName) 
+        throws UserCancelledOperationException
+    {
+<span class="nc bnc" id="L204" title="All 2 branches missed.">        if (colInfo.getDataType() == Types.TIMESTAMP</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">                || colInfo.getDataType() == Types.DATE</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">                || colInfo.getDataType() == Types.TIME) </span>
+        {
+            // Date/Time types never declare a length.  Just return something
+            // larger than 0 so we bypass other checks above.
+<span class="nc" id="L210">            return 10;</span>
+        }
+        // Oracle declares the column size to be 4000, regardless of the maximum
+        // length of the CLOB field.  So if the Oracle BLOB/CLOB column contains 
+        // values that exceed 4000 chars and we use colInfo.getColumnSize() we 
+        // might create a destination column that is too small for the data 
+        // that will be copied from Oracle.  We specify a default value of 4000
+        // in case the table has no records or if the BLOB/CLOB column contains 
+        // only null values.
+<span class="nc bnc" id="L219" title="All 2 branches missed.">        if (DialectFactory.isOracle(sourceSession.getMetaData())</span>
+<span class="nc bnc" id="L220" title="All 2 branches missed.">                &amp;&amp; (colInfo.getDataType() == Types.CLOB </span>
+<span class="nc bnc" id="L221" title="All 2 branches missed.">                        || colInfo.getDataType() == Types.BLOB))</span>
+        {
+<span class="nc" id="L223">            return getColumnLengthBruteForce(sourceSession, colInfo, tableName, 4000);</span>
+        }
+<span class="nc" id="L225">        int length = getColumnLength(sourceSession, colInfo);</span>
+        // As a last resort, get the length of the longest value in the 
+        // specified column.
+<span class="nc bnc" id="L228" title="All 2 branches missed.">        if (length &lt;= 0) {</span>
+<span class="nc" id="L229">            length = getColumnLengthBruteForce(sourceSession, colInfo, tableName, 10);            </span>
+        }
+<span class="nc" id="L231">        return length;</span>
+    }
+    
+    private static int getColumnLength(ISession sourceSession, 
+                                       TableColumnInfo colInfo) 
+        throws UserCancelledOperationException
+    {
+<span class="nc" id="L238">        HibernateDialect dialect = </span>
+<span class="nc" id="L239">            DialectFactory.getDialect(DialectFactory.SOURCE_TYPE, </span>
+<span class="nc" id="L240">                                      sourceSession.getApplication().getMainFrame(), </span>
+<span class="nc" id="L241">                                      sourceSession.getMetaData());</span>
+<span class="nc" id="L242">        int length = colInfo.getColumnSize();</span>
+<span class="nc" id="L243">        int type = colInfo.getDataType();</span>
+<span class="nc" id="L244">        length = dialect.getColumnLength(length, type); </span>
+<span class="nc" id="L245">        return length;</span>
+    }
+    
+    private static int getColumnLengthBruteForce(ISession sourceSession, 
+                                                 TableColumnInfo colInfo,
+                                                 String tableName,
+                                                 int defaultLength) 
+        throws UserCancelledOperationException
+    {
+<span class="nc" id="L254">        int length = defaultLength;</span>
+<span class="nc" id="L255">        String sql = </span>
+<span class="nc" id="L256">            DBUtil.getMaxColumnLengthSQL(sourceSession, </span>
+                                         colInfo, 
+                                         tableName, 
+                                         true);
+<span class="nc" id="L260">        ResultSet rs = null;</span>
+        try {
+<span class="nc" id="L262">            rs = DBUtil.executeQuery(sourceSession, sql);</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">            if (rs.next()) {</span>
+<span class="nc" id="L264">                length = rs.getInt(1);</span>
+            }
+<span class="nc bnc" id="L266" title="All 2 branches missed.">            if (length &lt;= 0) {</span>
+<span class="nc" id="L267">                length = defaultLength;</span>
+            }
+<span class="nc" id="L269">        } catch (SQLException e) {</span>
+<span class="nc" id="L270">            s_log.error(&quot;ColTypeMapper.getColumnLengthBruteForce: encountered &quot; +</span>
+<span class="nc" id="L271">                        &quot;unexpected SQLException - &quot;+e.getMessage());</span>
+        } finally {
+<span class="nc" id="L273">            SQLUtilities.closeResultSet(rs);</span>
+        }        
+<span class="nc" id="L275">        return length;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

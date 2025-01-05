@@ -1,0 +1,1094 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CellComponentFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent</a> &gt; <span class="el_source">CellComponentFactory.java</span></div><h1>CellComponentFactory.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent;
+
+import java.awt.Color;
+import java.awt.Component;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.lang.reflect.Method;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.Types;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+
+import javax.swing.DefaultCellEditor;
+import javax.swing.JLabel;
+import javax.swing.JTable;
+import javax.swing.JTextArea;
+import javax.swing.JTextField;
+import javax.swing.border.EmptyBorder;
+import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.TableCellRenderer;
+
+
+import net.sourceforge.squirrel_sql.fw.datasetviewer.ColumnDisplayDefinition;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.whereClause.IWhereClausePart;
+import net.sourceforge.squirrel_sql.fw.dialects.DialectType;
+import net.sourceforge.squirrel_sql.fw.gui.OkJPanel;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+
+/**
+ * @author gwg
+ *
+ * This class is used by other parts of SQuirreL to handle all
+ * DataType-specific behavior for the ContentsTab.
+ * This includes reading/updating the DB, formatting data for display,
+ * validating user input, converting user input into an internal object
+ * of the appropriate type, and saving the data to or reading from a file.
+ * The actual work is handled by separate DataType-specific classes,
+ * so this class is a facade that selects the class to use and calls
+ * the desired method on that class.  All of the DataType-specifc classes
+ * implement the IDataTypeComponent interface.
+ * &lt;P&gt;
+ * At this time we use only the type of the data to determine which DataType
+ * class to use for the requested component.  In the future it may become
+ * useful to include other factors, such as the specific table and column
+ * being displayed.  This info could be used to select a specialized class
+ * (or a general class using an external resource file) to display table
+ * and column specific translations of data, such as mapping an integer
+ * code in the DB into a mnemonic representation (eg. 1='dial-up', 2='cable', 3='DSL').
+ * &lt;P&gt;
+ * The JTable is needed to allow the components to identify which cell
+ * is being referred to by a double-click mouse event, which causes
+ * a popup editing window to be generated.
+ * &lt;P&gt;
+ * &lt;B&gt;Creating new DataType handlers&lt;/B&gt;
+ * Plugins and other code may need to create and install handlers for
+ * data types that are not included in the standard SQuirreL product.
+ * This might be needed to handle DBMS-specific data types,
+ * or to override the standard behavior for a specific data type.
+ * For example:
+ * &lt;DL&gt;
+ * &lt;LI&gt;
+ * PostgreSQL defines several non-standard data types, such as &quot;bytea&quot;,
+ * &quot;tid&quot;, &quot;xid&quot;, int2vector&quot;, etc.  All of these have the same SQL type-code
+ * of &quot;1111&quot;, which means &quot;OTHER&quot;.
+ * The default ContesTab operation on type 1111 is to not display it
+ * and not allow editing.  However, if a plugin is able to define the
+ * operations on those fields, it can register a handler that will
+ * display the data appropriately and allow editing on those fields.
+ * &lt;LI&gt;
+ * If a DBMS defines a standard SQL data type in a non-standard way,
+ * a plugin for that DBMS may need to override the normal DataType class
+ * for that data type with another.
+ * An example would be if a DBMS implemented SQL type SMALLINT,
+ * which is handled internally as a Short, as an INTEGER, which is
+ * handled as an Integer.
+ * In order to correctly read and display values of that type in the ContentsTab,
+ * the handler for SQL type SMALLINT (=5) should be changed from
+ * DataTypeShort to DataTypeInteger.
+ * &lt;/DL&gt;
+ * &lt;P&gt;
+ * Here is how to create and register a DataType handler:
+ * &lt;DL&gt;
+ * &lt;LI&gt;
+ * Using SQuirrel, connect to the DBMS.
+ * Click on the &quot;Data Types&quot; tab.
+ * Get the &quot;TYPE_NAME&quot; and &quot;DATA_TYPE&quot; values for the data type
+ * for which you want to create a handler.
+ * &lt;LI&gt;
+ * Create a handler for that type of data.
+ * The handler must implement the IDataTypeComponet interface.
+ * The files whose names start with &quot;DataType...&quot;
+ * in the package net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent
+ * (i.e. the same place as this file)
+ * are examples of how to handle different data types.
+ * The data must be held in the JTable as a Java object.
+ * You must first identify what class of that object is.
+ * It may be your own local class or one of the standard Java classes
+ * since all of the code outside of the DataType class just treats it as an Object.
+ * The DataType class that you create must handle all transformations
+ * between that internal Java class and the Database,
+ * rendering in a cell, rendering in the Popup editing window
+ * (which may be the same as in a cell), and export/import with files.
+ * The DataType class also determines whether or not these verious translations
+ * are allowed.
+ * &lt;LI&gt;
+ * As part of the initialization of the application or plugin,
+ * register the DataType class as the handler for the data type.
+ * This is done using the static method registerDataType() in this class.
+ * The first argument is the fully-qualified name of the method,
+ * and the other two arguments identify the data type.
+ * For example:
+ * &lt;PRE&gt;
+ * 	CellComponentFactory.registerDataType(
+ * 		&quot;net.sourceforge.squirrel_sql.plugins.postgreSQLPlugin.DataTypeBytea&quot;,
+ * 		1111, &quot;bytea&quot;);
+ * &lt;/PRE&gt;
+ * Another example, in the case where a SMALLINT is actually handled
+ * by the DBMS as an integer:
+ * &lt;PRE&gt;
+ * 	CellComponentFactory.registerDataType(
+ * 		&quot;net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.DataTypeInteger&quot;,
+ * 		5, &quot;SHORT&quot;);
+ * &lt;/PRE&gt;
+ * Once the DataType class is registered,
+ * that class is called to process that data type in all of the
+ * associated data type.
+ * &lt;/DL&gt;
+ * &lt;P&gt;
+ * The DataType registration process does not associate DataType handlers
+ * with particular DBMSs.  Therefore, if two plugins for two different DBMSs
+ * register exactly the same SQL Type code and data type name,
+ * one of the databases will not be handled correctly.
+ */
+<span class="nc" id="L140">public class CellComponentFactory {</span>
+
+	/* map of existing DataType objects for each column.
+	 * The key is the ColumnDisplayDefinition object, and the value
+	 * is the DataTypeObject for that column's data type.
+	 */
+<span class="nc" id="L146">	static HashMap&lt;ColumnDisplayDefinition, IDataTypeComponent&gt; _colDataTypeObjects = </span>
+        new HashMap&lt;ColumnDisplayDefinition, IDataTypeComponent&gt;();
+	
+	/* map of DBMS-specific registered data handlers.
+	 * The key is a string of the form:
+	 *   &lt;SQL type as a string&gt;:&lt;SQL type name&gt;
+	 * and the value is a factory that can create instances of DBMS-specific
+	 * DataTypeComponets.
+	 */
+<span class="nc" id="L155">	 static HashMap&lt;String,IDataTypeComponentFactory&gt; _pluginDataTypeFactories = </span>
+         new HashMap&lt;String,IDataTypeComponentFactory&gt;();
+
+	/* The current JTable that we are working with.
+	 * This is used only to see when the user moves
+	 * to a different JTable so we know when to clear
+	 * the HashMap of DataTypeObjects.
+	 */
+<span class="nc" id="L163">	static JTable _table = null;</span>
+	
+	/* logging mechanism for errors */
+<span class="nc" id="L166">	static private ILogger s_log = LoggerController.createLogger(CellComponentFactory.class);</span>
+	
+	/**
+	 * Return the name of the Java class that is used to represent
+	 * this data type within the application.
+	 */
+	public static String getClassName(ColumnDisplayDefinition colDef) {
+<span class="nc" id="L173">		IDataTypeComponent dataTypeObject = getDataTypeObject(null, colDef);</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">		if (dataTypeObject != null)</span>
+<span class="nc" id="L175">			return dataTypeObject.getClassName();</span>
+		else
+<span class="nc" id="L177">			return &quot;java.lang.Object&quot;;</span>
+	}
+	
+	/**
+	 * Determine if the values of two objects are the same.
+	 */
+	public static boolean areEqual(ColumnDisplayDefinition colDef,
+		Object newValue, Object oldValue) {
+			
+<span class="nc" id="L186">		IDataTypeComponent dataTypeObject = getDataTypeObject(null, colDef);</span>
+<span class="nc bnc" id="L187" title="All 2 branches missed.">		if (dataTypeObject != null)</span>
+<span class="nc" id="L188">			return dataTypeObject.areEqual(newValue, oldValue);</span>
+		
+		// we should never get here because the areEqual function is only
+		// called when we are trying to update the database, so we know
+		// that we have a DataType object for this column (or we would
+		// have been stopped from editing by the isEditableXXX methods),
+		// but we need a return here to keep the compiler happy.
+<span class="nc" id="L195">		return false;</span>
+	}
+
+
+	/*
+	 * Operations for Text and in-cell work
+	 */
+	
+	/**
+	 * Render value of object as a string for text output.
+	 * Used by Text version of table.
+	 */
+	public static String renderObject(Object value, ColumnDisplayDefinition colDef)
+	{
+<span class="nc" id="L209">		IDataTypeComponent dataTypeObject = getDataTypeObject(null, colDef);</span>
+		
+<span class="nc bnc" id="L211" title="All 2 branches missed.">		if (dataTypeObject != null)</span>
+<span class="nc" id="L212">			return dataTypeObject.renderObject(value);</span>
+		
+		// default behavior: toString
+<span class="nc bnc" id="L215" title="All 2 branches missed.">      if(null == value)</span>
+      {
+<span class="nc" id="L217">         return &quot;&lt;null&gt;&quot;;</span>
+      }
+      else
+      {
+<span class="nc" id="L221">		   return value.toString();</span>
+      }
+	}
+	
+	/**
+	 * Get a TableCellRenderer for the given column.
+	 */
+	public static TableCellRenderer getTableCellRenderer(
+         ColumnDisplayDefinition colDef)
+	{
+<span class="nc" id="L231">		return new CellRenderer(getDataTypeObject(null, colDef));</span>
+	}
+	
+
+	/**
+	 * The base component of a DefaultTableCellRenderer is a JLabel.
+	 * @author gwg
+	 */
+	static private final class CellRenderer extends DefaultTableCellRenderer implements SquirrelTableCellRenderer
+	{
+        private static final long serialVersionUID = 1L;
+        transient private final IDataTypeComponent _dataTypeObject;
+
+		CellRenderer(IDataTypeComponent dataTypeObject)
+		{
+<span class="nc" id="L246">			super();</span>
+
+<span class="nc" id="L248">			_dataTypeObject = dataTypeObject;</span>
+<span class="nc" id="L249">		}</span>
+
+		/**
+		 *
+		 * Returns the default table cell renderer - overridden from DefaultTableCellRenderer.
+		 *
+		 * @param table  the &lt;code&gt;JTable&lt;/code&gt;
+		 * @param value  the value to assign to the cell at
+		 *			&lt;code&gt;[row, column]&lt;/code&gt;
+		 * @param isSelected true if cell is selected
+		 * @param hasFocus true if cell has focus
+		 * @param row  the row of the cell to render
+		 * @param column the column of the cell to render
+		 * @return the default table cell renderer
+		 */
+		public Component getTableCellRendererComponent(JTable table, Object value,
+				boolean isSelected, boolean hasFocus, int row, int column) {
+				  	
+<span class="nc" id="L267">				JLabel label = (JLabel)super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);</span>
+
+				// if text cannot be edited in the cell but can be edited in
+				//				the popup, show that by changing the text colors.
+<span class="nc bnc" id="L271" title="All 2 branches missed.">				if (_dataTypeObject != null &amp;&amp;</span>
+<span class="nc bnc" id="L272" title="All 2 branches missed.">					_dataTypeObject.isEditableInCell(value) == false &amp;&amp;</span>
+<span class="nc bnc" id="L273" title="All 2 branches missed.">					_dataTypeObject.isEditableInPopup(value) == true) {</span>
+					// Use a CYAN background to indicate that the cell is
+					// editable in the popup
+<span class="nc" id="L276">				   setBackground(Color.cyan);</span>
+			   }
+			   else {
+					// since the previous entry might have changed the color,
+					// we need to reset the color back to default value for table cells,
+					// taking into account whether the cell is selected or not.
+<span class="nc bnc" id="L282" title="All 2 branches missed.">					if (isSelected)</span>
+<span class="nc" id="L283">						setBackground(table.getSelectionBackground());</span>
+					else
+<span class="nc" id="L285">						setBackground(table.getBackground());</span>
+			   }	
+	
+
+<span class="nc" id="L289">				return label;	  	</span>
+		 }
+		 
+		 
+		public void setValue(Object value)
+		{		
+			// default behavior if no DataType object is to use the
+			// DefaultColumnRenderer with no modification.
+<span class="nc bnc" id="L297" title="All 2 branches missed.">			if (_dataTypeObject != null)</span>
+<span class="nc" id="L298">				super.setValue(_dataTypeObject.renderObject(value));</span>
+<span class="nc" id="L299">			else super.setValue(DefaultColumnRenderer.getInstance().renderObject(value));</span>
+<span class="nc" id="L300">		}</span>
+
+		public Object renderValue(Object value)
+		{
+<span class="nc bnc" id="L304" title="All 2 branches missed.">			if (_dataTypeObject != null)</span>
+			{
+<span class="nc" id="L306">				return _dataTypeObject.renderObject(value);</span>
+			}
+			else
+			{
+<span class="nc" id="L310">				return DefaultColumnRenderer.getInstance().renderObject(value);</span>
+			}
+		}
+	}
+
+
+	/**
+	 * Return true if the data type for the column may be edited
+	 * within the table cell, false if not.
+	 */
+	public static boolean isEditableInCell(ColumnDisplayDefinition colDef,
+         Object originalValue)
+	{
+<span class="nc bnc" id="L323" title="All 2 branches missed.">		if (colDef.isAutoIncrement()) {</span>
+<span class="nc" id="L324">		    return false;</span>
+        }
+<span class="nc" id="L326">		IDataTypeComponent dataTypeObject = getDataTypeObject(null, colDef);</span>
+		
+<span class="nc bnc" id="L328" title="All 2 branches missed.">		if (dataTypeObject != null)</span>
+<span class="nc" id="L329">			return dataTypeObject.isEditableInCell(originalValue);</span>
+		
+		// there was no data type object, so this data type is unknown
+		// to squirrel and thus cannot be edited.	
+<span class="nc" id="L333">		return false;</span>
+	}
+
+	/**
+	 * See if a value in a column has been limited in some way and
+	 * needs to be re-read before being used for editing.
+	 * For read-only tables this may actually return true since we want
+	 * to be able to view the entire contents of the cell even if it was not
+	 * completely loaded during the initial table setup.
+	 */
+	public static boolean needToReRead(ColumnDisplayDefinition colDef,
+         Object originalValue) {
+<span class="nc" id="L345">		IDataTypeComponent dataTypeObject = getDataTypeObject(null, colDef);</span>
+		
+<span class="nc bnc" id="L347" title="All 2 branches missed.">		if (dataTypeObject != null)</span>
+<span class="nc" id="L348">			return dataTypeObject.needToReRead(originalValue);</span>
+		
+		// default - if we do not know the data type, then we cannot re-read it
+<span class="nc" id="L351">		return false;</span>
+	};
+	
+	/**
+	 * Return a DefaultCellEditor using a JTextField with appropriate
+	 * handlers to manage the type of input for the cell.
+	 */
+	public static DefaultCellEditor getInCellEditor(
+		JTable table, ColumnDisplayDefinition colDef) {
+
+
+		DefaultCellEditor ed;
+
+<span class="nc" id="L364">		IDataTypeComponent dataTypeObject = getDataTypeObject(table, colDef);</span>
+		
+		JTextField textField;
+		
+		// Default behavior if no data type found is to use a restorable text field
+		// with no other special behavior and hope the object has a toString().
+<span class="nc bnc" id="L370" title="All 2 branches missed.">		if (dataTypeObject != null)</span>
+		{
+<span class="nc" id="L372">			textField = dataTypeObject.getJTextField();</span>
+		}
+		else
+		{
+<span class="nc" id="L376">			textField = new RestorableJTextField();</span>
+		}
+					
+		// When changing the backgroud color, it helps to set the inner component's border to zero.  Otherwise,
+		// the border can obscure the text and make it hard to see.  This is especially seen when using the
+		// kunstoff l&amp;f.
+<span class="nc" id="L382">		textField.setBackground(Color.yellow);</span>
+<span class="nc" id="L383">		textField.setBorder(new EmptyBorder(0,0,0,0));</span>
+
+<span class="nc" id="L385">		ed = new CellEditorUsingRenderer(textField, dataTypeObject);</span>
+<span class="nc" id="L386">		ed.setClickCountToStart(1);</span>
+<span class="nc" id="L387">		return ed;</span>
+	}
+	
+	/**
+	 * Call the validate and convert method in the appropriate
+	 * DataType object.
+	 */
+	 public static Object validateAndConvert(ColumnDisplayDefinition colDef,
+         Object originalValue, String inputValue, StringBuffer messageBuffer) {
+
+<span class="nc" id="L397">		IDataTypeComponent dataTypeObject = getDataTypeObject(null, colDef);</span>
+
+<span class="nc bnc" id="L399" title="All 2 branches missed.">		if (dataTypeObject != null) {</span>
+			// we have an appropriate data type object
+<span class="nc" id="L401">			return dataTypeObject.validateAndConvert(inputValue, originalValue, messageBuffer);</span>
+		}
+
+	 	// No appropriate DataType for this column, so do the best
+	 	// we can with what we know.
+	 	//
+	 	// THIS MAY NOT BE THE BEST BEHAVIOR HERE!!!!!!!
+	 		
+	 	// Default Operation
+<span class="nc bnc" id="L410" title="All 2 branches missed.">	 	if (inputValue.equals(&quot;&lt;null&gt;&quot;))</span>
+<span class="nc" id="L411">	 		return null;</span>
+<span class="nc" id="L412">	 	else return inputValue;</span>
+	}
+	
+	/**
+	 * Return the flag from the component saying
+	 * whether to do editing in the special binary editing panel
+	 * or the component will handle all text input.
+	 */
+	public static boolean useBinaryEditingPanel(ColumnDisplayDefinition colDef) {
+<span class="nc" id="L421">		IDataTypeComponent dataTypeObject = getDataTypeObject(null, colDef);</span>
+
+<span class="nc bnc" id="L423" title="All 2 branches missed.">		if (dataTypeObject != null) {</span>
+			// we have an appropriate data type object
+<span class="nc" id="L425">			return dataTypeObject.useBinaryEditingPanel();</span>
+		}
+<span class="nc" id="L427">		return false;	// no object, so do not assume binary editing will work</span>
+	}
+	
+
+	/*
+	 * Operations for Popup work.
+	 */
+	
+	/**
+	 * Return true if the data type for the column may be edited
+	 * in the popup, false if not.
+	 */
+	public static boolean isEditableInPopup(ColumnDisplayDefinition colDef,
+         Object originalValue) {
+<span class="nc bnc" id="L441" title="All 4 branches missed.">        if (colDef != null &amp;&amp; colDef.isAutoIncrement()) {</span>
+<span class="nc" id="L442">            return false;</span>
+        }
+        
+<span class="nc" id="L445">		IDataTypeComponent dataTypeObject = getDataTypeObject(null, colDef);</span>
+		
+<span class="nc bnc" id="L447" title="All 2 branches missed.">		if (dataTypeObject != null) {</span>
+<span class="nc" id="L448">			return dataTypeObject.isEditableInPopup(originalValue);</span>
+		}
+			
+		// there was no data type object, so this data type is unknown
+		// to squirrel and thus cannot be edited.	
+<span class="nc" id="L453">		return false;</span>
+	}
+	
+	/**
+	 * Return a JTextArea with appropriate handlers for editing
+	 * the type of data in the cell.
+	 */
+	 public static JTextArea getJTextArea(ColumnDisplayDefinition colDef,
+         Object value) {
+
+		// The first argument is a JTable, which is only used by instances
+		// of JTextField to convert coordinates on a double-click.  Since that
+		// cannot happen with the JTextArea, do not bother passing the table.
+
+<span class="nc" id="L467">		IDataTypeComponent dataTypeObject = getDataTypeObject(null, colDef);</span>
+		
+<span class="nc bnc" id="L469" title="All 2 branches missed.">		if (dataTypeObject != null)</span>
+<span class="nc" id="L470">			return dataTypeObject.getJTextArea(value);</span>
+		
+		// default behavior if no appropriate data type found is to create
+		// a simple JTextArea with no special handling.
+		//
+		// In Theory, this cannot happen because if there is no data type object
+		// for this column's data type, then isEditableInPopup returns false, so
+		// we should not get here.  If there IS a data type object, and isEditableInPopup
+		// returns true, then we would have executed the return statement above.
+		// Assume that the value can be represented as a string.
+<span class="nc" id="L480">		RestorableJTextArea textArea = new RestorableJTextArea();</span>
+<span class="nc bnc" id="L481" title="All 2 branches missed.">        if (value != null) {</span>
+<span class="nc" id="L482">            textArea.setText(value.toString());</span>
+        } else {
+<span class="nc" id="L484">            textArea.setText(&quot;&quot;);</span>
+        }
+<span class="nc" id="L486">		return textArea;</span>
+	}
+	
+	/**
+	 * Call the validate and convert method in the appropriate
+	 * DataType object.
+	 */
+	 public static Object validateAndConvertInPopup(
+         ColumnDisplayDefinition colDef, Object originalValue,
+         String inputValue, StringBuffer messageBuffer) {
+
+<span class="nc" id="L497">		IDataTypeComponent dataTypeObject = getDataTypeObject(null, colDef);</span>
+
+<span class="nc bnc" id="L499" title="All 2 branches missed.">		if (dataTypeObject != null) {</span>
+			// we have an appropriate data type object
+<span class="nc" id="L501">			return dataTypeObject.validateAndConvertInPopup(inputValue, originalValue, messageBuffer);</span>
+		}
+
+	 	// No appropriate DataType for this column, so do the best
+	 	// we can with what we know.
+	 	//
+	 	// THIS MAY NOT BE THE BEST BEHAVIOR HERE!!!!!!!
+	 		
+	 	// Default Operation
+<span class="nc bnc" id="L510" title="All 2 branches missed.">	 	if (inputValue.equals(&quot;&lt;null&gt;&quot;))</span>
+<span class="nc" id="L511">	 		return null;</span>
+<span class="nc" id="L512">	 	else return inputValue;</span>
+	}
+
+
+	
+	
+	/*
+	 * DataBase-related functions
+	 */
+	 
+
+    /**
+     * Returns the result for the column at the specified index as determined 
+     * by a previously registered plugin DataTypeComponent.  Will return null 
+     * if the type cannot be handled by any plugin-registered DataTypeComponent.
+     * 
+     * @param rs
+     *        the ResultSet to read
+     * @param sqlType
+     *        the Java SQL type of the column
+     * @param sqlTypeName
+     *        the SQL type name of the column
+     * @param index
+     *        the index of the column that should be read
+     * 
+     * @return the value as interpreted by the plugin-registered
+     *         DataTypeComponent, or null if no plugin DataTypeComponent has
+     *         been registered for the specified sqlType and sqlTypename.
+     * 
+     * @throws Exception
+     */
+    public static Object readResultWithPluginRegisteredDataType(ResultSet rs,
+            int sqlType, String sqlTypeName, int index, DialectType dialectType) throws Exception {
+
+<span class="nc" id="L546">        Object result = null;</span>
+<span class="nc" id="L547">        String typeNameKey = getRegDataTypeKey(dialectType, sqlType, sqlTypeName);</span>
+<span class="nc bnc" id="L548" title="All 2 branches missed.">        if (_pluginDataTypeFactories.containsKey(typeNameKey)) {</span>
+<span class="nc" id="L549">            IDataTypeComponentFactory factory = _pluginDataTypeFactories.get(typeNameKey);</span>
+<span class="nc" id="L550">            IDataTypeComponent dtComp = factory.constructDataTypeComponent();</span>
+<span class="nc" id="L551">            ColumnDisplayDefinition colDef = new ColumnDisplayDefinition(</span>
+<span class="nc" id="L552">                rs, index, factory.getDialectType());</span>
+<span class="nc" id="L553">            dtComp.setColumnDisplayDefinition(colDef);</span>
+<span class="nc" id="L554">            dtComp.setTable(_table);</span>
+<span class="nc" id="L555">            result = dtComp.readResultSet(rs, index, false);</span>
+        }
+<span class="nc" id="L557">        return result;</span>
+    }
+	 
+	 /**
+	  * On input from the DB, read the data from the ResultSet into the appropriate
+	  * type of object to be stored in the table cell.
+	  */
+	public static Object readResultSet(ColumnDisplayDefinition colDef,
+		ResultSet rs, int index, boolean limitDataRead)
+		throws java.sql.SQLException {
+			
+<span class="nc" id="L568">		IDataTypeComponent dataTypeObject = getDataTypeObject(null, colDef);</span>
+
+<span class="nc bnc" id="L570" title="All 2 branches missed.">		if (dataTypeObject != null) {</span>
+			// we have an appropriate data type object
+<span class="nc" id="L572">			return dataTypeObject.readResultSet(rs, index, limitDataRead);</span>
+		}
+
+		//?? Best guess: read object?
+		//?? This is probably the wrong thing to do here, but
+		//?? I don't know what else to try.
+<span class="nc" id="L578">		return rs.getObject(index);</span>
+	}
+
+	/**
+	 * When updating the database, generate a string form of this object value
+	 * that can be used in the WHERE clause to match the value in the database.
+	 * A return value of null means that this column cannot be used in the WHERE
+	 * clause, while a return of &quot;null&quot; (or &quot;is null&quot;, etc) means that the column
+	 * can be used in the WHERE clause and the value is actually a null value.
+	 * This function must also include the column label so that its output
+	 * is of the form:
+	 * 	&quot;columnName = value&quot;
+	 * or
+	 * 	&quot;columnName is null&quot;
+	 * or whatever is appropriate for this column in the database.
+	 */
+	public static IWhereClausePart getWhereClauseValue(ColumnDisplayDefinition colDef,
+         Object value, ISQLDatabaseMetaData md) {
+<span class="nc" id="L596">		IDataTypeComponent dataTypeObject = getDataTypeObject(null, colDef);</span>
+
+<span class="nc bnc" id="L598" title="All 2 branches missed.">		if (dataTypeObject != null) {</span>
+			// we have an appropriate data type object
+<span class="nc" id="L600">			return dataTypeObject.getWhereClauseValue(value, md);</span>
+		}
+		
+		// if no object for this data type, then cannot use value in where clause
+<span class="nc" id="L604">		return null;</span>
+	}
+	
+	/**
+	 * When updating the database, insert the appropriate datatype into the
+	 * prepared statment at the given variable position.
+	 */
+	public static void setPreparedStatementValue(ColumnDisplayDefinition colDef,
+         PreparedStatement pstmt, Object value, int position) throws java.sql.SQLException {
+
+<span class="nc" id="L614">		IDataTypeComponent dataTypeObject = getDataTypeObject(null, colDef);</span>
+
+		// We should never NOT have an object here because we only get here
+		// when a DataType object has claimed that the column is editable.
+		// If there is no DataType for the column, then the default in the
+		// isEditableXXX() methods in this class is to say that the column
+		// is not editable, and therefore we should never have this method
+		// called in that case.
+<span class="nc bnc" id="L622" title="All 2 branches missed.">		if (dataTypeObject != null) {</span>
+			// we have an appropriate data type object
+<span class="nc" id="L624">			dataTypeObject.setPreparedStatementValue(pstmt, value, position);</span>
+		}
+<span class="nc" id="L626">	}</span>
+	
+	/**
+    * Get a default value for the table used to input data for a new row to be
+    * inserted into the DB.
+    */
+   static public Object getDefaultValue(ColumnDisplayDefinition colDef,
+         String dbDefaultValue) {
+<span class="nc" id="L634">      IDataTypeComponent dataTypeObject = getDataTypeObject(null, colDef);</span>
+
+<span class="nc bnc" id="L636" title="All 2 branches missed.">      if (dataTypeObject != null)</span>
+<span class="nc" id="L637">         return dataTypeObject.getDefaultValue(dbDefaultValue);</span>
+
+      // there was no data type object, so this data type is unknown
+      // to squirrel and thus cannot be edited.
+<span class="nc" id="L641">      return null;</span>
+   }
+	
+	
+	
+	/*
+	 * File IO related functions
+	 */
+	 
+	 
+	 /**
+	  * Say whether or not object can be exported to and imported from
+	  * a file.  We put both export and import together in one test
+	  * on the assumption that all conversions can be done both ways.
+	  */
+	 public static boolean canDoFileIO(ColumnDisplayDefinition colDef) {
+
+<span class="nc" id="L658">		IDataTypeComponent dataTypeObject = getDataTypeObject(null, colDef);</span>
+		
+		// if no DataType object, then there is nothing to handle File IO,
+		// so cannot do it
+<span class="nc bnc" id="L662" title="All 2 branches missed.">		if (dataTypeObject == null)</span>
+<span class="nc" id="L663">			return false;</span>
+
+		// let DataType object speak for itself
+<span class="nc" id="L666">		return dataTypeObject.canDoFileIO();</span>
+	 }
+	 
+	 /**
+	  * Read a file and construct a valid object from its contents.
+	  * Errors are returned by throwing an IOException containing the
+	  * cause of the problem as its message.
+	  */
+	 public static String importObject(ColumnDisplayDefinition colDef,
+	 	FileInputStream inStream)
+	 	throws IOException {
+
+<span class="nc" id="L678">		IDataTypeComponent dataTypeObject = getDataTypeObject(null, colDef);</span>
+		
+		// if no DataType object, then there is nothing to handle File IO,
+		// so cannot do it
+<span class="nc bnc" id="L682" title="All 2 branches missed.">		if (dataTypeObject == null)</span>
+<span class="nc" id="L683">			throw new IOException(</span>
+				&quot;No internal Data Type class for this column's SQL type&quot;);
+
+		// let DataType object speak for itself
+<span class="nc" id="L687">		return dataTypeObject.importObject(inStream);	 		</span>
+	 }
+
+	 
+	 /**
+	  * Given a text string from the Popup, validate that it makes sense
+	  * for the given DataType, then write it out to a file in the
+	  * appropriate format.
+	  * Errors are returned by throwing an IOException containing the
+	  * cause of the problem as its message.
+	  */
+	 public static void exportObject(ColumnDisplayDefinition colDef,
+	 	FileOutputStream outStream, String text)
+	 	throws IOException {
+
+<span class="nc" id="L702">		IDataTypeComponent dataTypeObject = getDataTypeObject(null, colDef);</span>
+		
+		// if no DataType object, then there is nothing to handle File IO,
+		// so cannot do it
+<span class="nc bnc" id="L706" title="All 2 branches missed.">		if (dataTypeObject == null)</span>
+<span class="nc" id="L707">			throw new IOException(</span>
+				&quot;No internal Data Type class for this column's SQL type&quot;);
+
+		// let DataType object speak for itself
+<span class="nc" id="L711">		dataTypeObject.exportObject(outStream, text);	 		</span>
+<span class="nc" id="L712">	 }</span>
+	
+	/**
+    * Constructs a key that is used to lookup previously registered custom
+    * types.
+    * 
+    * @param dialectType
+    *           the type of dialect that describes the session that is in use.
+    *           This is an important component in making the key because it
+    *           allows plugins for example to provide IDataTypeComponents for
+    *           standard types that are only used when a session that the plugin
+    *           is interested in is in use.
+    * @param sqlType
+    *           the JDBC type code supplied by the driver
+    * @param sqlTypeName
+    *           the JDBC type name supplied by the driver
+    * 
+    * @return a key that can be used to store/retreive a custom type.
+    */
+	private static String getRegDataTypeKey(DialectType dialectType, int sqlType, String sqlTypeName) {
+<span class="nc" id="L732">	    StringBuilder result = new StringBuilder();</span>
+<span class="nc bnc" id="L733" title="All 2 branches missed.">	    if (dialectType == null) {</span>
+<span class="nc" id="L734">	       result.append(DialectType.GENERIC.name());</span>
+	    } else {
+<span class="nc" id="L736">	       result.append(dialectType.name());</span>
+	    }
+<span class="nc" id="L738">	    result.append(&quot;:&quot;);</span>
+<span class="nc" id="L739">	    result.append(sqlType);</span>
+<span class="nc" id="L740">	    result.append(&quot;:&quot;);</span>
+<span class="nc" id="L741">	    result.append(sqlTypeName);</span>
+<span class="nc" id="L742">	    return result.toString();</span>
+	}
+	 
+	/**
+    * Method for registering a DataTypeComponent factory for a non-standard SQL
+    * type (or for overriding a standard handler).
+    */
+   public static void registerDataTypeFactory(
+         IDataTypeComponentFactory factory, int sqlType, String sqlTypeName) 
+   {
+<span class="nc" id="L752">      String typeName = getRegDataTypeKey(factory.getDialectType(), sqlType, sqlTypeName);</span>
+
+<span class="nc" id="L754">      _pluginDataTypeFactories.put(typeName, factory);</span>
+<span class="nc" id="L755">   }</span>
+	
+	
+	/*
+	 * Get control panels to let user adjust properties
+	 * on DataType classes.
+	 */
+	 
+	 /**
+	  * Get the Control Panels (JPanels containing controls) that let the
+	  * user adjust the properties of static properties in specific DataTypes.
+	  * The only DataType objects checked for here are:
+	  * 	- those that are registered through the registerDataType method, and
+	  * 	- those that are specifically listed in the variable initialClassNameList
+	  */
+	 public static OkJPanel[] getControlPanels() {
+<span class="nc" id="L771">		ArrayList&lt;OkJPanel&gt; panelList = new ArrayList&lt;OkJPanel&gt;();</span>
+		
+		/*
+		 * This is the list of names of classes that:
+		 * 	- support standard SQL type codes and thus do not need to be registered
+		 * 	- provide the getControlPanel method to allow manipulation of properties
+		 * These classes should all be named
+		 * 	net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.DataTypeXXXX
+		 * because they are part of the standard delivery of the product, and thus should
+		 * be local to this directory.
+		 */
+<span class="nc" id="L782">		String [] initialClassNameList = {</span>
+<span class="nc" id="L783">			net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.DataTypeGeneral.class.getName(),</span>
+<span class="nc" id="L784">			net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.DataTypeBlob.class.getName(),</span>
+<span class="nc" id="L785">			net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.DataTypeClob.class.getName(),</span>
+<span class="nc" id="L786">			net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.DataTypeString.class.getName(),</span>
+<span class="nc" id="L787">			net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.DataTypeOther.class.getName(),</span>
+<span class="nc" id="L788">			net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.DataTypeUnknown.class.getName(),</span>
+<span class="nc" id="L789">			net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.DataTypeDate.class.getName(),</span>
+<span class="nc" id="L790">			net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.DataTypeTime.class.getName(),</span>
+<span class="nc" id="L791">			net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.DataTypeTimestamp.class.getName(),			</span>
+<span class="nc" id="L792">			net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.FloatingPointBase.class.getName(),			</span>
+			 };
+
+
+		// make a single list of all class names that we need to check.
+		// Start with the names of known, standard classes that provide Control Panels
+<span class="nc" id="L798">		ArrayList&lt;String&gt; classNameList = </span>
+<span class="nc" id="L799">            new ArrayList&lt;String&gt;(Arrays.asList(initialClassNameList));</span>
+		
+		// add to that the list of all names that have been registered by plugins
+//		Iterator&lt;IDataTypeComponentFactory&gt; pluginDataTypeFactories = 
+//		    _registeredDataTypes.values().iterator();
+//		while (pluginDataTypeFactories.hasNext()) {
+//		    TODO: add support for plugin-registered data-type preferences panels
+//		          when it is needed.
+//		}
+		
+		// Now go through the list in the given order to get the panels
+<span class="nc bnc" id="L810" title="All 2 branches missed.">		for (int i=0; i&lt; classNameList.size(); i++) {</span>
+<span class="nc" id="L811">			String className = classNameList.get(i);</span>
+<span class="nc" id="L812">			Class&lt;?&gt;[] parameterTypes = new Class&lt;?&gt;[0];</span>
+			try {
+<span class="nc" id="L814">				Method panelMethod =</span>
+<span class="nc" id="L815">					Class.forName(className).getMethod(&quot;getControlPanel&quot;, parameterTypes);</span>
+					
+<span class="nc" id="L817">				OkJPanel panel = (OkJPanel)panelMethod.invoke(null, (Object[])null);</span>
+<span class="nc" id="L818">				panelList.add(panel);</span>
+			}
+<span class="nc" id="L820">			catch (Exception e) {</span>
+<span class="nc" id="L821">				s_log.error(&quot;Unexpected exception: &quot;+e.getMessage(), e);</span>
+<span class="nc" id="L822">			}</span>
+		}
+		
+<span class="nc" id="L825">		return panelList.toArray(new OkJPanel[0]);</span>
+	}
+
+
+	/*
+	 * Internal method used for both cell and popup work.
+	 */
+
+	/** 
+	 * Identify the type of data in the cell and get an instance
+	 * of the appropriate DataType object to work with it.
+	 * 
+	 * The JTable argument is used only by the DataType objects, not here.
+	 * Also, since it is used only for converting coordinates when the user
+	 * double-clicks in a cell, the JTextArea component does not use it, so
+	 * it may be null in that case.
+	 * 
+	 * NOTE: This currently gets a new copy of the DataType object for every
+	 * column even when multiple columns have the same SQL data type.  JTable's
+	 * Render and Edit operations typically re-use the same CellRenderer and
+	 * CellEditor objects for every cell by moving the viewpoint of the component
+	 * to the location of the cell to be rendered/edited, setting the value in
+	 * the component to the value at that cell, telling the component to paint,
+	 * then moving that same component to the next cell.  For us, the cells have
+	 * specific syntax or size constraints based on the SQL data type and the
+	 * metadata from the DB, so we use different CellRenderer/Editor components
+	 * for each column.  However, JTable's rendering/editing algorithm allows
+	 * us to re-use the same component for all cells in the same column, which
+	 * is what we do.  By saving the component, we avoid the need to create
+	 * new instances each time the userstarts editing, creates the popup dialog,
+	 * or does an operation requireing a static method call (e.g. validateAndConvert).
+	 * 
+    * @param table the JTable that will render the cells
+    * @param colDef the ColumnDisplayDefinition that describes the column.  It 
+    *               contains SQL type, SQL type name and DialectType, and these
+    *               three criteria are examined to determine if a type has been
+    *               registered 
+	 * 
+	 */
+	private static IDataTypeComponent getDataTypeObject(
+		JTable table, ColumnDisplayDefinition colDef) {
+		
+<span class="nc bnc" id="L867" title="All 2 branches missed.">	   if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L868">	      s_log.debug(&quot;getDataTypeObject: colDef=&quot;+colDef);</span>
+	   }
+	   
+<span class="nc" id="L871">	   IDataTypeComponent dataTypeComponent = null;</span>
+	   
+		// keep a hash table of the column objects
+		// so we can reuse them.
+<span class="nc bnc" id="L875" title="All 2 branches missed.">		if (table != _table) {</span>
+			// new table - clear hash map
+<span class="nc" id="L877">			_colDataTypeObjects.clear();</span>
+<span class="nc" id="L878">			_table = table;</span>
+		}
+<span class="nc bnc" id="L880" title="All 2 branches missed.">		if (_colDataTypeObjects.containsKey(colDef)) {</span>
+<span class="nc" id="L881">		   dataTypeComponent = _colDataTypeObjects.get(colDef);</span>
+		} else {
+<span class="nc bnc" id="L883" title="All 2 branches missed.">   		if (dataTypeComponent == null ) </span>
+   		{
+   	      /* See if we have a custom data-type registered. */		   
+<span class="nc" id="L886">   		   dataTypeComponent = getCustomDataType(table, colDef);</span>
+   		}
+   		
+<span class="nc bnc" id="L889" title="All 2 branches missed.">   		if (dataTypeComponent == null) {</span>
+   	      // we have not already created a DataType object for this column
+   	      // so do that now and save it		   
+<span class="nc" id="L892">   		   dataTypeComponent = getGenericDataType(table, colDef);</span>
+   		}
+   
+   		// remember this DataType object so we can reuse it
+<span class="nc" id="L896">   		_colDataTypeObjects.put(colDef, dataTypeComponent);</span>
+		}
+
+<span class="nc bnc" id="L899" title="All 4 branches missed.">		if (s_log.isDebugEnabled() &amp;&amp; dataTypeComponent != null) {</span>
+<span class="nc" id="L900">		   s_log.debug(&quot;getDataTypeObject: returning type: &quot;</span>
+<span class="nc" id="L901">               + dataTypeComponent.getClass().getName());</span>
+		} else {
+<span class="nc" id="L903">         s_log.debug(&quot;getDataTypeObject: returning null type&quot;);		   </span>
+		}
+		
+		// If we get here, then no data type object was found for this column.
+		// (should not get here because switch default returns null.)
+<span class="nc" id="L908">		return dataTypeComponent;</span>
+	}
+	
+	/**
+	 * Look for a plugin-registered custom IDataTypeComponent implementation.
+	 * 
+	 * @param table the JTable that will render the cells
+	 * @param colDef the ColumnDisplayDefinition that describes the column.  It 
+	 *               contains SQL type, SQL type name and DialectType, and these
+	 *               three criteria are examined to determine if a type has been
+	 *               registered
+	 * 
+	 * @return the plugin-registered IDataTypeCompoenent, or null if no plugin 
+	 *         has registered one for the column specified by colDef.
+	 */
+	private static IDataTypeComponent getCustomDataType(JTable table,
+         ColumnDisplayDefinition colDef) {
+<span class="nc" id="L925">	   IDataTypeComponent dataTypeComponent = null;</span>
+<span class="nc bnc" id="L926" title="All 4 branches missed.">	     if (dataTypeComponent == null &amp;&amp; !_pluginDataTypeFactories.isEmpty()</span>
+<span class="nc bnc" id="L927" title="All 2 branches missed.">	            &amp;&amp; colDef.getDialectType() != null) </span>
+	      {
+	        
+<span class="nc" id="L930">	         String typeName = getRegDataTypeKey(colDef.getDialectType(),</span>
+<span class="nc" id="L931">	                                             colDef.getSqlType(),</span>
+<span class="nc" id="L932">	                                             colDef.getSqlTypeName());</span>
+<span class="nc" id="L933">	         IDataTypeComponentFactory factory = _pluginDataTypeFactories.get(typeName);</span>
+<span class="nc bnc" id="L934" title="All 2 branches missed.">	         if (factory != null) {</span>
+<span class="nc" id="L935">	            dataTypeComponent = factory.constructDataTypeComponent();</span>
+<span class="nc bnc" id="L936" title="All 2 branches missed.">	            if (colDef != null) {</span>
+<span class="nc" id="L937">	               dataTypeComponent.setColumnDisplayDefinition(colDef);</span>
+	            }
+<span class="nc bnc" id="L939" title="All 2 branches missed.">	            if (table != null) {</span>
+<span class="nc" id="L940">	               dataTypeComponent.setTable(table);</span>
+<span class="nc bnc" id="L941" title="All 2 branches missed.">	            } else if (_table != null) {</span>
+<span class="nc" id="L942">	               dataTypeComponent.setTable(_table);</span>
+	            }
+	         }
+	      }
+<span class="nc" id="L946">	     return dataTypeComponent;</span>
+	}
+	
+	/**
+    * @param table
+    * @param colDef
+    * @return
+    */
+   private static IDataTypeComponent getGenericDataType(JTable table,
+         ColumnDisplayDefinition colDef) {
+<span class="nc" id="L956">      IDataTypeComponent dataTypeComponent = null;</span>
+
+      // Use the standard SQL type code to get the right handler
+      // for this data type.
+<span class="nc bnc" id="L960" title="All 2 branches missed.">      if (dataTypeComponent == null) {</span>
+<span class="nc bnc" id="L961" title="All 20 branches missed.">         switch (colDef.getSqlType()) {</span>
+         case Types.NULL: // should never happen
+<span class="nc bnc" id="L963" title="All 2 branches missed.">         	if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L964">         		s_log.debug(&quot;getGenericDataType: encountered an sql type = Types.NULL for column: &quot;+</span>
+<span class="nc" id="L965">         			colDef.getFullTableColumnName() + &quot;. A DataTypeComponent is not available for this type.&quot;);</span>
+         	}
+            break;
+
+         case Types.BIT:
+         case Types.BOOLEAN:
+<span class="nc" id="L971">            dataTypeComponent = new DataTypeBoolean(table, colDef);</span>
+<span class="nc" id="L972">            break;</span>
+
+         case Types.TIME:
+<span class="nc" id="L975">            dataTypeComponent = new DataTypeTime(table, colDef);</span>
+<span class="nc" id="L976">            break;</span>
+
+         case Types.DATE:
+            // Some databases store a time component in DATE columns (Oracle) 
+            // The user can set a preference for DATEs that allows them
+            // to be read as TIMESTAMP columns instead. This doesn't 
+            // appear to have ill effects for databases that are standards
+            // compliant (such as MySQL or PostgreSQL).  If the user 
+            // prefers it, use the TIMESTAMP data type instead of DATE.
+<span class="nc bnc" id="L985" title="All 2 branches missed.">            if (DataTypeDate.getReadDateAsTimestamp()) {</span>
+<span class="nc" id="L986">               colDef.setSqlType(Types.TIMESTAMP);</span>
+<span class="nc" id="L987">               colDef.setSqlTypeName(&quot;TIMESTAMP&quot;);</span>
+<span class="nc" id="L988">               dataTypeComponent = new DataTypeTimestamp(table, colDef);</span>
+            } else {
+<span class="nc" id="L990">               dataTypeComponent = new DataTypeDate(table, colDef);</span>
+            }
+<span class="nc" id="L992">            break;</span>
+
+         case Types.TIMESTAMP:
+         case -101: // Oracle's 'TIMESTAMP WITH TIME ZONE' == -101  
+         case -102: // Oracle's 'TIMESTAMP WITH LOCAL TIME ZONE' == -102
+<span class="nc" id="L997">            dataTypeComponent = new DataTypeTimestamp(table, colDef);</span>
+<span class="nc" id="L998">            break;</span>
+
+         case Types.BIGINT:
+<span class="nc" id="L1001">            dataTypeComponent = new DataTypeLong(table, colDef);</span>
+<span class="nc" id="L1002">            break;</span>
+
+         case Types.DOUBLE:
+         case Types.FLOAT:
+<span class="nc" id="L1006">            dataTypeComponent = new DataTypeDouble(table, colDef);</span>
+<span class="nc" id="L1007">            break;</span>
+
+         case Types.REAL:
+<span class="nc" id="L1010">            dataTypeComponent = new DataTypeFloat(table, colDef);</span>
+<span class="nc" id="L1011">            break;</span>
+
+         case Types.DECIMAL:
+         case Types.NUMERIC:
+<span class="nc" id="L1015">            dataTypeComponent = new DataTypeBigDecimal(table, colDef);</span>
+<span class="nc" id="L1016">            break;</span>
+
+         case Types.INTEGER:
+            // set up for integers
+<span class="nc" id="L1020">            dataTypeComponent = new DataTypeInteger(table, colDef);</span>
+<span class="nc" id="L1021">            break;</span>
+
+         case Types.SMALLINT:
+<span class="nc" id="L1024">            dataTypeComponent = new DataTypeShort(table, colDef);</span>
+<span class="nc" id="L1025">            break;</span>
+
+         case Types.TINYINT:
+<span class="nc" id="L1028">            dataTypeComponent = new DataTypeByte(table, colDef);</span>
+<span class="nc" id="L1029">            break;</span>
+
+         case Types.CHAR:
+         case Types.NCHAR:
+         case Types.VARCHAR:
+         case Types.NVARCHAR:
+         case Types.LONGVARCHAR:
+         case Types.LONGNVARCHAR:
+            // set up for string types
+<span class="nc" id="L1038">            dataTypeComponent = new DataTypeString(table, colDef);</span>
+<span class="nc" id="L1039">            break;</span>
+
+         // -8 is ROWID in Oracle. It's a string, but it's auto-assigned
+         case Types.ROWID:
+<span class="nc" id="L1043">            dataTypeComponent = new DataTypeString(table, colDef);</span>
+            // Oracle jdbc driver doesn't properly identify this column
+            // in ResultSetMetaData as read-only. For now, just use
+            // isAutoIncrement flag to simulate this setting.
+<span class="nc" id="L1047">            colDef.setIsAutoIncrement(true);</span>
+<span class="nc" id="L1048">            break;</span>
+
+         case Types.BINARY:
+         case Types.VARBINARY:
+         case Types.LONGVARBINARY:
+            // set up for Binary types
+<span class="nc" id="L1054">            dataTypeComponent = new DataTypeBinary(table, colDef);</span>
+<span class="nc" id="L1055">            break;</span>
+
+         case Types.BLOB:
+<span class="nc" id="L1058">            dataTypeComponent = new DataTypeBlob(table, colDef);</span>
+<span class="nc" id="L1059">            break;</span>
+
+         case Types.CLOB:
+<span class="nc" id="L1062">            dataTypeComponent = new DataTypeClob(table, colDef);</span>
+<span class="nc" id="L1063">            break;</span>
+
+	      // TODO: ResultSet has it's own NCLOB support (rs.getNClob(i)).  It is probably not valid to 
+	      // call getClob on an NClob column ??  So, may need to implement new DataTypeNClob type 
+	      // component (see below):  
+	      // 
+	      //case Types.NCLOB:
+	      //  dataTypeComponent = new DataTypeNClob(table, colDef);
+            
+         case Types.OTHER:
+<span class="nc" id="L1073">            dataTypeComponent = new DataTypeOther(table, colDef);</span>
+<span class="nc" id="L1074">            break;</span>
+
+         //Add begin
+         case Types.JAVA_OBJECT:
+<span class="nc" id="L1078">            dataTypeComponent = new DataTypeJavaObject(table, colDef);</span>
+<span class="nc" id="L1079">            break;</span>
+         //Add end
+
+         default:
+            // data type is unknown to us.
+            // It may be an unusual type like &quot;JAVA OBJECT&quot; or &quot;ARRAY&quot;,
+            // or it may be a DBMS-specific type
+<span class="nc" id="L1086">            dataTypeComponent = new DataTypeUnknown(table, colDef);</span>
+
+         }
+      }
+<span class="nc" id="L1090">      return dataTypeComponent;</span>
+   }
+   
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

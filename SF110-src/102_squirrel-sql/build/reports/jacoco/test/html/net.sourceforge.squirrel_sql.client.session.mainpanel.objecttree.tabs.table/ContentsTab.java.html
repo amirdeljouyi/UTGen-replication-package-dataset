@@ -1,0 +1,567 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ContentsTab.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.session.mainpanel.objecttree.tabs.table</a> &gt; <span class="el_source">ContentsTab.java</span></div><h1>ContentsTab.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.session.mainpanel.objecttree.tabs.table;
+/*
+ * Copyright (C) 2001-2004 Colin Bell
+ * colbell@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+import java.sql.DatabaseMetaData;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+
+import net.sourceforge.squirrel_sql.client.gui.session.SessionPanel;
+import net.sourceforge.squirrel_sql.client.preferences.SquirrelPreferences;
+import net.sourceforge.squirrel_sql.client.session.DataSetUpdateableTableModelImpl;
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.client.session.mainpanel.PleaseWaitDialog;
+import net.sourceforge.squirrel_sql.client.session.mainpanel.objecttree.ObjectTreePanel;
+import net.sourceforge.squirrel_sql.client.session.properties.SessionProperties;
+import net.sourceforge.squirrel_sql.client.session.sqlfilter.OrderByClausePanel;
+import net.sourceforge.squirrel_sql.client.session.sqlfilter.SQLFilterClauses;
+import net.sourceforge.squirrel_sql.client.session.sqlfilter.WhereClausePanel;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.ColumnDisplayDefinition;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.DataSetException;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.DataSetUpdateableTableModelListener;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.IDataModelImplementationDetails;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.IDataSet;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.IDataSetUpdateableTableModel;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.ResultSetDataSet;
+import net.sourceforge.squirrel_sql.fw.dialects.DialectFactory;
+import net.sourceforge.squirrel_sql.fw.gui.GUIUtils;
+import net.sourceforge.squirrel_sql.fw.sql.IDatabaseObjectInfo;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLConnection;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData;
+import net.sourceforge.squirrel_sql.fw.sql.ITableInfo;
+import net.sourceforge.squirrel_sql.fw.sql.SQLUtilities;
+import net.sourceforge.squirrel_sql.fw.sql.TableColumnInfo;
+import net.sourceforge.squirrel_sql.fw.sql.dbobj.BestRowIdentifier;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+/**
+ * This is the tab showing the contents (data) of the table.
+ *
+ * @author  &lt;A HREF=&quot;mailto:colbell@users.sourceforge.net&quot;&gt;Colin Bell&lt;/A&gt;
+ */
+public class ContentsTab extends BaseTableTab
+	implements IDataSetUpdateableTableModel
+{
+<span class="nc" id="L64">   private DataSetUpdateableTableModelImpl _dataSetUpdateableTableModel = new DataSetUpdateableTableModelImpl();</span>
+
+    /** Internationalized strings for this class. */
+<span class="nc" id="L67">    private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L68">        StringManagerFactory.getStringManager(ContentsTab.class);  </span>
+
+	/**
+	 * Name of the table that this tab displayed last time it was loaded.
+	 * This is needed to prevent an on-demand edit operation from turning
+	 * all data into editable tables.
+	 * The initial value of &quot;&quot; allows us to dispense with a check for null
+	 * on the first pass.
+	 */
+<span class="nc" id="L77">	String previousTableName = &quot;&quot;;</span>
+
+<span class="nc" id="L79">   private SQLFilterClauses _sqlFilterClauses = new SQLFilterClauses();</span>
+
+
+	/** Logger for this class. */
+<span class="nc" id="L83">	private static final ILogger s_log =</span>
+<span class="nc" id="L84">		LoggerController.createLogger(ContentsTab.class);</span>
+
+
+<span class="nc" id="L87">	private ObjectTreePanel _treePanel = null;</span>
+	
+<span class="nc" id="L89">   private PleaseWaitDialog _waitDialog = null;</span>
+
+<span class="nc" id="L91">	private SquirrelPreferences _prefs = null;</span>
+   
+<span class="nc" id="L93">   public ContentsTab(ObjectTreePanel treePanel) { </span>
+<span class="nc" id="L94">      _treePanel = treePanel;</span>
+<span class="nc" id="L95">   	_prefs = _treePanel.getSession().getApplication().getSquirrelPreferences();</span>
+
+<span class="nc" id="L97">   }</span>
+
+	/**
+	 * Return the title for the tab.
+	 *
+	 * @return	The title for the tab.
+	 */
+	public String getTitle()
+	{
+<span class="nc" id="L106">		return getContentsTabTitle();</span>
+	}
+
+	/**
+	 * Return the title for the tab.
+	 *
+	 * @return	The title for the tab.
+	 */
+	public static String getContentsTabTitle()
+	{
+		// i18n[ContentsTab.title=Content]
+<span class="nc" id="L117">		return s_stringMgr.getString(&quot;ContentsTab.title&quot;);</span>
+	}
+	
+	
+	/**
+	 * Return the hint for the tab.
+	 *
+	 * @return	The hint for the tab.
+	 */
+	public String getHint()
+	{
+		// i18n[ContentsTab.hint=View the contents of the selected table]
+<span class="nc" id="L129">		return s_stringMgr.getString(&quot;ContentsTab.hint&quot;);</span>
+	}
+	
+
+   public SQLFilterClauses getSQLFilterClauses()
+   {
+<span class="nc" id="L135">      return _sqlFilterClauses;</span>
+   }
+
+
+   /**
+    * Create the &lt;TT&gt;IDataSet&lt;/TT&gt; to be displayed in this tab.
+    */
+   protected IDataSet createDataSet() throws DataSetException
+   {
+<span class="nc" id="L144">      final ISession session = getSession();</span>
+<span class="nc" id="L145">      final ISQLConnection conn = session.getSQLConnection();</span>
+<span class="nc" id="L146">      ISQLDatabaseMetaData md = session.getMetaData();</span>
+
+      
+      try
+      {
+<span class="nc" id="L151">         final Statement stmt = conn.createStatement();</span>
+         try
+         {
+<span class="nc" id="L154">            final SessionProperties props = session.getProperties();</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">            if (props.getContentsLimitRows())</span>
+            {
+               try
+               {
+<span class="nc" id="L159">                  stmt.setMaxRows(props.getContentsNbrRowsToShow());</span>
+               }
+<span class="nc" id="L161">               catch (Exception ex)</span>
+               {
+<span class="nc" id="L163">                  s_log.error(&quot;Error on Statement.setMaxRows()&quot;, ex);</span>
+<span class="nc" id="L164">               }</span>
+            }
+<span class="nc" id="L166">            final ITableInfo ti = getTableInfo();</span>
+
+            /**
+             * When the SessionProperties are set to read-only (either table or text)
+             * but the user has selected &quot;Make Editable&quot; on the Popup menu, we want
+             * to limit the edit capability to only that table, and only for as long
+             * as the user is looking at that one table.  When the user switches away
+             * to another table, that new table should not be editable.
+             */
+<span class="nc" id="L175">            final String currentTableName = ti.getQualifiedName();</span>
+<span class="nc bnc" id="L176" title="All 2 branches missed.">            if (!currentTableName.equals(previousTableName))</span>
+            {
+<span class="nc" id="L178">               previousTableName = currentTableName;	// needed to prevent an infinite loop</span>
+<span class="nc" id="L179">               _dataSetUpdateableTableModel.setEditModeForced(false);</span>
+
+               /**
+                * Tell the GUI to rebuild itself.
+                * Unfortunately, this has the side effect of calling this same function
+                * another time.  The second call does not seem to be a problem,
+                * but we need to have reset the previousTableName before makeing
+                * this call or we will be in an infinite loop.
+                */
+               //props.forceTableContentsOutputClassNameChange();
+            }
+
+            /**
+             * If the table has a pseudo-column that is the best unique
+             * identifier for the rows (like Oracle's rowid), then we
+             * want to include that field in the query so that it will
+             * be available if the user wants to edit the data later.
+             */
+<span class="nc" id="L197">            String pseudoColumn = &quot;&quot;;</span>
+
+            try
+            {
+<span class="nc" id="L201">               BestRowIdentifier[] rowIDs = md.getBestRowIdentifier(ti);</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">               for (int i = 0; i &lt; rowIDs.length; ++i)</span>
+               {
+<span class="nc" id="L204">                  short pseudo = rowIDs[i].getPseudoColumn();</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">                  if (pseudo == DatabaseMetaData.bestRowPseudo)</span>
+                  {
+<span class="nc" id="L207">                     pseudoColumn = &quot; ,&quot; + rowIDs[i].getColumnName();</span>
+<span class="nc" id="L208">                     break;</span>
+                  }
+               }
+            }
+
+            // Some DBMS's (EG Think SQL) throw an exception on a call to
+            // getBestRowIdentifier.
+<span class="nc" id="L215">            catch (Throwable th)</span>
+            {
+<span class="nc bnc" id="L217" title="All 2 branches missed.">            	if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L218">	               s_log.debug(&quot;getBestRowIdentifier not supported for table &quot;+ currentTableName, th);</span>
+            	}
+<span class="nc" id="L220">            }</span>
+
+            // TODO: - Col - Add method to Databasemetadata that returns array
+            // of objects for getBestRowIdentifier. For PostgreSQL put this kludge in
+            // the new function. THis way all the kludges are kept in one place.
+            //
+            // KLUDGE!!!!!!
+            //
+            // For some DBs (e.g. PostgreSQL) there is actually a pseudo-column
+            // providing the rowId, but the getBestRowIdentifier function is not
+            // implemented.  This kludge hardcodes the knowledge that specific
+            // DBs use a specific pseudo-column.  Additionally, as of pg 8.1,
+            // you must create the table using &quot;WITH OID&quot; appended to the create
+            // statement.  Otherwise, OID column is not available by default.
+            //
+<span class="nc bnc" id="L235" title="All 2 branches missed.">            if (pseudoColumn.length() == 0)</span>
+            {
+<span class="nc bnc" id="L237" title="All 2 branches missed.">                if (DialectFactory.isPostgreSQL(md)) {</span>
+<span class="nc" id="L238">                    pseudoColumn = &quot;, oid&quot;;</span>
+                }
+<span class="nc bnc" id="L240" title="All 2 branches missed.">                if (DialectFactory.isOracle(md)) {</span>
+<span class="nc" id="L241">                    pseudoColumn = &quot;, ROWID&quot;;</span>
+                }
+            }
+
+<span class="nc" id="L245">            ResultSet rs = null;</span>
+            try
+            {
+               // Note. Some DBMSs such as Oracle do not allow:
+               // &quot;select *, rowid from table&quot;
+               // You cannot have any column name in the columns clause
+               // if you have * in there. Aliasing the table name seems to
+               // be the best way to get around the problem.
+<span class="nc" id="L253">               final StringBuffer buf = new StringBuffer();</span>
+<span class="nc" id="L254">               buf.append(&quot;select tbl.*&quot;)</span>
+<span class="nc" id="L255">                  .append(pseudoColumn)</span>
+<span class="nc" id="L256">                  .append(&quot; from &quot;)</span>
+<span class="nc" id="L257">                  .append(ti.getQualifiedName())</span>
+<span class="nc" id="L258">                  .append(&quot; tbl&quot;);</span>
+
+<span class="nc" id="L260">               String clause = _sqlFilterClauses.get(WhereClausePanel.getClauseIdentifier(), ti.getQualifiedName());</span>
+<span class="nc bnc" id="L261" title="All 4 branches missed.">               if ((clause != null) &amp;&amp; (clause.length() &gt; 0))</span>
+               {
+<span class="nc" id="L263">                 buf.append(&quot; where &quot;).append(clause);</span>
+               }
+<span class="nc" id="L265">               clause = _sqlFilterClauses.get(OrderByClausePanel.getClauseIdentifier(), ti.getQualifiedName());</span>
+<span class="nc bnc" id="L266" title="All 4 branches missed.">               if ((clause != null) &amp;&amp; (clause.length() &gt; 0))</span>
+               {
+<span class="nc" id="L268">                 buf.append(&quot; order by &quot;).append(clause);</span>
+               }
+
+<span class="nc bnc" id="L271" title="All 2 branches missed.">               if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L272">                   s_log.debug(&quot;createDataSet running SQL: &quot;+buf.toString());</span>
+               }
+                           
+<span class="nc" id="L275">               showWaitDialog(stmt);               </span>
+
+<span class="nc" id="L277">               rs = stmt.executeQuery(buf.toString());</span>
+
+            }
+<span class="nc" id="L280">            catch (SQLException ex)</span>
+            {
+<span class="nc bnc" id="L282" title="All 2 branches missed.">                if (s_log.isDebugEnabled()) {</span>
+<span class="nc" id="L283">                        s_log.debug(</span>
+                            &quot;createDataSet: exception from pseudocolumn query - &quot;
+                                    + ex, ex);
+                    }
+                // We assume here that if the pseudoColumn was used in the query,
+                // then it was likely to have caused the SQLException.  If not, 
+                // (length == 0), then retrying the query won't help - just throw
+                // the exception.
+<span class="nc bnc" id="L291" title="All 2 branches missed.">               if (pseudoColumn.length() == 0)</span>
+               {
+<span class="nc" id="L293">                  throw ex;</span>
+               }
+               // pseudocolumn query failed, so reset it.  Otherwise, we'll 
+               // mistake the last column for a pseudocolumn and make it 
+               // uneditable 
+<span class="nc" id="L298">               pseudoColumn = &quot;&quot;;</span>
+
+               // Some tables have pseudo column primary keys and others
+               // do not.  JDBC on some DBMSs does not handle pseudo
+               // columns 'correctly'.  Also, getTables returns 'views' as
+               // well as tables, so the thing we are looking at might not
+               // be a table. (JDBC does not give a simple way to
+               // determine what we are looking at since the type of
+               // object is described in a DBMS-specific encoding.)  For
+               // these reasons, rather than testing for all these
+               // conditions, we just try using the pseudo column info to
+               // get the table data, and if that fails, we try to get the
+               // table data without using the pseudo column.
+               // TODO: Should we change the mode from editable to
+               // non-editable?
+<span class="nc" id="L313">               final StringBuffer buf = new StringBuffer();</span>
+<span class="nc" id="L314">               buf.append(&quot;select *&quot;)</span>
+<span class="nc" id="L315">                  .append(&quot; from &quot;)</span>
+<span class="nc" id="L316">                  .append(ti.getQualifiedName())</span>
+<span class="nc" id="L317">                  .append(&quot; tbl&quot;);</span>
+
+<span class="nc" id="L319">               String clause = _sqlFilterClauses.get(WhereClausePanel.getClauseIdentifier(), ti.getQualifiedName());</span>
+<span class="nc bnc" id="L320" title="All 4 branches missed.">               if ((clause != null) &amp;&amp; (clause.length() &gt; 0))</span>
+               {
+<span class="nc" id="L322">                 buf.append(&quot; where &quot;).append(clause);</span>
+               }
+<span class="nc" id="L324">               clause = _sqlFilterClauses.get(OrderByClausePanel.getClauseIdentifier(), ti.getQualifiedName());</span>
+<span class="nc bnc" id="L325" title="All 4 branches missed.">               if ((clause != null) &amp;&amp; (clause.length() &gt; 0))</span>
+               {
+<span class="nc" id="L327">                 buf.append(&quot; order by &quot;).append(clause);</span>
+               }
+
+<span class="nc" id="L330">               rs = stmt.executeQuery(buf.toString());</span>
+<span class="nc" id="L331">            }</span>
+
+<span class="nc" id="L333">            final ResultSetDataSet rsds = new ResultSetDataSet();</span>
+
+            // to allow the fw to save and reload user options related to
+            // specific columns, we construct a unique name for the table
+            // so the column can be associcated with only that table.
+            // Some drivers do not provide the catalog or schema info, so
+            // those parts of the name will end up as null.  That's ok since
+            // this string is never viewed by the user and is just used to
+            // distinguish this table from other tables in the DB.
+            // We also include the URL used to connect to the DB so that
+            // the same table/DB on different machines is treated differently.
+<span class="nc" id="L344">            rsds.setContentsTabResultSet(rs,</span>
+<span class="nc" id="L345">                                         _dataSetUpdateableTableModel.getFullTableName(),</span>
+<span class="nc" id="L346">                                         DialectFactory.getDialectType(md));</span>
+<span class="nc bnc" id="L347" title="All 2 branches missed.">            if (rs != null) {</span>
+<span class="nc" id="L348">                try { rs.close(); } catch (SQLException e) {}</span>
+            }
+            // KLUDGE:
+            // We want some info about the columns to be available for validating the
+            // user input during cell editing operations.  Ideally we would get that
+            // info inside the ResultSetDataSet class during the creation of the
+            // columnDefinition objects by using various functions in ResultSetMetaData
+            // such as isNullable(idx).  Unfortunately, in at least some DBMSs (e.g.
+            // Postgres, HSDB) the results of those calls are not the same (and are less accurate
+            // than) the SQLMetaData.getColumns() call used in ColumnsTab to get the column info.
+            // Even more unfortunate is the fact that the set of attributes reported on by the two
+            // calls is not the same, with the ResultSetMetadata listing things not provided by
+            // getColumns.  Most of the data provided by the ResultSetMetaData calls is correct.
+            // However, the nullable/not-nullable property is not set correctly in at least two
+            // DBMSs, while it is correct for those DBMSs in the getColumns() info.  Therefore,
+            // we collect the collumn nullability information from getColumns() and pass that
+            // info to the ResultSet to override what it got from the ResultSetMetaData.
+<span class="nc" id="L365">            TableColumnInfo[] columnInfos = md.getColumnInfo(getTableInfo());</span>
+<span class="nc" id="L366">            final ColumnDisplayDefinition[] colDefs = </span>
+<span class="nc" id="L367">                rsds.getDataSetDefinition().getColumnDefinitions();</span>
+
+            // get the nullability information and pass it into the ResultSet
+            // Unfortunately, not all DBMSs provide the column number in object 17 as stated in the
+            // SQL documentation, so we have to guess that the result set is in column order
+<span class="nc bnc" id="L372" title="All 2 branches missed.">            for (int i = 0; i &lt; columnInfos.length; i++) {</span>
+<span class="nc" id="L373">                boolean isNullable = true;</span>
+<span class="nc" id="L374">                TableColumnInfo info = columnInfos[i];</span>
+<span class="nc bnc" id="L375" title="All 2 branches missed.">                if (info.isNullAllowed() == DatabaseMetaData.columnNoNulls) {</span>
+<span class="nc" id="L376">                    isNullable = false;</span>
+                }
+<span class="nc bnc" id="L378" title="All 2 branches missed.">                if (i &lt; colDefs.length) {</span>
+<span class="nc" id="L379">                    colDefs[i].setIsNullable(isNullable);</span>
+                }
+            }
+
+            //?? remember which column is the rowID (if any) so we can
+            //?? prevent editing on it
+<span class="nc bnc" id="L385" title="All 2 branches missed.">            if (pseudoColumn.length() &gt; 0)</span>
+            {
+<span class="nc" id="L387">               _dataSetUpdateableTableModel.setRowIDCol(rsds.getColumnCount() - 1);</span>
+            }
+
+<span class="nc" id="L390">            return rsds;</span>
+         }
+         finally
+         {
+<span class="nc" id="L394">             SQLUtilities.closeStatement(stmt);</span>
+         }
+
+      }
+<span class="nc" id="L398">      catch (SQLException ex)</span>
+      {
+<span class="nc" id="L400">         throw new DataSetException(ex);</span>
+      } finally {
+<span class="nc" id="L402">          disposeWaitDialog();</span>
+      }
+   }
+
+   /**
+    * Returns true if the ObjectTree tab is selected.
+    * 
+    * @return Returns true if the ObjectTree tab is selected.
+    *                 false is returned otherwise.
+    */
+   private boolean objectTreeTabIsSelected() {
+<span class="nc" id="L413">      boolean result = false;</span>
+<span class="nc" id="L414">      ISession session = _treePanel.getSession();</span>
+<span class="nc bnc" id="L415" title="All 2 branches missed.">      if (session != null) {</span>
+<span class="nc" id="L416">         SessionPanel sessionPanel = session.getSessionSheet();</span>
+<span class="nc bnc" id="L417" title="All 2 branches missed.">         if (sessionPanel != null) {</span>
+<span class="nc" id="L418">            result = sessionPanel.isObjectTreeTabSelected();</span>
+         }
+      }
+<span class="nc" id="L421">      return result;</span>
+   }
+   
+   /**
+    * Initialize the dialog to ask the user to wait, because the query can 
+    * take a while, but only if the ObjectTreeTab is selected.
+    * 
+    * @param stmt the Statement to cancel.
+    */
+   private void showWaitDialog(final Statement stmt) {
+      
+   	
+<span class="nc bnc" id="L433" title="All 2 branches missed.">      if (!_prefs.getShowPleaseWaitDialog()) return;</span>
+      
+      // Only do this if the object tree 
+      // (and hence this contents tab) is visible.
+<span class="nc bnc" id="L437" title="All 2 branches missed.">      if (objectTreeTabIsSelected()) {</span>
+         
+         // Save off selections so that selection/focus can be restored 
+         // later.
+<span class="nc" id="L441">         _treePanel.saveSelectedPaths();</span>
+         
+<span class="nc" id="L443">         GUIUtils.processOnSwingEventThread(new Runnable() {</span>
+            public void run() {
+<span class="nc" id="L445">               _waitDialog = new PleaseWaitDialog(stmt, _app);</span>
+<span class="nc" id="L446">               _waitDialog.showDialog(_app);                                          </span>
+               // Restore the paths
+<span class="nc" id="L448">               _treePanel.restoreSavedSelectedPaths();</span>
+<span class="nc" id="L449">            }</span>
+         });         
+      }
+<span class="nc" id="L452">   }</span>
+   
+   /**
+    * Hide the dialog if one is shown
+    * 
+    * @param _waitDialog the PleaseWaitDialog to close - can be null.
+    */
+   private void disposeWaitDialog() {
+<span class="nc bnc" id="L460" title="All 2 branches missed.">   	if (!_prefs.getShowPleaseWaitDialog()) return;</span>
+<span class="nc" id="L461">          GUIUtils.processOnSwingEventThread(new Runnable() {</span>
+              public void run() {
+<span class="nc bnc" id="L463" title="All 2 branches missed.">            	  if (_waitDialog != null) {</span>
+<span class="nc" id="L464">                  _waitDialog.dispose();</span>
+              }
+<span class="nc" id="L466">        	  }       </span>
+          });
+<span class="nc" id="L468">   }</span>
+   
+   public void setDatabaseObjectInfo(IDatabaseObjectInfo value)
+   {
+<span class="nc" id="L472">      super.setDatabaseObjectInfo(value);</span>
+<span class="nc" id="L473">      _dataSetUpdateableTableModel.setTableInfo(getTableInfo());</span>
+<span class="nc" id="L474">   }</span>
+
+   public void setSession(ISession session) throws IllegalArgumentException
+   {
+<span class="nc" id="L478">      super.setSession(session);</span>
+<span class="nc" id="L479">      _dataSetUpdateableTableModel.setSession(session);</span>
+<span class="nc" id="L480">   }</span>
+
+
+	/**
+	 * return the name of the table that is unambiguous across DB accesses,
+	 * including the same DB on different machines.
+	 * This function is static because it is used elsewhere to generate the same
+	 * name as is used within instances of this class.
+	 * 
+	 * @return the name of the table that is unique for this DB access
+	 */
+	public static String getUnambiguousTableName(ISession session, String name)
+   {
+<span class="nc" id="L493">		return DataSetUpdateableTableModelImpl.getUnambiguousTableName(session, name);</span>
+	}
+
+   ////////////////////////////////////////////////////////
+   // Implementataion of IDataSetUpdateableTableModel:
+   // Delegation to _dataSetUpdateableTableModel
+   public String getWarningOnCurrentData(Object[] values, ColumnDisplayDefinition[] colDefs, int col, Object oldValue)
+   {
+<span class="nc" id="L501">      return _dataSetUpdateableTableModel.getWarningOnCurrentData(values, colDefs, col, oldValue);</span>
+   }
+
+   public String getWarningOnProjectedUpdate(Object[] values, ColumnDisplayDefinition[] colDefs, int col, Object newValue)
+   {
+<span class="nc" id="L506">      return _dataSetUpdateableTableModel.getWarningOnProjectedUpdate(values, colDefs, col, newValue);</span>
+   }
+
+   public Object reReadDatum(Object[] values, ColumnDisplayDefinition[] colDefs, int col, StringBuffer message)
+   {
+<span class="nc" id="L511">      return _dataSetUpdateableTableModel.reReadDatum(values, colDefs, col, message);</span>
+   }
+
+   public String updateTableComponent(Object[] values, ColumnDisplayDefinition[] colDefs, int col, Object oldValue, Object newValue)
+   {
+<span class="nc" id="L516">      return _dataSetUpdateableTableModel.updateTableComponent(values, colDefs, col, oldValue, newValue);</span>
+   }
+
+   public int getRowidCol()
+   {
+<span class="nc" id="L521">      return _dataSetUpdateableTableModel.getRowidCol();</span>
+   }
+
+   public String deleteRows(Object[][] rowData, ColumnDisplayDefinition[] colDefs)
+   {
+<span class="nc" id="L526">      return _dataSetUpdateableTableModel.deleteRows(rowData, colDefs);</span>
+   }
+
+   public String[] getDefaultValues(ColumnDisplayDefinition[] colDefs)
+   {
+<span class="nc" id="L531">      return _dataSetUpdateableTableModel.getDefaultValues(colDefs);</span>
+   }
+
+   public String insertRow(Object[] values, ColumnDisplayDefinition[] colDefs)
+   {
+<span class="nc" id="L536">      return _dataSetUpdateableTableModel.insertRow(values, colDefs);</span>
+   }
+
+   public void addListener(DataSetUpdateableTableModelListener l)
+   {
+<span class="nc" id="L541">      _dataSetUpdateableTableModel.addListener(l);</span>
+<span class="nc" id="L542">   }</span>
+
+   public void removeListener(DataSetUpdateableTableModelListener l)
+   {
+<span class="nc" id="L546">      _dataSetUpdateableTableModel.removeListener(l);</span>
+<span class="nc" id="L547">   }</span>
+
+   public void forceEditMode(boolean mode)
+   {
+<span class="nc" id="L551">      _dataSetUpdateableTableModel.forceEditMode(mode);</span>
+<span class="nc" id="L552">   }</span>
+
+   public boolean editModeIsForced()
+   {
+<span class="nc" id="L556">      return _dataSetUpdateableTableModel.editModeIsForced();</span>
+   }
+
+
+   protected String getDestinationClassName()
+   {
+<span class="nc" id="L562">      return _dataSetUpdateableTableModel.getDestinationClassName();</span>
+   }
+   //
+   //////////////////////////////////////////////////////////////////////////////////
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

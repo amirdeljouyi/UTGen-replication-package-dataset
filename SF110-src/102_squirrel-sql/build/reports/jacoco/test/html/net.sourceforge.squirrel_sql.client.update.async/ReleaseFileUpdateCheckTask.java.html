@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ReleaseFileUpdateCheckTask.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.update.async</a> &gt; <span class="el_source">ReleaseFileUpdateCheckTask.java</span></div><h1>ReleaseFileUpdateCheckTask.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (C) 2008 Rob Manning
+ * manningr@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+package net.sourceforge.squirrel_sql.client.update.async;
+
+import static java.lang.System.currentTimeMillis;
+import static net.sourceforge.squirrel_sql.client.update.UpdateUtil.RELEASE_XML_FILENAME;
+import net.sourceforge.squirrel_sql.client.IApplication;
+import net.sourceforge.squirrel_sql.client.preferences.IUpdateSettings;
+import net.sourceforge.squirrel_sql.client.update.UpdateUtil;
+import net.sourceforge.squirrel_sql.client.update.xmlbeans.ChannelXmlBean;
+import net.sourceforge.squirrel_sql.fw.util.Utilities;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+/**
+ * We need to check to see if the release is current in several places. First, we must check when the user
+ * prompts us to which is running on the event dispatch thread. Since this is a potentially a long-running
+ * operation, this class uses the thread-pool to off-load it's work from the UI thread. Second, we must check
+ * that the release is current when the update check timer says to, based on user preferences. So, this the
+ * thread-pool isn't needed in that case and this class is used synchronously, since the timer thread is
+ * already not the UI thread.
+ * 
+ * @author manningr
+ */
+public class ReleaseFileUpdateCheckTask implements Runnable
+{
+
+	/** Logger for this class. */
+<span class="nc" id="L45">	private static final ILogger s_log = LoggerController.createLogger(ReleaseFileUpdateCheckTask.class);</span>
+
+<span class="nc" id="L47">	private UpdateCheckRunnableCallback _callback = null;</span>
+
+<span class="nc" id="L49">	private IUpdateSettings _settings = null;</span>
+
+<span class="nc" id="L51">	private UpdateUtil _util = null;</span>
+
+<span class="nc" id="L53">	private IApplication _app = null;</span>
+
+<span class="nc" id="L55">	private boolean isUpToDate = false;</span>
+
+	public ReleaseFileUpdateCheckTask(UpdateCheckRunnableCallback callback, IUpdateSettings settings,
+		UpdateUtil util, IApplication app)
+<span class="nc" id="L59">	{</span>
+<span class="nc" id="L60">		Utilities.checkNull(&quot;ReleaseFileUpdateCheckRunnable&quot;, &quot;settings&quot;, settings, &quot;util&quot;, util, &quot;app&quot;, app);</span>
+<span class="nc" id="L61">		_callback = callback;</span>
+<span class="nc" id="L62">		_settings = settings;</span>
+<span class="nc" id="L63">		_util = util;</span>
+<span class="nc" id="L64">		_app = app;</span>
+<span class="nc" id="L65">	}</span>
+
+	public void start()
+	{
+<span class="nc bnc" id="L69" title="All 2 branches missed.">		if (_app == null) { throw new IllegalStateException(</span>
+			&quot;_app was null - cannot access the thread pool for asynchronous use&quot;); }
+<span class="nc" id="L71">		_app.getThreadPool().addTask(this);</span>
+<span class="nc" id="L72">	}</span>
+
+	/**
+	 * Results in a boolean value (isUpToDate) indicating whether or not there are updates available to be
+	 * installed. This will also produce the installed and current ChannelXmlBeans and if used asynchronously
+	 * (callback is not null), then this will invoke the appropriate callback method. One side effect is that
+	 * the last update check time is stored in update settings so that the update check timer knows when to
+	 * schedule another check at startup. The sequence of steps involved is : 1. Find the local release.xml
+	 * file 2. Load the local release.xml file as a ChannelXmlBean. 3. Get the release.xml file as a
+	 * ChannelXmlBean from the server or local filesystem 3a. For server, Determine the channel that the user
+	 * has (stable or snapshot) 5. Determine if it is the same as the local copy, which was placed either by
+	 * the installer or the last update?
+	 * 
+	 * @see java.lang.Runnable#run()
+	 */
+	public void run()
+	{
+<span class="nc" id="L89">		String releaseFilename = null;</span>
+
+		// 1. Find the local release.xml file. Bail with exception if we cannot find it.
+		try
+		{
+<span class="nc" id="L94">			releaseFilename = _util.getLocalReleaseFile().getAbsolutePath();</span>
+		}
+<span class="nc" id="L96">		catch (Exception e)</span>
+		{
+<span class="nc" id="L98">			s_log.error(&quot;Unexpected exception while attempting to find local release file: &quot;+e.getMessage(), e);</span>
+<span class="nc bnc" id="L99" title="All 2 branches missed.">			if (_callback != null) {</span>
+<span class="nc" id="L100">				_callback.updateCheckFailed(e);</span>
+			}
+<span class="nc" id="L102">			return;</span>
+<span class="nc" id="L103">		}</span>
+
+		// 2. Load the local release.xml file as a ChannelXmlBean.
+<span class="nc" id="L106">		ChannelXmlBean installedChannelBean = _util.getLocalReleaseInfo(releaseFilename);</span>
+
+		// 3. &amp; 3a. Get the release.xml file as a ChannelXmlBean from the server or
+		// filesystem.
+<span class="nc" id="L110">		ChannelXmlBean currentChannelBean = getCurrentChannelXmlBean(installedChannelBean);</span>
+
+		// Record now as the last time we checked for updates.
+<span class="nc" id="L113">		_settings.setLastUpdateCheckTimeMillis(&quot;&quot; + currentTimeMillis());</span>
+<span class="nc" id="L114">		_app.getSquirrelPreferences().setUpdateSettings(_settings);</span>
+
+		// 5. Is it the same as the local copy, which was placed either by the
+		// installer or the last update?
+<span class="nc bnc" id="L118" title="All 2 branches missed.">		if (currentChannelBean == null)</span>
+		{
+<span class="nc" id="L120">			s_log.warn(&quot;run: currentChannelBean was null - it is inconclusive whether or not the software &quot;</span>
+				+ &quot;is current : assuming that it is for now&quot;);
+<span class="nc bnc" id="L122" title="All 2 branches missed.">			if (_callback != null) {</span>
+<span class="nc" id="L123">				_callback.updateCheckFailed(null);</span>
+			}
+		}
+		else
+		{
+<span class="nc" id="L128">			isUpToDate = currentChannelBean.equals(installedChannelBean);</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">			if (_callback != null)</span>
+			{
+<span class="nc" id="L131">				_callback.updateCheckComplete(isUpToDate, installedChannelBean, currentChannelBean);</span>
+			}
+		}
+<span class="nc" id="L134">	}</span>
+
+	/**
+	 * Uses settings to determine where to get the current release.xml that is available and retrieves it as an
+	 * XML bean. This will return null (and log a warning) if it couldn't be retrieved.
+	 * 
+	 * @param installedChannelBean
+	 *           the XML bean that represents what is installed.
+	 * @return an XML bean that represents what release is currently available or null if it couldn't be
+	 *         downloaded
+	 */
+	private ChannelXmlBean getCurrentChannelXmlBean(ChannelXmlBean installedChannelBean)
+	{
+<span class="nc" id="L147">		ChannelXmlBean currentChannelBean = null;</span>
+<span class="nc bnc" id="L148" title="All 2 branches missed.">		if (_settings.isRemoteUpdateSite())</span>
+		{
+			// 3a. For server, Determine the channel that the user has (stable or snapshot)
+<span class="nc" id="L151">			String channelName = getDesiredChannel(_settings, installedChannelBean);</span>
+
+			try
+			{
+<span class="nc" id="L155">				StringBuilder releasePath = new StringBuilder(&quot;/&quot;);</span>
+<span class="nc" id="L156">				releasePath.append(_settings.getUpdateServerPath());</span>
+<span class="nc" id="L157">				releasePath.append(&quot;/&quot;);</span>
+<span class="nc" id="L158">				releasePath.append(channelName);</span>
+<span class="nc" id="L159">				releasePath.append(&quot;/&quot;);</span>
+
+<span class="nc" id="L161">				currentChannelBean =</span>
+<span class="nc" id="L162">					_util.downloadCurrentRelease(_settings.getUpdateServer(),</span>
+<span class="nc" id="L163">						Integer.parseInt(_settings.getUpdateServerPort()), releasePath.toString(),</span>
+<span class="nc" id="L164">						RELEASE_XML_FILENAME, _app.getSquirrelPreferences().getProxySettings());</span>
+			}
+<span class="nc" id="L166">			catch (Exception e)</span>
+			{
+<span class="nc" id="L168">				s_log.error(&quot;Unexpected exception: &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L169">			}</span>
+<span class="nc" id="L170">		}</span>
+		else
+		{
+<span class="nc" id="L173">			currentChannelBean = _util.loadUpdateFromFileSystem(_settings.getFileSystemUpdatePath());</span>
+		}
+<span class="nc" id="L175">		return currentChannelBean;</span>
+	}
+
+	/**
+	 * This method takes a look at preference for channel and the channel that the user currently has installed
+	 * and logs an info if switching from one to channel to another.
+	 * 
+	 * @return the name of the channel that the user wants.
+	 */
+	private String getDesiredChannel(final IUpdateSettings settings, final ChannelXmlBean _installedChannelBean)
+	{
+<span class="nc" id="L186">		String desiredChannel = settings.getUpdateServerChannel().toLowerCase();</span>
+<span class="nc" id="L187">		String currentChannelName = _installedChannelBean.getName();</span>
+
+<span class="nc bnc" id="L189" title="All 2 branches missed.">		if (!currentChannelName.equals(desiredChannel))</span>
+		{
+<span class="nc bnc" id="L191" title="All 2 branches missed.">			if (s_log.isInfoEnabled())</span>
+			{
+<span class="nc" id="L193">				s_log.info(&quot;getDesiredChannel: User is switching distribution channel from &quot;</span>
+					+ &quot;installed channel (&quot; + currentChannelName + &quot;) to new channel (&quot; + desiredChannel + &quot;)&quot;);
+			}
+		}
+<span class="nc" id="L197">		return desiredChannel;</span>
+	}
+
+	/**
+	 * @return the isUpToDate
+	 */
+	public boolean isUpToDate()
+	{
+<span class="nc" id="L205">		return isUpToDate;</span>
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,510 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FastqFileParser.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.trace.fastq</a> &gt; <span class="el_source">FastqFileParser.java</span></div><h1>FastqFileParser.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+package org.jcvi.jillion.trace.fastq;
+
+import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.jcvi.jillion.core.io.IOUtil;
+import org.jcvi.jillion.core.residue.nt.NucleotideSequence;
+import org.jcvi.jillion.core.residue.nt.NucleotideSequenceBuilder;
+import org.jcvi.jillion.internal.core.io.RandomAccessFileInputStream;
+import org.jcvi.jillion.internal.core.io.TextLineParser;
+import org.jcvi.jillion.trace.fastq.FastqVisitor.FastqVisitorCallback;
+import org.jcvi.jillion.trace.fastq.FastqVisitor.FastqVisitorCallback.FastqVisitorMemento;
+/**
+ * {@code FastqFileParser}  will parse a single 
+ * fastq encoded file and call the appropriate
+ * visitXXX methods on the given {@link FastqVisitor}.
+ * @author dkatzel
+ *
+ */
+public abstract class FastqFileParser {
+
+<span class="nc" id="L49">	private static final Pattern CASAVA_1_8_DEFLINE_PATTERN = Pattern.compile(&quot;^@(\\S+\\s+\\d:[N|Y]:\\d+:\\S+)\\s*$&quot;);</span>
+	/**
+	 * Create a new {@link FastqFileParser} instance
+	 * that will parse the given fastq encoded
+	 * file.
+	 * @param fastqFile the file to parse.
+	 * @throws FileNotFoundException  if the file does not exist.
+	 * @throws NullPointerException if fastqFile is null.
+	 */
+	public static FastqFileParser create(File fastqFile) throws FileNotFoundException{
+<span class="nc" id="L59">		return new FileBasedFastqFileParser(fastqFile);</span>
+	}
+	/**
+	 * Create a new {@link FastqFileParser} instance
+	 * that will parse the given fastq encoded
+	 * inputStream.  Please Note that inputStream implementations
+	 * of the FastqFileParser can not create {@link FastqVisitorMemento}s
+	 * or use {@link #accept(FastqVisitor, FastqVisitorMemento)}
+	 * method.
+	 * @param in the fastq encoded inputstream to parse.
+	 * @throws NullPointerException if inputstream is null.
+	 */
+	public static FastqFileParser create(InputStream in){
+<span class="nc" id="L72">		return new InputStreamFastqFileParser(in);</span>
+	}
+	private FastqFileParser(){
+		//can not instantiate outside of this class file.
+	}
+	
+	public abstract void accept(FastqVisitor visitor) throws IOException;
+	
+	public abstract void accept(FastqVisitor visitor, FastqVisitorMemento memento) throws IOException;
+	
+	protected void parseFastqFile(FastqVisitor visitor, TextLineParser parser, long initialOffset) throws IOException{
+<span class="nc" id="L83">		ParserState parserState = new ParserState(initialOffset);</span>
+<span class="nc bnc" id="L84" title="All 4 branches missed.">		while(parserState.keepParsing() &amp;&amp; parser.hasNextLine()){</span>
+<span class="nc" id="L85">			parserState=parseNextRecord(visitor, parser, parserState);</span>
+		}
+<span class="nc bnc" id="L87" title="All 2 branches missed.">		if(parserState.keepParsing()){</span>
+<span class="nc" id="L88">			visitor.visitEnd();</span>
+		}else{
+<span class="nc" id="L90">			visitor.halted();</span>
+		}
+<span class="nc" id="L92">	}</span>
+	
+	private ParserState parseNextRecord(FastqVisitor visitor, TextLineParser parser, ParserState parserState) throws IOException{
+<span class="nc" id="L95">		String deflineText = parser.nextLine();</span>
+<span class="nc" id="L96">		Defline defline = Defline.parse(deflineText);</span>
+<span class="nc" id="L97">		AbstractFastqVisitorCallback callback = createCallback(parserState);</span>
+<span class="nc" id="L98">        FastqRecordVisitor recordVisitor= visitor.visitDefline(callback, defline.getId(), defline.getComment());</span>
+<span class="nc bnc" id="L99" title="All 2 branches missed.">        if(!parserState.keepParsing()){</span>
+<span class="nc" id="L100">        	return parserState;</span>
+        }
+<span class="nc" id="L102">        return parseRecordBody(parser,recordVisitor,parserState, deflineText.length());		</span>
+        
+	}
+	
+	private ParserState parseRecordBody(TextLineParser parser,
+			FastqRecordVisitor recordVisitor, ParserState parserState, int lengthOfDefline) throws IOException {
+<span class="nc" id="L108">		int numBytesRead = lengthOfDefline;</span>
+		boolean inBasecallBlock;
+		//default to 200 bp since most sequences are only that much anyway
+        //builder will grow if we get too big
+<span class="nc" id="L112">        NucleotideSequenceBuilder sequenceBuilder = new NucleotideSequenceBuilder(200);</span>
+<span class="nc" id="L113">        String line = parser.nextLine();</span>
+<span class="nc" id="L114">        numBytesRead+= line.length();</span>
+<span class="nc" id="L115">    	sequenceBuilder.append(line);</span>
+        do{
+<span class="nc" id="L117">        	line = parser.nextLine();</span>
+<span class="nc" id="L118">        	numBytesRead+= line.length();</span>
+<span class="nc" id="L119">        	Matcher beginQualityMatcher =FastqUtil.QUAL_DEFLINE_PATTERN.matcher(line);</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">        	inBasecallBlock = !beginQualityMatcher.find();</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        	if(inBasecallBlock){</span>
+<span class="nc" id="L122">        		sequenceBuilder.append(line);</span>
+        	}
+<span class="nc bnc" id="L124" title="All 2 branches missed.">        }while(inBasecallBlock);</span>
+        
+<span class="nc" id="L126">        NucleotideSequence sequence = sequenceBuilder.build();</span>
+<span class="nc bnc" id="L127" title="All 2 branches missed.">        if(recordVisitor!=null){</span>
+<span class="nc" id="L128">        	recordVisitor.visitNucleotides(sequence);</span>
+        }
+<span class="nc bnc" id="L130" title="All 2 branches missed.">        if(!parserState.keepParsing()){</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">        	if(recordVisitor!=null){</span>
+<span class="nc" id="L132">            	recordVisitor.halted();</span>
+            }
+<span class="nc" id="L134">        	return parserState.incrementOffset(numBytesRead);</span>
+        }
+        //now parse the qualities
+<span class="nc" id="L137">        int expectedQualities =  (int)sequence.getLength();</span>
+		 
+<span class="nc" id="L139">        StringBuilder qualityBuilder = new StringBuilder(expectedQualities);</span>
+        
+<span class="nc bnc" id="L141" title="All 2 branches missed.">    	while(qualityBuilder.length() &lt; expectedQualities){</span>
+<span class="nc" id="L142">    		line = parser.nextLine();</span>
+<span class="nc" id="L143">    		numBytesRead+= line.length();</span>
+<span class="nc" id="L144">    		qualityBuilder.append(line.trim());</span>
+    	}
+<span class="nc bnc" id="L146" title="All 2 branches missed.">    	if(qualityBuilder.length()&gt; expectedQualities){</span>
+<span class="nc" id="L147">    		throw new IOException(</span>
+<span class="nc" id="L148">    				String.format(&quot;too many quality values for current record: expected %d but was %d&quot;, expectedQualities, qualityBuilder.length()));</span>
+    	}
+<span class="nc bnc" id="L150" title="All 2 branches missed.">    	if(recordVisitor!=null){</span>
+<span class="nc" id="L151">    		recordVisitor.visitEncodedQualities(qualityBuilder.toString());</span>
+    	}
+<span class="nc" id="L153">    	ParserState endParserState = parserState.incrementOffset(numBytesRead);</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">		 if(recordVisitor !=null){</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">			 if(endParserState.keepParsing()){</span>
+<span class="nc" id="L156">				 recordVisitor.visitEnd();</span>
+			 }else{
+<span class="nc" id="L158">				 recordVisitor.halted();</span>
+			 }
+		 }
+<span class="nc" id="L161">		return endParserState;</span>
+	}
+
+	protected abstract AbstractFastqVisitorCallback createCallback(ParserState parserState);
+	
+	
+	
+	
+	private static final class Defline{
+		private final String id,comment;
+
+<span class="nc" id="L172">		private Defline(String id, String comment) {</span>
+<span class="nc" id="L173">			this.id = id;</span>
+<span class="nc" id="L174">			this.comment = comment;</span>
+<span class="nc" id="L175">		}</span>
+		
+		public static Defline parse(String fastqDefline){
+<span class="nc" id="L178">			Matcher casava18Matcher = CASAVA_1_8_DEFLINE_PATTERN.matcher(fastqDefline);</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">			if(casava18Matcher.matches()){</span>
+<span class="nc" id="L180">				return new Defline(casava18Matcher.group(1),null);</span>
+			}
+<span class="nc" id="L182">			Matcher beginSeqMatcher =FastqUtil.SEQ_DEFLINE_PATTERN.matcher(fastqDefline);</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">	        if(!beginSeqMatcher.find()){</span>
+<span class="nc" id="L184">	            throw new IllegalStateException(&quot;invalid fastq file, could not parse seq id from &quot;+ fastqDefline);</span>
+	        }
+<span class="nc" id="L186">	        return new Defline(beginSeqMatcher.group(1), beginSeqMatcher.group(3));</span>
+		}
+		public String getId() {
+<span class="nc" id="L189">			return id;</span>
+		}
+
+		public String getComment() {
+<span class="nc" id="L193">			return comment;</span>
+		}
+
+	}
+	
+	private static abstract class AbstractFastqVisitorCallback implements FastqVisitorCallback{
+		private final ParserState parserState;
+		
+		
+<span class="nc" id="L202">		public AbstractFastqVisitorCallback(ParserState parserState) {</span>
+<span class="nc" id="L203">			this.parserState = parserState;</span>
+<span class="nc" id="L204">		}</span>
+
+		@Override
+		public void haltParsing() {
+<span class="nc" id="L208">			parserState.stopParsing();</span>
+			
+<span class="nc" id="L210">		}</span>
+
+		final ParserState getParserState() {
+<span class="nc" id="L213">			return parserState;</span>
+		}
+		
+		
+	}
+	
+	private static class NoMementoCallback extends AbstractFastqVisitorCallback{
+
+		
+		
+		public NoMementoCallback(ParserState parserState) {
+<span class="nc" id="L224">			super(parserState);</span>
+<span class="nc" id="L225">		}</span>
+
+		@Override
+		public boolean canCreateMemento() {
+<span class="nc" id="L229">			return false;</span>
+		}
+
+		@Override
+		public FastqVisitorMemento createMemento() {
+<span class="nc" id="L234">			throw new UnsupportedOperationException(&quot;can not create memento&quot;);</span>
+		}
+		
+	}
+	
+	private static class MementoCallback extends AbstractFastqVisitorCallback{
+		
+		public MementoCallback(ParserState parserState){
+<span class="nc" id="L242">			super(parserState);</span>
+<span class="nc" id="L243">		}</span>
+
+		@Override
+		public boolean canCreateMemento() {
+<span class="nc" id="L247">			return true;</span>
+		}
+
+		@Override
+		public FastqVisitorMemento createMemento() {
+<span class="nc" id="L252">			return OffsetMemento.valueOf(getParserState().getCurrentOffset());</span>
+			//return new LongOffsetMemento(getParserState().getCurrentOffset());
+		}
+		
+	}
+
+	
+	
+	private static class ParserState{
+		private final long currentOffset;
+		private final AtomicBoolean keepParsing;
+		
+		ParserState(long startOffset){
+<span class="nc" id="L265">			this(startOffset, new AtomicBoolean(true));</span>
+<span class="nc" id="L266">		}</span>
+		
+		public final long getCurrentOffset() {
+<span class="nc" id="L269">			return currentOffset;</span>
+		}
+<span class="nc" id="L271">		private ParserState(long startOffset, AtomicBoolean keepParsing){</span>
+<span class="nc" id="L272">			this.currentOffset = startOffset;</span>
+<span class="nc" id="L273">			this.keepParsing = keepParsing;</span>
+<span class="nc" id="L274">		}</span>
+		
+		void stopParsing(){
+<span class="nc" id="L277">			keepParsing.set(false);</span>
+<span class="nc" id="L278">		}</span>
+		
+		public boolean keepParsing(){
+<span class="nc" id="L281">			return keepParsing.get();</span>
+		}
+		
+		ParserState incrementOffset(long increment){
+<span class="nc" id="L285">			return new ParserState(currentOffset+increment, keepParsing);</span>
+		}
+	}
+	
+	private static class FileBasedFastqFileParser extends FastqFileParser{
+		private final File fastqFile;
+		
+		
+<span class="nc" id="L293">		public FileBasedFastqFileParser(File fastqFile) throws FileNotFoundException {</span>
+<span class="nc bnc" id="L294" title="All 2 branches missed.">			if(!fastqFile.exists()){</span>
+<span class="nc" id="L295">				throw new FileNotFoundException(fastqFile.getAbsolutePath() + &quot; does not exist&quot;);</span>
+			}
+<span class="nc" id="L297">			this.fastqFile = fastqFile;</span>
+<span class="nc" id="L298">		}</span>
+
+
+		@Override
+		protected AbstractFastqVisitorCallback createCallback(
+				ParserState parserState) {
+<span class="nc" id="L304">			return new MementoCallback(parserState);</span>
+		}
+
+
+		@Override
+		public void accept(FastqVisitor visitor) throws IOException {
+<span class="nc bnc" id="L310" title="All 2 branches missed.">			if(visitor ==null){</span>
+<span class="nc" id="L311">				throw new NullPointerException(&quot;visitor can not be null&quot;);</span>
+			}
+<span class="nc" id="L313">			InputStream in = new BufferedInputStream(new FileInputStream(fastqFile));</span>
+			try{
+<span class="nc" id="L315">				TextLineParser parser = new TextLineParser(in);</span>
+<span class="nc" id="L316">				parseFastqFile(visitor, parser, 0L);			</span>
+			}finally{
+<span class="nc" id="L318">				IOUtil.closeAndIgnoreErrors(in);</span>
+			}
+<span class="nc" id="L320">		}</span>
+
+
+		@Override
+		public void accept(FastqVisitor visitor, FastqVisitorMemento memento)
+				throws IOException {
+<span class="nc bnc" id="L326" title="All 2 branches missed.">			if(!(memento instanceof OffsetMemento)){</span>
+<span class="nc" id="L327">				throw new IllegalArgumentException(&quot;unknown memento type, instance must be generated by this parser&quot;);</span>
+			}
+<span class="nc bnc" id="L329" title="All 2 branches missed.">			if(visitor ==null){</span>
+<span class="nc" id="L330">				throw new NullPointerException(&quot;visitor can not be null&quot;);</span>
+			}
+<span class="nc" id="L332">			long startOffset = ((OffsetMemento)memento).getValue();</span>
+<span class="nc" id="L333">			InputStream in = null;</span>
+			try{
+<span class="nc" id="L335">				in = new RandomAccessFileInputStream(fastqFile, startOffset);</span>
+<span class="nc" id="L336">				TextLineParser parser = new TextLineParser(in);</span>
+<span class="nc" id="L337">				parseFastqFile(visitor, parser, startOffset);	</span>
+			}finally{
+<span class="nc" id="L339">				IOUtil.closeAndIgnoreErrors(in);</span>
+			}
+<span class="nc" id="L341">		}		</span>
+	}
+	
+	private static class InputStreamFastqFileParser extends FastqFileParser{
+		private final InputStream in;
+		
+<span class="nc" id="L347">		public InputStreamFastqFileParser(InputStream in) {</span>
+<span class="nc bnc" id="L348" title="All 2 branches missed.">			if(in==null){</span>
+<span class="nc" id="L349">				throw new NullPointerException(&quot;inputstream can not be null&quot;);</span>
+			}
+<span class="nc" id="L351">			this.in = in;</span>
+<span class="nc" id="L352">		}</span>
+
+		@Override
+		public synchronized void accept(FastqVisitor visitor) throws IOException {
+			//synchronized to only let in one visitor at a time since they will
+			//all share the inputstream...
+<span class="nc bnc" id="L358" title="All 2 branches missed.">			if(visitor ==null){</span>
+<span class="nc" id="L359">				throw new NullPointerException(&quot;visitor can not be null&quot;);</span>
+			}
+			try{
+<span class="nc" id="L362">				TextLineParser parser = new TextLineParser(in);</span>
+<span class="nc" id="L363">				parseFastqFile(visitor, parser, 0L);</span>
+			}finally{
+<span class="nc" id="L365">				IOUtil.closeAndIgnoreErrors(in);</span>
+			}
+			
+<span class="nc" id="L368">		}</span>
+
+		@Override
+		public void accept(FastqVisitor visitor, FastqVisitorMemento memento)
+				throws IOException {
+<span class="nc" id="L373">			throw new UnsupportedOperationException(&quot;mementos not supported&quot;);</span>
+			
+		}
+
+		@Override
+		protected AbstractFastqVisitorCallback createCallback(
+				ParserState parserState) {
+<span class="nc" id="L380">			return new NoMementoCallback(parserState);</span>
+		}
+		
+	}
+	
+<span class="nc" id="L385">	public abstract static class OffsetMemento implements FastqVisitorMemento {</span>
+		private static final long UNSIGNED_MAX_BYTE = 0xFF;
+		private static final long UNSIGNED_MAX_SHORT = 0xFFFF;
+		//need the &quot;L&quot; at the end to make the value a long otherwise it's an int with value -1 !
+		private static final long UNSIGNED_MAX_INT = 0xFFFFFFFFL;
+		/**
+		 * Create a new instance of a {@link OffsetMemento}
+		 * which will wrap the given value but use
+		 * as few bytes as possible.
+		 * @param value the value to wrap; may
+		 * be negative.
+		 * @return a n{@link OffsetMemento} instance that
+		 * wraps the given value in as few bytes as possible.
+		 */
+		public static OffsetMemento valueOf(long value){
+			//TODO: should we do caching to return 
+			//already created instances (flyweight)?
+			//This is probably going to be used mostly
+			//for file offsets. If we wrap
+			//several fastq files, each of which have
+			//the same number of bases we might get a lot of
+			//duplicate instances...
+			
+<span class="nc bnc" id="L408" title="All 2 branches missed.">			if(value &lt;0){</span>
+<span class="nc" id="L409">				throw new IllegalArgumentException(&quot;can not have negative offset&quot;);</span>
+			}
+<span class="nc bnc" id="L411" title="All 2 branches missed.">			if(value &lt;=UNSIGNED_MAX_BYTE){</span>
+<span class="nc" id="L412">				return new ByteWidthOffsetMemento(value);</span>
+<span class="nc bnc" id="L413" title="All 2 branches missed.">			}else if(value &lt;=UNSIGNED_MAX_SHORT){</span>
+<span class="nc" id="L414">				return new ShortWidthOffsetMemento(value);</span>
+			}
+<span class="nc bnc" id="L416" title="All 2 branches missed.">			else if(value &lt;=UNSIGNED_MAX_INT){</span>
+<span class="nc" id="L417">				return new IntWidthOffsetMemento(value);</span>
+			}
+<span class="nc" id="L419">			return new LongWidthOffsetMemento(value);</span>
+		}
+		/**
+		 * Get the wrapped value as a long.
+		 * @return the value; may be negative.
+		 */
+		public abstract long getValue();
+		
+		@Override
+		public String toString() {
+<span class="nc" id="L429">			return Long.toString(getValue());</span>
+		}
+		@Override
+		public boolean equals(Object obj){
+<span class="nc bnc" id="L433" title="All 2 branches missed.">			if(obj ==null){</span>
+<span class="nc" id="L434">				return false;</span>
+			}
+<span class="nc bnc" id="L436" title="All 2 branches missed.">			if(obj instanceof OffsetMemento){</span>
+<span class="nc bnc" id="L437" title="All 2 branches missed.">				return getValue()==((OffsetMemento)obj).getValue();</span>
+			}
+<span class="nc" id="L439">			return false;</span>
+		}
+		
+		@Override
+		public int hashCode() {
+<span class="nc" id="L444">			final int prime = 31;</span>
+<span class="nc" id="L445">			long value = getValue();</span>
+<span class="nc" id="L446">			return prime * (int) (value ^ (value &gt;&gt;&gt; 32));</span>
+		}
+		
+		
+	}
+	
+	private static class ByteWidthOffsetMemento extends OffsetMemento{
+		
+		private final byte value;
+
+<span class="nc" id="L456">		public ByteWidthOffsetMemento(long value) {</span>
+<span class="nc" id="L457">			this.value = IOUtil.toSignedByte((int)value);</span>
+<span class="nc" id="L458">		}</span>
+
+		@Override
+		public long getValue() {
+<span class="nc" id="L462">			return IOUtil.toUnsignedByte(value);</span>
+		}
+		
+	}
+	
+	private static class ShortWidthOffsetMemento extends OffsetMemento{
+		
+		private final short value;
+
+<span class="nc" id="L471">		public ShortWidthOffsetMemento(long value) {</span>
+<span class="nc" id="L472">			this.value = IOUtil.toSignedShort((int)value);</span>
+<span class="nc" id="L473">		}</span>
+
+		@Override
+		public long getValue() {
+<span class="nc" id="L477">			return IOUtil.toUnsignedShort(value);</span>
+		}
+		
+	}
+	
+	private static class IntWidthOffsetMemento extends OffsetMemento{
+		
+		private final int value;
+
+<span class="nc" id="L486">		public IntWidthOffsetMemento(long value) {</span>
+<span class="nc" id="L487">			this.value = IOUtil.toSignedInt(value);</span>
+<span class="nc" id="L488">		}</span>
+
+		@Override
+		public long getValue() {
+<span class="nc" id="L492">			return IOUtil.toUnsignedInt(value);</span>
+		}
+		
+	}
+	private static class LongWidthOffsetMemento extends OffsetMemento{
+		
+		private final long value;
+
+<span class="nc" id="L500">		public LongWidthOffsetMemento(long value) {</span>
+<span class="nc" id="L501">			this.value = value;</span>
+<span class="nc" id="L502">		}</span>
+
+		@Override
+		public long getValue() {
+<span class="nc" id="L506">			return value;</span>
+		}	
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

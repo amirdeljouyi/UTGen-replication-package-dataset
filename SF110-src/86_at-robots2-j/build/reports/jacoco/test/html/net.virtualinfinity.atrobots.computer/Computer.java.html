@@ -1,0 +1,404 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Computer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">86_at-robots2-j</a> &gt; <a href="index.source.html" class="el_package">net.virtualinfinity.atrobots.computer</a> &gt; <span class="el_source">Computer.java</span></div><h1>Computer.java</h1><pre class="source lang-java linenums">package net.virtualinfinity.atrobots.computer;
+
+import net.virtualinfinity.atrobots.measures.Duration;
+import net.virtualinfinity.atrobots.ports.InvalidPort;
+import net.virtualinfinity.atrobots.ports.PortHandler;
+import net.virtualinfinity.atrobots.ports.PortListener;
+
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * An AT-Robots 2 virtual machine.
+ *
+ * @author Daniel Pitts
+ */
+public class Computer implements PortListener, Restartable {
+    private Memory memory;
+    private Registers registers;
+    private StackMemory stack;
+    private MemoryRegion program;
+    private int cycles;
+    private int instructionPointer;
+    private int nextInstructionPointer;
+    private InstructionTable instructionTable;
+    private HardwareBus hardwareBus;
+    private Map&lt;Integer, Integer&gt; jumpTable;
+    private AtRobotsCommunicationsQueue commQueue;
+    private int cyclesPerSimCycle;
+    private String lastMessage;
+<span class="nc" id="L31">    private ComputerErrorHandler errorHandler = new ErrorHandler();</span>
+    private boolean shutDown;
+    private int maxInstructionPointer;
+<span class="nc" id="L34">    private DebugListener debugListener = new EmptyDebugListener();</span>
+    private int id;
+    private String name;
+    private final DebugInfo debugInfo;
+
+<span class="nc" id="L39">    public Computer(Memory memory, int stackSize, int maxProcessorSpeed, DebugInfo debugInfo) {</span>
+<span class="nc" id="L40">        this.memory = memory;</span>
+<span class="nc" id="L41">        this.debugInfo = debugInfo;</span>
+<span class="nc" id="L42">        this.registers = new Registers(memory);</span>
+<span class="nc" id="L43">        this.stack = new StackMemory(registers.getStackPointerCell(), stackSize);</span>
+<span class="nc" id="L44">        this.program = new MemoryRegion(memory, 1024, 4096);</span>
+<span class="nc" id="L45">        this.cyclesPerSimCycle = maxProcessorSpeed;</span>
+<span class="nc" id="L46">        instructionTable = new InstructionTable();</span>
+<span class="nc" id="L47">        Map&lt;Integer, Integer&gt; jumpTable = new HashMap&lt;Integer, Integer&gt;();</span>
+<span class="nc" id="L48">        maxInstructionPointer = program.size() / 4;</span>
+<span class="nc bnc" id="L49" title="All 2 branches missed.">        for (int i = 0; i &lt; maxInstructionPointer; ++i) {</span>
+<span class="nc bnc" id="L50" title="All 2 branches missed.">            if (getMicrocodeAt(0, i) == Microcode.NumberedLabel) {</span>
+<span class="nc" id="L51">                jumpTable.put((int) getConstantAt(0, i), i);</span>
+            }
+        }
+<span class="nc bnc" id="L54" title="All 2 branches missed.">        if (jumpTable.isEmpty()) {</span>
+<span class="nc" id="L55">            this.jumpTable = Collections.emptyMap();</span>
+        } else {
+<span class="nc" id="L57">            this.jumpTable = jumpTable;</span>
+        }
+<span class="nc" id="L59">    }</span>
+
+    public HardwareBus getHardwareBus() {
+<span class="nc" id="L62">        return hardwareBus;</span>
+    }
+
+    public void setHardwareBus(HardwareBus hardwareBus) {
+<span class="nc" id="L66">        this.hardwareBus = hardwareBus;</span>
+<span class="nc" id="L67">    }</span>
+
+    public void useCycles() {
+<span class="nc bnc" id="L70" title="All 4 branches missed.">        while (cycles &gt; 0 &amp;&amp; !shutDown) {</span>
+<span class="nc" id="L71">            getHardwareBus().checkHeat();</span>
+<span class="nc" id="L72">            executeInstruction();</span>
+        }
+<span class="nc bnc" id="L74" title="All 4 branches missed.">        if (shutDown &amp;&amp; cycles &gt; 0) {</span>
+<span class="nc" id="L75">            cycles = 0;</span>
+        }
+<span class="nc" id="L77">        getHardwareBus().checkHeat();</span>
+<span class="nc" id="L78">    }</span>
+
+    void executeInstruction() {
+<span class="nc bnc" id="L81" title="All 2 branches missed.">        if (nextInstructionPointer &gt;= maxInstructionPointer) {</span>
+<span class="nc" id="L82">            nextInstructionPointer = 0;</span>
+        }
+<span class="nc" id="L84">        instructionPointer = nextInstructionPointer;</span>
+<span class="nc" id="L85">        debugListener.beforeInstruction(this);</span>
+<span class="nc" id="L86">        nextInstructionPointer++;</span>
+<span class="nc" id="L87">        getInstruction().execute(this);</span>
+<span class="nc" id="L88">        debugListener.afterInstruction(this);</span>
+<span class="nc" id="L89">    }</span>
+
+    public DebugListener getDebugListener() {
+<span class="nc" id="L92">        return debugListener;</span>
+    }
+
+    public void setDebugListener(DebugListener debugListener) {
+<span class="nc" id="L96">        this.debugListener = debugListener;</span>
+<span class="nc" id="L97">    }</span>
+
+    public int getInstructionPointer() {
+<span class="nc" id="L100">        return instructionPointer;</span>
+    }
+
+    public short getOperandValue(int opnumber) {
+<span class="nc" id="L104">        return getMicrocode(opnumber).getValue(Computer.this, opnumber);</span>
+    }
+
+    public Microcode getMicrocode(int opnumber) {
+<span class="nc" id="L108">        return Microcode.get(getConstant(3) &gt;&gt; (4 * opnumber));</span>
+    }
+
+    private Microcode getMicrocodeAt(int opnumber, int pointer) {
+<span class="nc" id="L112">        return Microcode.get(getConstantAt(3, pointer) &gt;&gt; (4 * opnumber));</span>
+    }
+
+    public short getConstant(int opnumber) {
+<span class="nc" id="L116">        return getConstantAt(opnumber, instructionPointer);</span>
+    }
+
+    private short getConstantAt(int opnumber, int pointer) {
+<span class="nc" id="L120">        return program.get(pointer * 4 + opnumber);</span>
+    }
+
+    public short getUnresolvedLabelValue(int opnumber) {
+<span class="nc" id="L124">        return getConstant(opnumber);</span>
+    }
+
+    public short getLabelValue(int opnumber) {
+<span class="nc" id="L128">        return getConstant(opnumber);</span>
+    }
+
+    public short getNumberedLabelValue(int opnumber) {
+<span class="nc" id="L132">        return getConstant(opnumber);</span>
+    }
+
+    public short getDoubleDereferencedValue(int opnumber) {
+<span class="nc" id="L136">        return memory.get(Microcode.Dereference.getValue(Computer.this, opnumber));</span>
+    }
+
+    public short getDeferencedValue(int opnumber) {
+<span class="nc" id="L140">        return memory.get(Microcode.Constant.getValue(Computer.this, opnumber));</span>
+    }
+
+    public Instruction getInstruction() {
+<span class="nc" id="L144">        final Microcode microcode = getMicrocode(0);</span>
+<span class="nc bnc" id="L145" title="All 2 branches missed.">        if (microcode == Microcode.NumberedLabel) {</span>
+<span class="nc" id="L146">            return instructionTable.getNumberedLabelInstruction();</span>
+        }
+<span class="nc bnc" id="L148" title="All 2 branches missed.">        if (!microcode.hasValue()) {</span>
+<span class="nc" id="L149">            return instructionTable.getInvalidMicrocodeInstruction();</span>
+        }
+<span class="nc" id="L151">        return instructionTable.getInstruction(microcode.getValue(Computer.this, 0));</span>
+    }
+
+    public void consumeCycles(int cost) {
+<span class="nc bnc" id="L155" title="All 2 branches missed.">        if (cost &gt; 0) {</span>
+<span class="nc" id="L156">            cycles -= cost;</span>
+        }
+<span class="nc" id="L158">    }</span>
+
+    public void setOperandValue(int opnumber, short value) {
+<span class="nc" id="L161">        final Microcode microcode = getMicrocode(opnumber);</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        if (microcode.isAddressible()) {</span>
+<span class="nc" id="L163">            memory.set(microcode.getAddress(Computer.this, opnumber), value);</span>
+        }
+<span class="nc" id="L165">    }</span>
+
+    public void popInstructionPointer() {
+<span class="nc" id="L168">        nextInstructionPointer = stack.pop();</span>
+<span class="nc" id="L169">    }</span>
+
+    public void call() {
+<span class="nc" id="L172">        stack.push((short) nextInstructionPointer);</span>
+<span class="nc" id="L173">        jump();</span>
+<span class="nc" id="L174">    }</span>
+
+    public void jump() {
+<span class="nc" id="L177">        final Microcode microcode = getMicrocode(1);</span>
+<span class="nc bnc" id="L178" title="All 2 branches missed.">        if (microcode == Microcode.ResolvedLabel) {</span>
+<span class="nc" id="L179">            setInstructionPointer(getLabelValue(1));</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">        } else if (microcode.isValid()) {</span>
+<span class="nc" id="L181">            jumpToNumberedLabel(microcode.getValue(this, 1));</span>
+        }
+<span class="nc" id="L183">    }</span>
+
+    public Flags getFlags() {
+<span class="nc" id="L186">        return registers.getFlags();</span>
+    }
+
+    public Registers getRegisters() {
+<span class="nc" id="L190">        return registers;</span>
+    }
+
+    public void callInterrupt() {
+<span class="nc" id="L194">        hardwareBus.callInterrupt(getOperandValue(1));</span>
+<span class="nc" id="L195">    }</span>
+
+    public void incrementOperand(int opnumber) {
+<span class="nc" id="L198">        memory.increment(getMicrocode(opnumber).getAddress(Computer.this, opnumber));</span>
+<span class="nc" id="L199">    }</span>
+
+    public void decrementOperand(int opnumber) {
+<span class="nc" id="L202">        memory.decrement(getMicrocode(opnumber).getAddress(Computer.this, opnumber));</span>
+<span class="nc" id="L203">    }</span>
+
+    public void push() {
+<span class="nc" id="L206">        stack.push(getOperandValue(1));</span>
+<span class="nc" id="L207">    }</span>
+
+    public void pop() {
+<span class="nc" id="L210">        setOperandValue(1, stack.pop());</span>
+<span class="nc" id="L211">    }</span>
+
+    public void readPort() {
+<span class="nc" id="L214">        setOperandValue(2, hardwareBus.readPort(getOperandValue(1)));</span>
+<span class="nc" id="L215">    }</span>
+
+    public void writePort() {
+<span class="nc" id="L218">        hardwareBus.writePort(getOperandValue(1), getOperandValue(2));</span>
+<span class="nc" id="L219">    }</span>
+
+    public int getOperandAddress(int opnumber) {
+<span class="nc" id="L222">        return getMicrocode(opnumber).getAddress(Computer.this, opnumber);</span>
+    }
+
+    public Memory getMemory() {
+<span class="nc" id="L226">        return memory;</span>
+    }
+
+    public void reset() {
+<span class="nc" id="L230">        stack.reset();</span>
+<span class="nc" id="L231">        getHardwareBus().reset();</span>
+<span class="nc" id="L232">    }</span>
+
+    public PortHandler createDefaultPortHandler() {
+<span class="nc" id="L235">        return new InvalidPort().setPortListener(Computer.this);</span>
+    }
+
+    public MemoryRegion getCommQueueMemoryRegion() {
+<span class="nc" id="L239">        return new MemoryRegion(memory, 512, 256);</span>
+    }
+
+    public ComputerErrorHandler getErrorHandler() {
+<span class="nc" id="L243">        return errorHandler;</span>
+    }
+
+    public void update(Duration duration) {
+<span class="nc" id="L247">        cycles += duration.getCycles() * getCyclesPerSimCycle();</span>
+<span class="nc" id="L248">        useCycles();</span>
+<span class="nc" id="L249">    }</span>
+
+    public int getCyclesPerSimCycle() {
+<span class="nc" id="L252">        return cyclesPerSimCycle;</span>
+    }
+
+    private void jumpToNumberedLabel(short value) {
+<span class="nc" id="L256">        final Integer location = jumpTable.get((int) value);</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">        if (location == null) {</span>
+<span class="nc" id="L258">            errorHandler.labelNotFound(value);</span>
+        } else {
+<span class="nc" id="L260">            setInstructionPointer(location);</span>
+        }
+<span class="nc" id="L262">    }</span>
+
+    public void jumpToLine() {
+<span class="nc" id="L265">        setInstructionPointer(getOperandValue(1));</span>
+<span class="nc" id="L266">    }</span>
+
+    private void setInstructionPointer(int instructionPointer) {
+<span class="nc" id="L269">        this.nextInstructionPointer = instructionPointer;</span>
+<span class="nc" id="L270">    }</span>
+
+    public void setCommQueue(AtRobotsCommunicationsQueue commQueue) {
+<span class="nc" id="L273">        Computer.this.commQueue = commQueue;</span>
+<span class="nc" id="L274">    }</span>
+
+    public AtRobotsCommunicationsQueue getCommQueue() {
+<span class="nc" id="L277">        return commQueue;</span>
+    }
+
+    public void invalidMicrocodeError() {
+<span class="nc" id="L281">        errorHandler.invalidMicrocodeError();</span>
+<span class="nc" id="L282">    }</span>
+
+    public void divideByZeroError() {
+<span class="nc" id="L285">        errorHandler.divideByZeroError();</span>
+<span class="nc" id="L286">    }</span>
+
+    public void genericError(short operandValue) {
+<span class="nc" id="L289">        errorHandler.genericError(operandValue);</span>
+<span class="nc" id="L290">    }</span>
+
+    public void unknownInstructionError(short operandValue) {
+<span class="nc" id="L293">        errorHandler.unknownInstructionError(operandValue);</span>
+<span class="nc" id="L294">    }</span>
+
+    public void invalidInterruptError(short operandValue) {
+<span class="nc" id="L297">        errorHandler.invalidInterruptError(operandValue);</span>
+<span class="nc" id="L298">    }</span>
+
+    public void invalidPortError() {
+<span class="nc" id="L301">        errorHandler.invalidPortError();</span>
+<span class="nc" id="L302">    }</span>
+
+    public void notAddressableError() {
+<span class="nc" id="L305">        errorHandler.notAddressableError();</span>
+<span class="nc" id="L306">    }</span>
+
+    public void shutDown() {
+<span class="nc" id="L309">        shutDown = true;</span>
+<span class="nc" id="L310">    }</span>
+
+    public boolean isShutDown() {
+<span class="nc" id="L313">        return shutDown;</span>
+    }
+
+    public void startUp() {
+<span class="nc" id="L317">        shutDown = false;</span>
+<span class="nc" id="L318">    }</span>
+
+    public int getCycles() {
+<span class="nc" id="L321">        return cycles;</span>
+    }
+
+    public int getNextInstructionPointer() {
+<span class="nc" id="L325">        return nextInstructionPointer;</span>
+    }
+
+    public String getLastMessage() {
+<span class="nc" id="L329">        return lastMessage;</span>
+    }
+
+    public StackMemory getStack() {
+<span class="nc" id="L333">        return stack;</span>
+    }
+
+    public DebugInfo getDebugInfo() {
+<span class="nc" id="L337">        return debugInfo;</span>
+    }
+
+    public void setId(int id) {
+<span class="nc" id="L341">        this.id = id;</span>
+<span class="nc" id="L342">    }</span>
+
+    public void setName(String name) {
+<span class="nc" id="L345">        this.name = name;</span>
+<span class="nc" id="L346">    }</span>
+
+    public int getId() {
+<span class="nc" id="L349">        return id;</span>
+    }
+
+    public String getName() {
+<span class="nc" id="L353">        return name;</span>
+    }
+
+<span class="nc" id="L356">    private class ErrorHandler implements ComputerErrorHandler {</span>
+        public void genericError(short operandValue) {
+<span class="nc" id="L358">            lastMessage = &quot;ERR &quot; + operandValue;</span>
+<span class="nc" id="L359">        }</span>
+
+        public void unknownInstructionError(short operandValue) {
+<span class="nc" id="L362">            lastMessage = &quot;Unknown instruction: &quot; + operandValue;</span>
+<span class="nc" id="L363">        }</span>
+
+        public void invalidInterruptError(short operandValue) {
+<span class="nc" id="L366">            lastMessage = &quot;Invalid Interrupt: &quot; + operandValue;</span>
+<span class="nc" id="L367">        }</span>
+
+        public void notAddressableError() {
+<span class="nc" id="L370">            lastMessage = &quot;Not addressable error.&quot;;</span>
+<span class="nc" id="L371">        }</span>
+
+        public void labelNotFound(short value) {
+<span class="nc" id="L374">            lastMessage = &quot;Label not found: &quot; + value;</span>
+<span class="nc" id="L375">        }</span>
+
+        public void invalidMicrocodeError() {
+<span class="nc" id="L378">            lastMessage = &quot;Invalid microcode.&quot;;</span>
+<span class="nc" id="L379">        }</span>
+
+        public void divideByZeroError() {
+<span class="nc" id="L382">            lastMessage = &quot;Divide by zero&quot;;</span>
+<span class="nc" id="L383">        }</span>
+
+        public void invalidPortError() {
+<span class="nc" id="L386">            lastMessage = &quot;Invalid port.&quot;;</span>
+
+<span class="nc" id="L388">        }</span>
+
+        public void commQueueEmptyError() {
+<span class="nc" id="L391">            lastMessage = &quot;Empty Comm Queue&quot;;</span>
+<span class="nc" id="L392">        }</span>
+
+        public void memoryBoundsError(int address) {
+<span class="nc" id="L395">            lastMessage = &quot;OutOfBounds: @&quot; + address;</span>
+<span class="nc" id="L396">        }</span>
+
+        public void writeToRomError() {
+<span class="nc" id="L399">            lastMessage = &quot;Write to ROM.&quot;;</span>
+<span class="nc" id="L400">        }</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

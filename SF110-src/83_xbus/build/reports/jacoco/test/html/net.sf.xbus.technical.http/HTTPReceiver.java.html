@@ -1,0 +1,578 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HTTPReceiver.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.technical.http</a> &gt; <span class="el_source">HTTPReceiver.java</span></div><h1>HTTPReceiver.java</h1><pre class="source lang-java linenums">package net.sf.xbus.technical.http;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.PrintWriter;
+import java.util.Hashtable;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.SortedSet;
+import java.util.TreeSet;
+import java.util.Vector;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import net.sf.xbus.application.Adapter;
+import net.sf.xbus.application.PostProcessor;
+import net.sf.xbus.base.core.ASCIITokenizer;
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.TAManager;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.core.config.Configuration;
+import net.sf.xbus.base.core.trace.Trace;
+import net.sf.xbus.base.notifyerror.NotifyError;
+import net.sf.xbus.base.xbussystem.XBUSSystem;
+import net.sf.xbus.base.xml.XMLHelper;
+import net.sf.xbus.technical.Receiver;
+import net.sf.xbus.technical.ReceiverThreadManager;
+
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+
+/**
+ * The class &lt;code&gt;HTTPReceiver&lt;/code&gt; handles requests coming via a
+ * HTTP-connection.
+ * &lt;p /&gt;
+ * Depending on the &lt;code&gt;System_xxx_Receiver&lt;/code&gt; entry in the
+ * configuration, it acts as a normal &lt;code&gt;HTTPReceiver&lt;/code&gt;, receiving
+ * and returning strings, as a &lt;code&gt;HTTPStreamReceiver&lt;/code&gt;, accepting an
+ * &lt;code&gt;InputStream&lt;/code&gt; as the request or as a
+ * &lt;code&gt;HTTPParameterReceiver&lt;/code&gt;, accepting a query string and returning
+ * the result as a string.
+ * &lt;p /&gt;
+ * The last part of the URL is used as the name of the system.
+ */
+
+<span class="nc" id="L50">public class HTTPReceiver implements Receiver</span>
+{
+	private static final String HTTP_RECEIVER = &quot;HTTPReceiver&quot;;
+
+	private static final String HTTP_STREAM_RECEIVER = &quot;HTTPStreamReceiver&quot;;
+
+	private static final String HTTP_PARAMETER_RECEIVER = &quot;HTTPParameterReceiver&quot;;
+
+<span class="nc" id="L58">	private static Hashtable mAmountErrors = new Hashtable();</span>
+
+<span class="nc" id="L60">	private XBUSSystem mSource = null;</span>
+
+<span class="nc" id="L62">	private String mReceiverType = null;</span>
+
+	/**
+	 * Handles the HTTP-request. In case of an error while processing the
+	 * messages, it returns a
+	 * &lt;code&gt;HttpServletResponse.SC_INTERNAL_SERVER_ERROR&lt;/code&gt;.
+	 */
+	public void doPost(HttpServletRequest req, HttpServletResponse res)
+	{
+		try
+		{
+<span class="nc" id="L73">			Trace.info(&quot;Receiving data from &quot; + req.getRequestURL().toString());</span>
+
+			/*
+			 * Do some initialization in the beginning
+			 */
+<span class="nc" id="L78">			initialize(req);</span>
+
+			/*
+			 * Check if the HTTPReceiver is stopped
+			 */
+<span class="nc bnc" id="L83" title="All 2 branches missed.">			if (ReceiverThreadManager.getInstance().isHTTPReceiverStopped(</span>
+<span class="nc" id="L84">					mSource.getName()))</span>
+			{
+				try
+				{
+<span class="nc" id="L88">					res.sendError(HttpServletResponse.SC_SERVICE_UNAVAILABLE);</span>
+				}
+<span class="nc" id="L90">				catch (IOException e1)</span>
+				{
+<span class="nc" id="L92">					Trace.error(e1);</span>
+<span class="nc" id="L93">				}</span>
+<span class="nc" id="L94">				return;</span>
+			}
+
+			/*
+			 * Test if the connection must be encrypted.
+			 */
+<span class="nc" id="L100">			Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L101">			boolean forceSSL = config.getValueAsBooleanOptional(</span>
+<span class="nc" id="L102">					Constants.CHAPTER_SYSTEM, mSource.getName(), &quot;ForceSSL&quot;);</span>
+<span class="nc bnc" id="L103" title="All 4 branches missed.">			if ((!req.isSecure()) &amp;&amp; (forceSSL))</span>
+			{
+<span class="nc" id="L105">				Trace.error(&quot;System &quot; + mSource.getName()</span>
+						+ &quot; accepts only SSL connections&quot;);
+<span class="nc" id="L107">				res.setStatus(HttpServletResponse.SC_UNAUTHORIZED);</span>
+<span class="nc" id="L108">				Trace.info(&quot;Error while processing &quot;</span>
+<span class="nc" id="L109">						+ mSource.getCompleteName());</span>
+<span class="nc" id="L110">				Trace.info(&quot;----------------------------&quot;);</span>
+<span class="nc" id="L111">				return;</span>
+			}
+		}
+<span class="nc" id="L114">		catch (XException e)</span>
+		{
+<span class="nc" id="L116">			handleError(res, e, null, e.getMessage());</span>
+<span class="nc" id="L117">			Trace.info(&quot;Error while processing &quot; + mSource.getCompleteName());</span>
+<span class="nc" id="L118">			Trace.info(&quot;----------------------------&quot;);</span>
+<span class="nc" id="L119">			return;</span>
+<span class="nc" id="L120">		}</span>
+
+		/*
+		 * Initialize transaction manager
+		 */
+<span class="nc" id="L125">		TAManager taManager = TAManager.getInstance();</span>
+		try
+		{
+<span class="nc" id="L128">			taManager.clearManager();</span>
+<span class="nc" id="L129">			taManager.begin();</span>
+		}
+<span class="nc" id="L131">		catch (XException e)</span>
+		{
+<span class="nc" id="L133">			handleError(res, e, null, e.getMessage());</span>
+<span class="nc" id="L134">			Trace.info(&quot;Error while processing &quot; + mSource.getCompleteName());</span>
+<span class="nc" id="L135">			Trace.info(&quot;----------------------------&quot;);</span>
+<span class="nc" id="L136">			return;</span>
+<span class="nc" id="L137">		}</span>
+
+		/*
+		 * Process the message, either an InputStream or a textual message
+		 */
+		try
+		{
+<span class="nc bnc" id="L144" title="All 2 branches missed.">			if (HTTP_RECEIVER.equals(mReceiverType))</span>
+			{
+<span class="nc" id="L146">				processTextMessage(req, res);</span>
+			}
+<span class="nc bnc" id="L148" title="All 2 branches missed.">			else if (HTTP_STREAM_RECEIVER.equals(mReceiverType))</span>
+			{
+<span class="nc" id="L150">				processStreamMessage(req, res);</span>
+			}
+<span class="nc bnc" id="L152" title="All 2 branches missed.">			else if (HTTP_PARAMETER_RECEIVER.equals(mReceiverType))</span>
+			{
+<span class="nc" id="L154">				processParameterMessage(req, res);</span>
+			}
+<span class="nc" id="L156">			Trace.info(&quot;End processing &quot; + mSource.getCompleteName());</span>
+<span class="nc" id="L157">			Trace.info(&quot;----------------------------&quot;);</span>
+		}
+<span class="nc" id="L159">		catch (Exception e)</span>
+		{
+<span class="nc" id="L161">			handleError(res, e, null, e.getMessage());</span>
+<span class="nc" id="L162">			Trace.info(&quot;Error while processing &quot; + mSource.getCompleteName());</span>
+<span class="nc" id="L163">			Trace.info(&quot;----------------------------&quot;);</span>
+		}
+<span class="nc" id="L165">		catch (Error e)</span>
+		{
+<span class="nc" id="L167">			handleError(res, e, null, e.getMessage());</span>
+<span class="nc" id="L168">			Trace.info(&quot;Error while processing &quot; + mSource.getCompleteName());</span>
+<span class="nc" id="L169">			Trace.info(&quot;----------------------------&quot;);</span>
+
+			/*
+			 * Errors must be passed through, the servlet engine has to process
+			 * them too.
+			 */
+<span class="nc" id="L175">			throw e;</span>
+<span class="nc" id="L176">		}</span>
+
+<span class="nc" id="L178">		taManager.close();</span>
+<span class="nc" id="L179">	}</span>
+
+	private void initialize(HttpServletRequest req) throws XException
+	{
+<span class="nc" id="L183">		Configuration config = Configuration.getInstance();</span>
+
+		/*
+		 * Get the name of the source from the last part of the URL.
+		 */
+<span class="nc" id="L188">		String servletName = null;</span>
+<span class="nc" id="L189">		ASCIITokenizer tokenizer = new ASCIITokenizer(req.getRequestURL()</span>
+<span class="nc" id="L190">				.toString(), &quot;/&quot;);</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">		while (tokenizer.hasMoreTokens())</span>
+		{
+<span class="nc" id="L193">			servletName = tokenizer.nextToken();</span>
+		}
+<span class="nc" id="L195">		mSource = new XBUSSystem(servletName);</span>
+
+		/*
+		 * Check, it this is a normal HTTPReceiver or a HTTPLineReaderReceiver
+		 */
+<span class="nc" id="L200">		String receiverType = config.getValue(Constants.CHAPTER_SYSTEM, mSource</span>
+<span class="nc" id="L201">				.getName(), &quot;Receiver&quot;);</span>
+
+<span class="nc bnc" id="L203" title="All 2 branches missed.">		if ((HTTP_RECEIVER.equals(receiverType))</span>
+<span class="nc bnc" id="L204" title="All 2 branches missed.">				|| (HTTP_STREAM_RECEIVER.equals(receiverType))</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">				|| (HTTP_PARAMETER_RECEIVER.equals(receiverType)))</span>
+		{
+<span class="nc" id="L207">			mReceiverType = receiverType;</span>
+		}
+		else
+		{
+<span class="nc" id="L211">			Vector params = new Vector(1);</span>
+<span class="nc" id="L212">			params.add(receiverType);</span>
+<span class="nc" id="L213">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_HTTP, &quot;2&quot;, params);
+		}
+<span class="nc" id="L217">	}</span>
+
+	/**
+	 * Processes textual messages and give back a response.
+	 * 
+	 * @param req
+	 *            request
+	 * @param res
+	 *            response
+	 * @throws XException
+	 *             if an error occurs
+	 */
+	private void processTextMessage(HttpServletRequest req,
+			HttpServletResponse res) throws XException
+	{
+		// Ohne die beiden nachsten Abfragen hat
+		// Tomcat 3.3a und Tomcat 4.0.2 ein Problem
+		// mit dem nachfolgenden Reader.
+<span class="nc" id="L235">		String contentType = req.getContentType();</span>
+<span class="nc" id="L236">		int contentLength = req.getContentLength();</span>
+
+<span class="nc" id="L238">		StringBuffer textString = null;</span>
+<span class="nc bnc" id="L239" title="All 2 branches missed.">		if (contentLength &gt; 0)</span>
+		{
+<span class="nc" id="L241">			textString = new StringBuffer(contentLength);</span>
+		}
+		else
+		{
+<span class="nc" id="L245">			textString = new StringBuffer();</span>
+		}
+		String line;
+
+		try
+		{
+<span class="nc" id="L251">			BufferedReader reader = req.getReader();</span>
+<span class="nc bnc" id="L252" title="All 2 branches missed.">			while ((line = reader.readLine()) != null)</span>
+			{
+<span class="nc" id="L254">				textString.append(line);</span>
+<span class="nc" id="L255">				textString.append(Constants.LINE_SEPERATOR);</span>
+			}
+<span class="nc" id="L257">			String requestText = textString.toString();</span>
+
+<span class="nc" id="L259">			Adapter adapter = new Adapter();</span>
+<span class="nc" id="L260">			adapter.callApplication(mSource, requestText, getType());</span>
+<span class="nc" id="L261">			String responseText = (String) adapter.getResponse();</span>
+
+<span class="nc bnc" id="L263" title="All 2 branches missed.">			if (Constants.RC_OK.equals(adapter.getReturncode()))</span>
+			{
+<span class="nc" id="L265">				TAManager.getInstance().commit();</span>
+
+<span class="nc" id="L267">				initializeAmountErrors();</span>
+
+<span class="nc" id="L269">				PostProcessor.start(mSource, responseText,</span>
+						Constants.POSTPROCESSING_PERSYSTEM);
+
+<span class="nc" id="L272">				res.setStatus(HttpServletResponse.SC_OK);</span>
+<span class="nc bnc" id="L273" title="All 4 branches missed.">				if ((responseText != null) &amp;&amp; (responseText.length() &gt; 0))</span>
+				{
+<span class="nc" id="L275">					res.setContentType(contentType);</span>
+<span class="nc" id="L276">					PrintWriter writer = res.getWriter();</span>
+<span class="nc" id="L277">					writer.print(responseText);</span>
+<span class="nc" id="L278">					writer.close();</span>
+<span class="nc" id="L279">				}</span>
+			}
+			else
+			{
+<span class="nc" id="L283">				TAManager.getInstance().rollback();</span>
+<span class="nc" id="L284">				handleError(res, null, requestText, adapter.getErrormessage());</span>
+			}
+		}
+<span class="nc" id="L287">		catch (Exception e)</span>
+		{
+<span class="nc bnc" id="L289" title="All 2 branches missed.">			if (e instanceof XException)</span>
+			{
+<span class="nc" id="L291">				throw (XException) e;</span>
+			}
+			else
+			{
+<span class="nc" id="L295">				throw new XException(Constants.LOCATION_INTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_HTTP, &quot;0&quot;, e);
+			}
+<span class="nc" id="L299">		}</span>
+<span class="nc" id="L300">	}</span>
+
+	/**
+	 * Processes an &lt;code&gt;InputStream&lt;/code&gt;, no response is given back.
+	 * 
+	 * @param req
+	 *            request
+	 * @param res
+	 *            response
+	 * @throws XException
+	 *             if an error occurs
+	 */
+	private void processStreamMessage(HttpServletRequest req,
+			HttpServletResponse res) throws XException
+	{
+		// Ohne die beiden nachsten Abfragen hat
+		// Tomcat 3.3a und Tomcat 4.0.2 ein Problem
+		// mit dem nachfolgenden Reader.
+		// String contentType = req.getContentType();
+		// int contentLength = req.getContentLength();
+
+<span class="nc" id="L321">		InputStream inStream = null;</span>
+		try
+		{
+<span class="nc" id="L324">			inStream = new BufferedInputStream(req.getInputStream());</span>
+		}
+<span class="nc" id="L326">		catch (IOException e)</span>
+		{
+<span class="nc" id="L328">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_HTTP, &quot;0&quot;, e);
+<span class="nc" id="L331">		}</span>
+<span class="nc" id="L332">		Adapter adapter = new Adapter();</span>
+<span class="nc" id="L333">		adapter.callApplication(mSource, inStream, getType());</span>
+
+<span class="nc bnc" id="L335" title="All 2 branches missed.">		if (Constants.RC_OK.equals(adapter.getReturncode()))</span>
+		{
+<span class="nc" id="L337">			TAManager.getInstance().commit();</span>
+
+<span class="nc" id="L339">			initializeAmountErrors();</span>
+
+<span class="nc" id="L341">			PostProcessor.start(mSource, adapter.getResponse(),</span>
+					Constants.POSTPROCESSING_PERSYSTEM);
+
+<span class="nc" id="L344">			res.setStatus(HttpServletResponse.SC_OK);</span>
+		}
+		else
+		{
+<span class="nc" id="L348">			TAManager.getInstance().rollback();</span>
+<span class="nc" id="L349">			handleError(res, null, null, adapter.getErrormessage());</span>
+		}
+<span class="nc" id="L351">	}</span>
+
+	/**
+	 * Processes parameter messages and gives back a response.
+	 * 
+	 * @param req
+	 *            request
+	 * @param res
+	 *            response
+	 * @throws XException
+	 *             if an error occurs
+	 */
+	private void processParameterMessage(HttpServletRequest req,
+			HttpServletResponse res) throws XException
+	{
+		try
+		{
+<span class="nc" id="L368">			String contentType = req.getContentType();</span>
+
+<span class="nc" id="L370">			Map parameters = req.getParameterMap();</span>
+<span class="nc" id="L371">			Document requestDoc = XMLHelper.getDocumentBuilder(&quot;Default&quot;,</span>
+<span class="nc" id="L372">					mSource.getName()).newDocument();</span>
+
+<span class="nc bnc" id="L374" title="All 4 branches missed.">			if ((parameters != null) &amp;&amp; (!parameters.isEmpty()))</span>
+			{
+				/*
+				 * Patch sent by Raffael Niedermuller to accept an URLParameter
+				 * named WILDCARD as $WILDCARD$ in configuration
+				 */
+<span class="nc" id="L380">				Object obj = parameters.get(XBUSSystem.FILENAME_WILDCARD_XML);</span>
+<span class="nc bnc" id="L381" title="All 2 branches missed.">				if (obj == null)</span>
+				{
+<span class="nc" id="L383">					obj = parameters.get(XBUSSystem.FILENAME_WILDCARD);</span>
+				}
+<span class="nc bnc" id="L385" title="All 2 branches missed.">				if (obj != null)</span>
+				{
+<span class="nc" id="L387">					String[] values = (String[]) obj;</span>
+<span class="nc" id="L388">					mSource.setAddress(XBUSSystem.FILENAME_WILDCARD, values[0]);</span>
+				}
+
+<span class="nc" id="L391">				Element rootNode = requestDoc.createElement(mSource.getName());</span>
+<span class="nc" id="L392">				requestDoc.appendChild(rootNode);</span>
+
+<span class="nc" id="L394">				SortedSet paramSet = new TreeSet(parameters.keySet());</span>
+<span class="nc" id="L395">				String key = null;</span>
+<span class="nc" id="L396">				Node tmpNode = null;</span>
+<span class="nc" id="L397">				String[] values = null;</span>
+<span class="nc bnc" id="L398" title="All 2 branches missed.">				for (Iterator it = paramSet.iterator(); it.hasNext();)</span>
+				{
+<span class="nc" id="L400">					key = (String) it.next();</span>
+<span class="nc" id="L401">					values = (String[]) parameters.get(key);</span>
+<span class="nc bnc" id="L402" title="All 2 branches missed.">					if ((XBUSSystem.FILENAME_WILDCARD.equals(key))</span>
+<span class="nc bnc" id="L403" title="All 2 branches missed.">							|| (XBUSSystem.FILENAME_WILDCARD_XML.equals(key)))</span>
+					{
+<span class="nc" id="L405">						rootNode.setAttribute(XBUSSystem.FILENAME_WILDCARD_XML,</span>
+								values[0]);
+					}
+					else
+					{
+<span class="nc" id="L410">						values = (String[]) parameters.get(key);</span>
+<span class="nc bnc" id="L411" title="All 2 branches missed.">						for (int i = 0; i &lt; values.length; i++)</span>
+						{
+<span class="nc" id="L413">							tmpNode = requestDoc.createElement(key);</span>
+<span class="nc" id="L414">							tmpNode.appendChild(requestDoc</span>
+<span class="nc" id="L415">									.createTextNode(values[i]));</span>
+<span class="nc" id="L416">							rootNode.appendChild(tmpNode);</span>
+						}
+					}
+				}
+			}
+
+<span class="nc" id="L422">			Adapter adapter = new Adapter();</span>
+<span class="nc" id="L423">			adapter.callApplication(mSource, requestDoc, getType());</span>
+
+<span class="nc" id="L425">			Object response = adapter.getResponse();</span>
+<span class="nc" id="L426">			String responseText = null;</span>
+<span class="nc bnc" id="L427" title="All 2 branches missed.">			if (response != null)</span>
+			{
+<span class="nc" id="L429">				responseText = XMLHelper</span>
+<span class="nc" id="L430">						.serializeXML((Document) response, null);</span>
+			}
+
+<span class="nc bnc" id="L433" title="All 2 branches missed.">			if (Constants.RC_OK.equals(adapter.getReturncode()))</span>
+			{
+<span class="nc" id="L435">				TAManager.getInstance().commit();</span>
+
+<span class="nc" id="L437">				initializeAmountErrors();</span>
+
+<span class="nc" id="L439">				PostProcessor.start(mSource, null,</span>
+						Constants.POSTPROCESSING_PERSYSTEM);
+
+<span class="nc" id="L442">				res.setStatus(HttpServletResponse.SC_OK);</span>
+<span class="nc bnc" id="L443" title="All 4 branches missed.">				if ((responseText != null) &amp;&amp; (responseText.length() &gt; 0))</span>
+				{
+<span class="nc" id="L445">					res.setContentType(contentType);</span>
+<span class="nc" id="L446">					PrintWriter writer = res.getWriter();</span>
+<span class="nc" id="L447">					writer.print(responseText);</span>
+<span class="nc" id="L448">					writer.close();</span>
+<span class="nc" id="L449">				}</span>
+			}
+			else
+			{
+<span class="nc" id="L453">				TAManager.getInstance().rollback();</span>
+<span class="nc" id="L454">				handleError(res, null, requestDoc, adapter.getErrormessage());</span>
+			}
+		}
+<span class="nc" id="L457">		catch (Exception e)</span>
+		{
+<span class="nc bnc" id="L459" title="All 2 branches missed.">			if (e instanceof XException)</span>
+			{
+<span class="nc" id="L461">				throw (XException) e;</span>
+			}
+			else
+			{
+<span class="nc" id="L465">				throw new XException(Constants.LOCATION_INTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_HTTP, &quot;0&quot;, e);
+			}
+<span class="nc" id="L469">		}</span>
+<span class="nc" id="L470">	}</span>
+
+	private void handleError(HttpServletResponse res, Throwable t,
+			Object request, Object responseText)
+	{
+<span class="nc" id="L475">		incrementAmountErrors();</span>
+<span class="nc" id="L476">		String message = null;</span>
+<span class="nc bnc" id="L477" title="All 2 branches missed.">		if (t != null)</span>
+		{
+<span class="nc" id="L479">			message = t.getMessage();</span>
+		}
+<span class="nc" id="L481">		NotifyError.notifyError(this, mSource, message, request, null);</span>
+<span class="nc" id="L482">		Trace.error(&quot;Error caught while processing doPost&quot;);</span>
+		// res.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+		try
+		{
+<span class="nc bnc" id="L486" title="All 2 branches missed.">			if (responseText != null)</span>
+			{
+<span class="nc" id="L488">				res.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR,</span>
+<span class="nc" id="L489">						responseText.toString());</span>
+			}
+			else
+			{
+<span class="nc" id="L493">				res.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);</span>
+			}
+		}
+<span class="nc" id="L496">		catch (IOException e)</span>
+		{
+<span class="nc" id="L498">			Trace.error(e);</span>
+<span class="nc" id="L499">		}</span>
+<span class="nc" id="L500">	}</span>
+
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see net.sf.xbus.technical.Receiver#getType()
+	 */
+	public String getType()
+	{
+<span class="nc bnc" id="L509" title="All 2 branches missed.">		if ((HTTP_STREAM_RECEIVER.equals(mReceiverType))</span>
+<span class="nc bnc" id="L510" title="All 2 branches missed.">				|| (HTTP_PARAMETER_RECEIVER.equals(mReceiverType)))</span>
+		{
+<span class="nc" id="L512">			return Constants.TYPE_OBJECT;</span>
+		}
+		else
+		{
+<span class="nc" id="L516">			return Constants.TYPE_TEXT;</span>
+		}
+	}
+
+	private void initializeAmountErrors()
+	{
+<span class="nc" id="L522">		mAmountErrors.remove(mSource.getName());</span>
+<span class="nc" id="L523">	}</span>
+
+	private void incrementAmountErrors()
+	{
+<span class="nc" id="L527">		Integer amountErrors = (Integer) mAmountErrors.get(mSource.getName());</span>
+<span class="nc bnc" id="L528" title="All 2 branches missed.">		if (amountErrors == null)</span>
+		{
+<span class="nc" id="L530">			amountErrors = new Integer(1);</span>
+		}
+		else
+		{
+<span class="nc" id="L534">			amountErrors = new Integer(amountErrors.intValue() + 1);</span>
+		}
+<span class="nc" id="L536">		mAmountErrors.put(mSource.getName(), amountErrors);</span>
+
+<span class="nc" id="L538">		checkStop();</span>
+<span class="nc" id="L539">	}</span>
+
+	private void checkStop()
+	{
+<span class="nc" id="L543">		int stopAfterErrors = ReceiverThreadManager.getStopAfterErrors(mSource</span>
+<span class="nc" id="L544">				.getName(), &quot;HTTPReceiver&quot;);</span>
+<span class="nc" id="L545">		int amountErrors = 0;</span>
+<span class="nc" id="L546">		Integer amountErrorsInt = (Integer) mAmountErrors</span>
+<span class="nc" id="L547">				.get(mSource.getName());</span>
+<span class="nc bnc" id="L548" title="All 2 branches missed.">		if (amountErrorsInt != null)</span>
+		{
+<span class="nc" id="L550">			amountErrors = amountErrorsInt.intValue();</span>
+		}
+<span class="nc bnc" id="L552" title="All 6 branches missed.">		if (!ReceiverThreadManager.getInstance().isHTTPReceiverStopped(</span>
+<span class="nc" id="L553">				mSource.getName())</span>
+				&amp;&amp; (stopAfterErrors &gt; 0) &amp;&amp; (amountErrors &gt;= stopAfterErrors))
+		{
+<span class="nc" id="L556">			String message = &quot;Stopping HTTPReceiver &quot; + mSource.getName()</span>
+					+ &quot; because of maximum amount of errors!&quot;;
+<span class="nc" id="L558">			Trace.always(message);</span>
+<span class="nc" id="L559">			NotifyError.notifyError(this, mSource, message, null, null);</span>
+			try
+			{
+<span class="nc" id="L562">				ReceiverThreadManager.getInstance().demandStopReceiverThread(</span>
+<span class="nc" id="L563">						mSource.getName());</span>
+			}
+<span class="nc" id="L565">			catch (XException e)</span>
+			{
+				// do nothing
+<span class="nc" id="L568">			}</span>
+		}
+<span class="nc" id="L570">	}</span>
+
+	public static void initializeAmountErrorsCompletely()
+	{
+<span class="nc" id="L574">		mAmountErrors.clear();</span>
+<span class="nc" id="L575">	}</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,794 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FTPClient.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">52_lagoon</a> &gt; <a href="index.source.html" class="el_package">nu.staldal.ftp</a> &gt; <span class="el_source">FTPClient.java</span></div><h1>FTPClient.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2002, Mikael St�ldal
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ * notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ * notice, this list of conditions and the following disclaimer in the
+ * documentation and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of the author nor the names of its contributors
+ * may be used to endorse or promote products derived from this software
+ * without specific prior written permission.
+ *
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ *
+ * Note: This is known as &quot;the modified BSD license&quot;. It's an approved
+ * Open Source and Free Software license, see
+ * http://www.opensource.org/licenses/
+ * and
+ * http://www.gnu.org/philosophy/license-list.html
+ */
+
+package nu.staldal.ftp;
+
+import java.io.*;
+import java.net.*;
+
+/**
+ * An FTP client. See RFC-959.
+ *
+ * Pathnames must be specified using '/' for directory separator.
+ * Passive mode will be used for all transfers.
+ * &lt;em&gt;Not&lt;/em&gt; thread-safe, i.e. you cannot start a new file while another one is in
+ * progress. 
+ *
+ * &lt;strong&gt;Note:&lt;/strong&gt; This class will transmit password in clear text over
+ * the network.
+ */
+public class FTPClient
+{
+	private static final boolean DEBUG = false;
+
+    private Socket control;
+    private InputStream controlIn;
+    private OutputStream controlOut;
+   	private String respString;
+
+<span class="nc" id="L66">    private String lastPath = &quot;&quot;;</span>
+<span class="nc" id="L67">    private int lastPathLen = 0;</span>
+
+
+	private void sendLine(String str)
+		throws IOException
+	{
+<span class="nc" id="L73">		controlOut.write(str.getBytes(&quot;US-ASCII&quot;));</span>
+<span class="nc" id="L74">		controlOut.write('\r');</span>
+<span class="nc" id="L75">		controlOut.write('\n');</span>
+<span class="nc" id="L76">		controlOut.flush();</span>
+<span class="nc" id="L77">	}</span>
+
+	
+	private String recvLine()
+		throws EOFException, IOException
+	{
+<span class="nc" id="L83">		StringBuffer sb = new StringBuffer();</span>
+
+		while (true)
+		{
+<span class="nc" id="L87">			int i = controlIn.read();</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">			if (i &lt; 0) throw new EOFException(&quot;Unexpected EOF when reading socket&quot;);</span>
+<span class="nc" id="L89">			byte b = (byte)i;</span>
+<span class="nc bnc" id="L90" title="All 2 branches missed.">			if (b == '\n') break;</span>
+<span class="nc bnc" id="L91" title="All 2 branches missed.">			if (b != '\r') sb.append((char)b);</span>
+<span class="nc" id="L92">		}</span>
+
+<span class="nc" id="L94">		return sb.toString();</span>
+	}
+
+
+	private int recvResponse()
+		throws EOFException, IOException
+	{
+<span class="nc" id="L101">		respString = recvLine();</span>
+<span class="nc" id="L102">		String code = respString.substring(0,3);</span>
+<span class="nc bnc" id="L103" title="All 2 branches missed.">		if (respString.charAt(3) == '-') // multiline response</span>
+		{
+<span class="nc" id="L105">			String endMark = code + ' ';</span>
+			while (true)
+			{
+<span class="nc" id="L108">				respString = recvLine();</span>
+<span class="nc bnc" id="L109" title="All 2 branches missed.">				if (respString.startsWith(endMark))</span>
+<span class="nc" id="L110">					break;</span>
+			}
+		}
+<span class="nc" id="L113">		return Integer.parseInt(code);</span>
+	}
+
+	
+	/**
+	 * Connect to an FTP server and login.
+	 *
+	 * @param url  an URL specifying host, port, username and optionally
+	 *             an initial path to change to
+	 * @param password  the password to use for logging in
+	 *
+	 * @throws MalformedURLException  if there are any syntactic error in the URL
+	 * @throws UnknownHostException  if the hostname specified doesn't exist
+	 * @throws FTPAuthenticationException  if the password is wrong
+	 * @throws FTPException if any FTP protocol error occurs
+	 * @throws IOException if any other IO error occurs
+	 */
+    public FTPClient(String url, String password)
+	    throws MalformedURLException, UnknownHostException,
+        	FTPAuthenticationException, FTPException, IOException 
+<span class="nc" id="L133">    {</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">		if (!url.startsWith(&quot;ftp://&quot;))</span>
+<span class="nc" id="L135">			throw new MalformedURLException(url);</span>
+
+<span class="nc" id="L137">		int userPos = 5;</span>
+<span class="nc" id="L138">		int hostPos = url.indexOf('@', userPos+1);</span>
+<span class="nc bnc" id="L139" title="All 2 branches missed.">		if (hostPos &lt; 0)</span>
+<span class="nc" id="L140">			throw new MalformedURLException(url);</span>
+<span class="nc" id="L141">		int portPos = url.indexOf(':', hostPos+1);</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">		int pathPos = url.indexOf('/', ((portPos&lt;0) ? hostPos : portPos)+1);</span>
+
+		String username;
+		String host;
+		int port;
+		String path;
+
+		try
+		{
+<span class="nc" id="L151">			username = url.substring(userPos+1,hostPos);</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">			host = url.substring(hostPos+1,(portPos&lt;0) ? pathPos : portPos);</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">			port = (portPos&lt;0) ? 21 : Integer.parseInt(url.substring(portPos+1,pathPos));</span>
+<span class="nc" id="L154">			path = url.substring(pathPos+1);</span>
+		}
+<span class="nc" id="L156">		catch (NumberFormatException e)</span>
+		{
+<span class="nc" id="L158">			throw new MalformedURLException(url);</span>
+<span class="nc" id="L159">		}</span>
+
+<span class="nc bnc" id="L161" title="All 4 branches missed.">		if (port &lt; 0 || port &gt; 65535 ||</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">			username.length() &lt; 1 ||</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">			host.length() &lt; 1 ||</span>
+<span class="nc bnc" id="L164" title="All 4 branches missed.">			(path.length() &gt; 0 &amp;&amp; path.charAt(path.length()-1) != '/'))</span>
+<span class="nc" id="L165">			throw new MalformedURLException(url);</span>
+			
+<span class="nc" id="L167">		connect(host, port, username, password);</span>
+<span class="nc" id="L168">		initialDir(path);				</span>
+<span class="nc" id="L169">	}</span>
+
+		
+	/**
+	 * Connect to an FTP server and login.
+	 *
+	 * @param host  the host to connect to, may be a domain name or IP address
+	 * @param port  the control channel port (default 21)
+	 * @param username  the username to use for logging in
+	 * @param password  the password to use for logging in
+	 * @param path  initial path, realtive to home directory unless starting with '/',
+	 *              may be &lt;code&gt;null&lt;/code&gt; to use home directory
+	 *
+	 * @throws UnknownHostException  if the hostname specified doesn't exist
+	 * @throws FTPAuthenticationException  if the password is wrong
+	 * @throws FTPException if any FTP protocol error occurs
+	 * @throws IOException if any other IO error occurs
+	 */
+	public FTPClient(String host, int port, String username, String password, String path)
+	    throws UnknownHostException, FTPAuthenticationException, FTPException, IOException 
+<span class="nc" id="L189">	{</span>
+<span class="nc" id="L190">		connect(host, port, username, password);</span>
+<span class="nc" id="L191">		initialDir(path);</span>
+<span class="nc" id="L192">	}</span>
+	
+
+	private void connect(String host, int port, String username, String password)
+	    throws UnknownHostException, FTPAuthenticationException, FTPException, IOException 
+	{
+<span class="nc bnc" id="L198" title="All 4 branches missed.">		if (port &lt; 0 || port &gt; 65535) port = 21;</span>
+			
+<span class="nc" id="L200">		control = new Socket(host, port);</span>
+<span class="nc" id="L201">		controlIn = control.getInputStream();</span>
+<span class="nc" id="L202">		controlOut = control.getOutputStream();</span>
+
+		int resp;
+
+		// Receive greeting message
+		greeting: while (true)
+		{
+<span class="nc" id="L209">			resp = recvResponse();</span>
+<span class="nc bnc" id="L210" title="All 4 branches missed.">			switch (resp)</span>
+			{
+				case 120:
+<span class="nc" id="L213">					continue greeting;</span>
+
+				case 220:
+<span class="nc" id="L216">					break greeting;</span>
+
+				case 421:
+<span class="nc" id="L219">					throw new FTPException(&quot;FTP server not avaliable (421)&quot;);</span>
+
+				default:
+<span class="nc" id="L222">					throw new FTPException(&quot;Unexpected response from FTP server: &quot; + respString);</span>
+			}
+		}
+
+<span class="nc" id="L226">		sendLine(&quot;USER &quot; + username);</span>
+<span class="nc" id="L227">		resp = recvResponse();</span>
+<span class="nc bnc" id="L228" title="All 5 branches missed.">		switch (resp)</span>
+		{
+			case 230:
+<span class="nc" id="L231">				break;</span>
+
+			case 331:
+<span class="nc" id="L234">				sendLine(&quot;PASS &quot; + password);</span>
+<span class="nc" id="L235">				resp = recvResponse();</span>
+<span class="nc bnc" id="L236" title="All 4 branches missed.">				switch (resp)</span>
+				{
+					case 230:
+<span class="nc" id="L239">						break;</span>
+
+					case 530:
+<span class="nc" id="L242">                        throw new FTPAuthenticationException();</span>
+
+					case 421:
+<span class="nc" id="L245">						throw new FTPException(&quot;FTP server not avaliable (421)&quot;);</span>
+
+					default:
+<span class="nc" id="L248">						throw new FTPException(&quot;Unexpected response from FTP server: &quot; + respString);</span>
+				}
+				break;
+
+			case 530:
+<span class="nc" id="L253">				throw new FTPException(&quot;Invalid username&quot;);</span>
+
+			case 421:
+<span class="nc" id="L256">				throw new FTPException(&quot;FTP server not avaliable (421)&quot;);</span>
+
+			default:
+<span class="nc" id="L259">				throw new FTPException(&quot;Unexpected response from FTP server: &quot; + respString);</span>
+		}
+<span class="nc" id="L261">	}</span>
+	
+
+	private void initialDir(String path)
+		throws FTPException, IOException	
+	{
+<span class="nc bnc" id="L267" title="All 2 branches missed.">		if (path == null) return;</span>
+<span class="nc" id="L268">		int pos, oldPos = 0;</span>
+        while (true)
+        {
+<span class="nc" id="L271">            pos = path.indexOf('/', oldPos);</span>
+<span class="nc bnc" id="L272" title="All 2 branches missed.">            if (pos &lt; 0) break;</span>
+<span class="nc" id="L273">            String comp = path.substring(oldPos, pos);</span>
+<span class="nc bnc" id="L274" title="All 2 branches missed.">            if (!chdir(comp))</span>
+<span class="nc" id="L275">				throw new FTPException(&quot;Path not found: &quot; + path);</span>
+<span class="nc" id="L276">            oldPos = pos + 1;</span>
+<span class="nc" id="L277">        }	</span>
+<span class="nc" id="L278">	}</span>
+	
+
+    /**
+     * Logout and disconnect from the FTP server.
+     *
+     * After this method has been invoked, no other method may be invoked.
+     */
+    public void close()
+    	throws IOException
+    {
+<span class="nc" id="L289">		sendLine(&quot;QUIT&quot;);</span>
+<span class="nc" id="L290">		int resp = recvResponse();</span>
+<span class="nc" id="L291">		control.close();</span>
+<span class="nc" id="L292">        control = null;</span>
+<span class="nc" id="L293">    }</span>
+
+	
+	/**
+	 * Change the current directory.
+	 * 
+	 * @param dir  the directory to change into
+	 * 
+	 * @return true if successful, false otherwise
+	 * @throws FTPException if any FTP protocol error occurs
+	 * @throws IOException if any other IO error occurs
+	 */
+	private boolean chdir(String dir)
+		throws FTPException, IOException
+	{
+		if (DEBUG) System.out.println(&quot;CWD &quot; + dir);
+<span class="nc" id="L309">		sendLine(&quot;CWD &quot; + dir);</span>
+<span class="nc" id="L310">		int resp = recvResponse();</span>
+<span class="nc bnc" id="L311" title="All 4 branches missed.">		switch (resp)</span>
+		{
+			case 250:
+<span class="nc" id="L314">				return true;</span>
+
+			case 550:
+<span class="nc" id="L317">				return false;</span>
+
+			case 421:
+<span class="nc" id="L320">				throw new FTPException(&quot;FTP server not avaliable (421)&quot;);</span>
+
+			default:
+<span class="nc" id="L323">				throw new FTPException(&quot;Unexpected response from FTP server: &quot; + respString);</span>
+		}
+	}
+
+	
+	/**
+	 * Change the current directory to the parent directory.
+	 * 
+	 * @return true if successful, false otherwise
+	 * @throws FTPException if any FTP protocol error occurs
+	 * @throws IOException if any other IO error occurs
+	 */
+	private boolean cdup()
+		throws FTPException, IOException
+	{
+		if (DEBUG) System.out.println(&quot;CDUP&quot;);
+<span class="nc" id="L339">		sendLine(&quot;CDUP&quot;);</span>
+<span class="nc" id="L340">		int resp = recvResponse();</span>
+<span class="nc bnc" id="L341" title="All 4 branches missed.">		switch (resp)</span>
+		{
+			case 200:
+			case 250:
+<span class="nc" id="L345">				return true;</span>
+
+			case 550:
+<span class="nc" id="L348">				return false;</span>
+
+			case 421:
+<span class="nc" id="L351">				throw new FTPException(&quot;FTP server not avaliable (421)&quot;);</span>
+
+			default:
+<span class="nc" id="L354">				throw new FTPException(&quot;Unexpected response from FTP server: &quot; + respString);</span>
+		}
+	}
+
+
+	/**
+	 * Create a new directory.
+	 *
+	 * @param dir  the directory to create
+	 * 
+	 * @return true if successful, false otherwise
+	 * @throws FTPException if any FTP protocol error occurs
+	 * @throws IOException if any other IO error occurs
+	 */
+	private boolean mkdir(String dir)
+		throws FTPException, IOException
+	{
+		if (DEBUG) System.out.println(&quot;MKD &quot; + dir);
+<span class="nc" id="L372">		sendLine(&quot;MKD &quot; + dir);</span>
+<span class="nc" id="L373">		int resp = recvResponse();</span>
+<span class="nc bnc" id="L374" title="All 4 branches missed.">		switch (resp)</span>
+		{
+			case 257:
+<span class="nc" id="L377">				return true;</span>
+
+			case 550:
+<span class="nc" id="L380">				return false;</span>
+
+			case 421:
+<span class="nc" id="L383">				throw new FTPException(&quot;FTP server not avaliable (421)&quot;);</span>
+
+			default:
+<span class="nc" id="L386">				throw new FTPException(&quot;Unexpected response from FTP server: &quot; + respString);</span>
+		}
+	}
+
+
+    /**
+     * Create a new file, or overwrite an existing file. 
+	 * Will create directories as nessesary.
+     *
+     * @param pathname  path to the file
+	 *
+	 * @return an OutputStream to write to, close() it when finished
+	 * @throws FTPException if any FTP protocol error occurs
+	 * @throws IOException if any other IO error occurs
+     */
+    public OutputStream store(String pathname)
+        throws FTPException, IOException
+	{
+<span class="nc" id="L404">		return store(pathname, false);</span>
+	}
+
+
+    /**
+     * Create a new file, or overwrite an existing file. 
+	 * Will create directories as nessesary.
+     *
+     * @param pathname  path to the file
+	 * @param last  close the FTPClient after transferring this file
+	 *
+	 * @return an OutputStream to write to, close() it when finished
+	 * @throws FTPException if any FTP protocol error occurs
+	 * @throws IOException if any other IO error occurs
+     */
+    public OutputStream store(String pathname, boolean last)
+        throws FTPException, IOException
+	{
+<span class="nc" id="L422">		int pos = pathname.lastIndexOf('/');</span>
+<span class="nc" id="L423">	    String path = pathname.substring(0, pos+1);</span>
+<span class="nc" id="L424">	    String filename = pathname.substring(pos+1);</span>
+
+<span class="nc" id="L426">		changeDir(path);</span>
+<span class="nc" id="L427">		return upload(&quot;STOR&quot;, filename, last);		</span>
+	}
+    
+
+    /**
+     * Create a new file, or append to an existing file. 
+	 * Will create directories as nessesary.
+     *
+     * @param pathname  path to the file
+	 *
+	 * @return an OutputStream to write to, close() it when finished
+	 * @throws FTPException if any FTP protocol error occurs
+	 * @throws IOException if any other IO error occurs
+     */
+    public OutputStream append(String pathname)
+        throws FTPException, IOException
+	{
+<span class="nc" id="L444">		return append(pathname, false);</span>
+	}
+
+
+    /**
+     * Create a new file, or append to an existing file. 
+	 * Will create directories as nessesary.
+     *
+     * @param pathname  path to the file
+	 * @param last  close the FTPClient after transferring this file
+	 *
+	 * @return an OutputStream to write to, close() it when finished
+	 * @throws FTPException if any FTP protocol error occurs
+	 * @throws IOException if any other IO error occurs
+     */
+    public OutputStream append(String pathname, boolean last)
+        throws FTPException, IOException
+	{
+<span class="nc" id="L462">		int pos = pathname.lastIndexOf('/');</span>
+<span class="nc" id="L463">	    String path = pathname.substring(0, pos+1);</span>
+<span class="nc" id="L464">	    String filename = pathname.substring(pos+1);</span>
+
+<span class="nc" id="L466">		changeDir(path);</span>
+<span class="nc" id="L467">		return upload(&quot;APPE&quot;, filename, last);		</span>
+	}
+
+
+    /**
+     * Create a new file with an unique name. 
+	 * Will create directories as nessesary.
+     *
+     * @param path  path to the file, must end with '/' or be empty
+	 *
+	 * @return an OutputStream to write to, close() it when finished
+	 * @throws FTPException if any FTP protocol error occurs
+	 * @throws IOException if any other IO error occurs
+     */
+    public OutputStream storeUnique(String path)
+        throws FTPException, IOException
+	{
+<span class="nc" id="L484">		return storeUnique(path, false);		</span>
+	}
+
+
+    /**
+     * Create a new file with an unique name. 
+	 * Will create directories as nessesary.
+     *
+     * @param path  path to the file, must end with '/' or be empty
+	 * @param last  close the FTPClient after transferring this file
+	 *
+	 * @return an OutputStream to write to, close() it when finished
+	 * @throws FTPException if any FTP protocol error occurs
+	 * @throws IOException if any other IO error occurs
+     */
+    public OutputStream storeUnique(String path, boolean last)
+        throws FTPException, IOException
+	{
+<span class="nc" id="L502">		changeDir(path);</span>
+<span class="nc" id="L503">		return upload(&quot;STOU&quot;, null, last);		</span>
+	}
+
+
+	private void changeDir(String path)
+        throws FTPException, IOException
+	{
+<span class="nc bnc" id="L510" title="All 2 branches missed.">		if (!path.equals(lastPath))</span>
+		{
+<span class="nc bnc" id="L512" title="All 4 branches missed.">			if (path.length() &gt; 0 &amp;&amp; path.charAt(0) != '/') path = '/' + path; </span>
+			
+			// change directory
+<span class="nc bnc" id="L515" title="All 2 branches missed.">			for (int i = 0; i &lt; lastPathLen; i++)</span>
+<span class="nc bnc" id="L516" title="All 2 branches missed.">				if (!cdup())</span>
+<span class="nc" id="L517">					throw new FTPException(&quot;Unable to change to parent directory&quot;);</span>
+
+<span class="nc" id="L519">			lastPathLen = 0;</span>
+<span class="nc" id="L520">			int pos, oldPos = 1;</span>
+<span class="nc" id="L521">			boolean mkd = false;</span>
+			while (true)
+			{
+<span class="nc" id="L524">				pos = path.indexOf('/', oldPos);</span>
+<span class="nc bnc" id="L525" title="All 2 branches missed.">				if (pos &lt; 0) break;</span>
+<span class="nc" id="L526">				lastPathLen++;</span>
+<span class="nc" id="L527">				String comp = path.substring(oldPos, pos);</span>
+<span class="nc bnc" id="L528" title="All 2 branches missed.">				if (mkd)</span>
+				{
+<span class="nc bnc" id="L530" title="All 2 branches missed.">					if (!mkdir(comp))</span>
+<span class="nc" id="L531">						throw new FTPException(&quot;Unable to create directory: &quot; + comp);</span>
+<span class="nc bnc" id="L532" title="All 2 branches missed.">					if (!chdir(comp))</span>
+<span class="nc" id="L533">						throw new FTPException(&quot;Unable to change into newly created directory: &quot; + comp);</span>
+				}
+				else
+				{
+<span class="nc bnc" id="L537" title="All 2 branches missed.">					if (!chdir(comp))</span>
+					{
+<span class="nc bnc" id="L539" title="All 2 branches missed.">						if (!mkdir(comp))</span>
+<span class="nc" id="L540">							throw new FTPException(&quot;Unable to create directory: &quot; + comp);</span>
+<span class="nc bnc" id="L541" title="All 2 branches missed.">						if (!chdir(comp))</span>
+<span class="nc" id="L542">							throw new FTPException(&quot;Unable to change into newly created directory: &quot; + comp);</span>
+<span class="nc" id="L543">						mkd = true;</span>
+					}
+				}
+<span class="nc" id="L546">				oldPos = pos + 1;</span>
+<span class="nc" id="L547">			}</span>
+		}
+<span class="nc" id="L549">		lastPath = path;		</span>
+<span class="nc" id="L550">	}</span>
+	
+	
+	private OutputStream upload(String cmd, String filename, boolean last)
+        throws FTPException, IOException
+	{
+		int resp;
+
+<span class="nc" id="L558">		sendLine(&quot;TYPE I&quot;);</span>
+<span class="nc" id="L559">		resp = recvResponse();</span>
+<span class="nc bnc" id="L560" title="All 3 branches missed.">		switch (resp)</span>
+		{
+			case 200:
+<span class="nc" id="L563">				break;</span>
+
+			case 421:
+<span class="nc" id="L566">				throw new FTPException(&quot;FTP server not avaliable (421)&quot;);</span>
+
+			default:
+<span class="nc" id="L569">				throw new FTPException(&quot;Unexpected response from FTP server: &quot; + respString);</span>
+		}
+
+<span class="nc" id="L572">		sendLine(&quot;PASV&quot;);</span>
+<span class="nc" id="L573">		resp = recvResponse();</span>
+<span class="nc bnc" id="L574" title="All 3 branches missed.">		switch (resp)</span>
+		{
+			case 227:
+<span class="nc" id="L577">				break;</span>
+
+			case 421:
+<span class="nc" id="L580">				throw new FTPException(&quot;FTP server not avaliable (421)&quot;);</span>
+
+			default:
+<span class="nc" id="L583">				throw new FTPException(&quot;Unexpected response from FTP server: &quot; + respString);</span>
+		}
+
+		InetAddress addr;
+		int port;
+<span class="nc" id="L588">		String s = respString.replace(',', '.');</span>
+<span class="nc" id="L589">		int i = 3;</span>
+
+<span class="nc bnc" id="L591" title="All 4 branches missed.">		while (i &lt; s.length() &amp;&amp; !Character.isDigit(s.charAt(i))) i++;</span>
+<span class="nc bnc" id="L592" title="All 2 branches missed.">		if (i == s.length()) throw new FTPException(&quot;invalid response to PASV command&quot;);</span>
+<span class="nc" id="L593">		int c1 = s.indexOf('.',i);</span>
+<span class="nc bnc" id="L594" title="All 2 branches missed.">		if (c1 &lt; 0) throw new FTPException(&quot;invalid response to PASV command&quot;);</span>
+<span class="nc" id="L595">		int c2 = s.indexOf('.',c1+2);</span>
+<span class="nc bnc" id="L596" title="All 2 branches missed.">		if (c2 &lt; 0) throw new FTPException(&quot;invalid response to PASV command&quot;);</span>
+<span class="nc" id="L597">		int c3 = s.indexOf('.',c2+1);</span>
+<span class="nc bnc" id="L598" title="All 2 branches missed.">		if (c3 &lt; 0) throw new FTPException(&quot;invalid response to PASV command&quot;);</span>
+<span class="nc" id="L599">		int c4 = s.indexOf('.',c3+1);</span>
+<span class="nc bnc" id="L600" title="All 2 branches missed.">		if (c4 &lt; 0) throw new FTPException(&quot;invalid response to PASV command&quot;);</span>
+<span class="nc" id="L601">		int c5 = s.indexOf('.',c4+1);</span>
+<span class="nc bnc" id="L602" title="All 2 branches missed.">		if (c5 &lt; 0) throw new FTPException(&quot;invalid response to PASV command&quot;);</span>
+		try {
+<span class="nc" id="L604">			addr = InetAddress.getByName(s.substring(i,c4));</span>
+
+<span class="nc" id="L606">			i = c5+1;</span>
+<span class="nc bnc" id="L607" title="All 4 branches missed.">			while (i &lt; s.length() &amp;&amp; Character.isDigit(s.charAt(i))) i++;</span>
+<span class="nc" id="L608">			int portA = Integer.parseInt(s.substring(c4+1,c5));</span>
+<span class="nc" id="L609">			int portB = Integer.parseInt(s.substring(c5+1,i));</span>
+<span class="nc" id="L610">			port = (portA&lt;&lt;8) + portB;</span>
+		}
+<span class="nc" id="L612">		catch (UnknownHostException e)</span>
+		{
+<span class="nc" id="L614">			throw new FTPException(&quot;invalid response to PASV command&quot;);</span>
+		}
+<span class="nc" id="L616">		catch (NumberFormatException e)</span>
+		{
+<span class="nc" id="L618">			throw new FTPException(&quot;invalid response to PASV command&quot;);</span>
+<span class="nc" id="L619">		}</span>
+
+<span class="nc bnc" id="L621" title="All 2 branches missed.">		if (cmd == null) </span>
+<span class="nc" id="L622">			sendLine(cmd); </span>
+		else
+<span class="nc" id="L624">			sendLine(cmd + &quot; &quot; + filename);</span>
+			
+<span class="nc" id="L626">		Socket data = new Socket(addr, port);</span>
+<span class="nc" id="L627">		resp = recvResponse();</span>
+<span class="nc bnc" id="L628" title="All 3 branches missed.">		switch (resp)</span>
+		{
+			case 125:
+			case 150:
+<span class="nc" id="L632">				break;</span>
+
+			case 421:
+<span class="nc" id="L635">				throw new FTPException(&quot;FTP server not avaliable (421)&quot;);</span>
+
+			default:
+<span class="nc" id="L638">				throw new FTPException(&quot;Unexpected response from FTP server: &quot; + respString);</span>
+		}
+
+<span class="nc bnc" id="L641" title="All 2 branches missed.">		return new FTPOutputStream(data.getOutputStream(), data, last ? this : null);</span>
+    }
+
+	
+    /**
+     * Deletes a file.
+	 *
+     * @param pathname  path to the file
+	 *
+	 * @return true if successful, false otherwise (file didn't exsist)
+	 * @throws FTPException if any FTP protocol error occurs
+	 * @throws IOException if any other IO error occurs
+     */
+    public boolean deleteFile(String pathname)
+        throws FTPException, IOException
+    {
+		String path;
+		String fn;
+<span class="nc" id="L659">		int pos = pathname.lastIndexOf('/');</span>
+<span class="nc" id="L660">		path = pathname.substring(0, pos+1);</span>
+<span class="nc" id="L661">		fn = pathname.substring(pos+1);</span>
+
+<span class="nc bnc" id="L663" title="All 2 branches missed.">		if (!path.equals(lastPath))</span>
+		{
+			// change directory
+<span class="nc bnc" id="L666" title="All 2 branches missed.">			for (int i = 0; i &lt; lastPathLen; i++)</span>
+<span class="nc bnc" id="L667" title="All 2 branches missed.">				if (!cdup())</span>
+<span class="nc" id="L668">					throw new FTPException(&quot;Unable to change to parent directory&quot;);</span>
+
+<span class="nc" id="L670">			lastPathLen = 0;</span>
+<span class="nc" id="L671">			int oldPos = 1;</span>
+			while (true)
+			{
+<span class="nc" id="L674">				pos = path.indexOf('/', oldPos);</span>
+<span class="nc bnc" id="L675" title="All 2 branches missed.">				if (pos &lt; 0) break;</span>
+<span class="nc" id="L676">				lastPathLen++;</span>
+<span class="nc" id="L677">				String comp = path.substring(oldPos, pos);</span>
+<span class="nc bnc" id="L678" title="All 2 branches missed.">				if (!chdir(comp))</span>
+				{
+<span class="nc" id="L680">					return false; // file doesn't exist</span>
+				}
+<span class="nc" id="L682">				oldPos = pos + 1;</span>
+<span class="nc" id="L683">			}</span>
+		}
+<span class="nc" id="L685">		lastPath = path;</span>
+
+<span class="nc" id="L687">		sendLine(&quot;DELE &quot; + fn);</span>
+<span class="nc" id="L688">		int resp = recvResponse();</span>
+<span class="nc bnc" id="L689" title="All 5 branches missed.">		switch (resp)</span>
+		{
+			case 250:
+<span class="nc" id="L692">				return true;</span>
+			
+			case 550:
+<span class="nc" id="L695">				return false;</span>
+
+			case 450:
+<span class="nc" id="L698">				throw new FTPException(&quot;Unable to delete file: &quot; + respString);</span>
+
+			case 421:
+<span class="nc" id="L701">				throw new FTPException(&quot;FTP server not avaliable (421)&quot;);</span>
+
+			default:
+<span class="nc" id="L704">				throw new FTPException(&quot;Unexpected response from FTP server: &quot; + respString);</span>
+		}
+	}
+
+
+	class FTPOutputStream extends OutputStream
+	{
+		private Socket data;
+		private OutputStream out;
+		private FTPClient ftp;
+
+		
+		FTPOutputStream(OutputStream out, Socket data, FTPClient ftp)
+<span class="nc" id="L717">		{</span>
+<span class="nc" id="L718">			this.out = out;</span>
+<span class="nc" id="L719">			this.data = data;</span>
+<span class="nc" id="L720">			this.ftp = ftp;</span>
+<span class="nc" id="L721">		}</span>
+
+
+		public void write(int b)
+            throws IOException
+		{
+<span class="nc" id="L727">			out.write(b);	</span>
+<span class="nc" id="L728">		}</span>
+
+					
+		public void write(byte[] b)
+            throws IOException
+		{
+<span class="nc" id="L734">			out.write(b);	</span>
+<span class="nc" id="L735">		}</span>
+
+		   
+		public void write(byte[] b, int off, int len)
+            throws IOException
+		{
+<span class="nc" id="L741">			out.write(b, off, len);	</span>
+<span class="nc" id="L742">		}</span>
+
+		   
+		public void flush()
+        	throws IOException
+		{
+<span class="nc" id="L748">			out.flush();	</span>
+<span class="nc" id="L749">		}</span>
+
+		
+		public void close()
+			throws IOException
+		{
+<span class="nc" id="L755">			out.close();</span>
+
+<span class="nc bnc" id="L757" title="All 2 branches missed.">			if (data != null)</span>
+			{
+<span class="nc" id="L759">				data.close();</span>
+<span class="nc" id="L760">				data = null;</span>
+			}
+	
+			theLoop: while (true)
+			{
+<span class="nc" id="L765">				int resp = recvResponse();</span>
+<span class="nc bnc" id="L766" title="All 4 branches missed.">				switch (resp)</span>
+				{
+					case 226:
+					case 250:
+<span class="nc" id="L770">						break;</span>
+	
+					case 425:
+					case 426:
+					case 451:
+					case 551:
+					case 552:
+<span class="nc" id="L777">						throw new FTPException(&quot;Error in file transfer (&quot; + resp + &quot;)&quot;);</span>
+	
+					case 421:
+<span class="nc" id="L780">						throw new FTPException(&quot;FTP server not avaliable (421)&quot;);</span>
+	
+					default:
+<span class="nc" id="L783">						throw new FTPException(&quot;Unexpected response from FTP server: &quot; + respString);</span>
+				}
+				break;
+			}
+			
+<span class="nc bnc" id="L788" title="All 2 branches missed.">			if (ftp != null) ftp.close(); </span>
+<span class="nc" id="L789">		}				</span>
+	}	
+	
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

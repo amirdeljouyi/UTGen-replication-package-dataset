@@ -1,0 +1,389 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TunnelServlet.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.net.tunnel</a> &gt; <span class="el_source">TunnelServlet.java</span></div><h1>TunnelServlet.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2004-2006 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: TunnelServlet.java,v 1.3 2007/03/10 12:42:13 tanderson Exp $
+ */
+package org.exolab.jms.net.tunnel;
+
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InterruptedIOException;
+import java.io.OutputStream;
+import java.io.PrintWriter;
+import java.net.Socket;
+
+
+/**
+ * HTTP Tunnel servlet.
+ *
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.3 $ $Date: 2007/03/10 12:42:13 $
+ */
+<span class="nc" id="L65">public class TunnelServlet extends HttpServlet {</span>
+
+    /**
+     * The host that the server is running on.
+     */
+    private String _host;
+
+    /**
+     * The port that the connector is listening on.
+     */
+    private int _port;
+
+    /**
+     * The socket timeout, in milliseconds. A value of &lt;code&gt;0&lt;/code&gt; indicates
+     * to block indefinitely.
+     */
+    private int _timeout;
+
+    /**
+     * The connection manager.
+     */
+<span class="nc" id="L86">    private static final SocketManager _manager = new SocketManager();</span>
+
+    /**
+     * Initialisation property name for the host that the server is running on.
+     */
+    private static final String SERVER_HOST = &quot;host&quot;;
+
+    /**
+     * Initialisation property name for the port that the connector is listening
+     * on.
+     */
+    private static final String SERVER_PORT = &quot;port&quot;;
+
+    /**
+     * Initialisation property name for the maximum time a connection will
+     * block waiting for data.
+     */
+    private static final String READ_TIMEOUT = &quot;readTimeout&quot;;
+
+    /**
+     * The default read timeout in seconds.
+     */
+    private static final int DEFAULT_READ_TIMEOUT = 30;
+
+    /**
+     * Initialisation property name for the time a connection must be idle for,
+     * before it may be reaped.
+     */
+    private static final String IDLE_PERIOD = &quot;idlePeriod&quot;;
+
+    /**
+     * The default idle period in seconds.
+     */
+    private static final int DEFAULT_IDLE_PERIOD = 60 * 5;
+
+
+    /**
+     * Initialise the servlet.
+     *
+     * @throws ServletException if the servlet can't be initialised
+     */
+    public void init() throws ServletException {
+<span class="nc" id="L128">        _host = getString(SERVER_HOST);</span>
+<span class="nc" id="L129">        _port = getInt(SERVER_PORT);</span>
+
+<span class="nc" id="L131">        int readTimeout = getInt(READ_TIMEOUT, DEFAULT_READ_TIMEOUT);</span>
+<span class="nc" id="L132">        int idlePeriod = getInt(IDLE_PERIOD, DEFAULT_IDLE_PERIOD);</span>
+
+<span class="nc" id="L134">        _timeout = readTimeout * 1000;</span>
+<span class="nc" id="L135">        _manager.setIdlePeriod(idlePeriod);</span>
+
+<span class="nc" id="L137">        log(&quot;OpenJMS tunnel accepting requests (timeout=&quot; + readTimeout</span>
+                + &quot;, idle=&quot; + idlePeriod);
+<span class="nc" id="L139">    }</span>
+
+    /**
+     * Handle a GET request. This method always sets the response code to
+     * &lt;code&gt;HttpServletResponse.SC_BAD_REQUEST&lt;/code&gt;.
+     *
+     * @param request  the client request
+     * @param response the response to the request
+     * @throws IOException for any I/O error
+     */
+    protected void doGet(HttpServletRequest request,
+                         HttpServletResponse response) throws IOException {
+<span class="nc" id="L151">        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);</span>
+<span class="nc" id="L152">    }</span>
+
+    /**
+     * Handle a POST request.
+     *
+     * @param request  the client request
+     * @param response the response to the request
+     * @throws IOException for any I/O error
+     */
+    protected void doPost(HttpServletRequest request,
+                          HttpServletResponse response) throws IOException {
+
+<span class="nc" id="L164">        String action = request.getHeader(&quot;action&quot;);</span>
+
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        if (action == null) {</span>
+<span class="nc" id="L167">            response.sendError(HttpServletResponse.SC_BAD_REQUEST,</span>
+                               &quot;Invalid action&quot;);
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        } else if (action.equals(&quot;open&quot;)) {</span>
+<span class="nc" id="L170">            open(response);</span>
+        } else {
+<span class="nc" id="L172">            String id = request.getHeader(&quot;id&quot;);</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">            if (id == null) {</span>
+<span class="nc" id="L174">                response.sendError(HttpServletResponse.SC_BAD_REQUEST,</span>
+                                   &quot;Invalid connection&quot;);
+<span class="nc bnc" id="L176" title="All 2 branches missed.">            } else if (action.equals(&quot;read&quot;)) {</span>
+<span class="nc" id="L177">                read(id, response);</span>
+<span class="nc bnc" id="L178" title="All 2 branches missed.">            } else if (action.equals(&quot;write&quot;)) {</span>
+<span class="nc" id="L179">                write(id, request, response);</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">            } else if (action.equals(&quot;close&quot;)) {</span>
+<span class="nc" id="L181">                close(id, response);</span>
+            } else {
+<span class="nc" id="L183">                response.sendError(HttpServletResponse.SC_BAD_REQUEST,</span>
+                                   &quot;Invalid action&quot;);
+            }
+        }
+<span class="nc" id="L187">    }</span>
+
+    /**
+     * Handle an open request. A connection is established to the server and the
+     * identifier written to the client.
+     *
+     * @param response the response to the request
+     * @throws IOException for any I/O error
+     */
+    private void open(HttpServletResponse response) throws IOException {
+<span class="nc" id="L197">        response.setContentType(&quot;text/plain&quot;);</span>
+<span class="nc" id="L198">        PrintWriter out = new PrintWriter(response.getWriter());</span>
+
+        try {
+<span class="nc" id="L201">            String id = _manager.open(_host, _port);</span>
+<span class="nc" id="L202">            out.println(&quot;OPEN &quot; + id);</span>
+<span class="nc" id="L203">            response.setStatus(HttpServletResponse.SC_OK);</span>
+<span class="nc" id="L204">        } catch (Exception exception) {</span>
+<span class="nc" id="L205">            response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR,</span>
+<span class="nc" id="L206">                               exception.getMessage());</span>
+<span class="nc" id="L207">            log(&quot;open failed&quot;, exception);</span>
+<span class="nc" id="L208">        }</span>
+<span class="nc" id="L209">    }</span>
+
+    /**
+     * Handles a read request. Data is read from the endpoint and written to the
+     * client.
+     *
+     * @param id       the endpoint identifier
+     * @param response the response to the client
+     * @throws IOException for any I/O error
+     */
+    private void read(String id, HttpServletResponse response)
+            throws IOException {
+<span class="nc" id="L221">        Socket socket = _manager.getSocket(id);</span>
+<span class="nc bnc" id="L222" title="All 2 branches missed.">        if (socket == null) {</span>
+<span class="nc" id="L223">            log(&quot;Connection not found, id=&quot; + id);</span>
+<span class="nc" id="L224">            response.sendError(HttpServletResponse.SC_BAD_REQUEST,</span>
+                               &quot;Connection not found&quot;);
+        } else {
+<span class="nc" id="L227">            byte[] data = new byte[1024];</span>
+            try {
+<span class="nc" id="L229">                socket.setSoTimeout(_timeout);</span>
+<span class="nc" id="L230">                InputStream in = socket.getInputStream();</span>
+<span class="nc" id="L231">                int count = 0;</span>
+                try {
+<span class="nc" id="L233">                    count = in.read(data);</span>
+<span class="nc" id="L234">                } catch (InterruptedIOException ignore) {</span>
+<span class="nc" id="L235">                }</span>
+                // log(&quot;read(id=&quot; + id + &quot;), [length=&quot; + count + &quot;]&quot;);
+<span class="nc bnc" id="L237" title="All 2 branches missed.">                if (count != -1) {</span>
+<span class="nc" id="L238">                    response.setContentLength(count);</span>
+<span class="nc" id="L239">                    response.setStatus(HttpServletResponse.SC_OK);</span>
+<span class="nc" id="L240">                    OutputStream out = response.getOutputStream();</span>
+<span class="nc" id="L241">                    out.write(data, 0, count);</span>
+<span class="nc" id="L242">                    out.flush();</span>
+<span class="nc" id="L243">                } else {</span>
+<span class="nc" id="L244">                    remove(id);</span>
+<span class="nc" id="L245">                    response.setStatus(</span>
+                            HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                }
+<span class="nc" id="L248">            } catch (IOException exception) {</span>
+<span class="nc" id="L249">                log(&quot;read failed&quot;, exception);</span>
+<span class="nc" id="L250">                remove(id);</span>
+<span class="nc" id="L251">                response.sendError(</span>
+                        HttpServletResponse.SC_INTERNAL_SERVER_ERROR,
+<span class="nc" id="L253">                        exception.getMessage());</span>
+<span class="nc" id="L254">            }</span>
+        }
+<span class="nc" id="L256">    }</span>
+
+    /**
+     * Handles a write request. Data from the client is written to the endpoint
+     *
+     * @param id       the endpoint identifier
+     * @param request  the client request
+     * @param response the response to the client
+     * @throws IOException for any I/O error
+     */
+    private void write(String id, HttpServletRequest request,
+                       HttpServletResponse response) throws IOException {
+<span class="nc" id="L268">        Socket endpoint = _manager.getSocket(id);</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">        if (endpoint == null) {</span>
+<span class="nc" id="L270">            response.sendError(HttpServletResponse.SC_BAD_REQUEST,</span>
+                               &quot;Connection not found&quot;);
+        } else {
+            try {
+                // log(&quot;write(id=&quot; + id + &quot;), [length=&quot;
+                //    + request.getContentLength()
+                //    + &quot;]&quot;);
+<span class="nc" id="L277">                InputStream in = request.getInputStream();</span>
+<span class="nc" id="L278">                OutputStream out = endpoint.getOutputStream();</span>
+<span class="nc" id="L279">                byte[] data = new byte[1024];</span>
+<span class="nc" id="L280">                int count = 0;</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">                while (count != -1) {</span>
+<span class="nc" id="L282">                    count = in.read(data);</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">                    if (count &gt; 0) {</span>
+<span class="nc" id="L284">                        out.write(data, 0, count);</span>
+                    }
+                }
+<span class="nc" id="L287">                in.close();</span>
+<span class="nc" id="L288">                out.flush();</span>
+<span class="nc" id="L289">                response.setStatus(HttpServletResponse.SC_OK);</span>
+<span class="nc" id="L290">            } catch (IOException exception) {</span>
+<span class="nc" id="L291">                log(&quot;write failed&quot;, exception);</span>
+<span class="nc" id="L292">                remove(id);</span>
+<span class="nc" id="L293">                response.sendError(</span>
+                        HttpServletResponse.SC_INTERNAL_SERVER_ERROR,
+<span class="nc" id="L295">                        exception.getMessage());</span>
+<span class="nc" id="L296">            }</span>
+        }
+<span class="nc" id="L298">    }</span>
+
+    /**
+     * Handle a close request.
+     *
+     * @param id       the endpoint identifier
+     * @param response the response to the client
+     * @throws IOException for any I/O error
+     */
+    private void close(String id, HttpServletResponse response)
+            throws IOException {
+
+        try {
+<span class="nc" id="L311">            log(&quot;close(id=&quot; + id + &quot;)&quot;);</span>
+<span class="nc" id="L312">            _manager.close(id);</span>
+<span class="nc" id="L313">            response.setStatus(HttpServletResponse.SC_OK);</span>
+<span class="nc" id="L314">        } catch (IOException exception) {</span>
+<span class="nc" id="L315">            log(&quot;close failed&quot;, exception);</span>
+<span class="nc" id="L316">            response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR,</span>
+<span class="nc" id="L317">                               exception.getMessage());</span>
+<span class="nc" id="L318">        }</span>
+<span class="nc" id="L319">    }</span>
+
+    /**
+     * Removes a socket.
+     *
+     * @param id the socket identifier
+     */
+    private void remove(String id) {
+        try {
+<span class="nc" id="L328">            _manager.close(id);</span>
+<span class="nc" id="L329">        } catch (IOException ignore) {</span>
+<span class="nc" id="L330">        }</span>
+<span class="nc" id="L331">    }</span>
+
+    /**
+     * Helper to get an initialisation property.
+     *
+     * @param name the property name
+     * @return the value corresponding to &lt;code&gt;name&lt;/code&gt;
+     * @throws ServletException if the property doesn't exist
+     */
+    private String getString(String name) throws ServletException {
+<span class="nc" id="L341">        String value = getInitParameter(name);</span>
+<span class="nc bnc" id="L342" title="All 2 branches missed.">        if (value == null) {</span>
+<span class="nc" id="L343">            throw new ServletException(&quot;Property not defined: &quot; + name);</span>
+        }
+<span class="nc" id="L345">        return value;</span>
+    }
+
+    /**
+     * Helper to get an initialisation property.
+     *
+     * @param name the property name
+     * @return the value corresponding to &lt;code&gt;name&lt;/code&gt;
+     * @throws ServletException if the property doesn't exist
+     */
+    private int getInt(String name) throws ServletException {
+        int result;
+<span class="nc" id="L357">        String value = getString(name);</span>
+        try {
+<span class="nc" id="L359">            result = Integer.parseInt(value);</span>
+<span class="nc" id="L360">        } catch (NumberFormatException exception) {</span>
+<span class="nc" id="L361">            throw new ServletException(&quot;Invalid &quot; + name + &quot;: &quot; + value);</span>
+<span class="nc" id="L362">        }</span>
+<span class="nc" id="L363">        return result;</span>
+    }
+
+    /**
+     * Helper to get an initialisation property.
+     *
+     * @param name         the property name
+     * @param defaultValue the default value to use
+     * @return the value corresponding to &lt;code&gt;name&lt;/code&gt;
+     * @throws ServletException if the value is invalid
+     */
+    private int getInt(String name, int defaultValue) throws ServletException {
+        int result;
+<span class="nc" id="L376">        String value = getInitParameter(name);</span>
+<span class="nc bnc" id="L377" title="All 2 branches missed.">        if (value == null) {</span>
+<span class="nc" id="L378">            result = defaultValue;</span>
+        } else {
+            try {
+<span class="nc" id="L381">                result = Integer.parseInt(value);</span>
+<span class="nc" id="L382">            } catch (NumberFormatException exception) {</span>
+<span class="nc" id="L383">                throw new ServletException(&quot;Invalid &quot; + name + &quot;: &quot; + value);</span>
+<span class="nc" id="L384">            }</span>
+        }
+<span class="nc" id="L386">        return result;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

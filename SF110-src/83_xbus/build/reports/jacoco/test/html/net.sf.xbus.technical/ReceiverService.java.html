@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ReceiverService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.technical</a> &gt; <span class="el_source">ReceiverService.java</span></div><h1>ReceiverService.java</h1><pre class="source lang-java linenums">package net.sf.xbus.technical;
+
+import java.lang.management.ManagementFactory;
+import java.util.Iterator;
+import java.util.List;
+
+import javax.management.InstanceAlreadyExistsException;
+import javax.management.MBeanRegistrationException;
+import javax.management.MBeanServer;
+import javax.management.MalformedObjectNameException;
+import javax.management.NotCompliantMBeanException;
+import javax.management.ObjectName;
+
+import net.sf.xbus.admin.jmx.Administrator;
+import net.sf.xbus.application.PreProcessor;
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.TAManager;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.core.config.Configuration;
+import net.sf.xbus.base.core.trace.Trace;
+
+/**
+ * &lt;code&gt;ReceiverService&lt;/code&gt; runs as a background service and waits for
+ * incoming messages to process.
+ * &lt;p&gt;
+ * At startup, &lt;code&gt;ReceiverService&lt;/code&gt; searches for systems, which receiver
+ * ends with &lt;code&gt;&quot;Thread&quot;&lt;/code&gt;. For every found system, a thread is started
+ * to process the messages. The used receivers must extend the
+ * {@link net.sf.xbus.technical.ReceiverThreadBase}.
+ * &lt;p&gt;
+ */
+
+public class ReceiverService {
+	/**
+	 * Reference to the Singleton object
+	 */
+<span class="nc" id="L37">	static private ReceiverService mReceiverService = null;</span>
+
+	/**
+	 * Used for locking during &lt;code&gt;getInstance&lt;/code&gt;
+	 */
+<span class="nc" id="L42">	static private final Object classLock = ReceiverService.class;</span>
+
+	/**
+	 * Indicates if the JMX administration shall be started
+	 */
+<span class="nc" id="L47">	private boolean mStartJMX = false;</span>
+
+	/**
+	 * Indicates if the systems for processing incoming messages are already
+	 * started
+	 */
+<span class="nc" id="L53">	private boolean mSystemsStarted = false;</span>
+
+	/**
+	 * The Watchdog is a thread that checks every few seconds, if all
+	 * ReceiverThreads are still running.
+	 */
+<span class="nc" id="L59">	private ReceiverServiceWatchdog mWatchdog = null;</span>
+<span class="nc" id="L60">	private Thread mWatchdogThread = null;</span>
+
+	/**
+	 * The constructor should be private to implement the &lt;code&gt;Singleton&lt;/code&gt;
+	 * pattern. But the bootstrapping mechanism needs a public constructor.
+	 */
+<span class="nc" id="L66">	public ReceiverService() {</span>
+<span class="nc" id="L67">	}</span>
+
+	/**
+	 * Returns the one and only instance of the &lt;code&gt;ReceiverService&lt;/code&gt;,
+	 * which implements the &lt;b&gt;Singleton &lt;/b&gt; pattern. If the object doesn't
+	 * exist, it is created.
+	 * 
+	 * @return the one and only instance of the &lt;code&gt;ReceiverService&lt;/code&gt;
+	 */
+	public static ReceiverService getInstance() {
+<span class="nc" id="L77">		synchronized (classLock) {</span>
+<span class="nc bnc" id="L78" title="All 2 branches missed.">			if (mReceiverService == null) {</span>
+<span class="nc" id="L79">				mReceiverService = new ReceiverService();</span>
+			}
+
+<span class="nc" id="L82">			return mReceiverService;</span>
+		}
+	}
+
+	/**
+	 * Starts all threads to receive messages and for administration.
+	 * 
+	 * @param insideServletEngine
+	 *            if true, the ReceiverService is running inside a servlet
+	 *            engine
+	 */
+	public synchronized void start(boolean insideServletEngine)
+			throws XException {
+<span class="nc" id="L95">		Trace.always(&quot;Entering ReceiverService.start&quot;);</span>
+
+		/*
+		 * The class variable must be set here because an issue with the
+		 * classloader. Do not remove!
+		 */
+<span class="nc" id="L101">		mReceiverService = this;</span>
+
+		/*
+		 * Register MBeans
+		 */
+		try {
+<span class="nc" id="L107">			MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();</span>
+<span class="nc" id="L108">			ObjectName name = new ObjectName(&quot;xBus:mbean=Administrator&quot;);</span>
+<span class="nc" id="L109">			Administrator mbean = new Administrator();</span>
+<span class="nc" id="L110">			mbs.registerMBean(mbean, name);</span>
+<span class="nc" id="L111">		} catch (Exception e) {</span>
+<span class="nc" id="L112">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_ADMIN, Constants.PACKAGE_ADMIN_JMX, &quot;0&quot;, e);
+<span class="nc" id="L114">		}</span>
+
+<span class="nc" id="L116">		startAllSystems();</span>
+<span class="nc" id="L117">		ReceiverThreadManager.getInstance().setIsServletEngine(</span>
+				insideServletEngine);
+<span class="nc" id="L119">		startWatchdog();</span>
+
+<span class="nc" id="L121">		Trace.always(&quot;Leaving ReceiverService.start&quot;);</span>
+<span class="nc" id="L122">	}</span>
+
+	/**
+	 * Starts all threads to receive messages and for administration. The
+	 * &lt;code&gt;ReceiverService&lt;/code&gt; is running inside a servlet engine.
+	 */
+	public synchronized void startInsideServletEngine() throws XException {
+<span class="nc" id="L129">		start(true);</span>
+<span class="nc" id="L130">	}</span>
+
+	/**
+	 * Starts all threads to receive messages and for administration. The
+	 * &lt;code&gt;ReceiverService&lt;/code&gt; is not running inside a servlet engine.
+	 */
+	public synchronized void startWithoutServletEngine() throws XException {
+<span class="nc" id="L137">		start(false);</span>
+<span class="nc" id="L138">	}</span>
+
+	/**
+	 * Stops all threads, including the administration threads.
+	 * 
+	 * @return true if ReceiverService has been stopped
+	 */
+	public synchronized boolean stop() throws XException {
+<span class="nc" id="L146">		Trace.always(&quot;Stopping ReceiverService...&quot;);</span>
+
+<span class="nc" id="L148">		stopWatchdog();</span>
+<span class="nc" id="L149">		stopAllSystems();</span>
+<span class="nc" id="L150">		TAManager.getInstance().close();</span>
+		// if (mStartJMX)
+		// {
+		// AdministratorJMXServer.stop();
+		// }
+
+<span class="nc" id="L156">		Trace.always(&quot;ReceiverService stopped&quot;);</span>
+<span class="nc" id="L157">		return true;</span>
+	}
+
+	/**
+	 * Starts all configured threads to process message for different systems.
+	 */
+	public synchronized void startAllSystems() throws XException {
+<span class="nc" id="L164">		Configuration config = Configuration.getInstance();</span>
+
+<span class="nc" id="L166">		PreProcessor.process(PreProcessor.RECEIVER_SERVICE);</span>
+
+<span class="nc" id="L168">		List sections = config.getSections(Constants.CHAPTER_SYSTEM);</span>
+<span class="nc" id="L169">		String system = null;</span>
+<span class="nc" id="L170">		String receiver = null;</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">		for (Iterator it = sections.iterator(); it.hasNext();) {</span>
+<span class="nc" id="L172">			system = (String) it.next();</span>
+<span class="nc" id="L173">			receiver = config.getValueOptional(Constants.CHAPTER_SYSTEM,</span>
+					system, &quot;Receiver&quot;);
+<span class="nc bnc" id="L175" title="All 4 branches missed.">			if ((receiver != null) &amp;&amp; (receiver.endsWith(&quot;Thread&quot;))) {</span>
+<span class="nc" id="L176">				ReceiverThreadManager.getInstance().startReceiverThread(system);</span>
+			}
+		}
+
+<span class="nc" id="L180">		mSystemsStarted = true;</span>
+<span class="nc" id="L181">	}</span>
+
+	/**
+	 * Stops all threads after processing their current message.
+	 */
+	public synchronized void stopAllSystems() throws XException {
+<span class="nc bnc" id="L187" title="All 2 branches missed.">		if (!mSystemsStarted) {</span>
+<span class="nc" id="L188">			return;</span>
+		}
+
+		ReceiverThreadManager receiverThreadManager = ReceiverThreadManager
+<span class="nc" id="L192">				.getInstance();</span>
+		/*
+		 * Demand to stop all running systems
+		 */
+		String systemname;
+<span class="nc" id="L197">		for (Iterator i = receiverThreadManager.getRunningReceiverThreads()</span>
+<span class="nc bnc" id="L198" title="All 2 branches missed.">				.iterator(); i.hasNext();) {</span>
+<span class="nc" id="L199">			systemname = (String) i.next();</span>
+<span class="nc" id="L200">			receiverThreadManager.demandStopReceiverThread(systemname);</span>
+		}
+
+		/*
+		 * Wait until all systems have been stopped
+		 */
+<span class="nc" id="L206">		boolean completed = receiverThreadManager.getRunningReceiverThreads()</span>
+<span class="nc" id="L207">				.isEmpty();</span>
+<span class="nc bnc" id="L208" title="All 2 branches missed.">		while (!completed) {</span>
+			try {
+<span class="nc" id="L210">				Thread.sleep(1000);</span>
+<span class="nc" id="L211">			} catch (InterruptedException e) {</span>
+<span class="nc" id="L212">			}</span>
+<span class="nc" id="L213">			completed = receiverThreadManager.getRunningReceiverThreads()</span>
+<span class="nc" id="L214">					.isEmpty();</span>
+		}
+
+<span class="nc" id="L217">		mSystemsStarted = false;</span>
+<span class="nc" id="L218">	}</span>
+
+	public boolean isWatchdogRunning() {
+<span class="nc bnc" id="L221" title="All 4 branches missed.">		return ((mWatchdogThread != null) &amp;&amp; (mWatchdogThread.isAlive()));</span>
+	}
+
+	/**
+	 * TODO Kommentierung
+	 */
+	private void startWatchdog() {
+<span class="nc" id="L228">		mWatchdog = new ReceiverServiceWatchdog();</span>
+<span class="nc" id="L229">		mWatchdogThread = new Thread(mWatchdog, &quot;ReceiverServiceWatchdog&quot;);</span>
+<span class="nc" id="L230">		mWatchdogThread.start();</span>
+<span class="nc" id="L231">	}</span>
+
+	/**
+	 * TODO Kommentierung
+	 */
+	private void stopWatchdog() {
+<span class="nc" id="L237">		mWatchdog.stopWatchdog();</span>
+<span class="nc" id="L238">	}</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

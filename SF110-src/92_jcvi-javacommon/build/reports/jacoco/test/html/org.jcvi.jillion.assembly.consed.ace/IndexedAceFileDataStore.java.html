@@ -1,0 +1,315 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IndexedAceFileDataStore.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.assembly.consed.ace</a> &gt; <span class="el_source">IndexedAceFileDataStore.java</span></div><h1>IndexedAceFileDataStore.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+package org.jcvi.jillion.assembly.consed.ace;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.jcvi.jillion.assembly.consed.ace.AceFileVisitorCallback.AceFileVisitorMemento;
+import org.jcvi.jillion.core.Range;
+import org.jcvi.jillion.core.datastore.DataStoreClosedException;
+import org.jcvi.jillion.core.datastore.DataStoreException;
+import org.jcvi.jillion.core.datastore.DataStoreFilter;
+import org.jcvi.jillion.core.util.MapUtil;
+import org.jcvi.jillion.core.util.iter.StreamingIterator;
+import org.jcvi.jillion.internal.core.datastore.DataStoreIterator;
+import org.jcvi.jillion.internal.core.datastore.DataStoreStreamingIterator;
+/**
+ * {@code IndexedAceFileDataStore} is an implementation of 
+ * {@link AceFileContigDataStore} that only stores an {@link AceFileVisitorMemento}s
+ * to the various contigs contained
+ * inside the ace file.  Calls to {@link AceContig#getRead(String)} may
+ * cause part of the ace file to be re-parsed in order to retrieve
+ * any missing information.  
+ * &lt;p/&gt;
+ * This allows large files to provide random 
+ * access without taking up much memory.  The down side is each contig
+ * must be re-parsed each time and the ace file must exist and not
+ * get altered during the entire lifetime of this object.
+ * @author dkatzel
+ */
+final class IndexedAceFileDataStore implements AceFileContigDataStore{
+	
+	private final Map&lt;String, AceFileVisitorMemento&gt; mementos;
+	private final List&lt;WholeAssemblyAceTag&gt; wholeAssemblyTags;
+    private final List&lt;ConsensusAceTag&gt; consensusTags;
+    private final List&lt;ReadAceTag&gt; readTags;
+   
+    private final AceHandler parser;
+    private final long totalNumberOfReads;
+    
+<span class="nc" id="L64">    private volatile boolean closed=false;</span>
+    
+    public static AceFileContigDataStore create(File aceFile, DataStoreFilter filter) throws IOException{
+<span class="nc bnc" id="L67" title="All 2 branches missed.">    	if(filter==null){</span>
+<span class="nc" id="L68">    		throw new NullPointerException(&quot;filter can not be null&quot;);</span>
+    	}
+<span class="nc" id="L70">    	AceHandler parser = AceFileParser.create(aceFile);</span>
+<span class="nc" id="L71">    	VisitorBuilder visitorBuilder = new VisitorBuilder(filter);</span>
+<span class="nc" id="L72">    	parser.accept(visitorBuilder);</span>
+<span class="nc" id="L73">    	return new IndexedAceFileDataStore(visitorBuilder, parser);</span>
+    }
+    
+<span class="nc" id="L76">    private IndexedAceFileDataStore(VisitorBuilder builder, AceHandler parser){    	</span>
+<span class="nc" id="L77">    	this.parser = parser;</span>
+<span class="nc" id="L78">    	this.mementos = builder.mementos;</span>
+<span class="nc" id="L79">    	this.wholeAssemblyTags = builder.wholeAssemblyTags;</span>
+<span class="nc" id="L80">    	this.consensusTags = builder.consensusTags;</span>
+<span class="nc" id="L81">    	this.readTags = builder.readTags;</span>
+<span class="nc" id="L82">    	this.totalNumberOfReads = builder.totalNumberOfReads;</span>
+<span class="nc" id="L83">    }</span>
+	
+    
+    private void checkNotYetClosed(){
+<span class="nc bnc" id="L87" title="All 2 branches missed.">    	if(closed){</span>
+<span class="nc" id="L88">    		throw new DataStoreClosedException(&quot;closed&quot;);</span>
+    	}
+<span class="nc" id="L90">    }</span>
+    
+    
+	@Override
+	public void close() throws IOException {
+<span class="nc" id="L95">		closed=true;		</span>
+<span class="nc" id="L96">	}</span>
+	@Override
+	public StreamingIterator&lt;String&gt; idIterator() throws DataStoreException {
+<span class="nc" id="L99">		checkNotYetClosed();</span>
+<span class="nc" id="L100">		return DataStoreStreamingIterator.create(this, mementos.keySet().iterator());</span>
+	}
+
+	@Override
+	public AceContig get(String id) throws DataStoreException {
+		//contains does the check not closed so we don't have to
+<span class="nc bnc" id="L106" title="All 2 branches missed.">		if(!contains(id)){</span>
+<span class="nc" id="L107">			return null;</span>
+		}
+<span class="nc" id="L109">		AceFileVisitorMemento memento = mementos.get(id);</span>
+<span class="nc" id="L110">		SingleAceFileVisitor singleAceFileVisitor = new SingleAceFileVisitor();</span>
+		try{
+<span class="nc" id="L112">			parser.accept(singleAceFileVisitor, memento);</span>
+<span class="nc" id="L113">			return singleAceFileVisitor.getContig();</span>
+<span class="nc" id="L114">		}catch(IOException e){</span>
+<span class="nc" id="L115">			throw new DataStoreException(&quot;error re-parsing contig &quot;+ id ,e);</span>
+		}
+	}
+
+	@Override
+	public boolean contains(String id) throws DataStoreException {
+<span class="nc" id="L121">		checkNotYetClosed();</span>
+<span class="nc" id="L122">		return mementos.containsKey(id);</span>
+	}
+
+	@Override
+	public long getNumberOfRecords() throws DataStoreException {
+<span class="nc" id="L127">		checkNotYetClosed();</span>
+<span class="nc" id="L128">		return mementos.size();</span>
+	}
+
+	@Override
+	public boolean isClosed() {
+<span class="nc" id="L133">		return closed;</span>
+	}
+
+	@Override
+	public StreamingIterator&lt;AceContig&gt; iterator() throws DataStoreException {
+<span class="nc" id="L138">		checkNotYetClosed();</span>
+		//TODO should we just use a large datastore iterator?
+<span class="nc" id="L140">		return new DataStoreIterator&lt;AceContig&gt;(this);</span>
+	}
+
+	@Override
+	public long getNumberOfTotalReads() throws DataStoreException {
+<span class="nc" id="L145">		checkNotYetClosed();</span>
+<span class="nc" id="L146">		return totalNumberOfReads;</span>
+	}
+
+	@Override
+	public StreamingIterator&lt;WholeAssemblyAceTag&gt; getWholeAssemblyTagIterator()
+			throws DataStoreException {
+<span class="nc" id="L152">		checkNotYetClosed();</span>
+<span class="nc" id="L153">		return DataStoreStreamingIterator.create(this, wholeAssemblyTags.iterator());</span>
+	}
+
+	@Override
+	public StreamingIterator&lt;ReadAceTag&gt; getReadTagIterator()
+			throws DataStoreException {
+<span class="nc" id="L159">		checkNotYetClosed();</span>
+<span class="nc" id="L160">		return DataStoreStreamingIterator.create(this, readTags.iterator());</span>
+	}
+
+	@Override
+	public StreamingIterator&lt;ConsensusAceTag&gt; getConsensusTagIterator()
+			throws DataStoreException {
+<span class="nc" id="L166">		checkNotYetClosed();</span>
+<span class="nc" id="L167">		return DataStoreStreamingIterator.create(this, consensusTags.iterator());</span>
+	}
+
+
+
+
+
+
+	private static class VisitorBuilder implements AceFileVisitor{
+<span class="nc" id="L176">		private final List&lt;WholeAssemblyAceTag&gt; wholeAssemblyTags = new ArrayList&lt;WholeAssemblyAceTag&gt;();</span>
+<span class="nc" id="L177">        private final List&lt;ConsensusAceTag&gt; consensusTags = new ArrayList&lt;ConsensusAceTag&gt;();</span>
+<span class="nc" id="L178">        private final List&lt;ReadAceTag&gt; readTags = new ArrayList&lt;ReadAceTag&gt;();</span>
+        
+        private final DataStoreFilter filter;
+
+        private long totalNumberOfReads;
+        
+        Map&lt;String, AceFileVisitorMemento&gt; mementos;
+        
+<span class="nc" id="L186">		public VisitorBuilder(DataStoreFilter filter) {</span>
+<span class="nc" id="L187">			this.filter = filter;</span>
+<span class="nc" id="L188">		}</span>
+
+		@Override
+		public void visitHeader(int numberOfContigs, long totalNumberOfReads) {
+<span class="nc" id="L192">			int capacity = MapUtil.computeMinHashMapSizeWithoutRehashing(numberOfContigs);</span>
+<span class="nc" id="L193">			mementos = new LinkedHashMap&lt;String, AceFileVisitorCallback.AceFileVisitorMemento&gt;(capacity);</span>
+<span class="nc" id="L194">		}</span>
+
+		@Override
+		public AceContigVisitor visitContig(AceFileVisitorCallback callback,
+				String contigId, int numberOfBases, int numberOfReads,
+				int numberOfBaseSegments, boolean reverseComplemented) {
+<span class="nc bnc" id="L200" title="All 2 branches missed.">			if(filter.accept(contigId)){</span>
+<span class="nc" id="L201">				mementos.put(contigId, callback.createMemento());</span>
+<span class="nc" id="L202">				totalNumberOfReads +=numberOfReads;</span>
+			}
+			//always skip
+<span class="nc" id="L205">			return null;</span>
+		}
+
+		@Override
+		public void visitReadTag(String id, String type, String creator,
+				long gappedStart, long gappedEnd, Date creationDate,
+				boolean isTransient) {
+<span class="nc" id="L212">			 readTags.add(new ReadAceTag(id, type, creator, creationDate, </span>
+<span class="nc" id="L213">	                    Range.of(gappedStart,gappedEnd), isTransient));			</span>
+<span class="nc" id="L214">		}</span>
+
+		@Override
+		public AceConsensusTagVisitor visitConsensusTag(String id, String type,
+				String creator, long gappedStart, long gappedEnd,
+				Date creationDate, boolean isTransient) {
+			//only visit tags for contigs we care about
+<span class="nc bnc" id="L221" title="All 2 branches missed.">			if(filter.accept(id)){</span>
+<span class="nc" id="L222">				return new AbstractAceConsensusTagVisitor(id, type, creator, </span>
+									gappedStart, gappedEnd, 
+<span class="nc" id="L224">									creationDate, isTransient) {</span>
+					
+					@Override
+					protected void visitConsensusTag(ConsensusAceTag consensusTag) {
+<span class="nc" id="L228">						consensusTags.add(consensusTag);						</span>
+<span class="nc" id="L229">					}</span>
+				};
+			}
+			//if we don't care about contig then skip it
+<span class="nc" id="L233">			return null;</span>
+		}
+
+		@Override
+		public void visitWholeAssemblyTag(String type, String creator,
+				Date creationDate, String data) {
+<span class="nc" id="L239">			 wholeAssemblyTags.add(new WholeAssemblyAceTag(type, creator, creationDate, data.trim()));</span>
+<span class="nc" id="L240">	    }</span>
+
+		@Override
+		public void visitEnd() {
+			//no-op			
+<span class="nc" id="L245">		}</span>
+
+		@Override
+		public void halted() {
+			//no-op		
+<span class="nc" id="L250">		}        </span>
+        
+	}
+	
+<span class="nc" id="L254">	public static final class SingleAceFileVisitor implements AceFileVisitor {</span>
+
+		private AceContig contig;
+		
+		public final AceContig getContig() {
+<span class="nc" id="L259">			return contig;</span>
+		}
+
+		@Override
+		public void visitHeader(int numberOfContigs, long totalNumberOfReads) {
+			//no-op
+<span class="nc" id="L265">		}</span>
+
+		@Override
+		public AceContigVisitor visitContig(final AceFileVisitorCallback callback,
+				String contigId, int numberOfBases, int numberOfReads,
+				int numberOfBaseSegments, boolean reverseComplemented) {
+			//assume first contig we see is the one we want
+<span class="nc" id="L272">			return new AbstractAceContigBuilderVisitor(contigId, numberOfBases, numberOfReads) {</span>
+				
+				@Override
+				protected void visitContig(AceContigBuilder builder) {
+<span class="nc" id="L276">					contig = builder.build();</span>
+<span class="nc" id="L277">					callback.haltParsing();</span>
+<span class="nc" id="L278">				}</span>
+			};
+		}
+
+		@Override
+		public void visitReadTag(String id, String type, String creator,
+				long gappedStart, long gappedEnd, Date creationDate,
+				boolean isTransient) {
+			//no-op
+<span class="nc" id="L287">		}</span>
+
+		@Override
+		public AceConsensusTagVisitor visitConsensusTag(String id, String type,
+				String creator, long gappedStart, long gappedEnd,
+				Date creationDate, boolean isTransient) {
+			//always skip
+<span class="nc" id="L294">			return null;</span>
+		}
+
+		@Override
+		public void visitWholeAssemblyTag(String type, String creator,
+				Date creationDate, String data) {
+			//no-op
+<span class="nc" id="L301">		}</span>
+
+		@Override
+		public void visitEnd() {
+			//no-op
+<span class="nc" id="L306">		}</span>
+
+		@Override
+		public void halted() {
+			//no-op
+<span class="nc" id="L311">		}</span>
+
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

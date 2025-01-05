@@ -1,0 +1,388 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MultiplexInputStream.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.net.multiplexer</a> &gt; <span class="el_source">MultiplexInputStream.java</span></div><h1>MultiplexInputStream.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2003-2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: MultiplexInputStream.java,v 1.2 2005/04/02 13:23:12 tanderson Exp $
+ */
+package org.exolab.jms.net.multiplexer;
+
+import java.io.DataInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+
+/**
+ * An &lt;code&gt;InputStream&lt;/code&gt; which reads multiplexed data over a shared
+ * physical connection, managed by a {@link Multiplexer}.
+ * &lt;p/&gt;
+ * &lt;em&gt;NOTE:&lt;/em&gt; the &lt;code&gt;InputStream&lt;/code&gt; methods of this class are not
+ * thread safe
+ *
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.2 $
+ * @see Multiplexer
+ */
+class MultiplexInputStream extends InputStream implements Constants {
+
+    /**
+     * The channel identifier.
+     */
+    private final int _channelId;
+
+    /**
+     * The multiplexer.
+     */
+    private Multiplexer _multiplexer;
+
+    /**
+     * The local data buffer.
+     */
+    private byte[] _data;
+
+    /**
+     * Temporary buffer for single byte reads.
+     */
+<span class="nc" id="L86">    private byte[] _byte = new byte[1];</span>
+
+    /**
+     * The index into &lt;code&gt;_data&lt;/code&gt; where data starts.
+     */
+<span class="nc" id="L91">    private int _index = 0;</span>
+
+    /**
+     * The number of available bytes in &lt;code&gt;_data&lt;/code&gt;.
+     */
+<span class="nc" id="L96">    private int _available = 0;</span>
+
+    /**
+     * Indicates if the underyling connection has been closed.
+     */
+<span class="nc" id="L101">    private boolean _disconnected = false;</span>
+
+    /**
+     * The no. of bytes to read before notifying the remote endpoint.
+     */
+    private final int _lowWaterMark;
+
+    /**
+     * The number of bytes read from this stream since the last.
+     * &lt;code&gt;notifyRead()&lt;/code&gt; call
+     */
+<span class="nc" id="L112">    private int _read = 0;</span>
+
+    /**
+     * Synchronization helper.
+     */
+<span class="nc" id="L117">    private final Object _lock = new Object();</span>
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L122">    private final Log _log = LogFactory.getLog(MultiplexInputStream.class);</span>
+
+
+    /**
+     * Construct a new &lt;code&gt;MultiplexInputStream&lt;/code&gt;.
+     *
+     * @param channelId   the channel identifier
+     * @param multiplexer the multiplexer
+     * @param size        the size of the local data buffer
+     */
+    public MultiplexInputStream(int channelId, Multiplexer multiplexer,
+<span class="nc" id="L133">                                int size) {</span>
+<span class="nc" id="L134">        _channelId = channelId;</span>
+<span class="nc" id="L135">        _multiplexer = multiplexer;</span>
+<span class="nc" id="L136">        _data = new byte[size];</span>
+<span class="nc" id="L137">        _lowWaterMark = size / 2;</span>
+<span class="nc" id="L138">    }</span>
+
+    /**
+     * This implementation is a no-op, as the stream is re-used.
+     */
+    public void close() {
+<span class="nc" id="L144">    }</span>
+
+    /**
+     * Closes this input stream and releases any resources associated with it.
+     *
+     * @throws IOException if an I/O error occurs
+     */
+    public void destroy() throws IOException {
+        // notify the endpoint iff it hasn't notified this of disconnection
+<span class="nc" id="L153">        synchronized (_lock) {</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">            if (!_disconnected) {</span>
+                //_multiplexer.closed(this);
+            }
+<span class="nc" id="L157">        }</span>
+<span class="nc" id="L158">        _multiplexer = null;</span>
+<span class="nc" id="L159">        _data = null;</span>
+<span class="nc" id="L160">    }</span>
+
+    /**
+     * Reads the next byte of data from the input stream. The value byte is
+     * returned as an &lt;code&gt;int&lt;/code&gt; in the range &lt;code&gt;0&lt;/code&gt; to
+     * &lt;code&gt;255&lt;/code&gt;. If no byte is available because the end of the stream
+     * has been reached, the value &lt;code&gt;-1&lt;/code&gt; is returned. This method
+     * blocks until input data is available, the end of the stream is detected,
+     * or an exception is thrown.
+     *
+     * @return the next byte of data, or &lt;code&gt;-1&lt;/code&gt; if the end of the
+     *         stream is reached.
+     * @throws IOException if an I/O error occurs.
+     */
+    public int read() throws IOException {
+<span class="nc" id="L175">        final int mask = 0xFF;</span>
+<span class="nc" id="L176">        int count = read(_byte, 0, 1);</span>
+<span class="nc bnc" id="L177" title="All 2 branches missed.">        return (count == 1) ? _byte[0] &amp; mask : -1;</span>
+    }
+
+    /**
+     * Reads up to &lt;code&gt;length&lt;/code&gt; bytes of data from the input stream into
+     * an array of bytes.  An attempt is made to read as many as
+     * &lt;code&gt;length&lt;/code&gt; bytes, but a smaller number may be read, possibly
+     * zero. The number of bytes actually read is returned as an integer.
+     * &lt;p/&gt;
+     * &lt;p&gt; If the first byte cannot be read for any reason other than end of
+     * file, then an &lt;code&gt;IOException&lt;/code&gt; is thrown. In particular, an
+     * &lt;code&gt;IOException&lt;/code&gt; is thrown if the input stream has been closed.
+     *
+     * @param buffer the buffer into which the data is read
+     * @param offset the start offset in array &lt;code&gt;buffer&lt;/code&gt; at which the
+     *               data is written
+     * @param length the maximum number of bytes to read
+     * @return the total number of bytes read into the buffer, or
+     *         &lt;code&gt;-1&lt;/code&gt; if there is no more data because the end of the
+     *         stream has been reached.
+     * @throws IOException               if an I/O error occurs.
+     * @throws IndexOutOfBoundsException if &lt;code&gt;offset&lt;/code&gt; is negative, or
+     *                                   &lt;code&gt;length&lt;/code&gt; is negative, or
+     *                                   &lt;code&gt;offset+length&lt;/code&gt; is greater
+     *                                   than the length of the array
+     * @throws NullPointerException      if &lt;code&gt;buffer&lt;/code&gt; is null
+     */
+    public int read(byte[] buffer, int offset, int length) throws IOException {
+<span class="nc" id="L205">        int count = 0;</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">        if (length &gt; 0) {</span>
+<span class="nc" id="L207">            synchronized (_lock) {</span>
+<span class="nc bnc" id="L208" title="All 2 branches missed.">                count = (length &lt;= _available) ? length : _available;</span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">                if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L210">                    _log.debug(&quot;read(length=&quot; + length + &quot;) [channelId=&quot;</span>
+                               + _channelId
+                               + &quot;, available=&quot; + _available + &quot;]&quot;);
+                }
+
+<span class="nc bnc" id="L215" title="All 2 branches missed.">                if (count &gt; 0) {</span>
+                    // copy the available data into the buffer
+<span class="nc" id="L217">                    copy(buffer, offset, count);</span>
+                }
+
+<span class="nc bnc" id="L220" title="All 2 branches missed.">                if (count &lt; length) {</span>
+                    // wait for more data to become available
+<span class="nc" id="L222">                    int more = length - count;</span>
+<span class="nc bnc" id="L223" title="All 4 branches missed.">                    while ((_available &lt; more) &amp;&amp; !_disconnected) {</span>
+<span class="nc bnc" id="L224" title="All 2 branches missed.">                        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L225">                            _log.debug(&quot;read() waiting on data [channelId=&quot;</span>
+                                       + _channelId
+                                       + &quot;, available=&quot; + _available
+                                       + &quot;, requested=&quot; + more + &quot;]&quot;);
+                        }
+
+                        try {
+<span class="nc" id="L232">                            _lock.wait();</span>
+<span class="nc" id="L233">                        } catch (InterruptedException ignore) {</span>
+<span class="nc" id="L234">                        }</span>
+                    }
+
+<span class="nc bnc" id="L237" title="All 2 branches missed.">                    if (_available &gt; 0) {</span>
+                        // more data available, so copy it
+<span class="nc bnc" id="L239" title="All 2 branches missed.">                        more = (more &lt;= _available) ? more : _available;</span>
+<span class="nc" id="L240">                        offset += count;</span>
+<span class="nc" id="L241">                        copy(buffer, offset, more);</span>
+<span class="nc" id="L242">                        count += more;</span>
+                    }
+                }
+
+<span class="nc bnc" id="L246" title="All 4 branches missed.">                if ((count == 0) &amp;&amp; _disconnected) {</span>
+                    // no data was read, and we were disconnected. Indicate
+                    // end of stream to user
+<span class="nc" id="L249">                    count = -1;</span>
+                }
+<span class="nc" id="L251">            }</span>
+        }
+<span class="nc" id="L253">        return count;</span>
+    }
+
+    /**
+     * Returns the number of bytes that can be read (or skipped over) from this
+     * input stream without blocking by the next caller of a method for this
+     * input stream.
+     *
+     * @return the number of bytes that can be read from this input stream
+     *         without blocking.
+     */
+    public int available() {
+        int result;
+<span class="nc" id="L266">        synchronized (_lock) {</span>
+<span class="nc" id="L267">            result = _available;</span>
+<span class="nc" id="L268">        }</span>
+<span class="nc" id="L269">        return result;</span>
+    }
+
+    /**
+     * Invoked when the underlying physical connection is closed.
+     */
+    public void disconnected() {
+<span class="nc" id="L276">        synchronized (_lock) {</span>
+<span class="nc" id="L277">            _disconnected = true;</span>
+<span class="nc" id="L278">            _lock.notifyAll();</span>
+<span class="nc" id="L279">        }</span>
+<span class="nc" id="L280">    }</span>
+
+    /**
+     * Returns a string representation of this.
+     *
+     * @return a string representation of this
+     */
+    public String toString() {
+<span class="nc" id="L288">        return &quot;MultiplexInputStream[available=&quot; + _available + &quot;]&quot;;</span>
+    }
+
+    /**
+     * Invoked by {@link Multiplexer} when data is available for this stream.
+     *
+     * @param input  the stream to read data from
+     * @param length the number of bytes to read
+     * @throws IOException if an I/O error occurs
+     */
+    protected void receive(DataInputStream input, int length)
+            throws IOException {
+
+<span class="nc" id="L301">        synchronized (_lock) {</span>
+<span class="nc" id="L302">            int space = _data.length - _available;</span>
+<span class="nc bnc" id="L303" title="All 2 branches missed.">            if (length &gt; space) {</span>
+<span class="nc" id="L304">                throw new IOException(&quot;Buffer overflow: buffer size=&quot;</span>
+                                      + _data.length
+                                      + &quot;, space available=&quot; + space
+                                      + &quot;, requested size=&quot; + length);
+            }
+
+<span class="nc" id="L310">            int freeAtEnd = _data.length - (_index + _available);</span>
+<span class="nc bnc" id="L311" title="All 2 branches missed.">            if (length &gt; freeAtEnd) {</span>
+                // make space at the end of the buffer, by shuffling data
+                // to the start
+<span class="nc" id="L314">                System.arraycopy(_data, _index, _data, 0, _available);</span>
+<span class="nc" id="L315">                _index = 0;</span>
+            }
+<span class="nc" id="L317">            input.readFully(_data, _index + _available, length);</span>
+
+<span class="nc bnc" id="L319" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L320">                _log.debug(&quot;receive(length=&quot; + length</span>
+                           + &quot;) [channelId=&quot; + _channelId
+                           + &quot;, available=&quot; + _available
+                           + &quot;, space=&quot; + (_data.length - _available) + &quot;]&quot;);
+
+/*
+                StringBuffer buf = new StringBuffer();
+                for (int i = 0; i &lt; length; ++i) {
+                    if (i &gt; 0) {
+                      buf.append(&quot;, &quot;);
+                    }
+                    final int mask = 0xff;
+                    int value = _data[_index + i + _available] &amp; mask;
+                    buf.append(Integer.toHexString(value));
+                }
+                _log.debug(&quot;receive[channelId=&quot; + _channelId
+                           + &quot;], length=&quot; + length + &quot;, data=&quot; + buf);
+*/
+            }
+
+<span class="nc" id="L340">            _available += length;</span>
+
+<span class="nc" id="L342">            _lock.notifyAll();</span>
+<span class="nc" id="L343">        }</span>
+<span class="nc" id="L344">    }</span>
+
+    /**
+     * Helper to copy data to a user buffer, notifying the remote endpoint if
+     * more data should be sent.
+     *
+     * @param buffer the buffer into which the data is read
+     * @param offset the start offset in array &lt;code&gt;buffer&lt;/code&gt; at which the
+     *               data is written
+     * @param length the maximum number of bytes to read
+     * @throws IOException               if an I/O error occurs.
+     * @throws IndexOutOfBoundsException if &lt;code&gt;offset&lt;/code&gt; is negative, or
+     *                                   &lt;code&gt;length&lt;/code&gt; is negative, or
+     *                                   &lt;code&gt;offset+length&lt;/code&gt; is greater
+     *                                   than the length of the array
+     * @throws NullPointerException      if &lt;code&gt;buffer&lt;/code&gt; is null
+     */
+    private void copy(byte[] buffer, int offset, int length)
+            throws IOException {
+
+<span class="nc" id="L364">        System.arraycopy(_data, _index, buffer, offset, length);</span>
+<span class="nc" id="L365">        _index += length;</span>
+<span class="nc" id="L366">        _available -= length;</span>
+<span class="nc" id="L367">        _read += length;</span>
+<span class="nc bnc" id="L368" title="All 2 branches missed.">        if (_read &gt;= _lowWaterMark) {</span>
+<span class="nc" id="L369">            notifyRead();</span>
+        }
+<span class="nc" id="L371">    }</span>
+
+    /**
+     * Notify the remote endpoint of the current no. of bytes read.
+     *
+     * @throws IOException if the notification fails
+     */
+    private void notifyRead() throws IOException {
+<span class="nc bnc" id="L379" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L380">            _log.debug(&quot;notifyRead() [channelId=&quot; + _channelId</span>
+                       + &quot;, read=&quot; + _read + &quot;]&quot;);
+        }
+<span class="nc" id="L383">        _multiplexer.send(FLOW_READ, _channelId, _read);</span>
+<span class="nc" id="L384">        _read = 0;</span>
+<span class="nc" id="L385">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

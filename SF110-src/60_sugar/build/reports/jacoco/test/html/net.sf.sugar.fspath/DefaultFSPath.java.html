@@ -1,0 +1,365 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DefaultFSPath.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">60_sugar</a> &gt; <a href="index.source.html" class="el_package">net.sf.sugar.fspath</a> &gt; <span class="el_source">DefaultFSPath.java</span></div><h1>DefaultFSPath.java</h1><pre class="source lang-java linenums">/**
+ * Copyright 2008 (C) Keith Bishop (bishi@users.sourceforge.net)
+ *
+ * All rights reserved.
+ *
+ * This file is part of FSPath.
+ *
+ * FSPath is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * FSPath is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with FSPath.  If not, see &lt;http://www.gnu.org/licenses/&gt;.
+ */
+
+/*
+ * DefaultFSPath.java
+ *
+ * Created on 18 September 2006, 00:25
+ *
+ */
+
+package net.sf.sugar.fspath;
+
+import java.io.File;
+import java.io.IOException;
+import java.text.DateFormat;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+import javax.xml.namespace.QName;
+
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
+
+import javax.xml.xpath.XPath;
+import javax.xml.xpath.XPathConstants;
+import javax.xml.xpath.XPathExpressionException;
+import javax.xml.xpath.XPathFactory;
+import net.sf.sugar.fspath.xpath.RegexFunctionResolver;
+import org.w3c.dom.Attr;
+
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+
+/**
+ *
+ *  The default implementation of the FSPath interface.
+ *  This class uses the JDK's XPath implementation as the basis for
+ *  FSPath queries.
+ *  On instantiation, a DOM is created of the filesystem metadata starting form the &lt;code&gt;rootDirectory&lt;/code&gt;.
+ *  This DOM can then be queried using standard XML tools.
+ *  &lt;br/&gt;
+ *  Whilst this approach has been relatively quick to implement, it is still tied to the limitations of XPath.
+ *  Future implementations of this class are likely to implement the FSPath language fully themselves wthout relying on XPath.
+ *  &lt;br/&gt;
+ *  todo: develop some front end substitution to enable the short queries i.e. /var/www etc
+ *
+ * @author keith
+ *  $Id$
+ */
+public class DefaultFSPath implements FSPath {
+
+    /**
+     *  Escape characters, we must escape any characters that are
+     *  illegal in XML attribute text.
+     *
+     *  i.e. &amp;amp; &quot; &lt; &gt;
+     */
+    private Map escapeChars;
+
+    private DocumentBuilder documentBuilder;
+
+    private XPath xpath;
+
+    private Document dom;
+
+    /**
+     *  The date format used to correspond to the xs:date format i.e. yyyy-MM-dd'T'HH:mm:ss.SSS
+     */
+    private DateFormat format;
+
+    private File rootDirectory;
+
+
+<span class="fc" id="L97">    public DefaultFSPath() {</span>
+        //used for unit test instantiation
+
+<span class="fc" id="L100">        this.xpath = XPathFactory.newInstance().newXPath();</span>
+
+        //this.xpath.setNamespaceContext(new FSNamespaceContext());
+
+        //this effectively enables the user of our custom XPath function
+        //fs:match()
+<span class="fc" id="L106">        this.xpath.setXPathFunctionResolver(new RegexFunctionResolver());</span>
+
+<span class="fc" id="L108">        this.escapeChars = this.createEscapeCharsMap();</span>
+
+<span class="fc" id="L110">        this.format = new SimpleDateFormat(&quot;yyyy-MM-dd'T'HH:mm:ss.SSS&quot;);</span>
+<span class="fc" id="L111">    }</span>
+
+    /**
+     * Creates a new instance of DefaultFSPath, based on the directory supplied
+     */
+    public DefaultFSPath(File currentDir) {
+<span class="fc" id="L117">        this();</span>
+
+<span class="fc" id="L119">        this.rootDirectory = currentDir;</span>
+
+        //check if file is a directory
+<span class="fc bfc" id="L122" title="All 2 branches covered.">        if (! currentDir.isDirectory()) {</span>
+<span class="fc" id="L123">            throw new InstantiationError(&quot;the java.io.File specified must be a Directory&quot;);</span>
+        }
+
+        try {
+<span class="fc" id="L127">            this.createDocumentBuilder();</span>
+
+            //build DOM representation
+<span class="fc" id="L130">            this.dom = this.buildDOM(currentDir);</span>
+
+<span class="nc" id="L132">        } catch (ParserConfigurationException pce) {</span>
+<span class="nc" id="L133">            pce.printStackTrace();</span>
+<span class="nc" id="L134">            throw new InstantiationError(&quot;FSDom threw a ParserConfigurationException : &quot; + pce.getMessage());</span>
+<span class="nc" id="L135">        } catch (IOException ioe) {</span>
+<span class="nc" id="L136">            ioe.printStackTrace();</span>
+<span class="nc" id="L137">            throw new InstantiationError(&quot;FSDom threw an IOException : &quot; + ioe.getMessage());</span>
+<span class="fc" id="L138">        }</span>
+
+
+<span class="fc" id="L141">    }</span>
+
+    protected Map createEscapeCharsMap() {
+<span class="fc" id="L144">        Map&lt;String, String&gt; escapeChars = new HashMap&lt;String, String&gt;();</span>
+
+<span class="fc" id="L146">        escapeChars.put(&quot;&amp;&quot;, &quot;&amp;#26;&quot;);</span>
+<span class="fc" id="L147">        escapeChars.put(&quot;&lt;&quot;, &quot;&amp;#3c;&quot;);</span>
+<span class="fc" id="L148">        escapeChars.put(&quot;&gt;&quot;, &quot;&amp;#3e;&quot;);</span>
+<span class="fc" id="L149">        escapeChars.put(&quot;\&quot;&quot;, &quot;&amp;#22;&quot;);</span>
+
+<span class="fc" id="L151">        return escapeChars;</span>
+    }
+
+    protected void createDocumentBuilder() throws ParserConfigurationException {
+        try {
+<span class="fc" id="L156">            this.documentBuilder = DocumentBuilderFactory.newInstance().newDocumentBuilder();</span>
+<span class="nc" id="L157">        } catch (ParserConfigurationException pce) {</span>
+<span class="nc" id="L158">            pce.printStackTrace();</span>
+<span class="nc" id="L159">            throw pce;</span>
+<span class="fc" id="L160">        }</span>
+<span class="fc" id="L161">    }</span>
+
+    protected Document buildDOM(File currentDir) throws IOException {
+<span class="fc" id="L164">        Document dom = this.documentBuilder.newDocument();</span>
+
+<span class="fc" id="L166">        dom.appendChild(this.createChildElement(dom, currentDir));</span>
+
+<span class="fc" id="L168">        return dom;</span>
+    }
+
+    private Element createChildElement(Document dom, File currentFile) throws IOException {
+
+<span class="fc" id="L173">        Element currentElement = null;</span>
+
+<span class="fc bfc" id="L175" title="All 2 branches covered.">        if (currentFile.isDirectory()) {</span>
+
+<span class="fc" id="L177">            currentElement = dom.createElement(FSPathAttributes.dir.name());</span>
+
+            //recurse and create child elements for all its children
+<span class="fc" id="L180">            File[] children = currentFile.listFiles();</span>
+
+<span class="pc bpc" id="L182" title="1 of 2 branches missed.">            if (children != null) {</span>
+<span class="fc bfc" id="L183" title="All 2 branches covered.">                for (int i = 0; i &lt; children.length; i++) {</span>
+<span class="fc" id="L184">                    currentElement.appendChild(this.createChildElement(dom, children[i]));</span>
+                }
+            }
+<span class="fc" id="L187">        } else {</span>
+<span class="fc" id="L188">            currentElement = dom.createElement(FSPathAttributes.file.name());</span>
+        }
+
+<span class="fc" id="L191">        currentElement.setAttribute(FSPathAttributes.name.name(), currentFile.getName());</span>
+<span class="fc" id="L192">        currentElement.setAttribute(FSPathAttributes.absolutePath.name(), currentFile.getAbsolutePath());</span>
+<span class="fc" id="L193">        currentElement.setAttribute(FSPathAttributes.canRead.name(), Boolean.toString(currentFile.canRead())); //optional for speed?</span>
+<span class="fc" id="L194">        currentElement.setAttribute(FSPathAttributes.canWrite.name(), Boolean.toString(currentFile.canWrite())); //optional for speed?</span>
+<span class="fc" id="L195">        currentElement.setAttribute(FSPathAttributes.canonicalPath.name(), currentFile.getCanonicalPath());</span>
+<span class="fc" id="L196">        currentElement.setAttribute(FSPathAttributes.exists.name(), Boolean.toString(currentFile.exists())); //optional for speed?</span>
+<span class="fc" id="L197">        currentElement.setAttribute(FSPathAttributes.isAbsolute.name(), Boolean.toString(currentFile.isAbsolute()));</span>
+<span class="fc" id="L198">        currentElement.setAttribute(FSPathAttributes.isDirectory.name(), Boolean.toString(currentFile.isDirectory()));</span>
+<span class="fc" id="L199">        currentElement.setAttribute(FSPathAttributes.isFile.name(), Boolean.toString(currentFile.isFile()));</span>
+<span class="fc" id="L200">        currentElement.setAttribute(FSPathAttributes.isHidden.name(), Boolean.toString(currentFile.isHidden()));</span>
+<span class="fc" id="L201">        currentElement.setAttribute(FSPathAttributes.lastModified.name(), this.format.format(new Date(currentFile.lastModified())));</span>
+<span class="fc" id="L202">        currentElement.setAttribute(FSPathAttributes.length.name(), Long.toString(currentFile.length()));</span>
+<span class="fc" id="L203">        currentElement.setAttribute(FSPathAttributes.parent.name(), currentFile.getParent());</span>
+<span class="fc" id="L204">        currentElement.setAttribute(FSPathAttributes.path.name(), currentFile.getPath());</span>
+       
+<span class="fc" id="L206">        return currentElement;</span>
+    }
+
+    /**
+     *  Calls this.query(expression, XPathConstants.NODESET)
+     *
+     *  Note : This method MUST be passed an expression which returns a nodeset.
+     *
+     *  @param expression the FSPath expression to execute.
+     *  @returns &lt;code&gt;FSPathResultList&lt;/code&gt; the FSPathResult objects contained
+     *  in this list will be of type &lt;code&gt;java.io.File&lt;/code&gt;,
+     *  &lt;code&gt;java.lang.Double&lt;/code&gt;, &lt;code&gt;java.lang.Boolean&lt;/code&gt;,
+     *  &lt;code&gt;java.lang.String&lt;/code&gt;
+     */
+    public FSPathResultList query(String expression) {
+<span class="fc" id="L221">        return this.query(expression, XPathConstants.NODESET);</span>
+    }
+
+    /**
+     *
+     */
+    public FSPathResultList query(String expression, QName returnType) {
+
+<span class="fc" id="L229">        FSPathResultList results = new FSPathResultListImpl();</span>
+
+        try {
+
+<span class="pc bpc" id="L233" title="1 of 2 branches missed.">            if (XPathConstants.NODESET.equals(returnType)) {</span>
+<span class="pc" id="L234">                NodeList nodelist = (NodeList)this.xpath.evaluate(expression,</span>
+<span class="fc" id="L235">                                                              this.dom.getDocumentElement(),</span>
+                                                              XPathConstants.NODESET);
+<span class="nc bnc" id="L237" title="All 2 branches missed.">                if (nodelist.getLength() &gt; 0) {</span>
+<span class="nc bnc" id="L238" title="All 2 branches missed.">                    for (int i = 0; i &lt; nodelist.getLength(); i++) {</span>
+<span class="nc" id="L239">                        processNode(nodelist.item(i), results);</span>
+                    }
+                }
+<span class="nc" id="L242">                return results;</span>
+            }
+
+<span class="nc bnc" id="L245" title="All 2 branches missed.">            if (XPathConstants.NODE.equals(returnType)) {</span>
+<span class="nc" id="L246">                Node node = (Node)this.xpath.evaluate(expression,</span>
+<span class="nc" id="L247">                                                      this.dom.getDocumentElement(),</span>
+                                                      XPathConstants.NODE);
+<span class="nc" id="L249">                processNode(node, results);</span>
+
+<span class="nc" id="L251">                return results;</span>
+            }
+
+<span class="nc bnc" id="L254" title="All 2 branches missed.">            if (XPathConstants.BOOLEAN.equals(returnType)) {</span>
+<span class="nc" id="L255">                Boolean result = (Boolean)this.xpath.evaluate(expression,</span>
+<span class="nc" id="L256">                                                              this.dom.getDocumentElement(),</span>
+                                                              XPathConstants.BOOLEAN);
+
+<span class="nc" id="L259">               results.add(new FSPathResult(result));</span>
+
+<span class="nc" id="L261">               return results;</span>
+            }
+
+<span class="nc bnc" id="L264" title="All 2 branches missed.">            if (XPathConstants.NUMBER.equals(returnType)) {</span>
+<span class="nc" id="L265">                Double result = (Double)this.xpath.evaluate(expression,</span>
+<span class="nc" id="L266">                                                            this.dom.getDocumentElement(),</span>
+                                                            XPathConstants.NUMBER);
+<span class="nc" id="L268">                results.add(new FSPathResult(result));</span>
+
+<span class="nc" id="L270">                return results;</span>
+            }
+
+<span class="nc bnc" id="L273" title="All 2 branches missed.">            if (XPathConstants.STRING.equals(returnType)) {</span>
+<span class="nc" id="L274">                String result = (String)this.xpath.evaluate(expression,</span>
+<span class="nc" id="L275">                                                            this.dom.getDocumentElement(),</span>
+                                                            XPathConstants.STRING);
+
+<span class="nc" id="L278">                results.add(new FSPathResult(result));</span>
+
+<span class="nc" id="L280">                return results;</span>
+            }
+
+
+<span class="fc" id="L284">        } catch (XPathExpressionException xpee) {</span>
+<span class="fc" id="L285">            System.out.println(&quot;Invalid FSPath expression : &quot; + xpee.getCause().getMessage());</span>
+<span class="nc" id="L286">        } catch (IllegalArgumentException iae) {</span>
+<span class="nc" id="L287">            iae.printStackTrace();</span>
+<span class="nc" id="L288">            System.out.println(&quot;IllegalArgumentException&quot;);</span>
+<span class="nc" id="L289">        } catch (ParseException pe) {</span>
+<span class="nc" id="L290">            pe.printStackTrace();</span>
+<span class="nc" id="L291">            System.out.println(&quot;ParseException&quot;);</span>
+<span class="pc" id="L292">        }</span>
+
+
+<span class="fc" id="L295">        return results;</span>
+    }
+
+    private void processNode(Node node, FSPathResultList results)
+                                                throws XPathExpressionException,
+                                                       IllegalArgumentException,
+                                                       ParseException {
+
+        //as the only elements in our dom are files or directories we will try to
+        //create File objects of those nodes.
+<span class="nc bnc" id="L305" title="All 2 branches missed.">        if (node.getNodeType() == Node.ELEMENT_NODE) {</span>
+
+<span class="nc" id="L307">            String fileName = node.getAttributes().getNamedItem(FSPathAttributes.absolutePath.name()).getNodeValue();</span>
+            //System.out.println(&quot;Filename : &quot; + fileName);
+<span class="nc" id="L309">            results.add(new FSPathResult(new File(fileName)));</span>
+
+<span class="nc" id="L311">            return;</span>
+        }
+
+<span class="nc bnc" id="L314" title="All 2 branches missed.">        if (node.getNodeType() == Node.ATTRIBUTE_NODE) {</span>
+
+<span class="nc" id="L316">            Attr attr = (Attr)node;</span>
+
+            //now work out which attirutes were Dates, Longs and Strings
+
+<span class="nc" id="L320">            if (FSPathAttributes.absolutePath.name().equals(attr.getName())</span>
+<span class="nc" id="L321">                | FSPathAttributes.canonicalPath.name().equals(attr.getName())</span>
+<span class="nc" id="L322">                | FSPathAttributes.name.name().equals(attr.getName())</span>
+<span class="nc" id="L323">                | FSPathAttributes.parent.name().equals(attr.getName())</span>
+<span class="nc bnc" id="L324" title="All 2 branches missed.">                | FSPathAttributes.path.name().equals(attr.getName())) {</span>
+
+<span class="nc" id="L326">                results.add(new FSPathResult(attr.getValue()));</span>
+
+<span class="nc" id="L328">                return;</span>
+            }
+
+<span class="nc" id="L331">            if (FSPathAttributes.canRead.name().equals(attr.getName())</span>
+<span class="nc" id="L332">                | FSPathAttributes.canWrite.name().equals(attr.getName())</span>
+<span class="nc" id="L333">                | FSPathAttributes.exists.name().equals(attr.getName())</span>
+<span class="nc" id="L334">                | FSPathAttributes.isAbsolute.name().equals(attr.getName())</span>
+<span class="nc" id="L335">                | FSPathAttributes.isDirectory.name().equals(attr.getName())</span>
+<span class="nc" id="L336">                | FSPathAttributes.isFile.name().equals(attr.getName())</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">                | FSPathAttributes.isHidden.name().equals(attr.getName())) {</span>
+
+<span class="nc" id="L339">                results.add(new FSPathResult(new Boolean(attr.getValue())));</span>
+
+<span class="nc" id="L341">                return;</span>
+            }
+
+<span class="nc bnc" id="L344" title="All 2 branches missed.">            if (FSPathAttributes.lastModified.name().equals(attr.getName())) {</span>
+<span class="nc" id="L345">                results.add(new FSPathResult(this.format.parse(attr.getValue())));</span>
+
+<span class="nc" id="L347">                return;</span>
+            }
+
+<span class="nc bnc" id="L350" title="All 2 branches missed.">            if (FSPathAttributes.length.name().equals(attr.getName())) {</span>
+<span class="nc" id="L351">                results.add(new FSPathResult(Double.parseDouble(attr.getValue())));</span>
+
+<span class="nc" id="L353">                return;</span>
+            }
+        }
+<span class="nc" id="L356">    }</span>
+
+    public File getRootDirectory() {
+<span class="nc" id="L359">        return this.rootDirectory;</span>
+    }
+
+
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

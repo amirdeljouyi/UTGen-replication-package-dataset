@@ -1,0 +1,871 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DataTypeTime.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent</a> &gt; <span class="el_source">DataTypeTime.java</span></div><h1>DataTypeTime.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent;
+/*
+ * Copyright (C) 2001-2004 Colin Bell
+ * colbell@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+import java.awt.event.*;
+import java.awt.GridBagLayout;
+import java.awt.GridBagConstraints;
+import javax.swing.event.ChangeListener;
+import javax.swing.event.ChangeEvent;
+import java.awt.Insets;
+
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.io.IOException;
+
+import javax.swing.JTable;
+import javax.swing.JTextField;
+import javax.swing.JTextArea;
+import javax.swing.SwingUtilities;
+import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
+import javax.swing.BorderFactory;
+
+import javax.swing.text.JTextComponent;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.Time;
+
+import java.text.DateFormat;
+
+import net.sourceforge.squirrel_sql.fw.datasetviewer.CellDataPopup;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.ColumnDisplayDefinition;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.whereClause.IWhereClausePart;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.whereClause.IsNullWhereClausePart;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.whereClause.NoParameterWhereClausePart;
+import net.sourceforge.squirrel_sql.fw.gui.OkJPanel;
+import net.sourceforge.squirrel_sql.fw.gui.RightLabel;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.ThreadSafeDateFormat;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+/**
+ * @author gwg
+ *
+ * This class provides the display components for handling Time data types,
+ * specifically SQL type TIME.
+ * The display components are for:
+ * &lt;UL&gt;
+ * &lt;LI&gt; read-only display within a table cell
+ * &lt;LI&gt; editing within a table cell
+ * &lt;LI&gt; read-only or editing display within a separate window
+ * &lt;/UL&gt;
+ * The class also contains
+ * &lt;UL&gt;
+ * &lt;LI&gt; a function to compare two display values
+ * to see if they are equal.  This is needed because the display format
+ * may not be the same as the internal format, and all internal object
+ * types may not provide an appropriate equals() function.
+ * &lt;LI&gt; a function to return a printable text form of the cell contents,
+ * which is used in the text version of the table.
+ * &lt;/UL&gt;
+ * &lt;P&gt;
+ * The components returned from this class extend RestorableJTextField
+ * and RestorableJTextArea for use in editing table cells that
+ * contain values of this data type.  It provides the special behavior for null
+ * handling and resetting the cell to the original value.
+ */
+
+public class DataTypeTime extends BaseDataTypeComponent
+   implements IDataTypeComponent
+{
+
+<span class="nc" id="L93">   private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L94">      StringManagerFactory.getStringManager(DataTypeTime.class);</span>
+
+   /** Logger for this class. */
+<span class="nc" id="L97">   private static ILogger s_log = LoggerController.createLogger(DataTypeTime.class);</span>
+
+   /* whether nulls are allowed or not */
+   private boolean _isNullable;
+
+   /* table of which we are part (needed for creating popup dialog) */
+   private JTable _table;
+
+   /* The JTextComponent that is being used for editing */
+   private IRestorableTextComponent _textComponent;
+
+   /* The CellRenderer used for this data type */
+   //??? For now, use the same renderer as everyone else.
+   //??
+   //?? IN FUTURE: change this to use a new instance of renederer
+   //?? for this data type.
+<span class="nc" id="L113">   private DefaultColumnRenderer _renderer = DefaultColumnRenderer.getInstance();</span>
+
+
+   /**
+    * Name of this class, which is needed because the class name is needed
+    * by the static method getControlPanel, so we cannot use something
+    * like getClass() to find this name.
+    */
+   private static final String thisClassName =
+      &quot;net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.DataTypeTime&quot;;
+
+
+   /** Default date format */
+<span class="nc" id="L126">   private static int DEFAULT_LOCALE_FORMAT = DateFormat.SHORT;</span>
+
+   /*
+     * Properties settable by the user
+     */
+    // flag for whether we have already loaded the properties or not
+<span class="nc" id="L132">    private static boolean propertiesAlreadyLoaded = false;</span>
+
+    // flag for whether to use the default Java format (true)
+    // or the Locale-dependent format (false)
+<span class="nc" id="L136">    private static boolean useJavaDefaultFormat = true;</span>
+
+    // which locale-dependent format to use; short, medium, long, or full
+<span class="nc" id="L139">    private static int localeFormat = DEFAULT_LOCALE_FORMAT;</span>
+
+    // Whether to force user to enter dates in exact format or use heuristics to guess it
+<span class="nc" id="L142">    private static boolean lenient = true;</span>
+
+    // The DateFormat object to use for all locale-dependent formatting.
+    // This is reset each time the user changes the previous settings.
+<span class="nc" id="L146">    private static ThreadSafeDateFormat dateFormat = </span>
+        new ThreadSafeDateFormat(localeFormat, true);
+    private boolean _renderExceptionHasBeenLogged;
+
+   /**
+    * Constructor - save the data needed by this data type.
+    */
+<span class="nc" id="L153">   public DataTypeTime(JTable table, ColumnDisplayDefinition colDef) {</span>
+<span class="nc" id="L154">      _table = table;</span>
+<span class="nc" id="L155">      _colDef = colDef;</span>
+<span class="nc" id="L156">      _isNullable = colDef.isNullable();</span>
+
+<span class="nc" id="L158">      loadProperties();</span>
+<span class="nc" id="L159">   }</span>
+
+   /** Internal function to get the user-settable properties from the DTProperties,
+    * if they exist, and to ensure that defaults are set if the properties have
+    * not yet been created.
+    * &lt;P&gt;
+    * This method may be called from different places depending on whether
+    * an instance of this class is created before the user brings up the Session
+    * Properties window.  In either case, the data is static and is set only
+    * the first time we are called.
+    */
+   private static void loadProperties() {
+
+      //set the property values
+      // Note: this may have already been done by another instance of
+      // this DataType created to handle a different column.
+<span class="nc bnc" id="L175" title="All 2 branches missed.">      if (propertiesAlreadyLoaded == false) {</span>
+         // get parameters previously set by user, or set default values
+<span class="nc" id="L177">         useJavaDefaultFormat =true;	// set to use the Java default</span>
+<span class="nc" id="L178">         String useJavaDefaultFormatString = DTProperties.get(</span>
+            thisClassName, &quot;useJavaDefaultFormat&quot;);
+<span class="nc bnc" id="L180" title="All 4 branches missed.">         if (useJavaDefaultFormatString != null &amp;&amp; useJavaDefaultFormatString.equals(&quot;false&quot;))</span>
+<span class="nc" id="L181">            useJavaDefaultFormat =false;</span>
+
+         // get which locale-dependent format to use
+<span class="nc" id="L184">         localeFormat =DateFormat.SHORT;	// set to use the Java default</span>
+<span class="nc" id="L185">         String localeFormatString = DTProperties.get(</span>
+            thisClassName, &quot;localeFormat&quot;);
+<span class="nc bnc" id="L187" title="All 2 branches missed.">         if (localeFormatString != null)</span>
+<span class="nc" id="L188">            localeFormat = Integer.parseInt(localeFormatString);</span>
+
+         // use lenient input or force user to enter exact format
+<span class="nc" id="L191">         lenient = true;	// set to allow less stringent input</span>
+<span class="nc" id="L192">         String lenientString = DTProperties.get(</span>
+            thisClassName, &quot;lenient&quot;);
+<span class="nc bnc" id="L194" title="All 4 branches missed.">         if (lenientString != null &amp;&amp; lenientString.equals(&quot;false&quot;))</span>
+<span class="nc" id="L195">            lenient =false;</span>
+
+         /*
+          * After loading the properties, we must initialize the dateFormat.
+          * See Bug 3086444
+          */
+<span class="nc" id="L201">         initDateFormat(localeFormat, lenient);</span>
+
+      }
+<span class="nc" id="L204">   }</span>
+
+   /**
+    * Defines the dateFormat with the specific format and lenient options
+    */
+   private static void initDateFormat(int format, boolean lenient) {
+<span class="nc" id="L210">       dateFormat = new ThreadSafeDateFormat(format, true);	// lenient is set next</span>
+<span class="nc" id="L211">       dateFormat.setLenient(lenient);</span>
+<span class="nc" id="L212">   }</span>
+
+
+   /**
+    * Return the name of the java class used to hold this data type.
+    */
+   public String getClassName() {
+<span class="nc" id="L219">      return &quot;java.sql.Time&quot;;</span>
+   }
+
+   /*
+    * First we have the methods for in-cell and Text-table operations
+    */
+
+   /**
+    * Render a value into text for this DataType.
+    */
+   public String renderObject(Object value) {
+      // use the Java default date-to-string
+<span class="nc bnc" id="L231" title="All 4 branches missed.">      if (useJavaDefaultFormat == true || value == null)</span>
+<span class="nc" id="L232">         return (String)_renderer.renderObject(value);</span>
+
+      // use a date formatter
+      try
+      {
+<span class="nc" id="L237">          return (String)_renderer.renderObject(dateFormat.format(value));</span>
+      }
+<span class="nc" id="L239">      catch (Exception e)</span>
+      {
+<span class="nc bnc" id="L241" title="All 2 branches missed.">          if(false == _renderExceptionHasBeenLogged)</span>
+          {
+<span class="nc" id="L243">              _renderExceptionHasBeenLogged = true;</span>
+<span class="nc" id="L244">              s_log.error(&quot;Could not format \&quot;&quot; + value + &quot;\&quot; as date type&quot;, e);</span>
+          }
+<span class="nc" id="L246">          return (String) _renderer.renderObject(value);</span>
+      }
+   }
+
+   /**
+    * This Data Type can be edited in a table cell.
+    */
+   public boolean isEditableInCell(Object originalValue) {
+<span class="nc" id="L254">      return true;</span>
+   }
+
+   /**
+    * See if a value in a column has been limited in some way and
+    * needs to be re-read before being used for editing.
+    * For read-only tables this may actually return true since we want
+    * to be able to view the entire contents of the cell even if it was not
+    * completely loaded during the initial table setup.
+    */
+   public boolean needToReRead(Object originalValue) {
+      // this DataType does not limit the data read during the initial load of the table,
+      // so there is no need to re-read the complete data later
+<span class="nc" id="L267">      return false;</span>
+   }
+
+   /**
+    * Return a JTextField usable in a CellEditor.
+    */
+   public JTextField getJTextField() {
+<span class="nc" id="L274">      _textComponent = new RestorableJTextField();</span>
+
+      // special handling of operations while editing this data type
+<span class="nc" id="L277">      ((RestorableJTextField)_textComponent).addKeyListener(new KeyTextHandler());</span>
+
+      //
+      // handle mouse events for double-click creation of popup dialog.
+      // This happens only in the JTextField, not the JTextArea, so we can
+      // make this an inner class within this method rather than a separate
+      // inner class as is done with the KeyTextHandler class.
+      //
+<span class="nc" id="L285">      ((RestorableJTextField)_textComponent).addMouseListener(new MouseAdapter()</span>
+<span class="nc" id="L286">      {</span>
+         public void mousePressed(MouseEvent evt)
+         {
+<span class="nc bnc" id="L289" title="All 2 branches missed.">            if (evt.getClickCount() == 2)</span>
+            {
+<span class="nc" id="L291">               MouseEvent tableEvt = SwingUtilities.convertMouseEvent(</span>
+<span class="nc" id="L292">                  (RestorableJTextField)DataTypeTime.this._textComponent,</span>
+<span class="nc" id="L293">                  evt, DataTypeTime.this._table);</span>
+<span class="nc" id="L294">               CellDataPopup.showDialog(DataTypeTime.this._table,</span>
+                  DataTypeTime.this._colDef, tableEvt, true);
+            }
+<span class="nc" id="L297">         }</span>
+      });	// end of mouse listener
+
+<span class="nc" id="L300">      return (JTextField)_textComponent;</span>
+   }
+
+   /**
+    * Implement the interface for validating and converting to internal object.
+    * Null is a valid successful return, so errors are indicated only by
+    * existance or not of a message in the messageBuffer.
+    */
+   public Object validateAndConvert(String value, Object originalValue, StringBuffer messageBuffer) {
+      // handle null, which is shown as the special string &quot;&lt;null&gt;&quot;
+<span class="nc bnc" id="L310" title="All 4 branches missed.">      if (value.equals(&quot;&lt;null&gt;&quot;) || value.equals(&quot;&quot;))</span>
+<span class="nc" id="L311">         return null;</span>
+
+      // Do the conversion into the object in a safe manner
+      try {
+<span class="nc bnc" id="L315" title="All 2 branches missed.">         if (useJavaDefaultFormat) {</span>
+            // allow the user to enter just the hour or just hour and minute
+            // and assume the un-entered values are 0
+<span class="nc" id="L318">            int firstColon = value.indexOf(&quot;:&quot;);</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">            if (firstColon == -1) {</span>
+               // user just entered the hour, so append min &amp; sec
+<span class="nc" id="L321">               value = value + &quot;:0:0&quot;;</span>
+            }
+            else {
+               // user entered hour an min. See if they also entered secs
+<span class="nc bnc" id="L325" title="All 2 branches missed.">               if (value.indexOf(&quot;:&quot;, firstColon + 1) == -1) {</span>
+                  // user did not enter seconds
+<span class="nc" id="L327">                  value = value + &quot;:0&quot;;</span>
+               }
+            }
+<span class="nc" id="L330">            Object obj = Time.valueOf(value);</span>
+<span class="nc" id="L331">            return obj;</span>
+         }
+         else {
+            // use the DateFormat to parse
+<span class="nc" id="L335">            java.util.Date javaDate = dateFormat.parse(value);</span>
+<span class="nc" id="L336">            return new Time(javaDate.getTime());</span>
+         }
+      }
+<span class="nc" id="L339">      catch (Exception e) {</span>
+<span class="nc" id="L340">         messageBuffer.append(e.toString()+&quot;\n&quot;);</span>
+         //?? do we need the message also, or is it automatically part of the toString()?
+         //messageBuffer.append(e.getMessage());
+<span class="nc" id="L343">         return null;</span>
+      }
+   }
+
+   /**
+    * If true, this tells the PopupEditableIOPanel to use the
+    * binary editing panel rather than a pure text panel.
+    * The binary editing panel assumes the data is an array of bytes,
+    * converts it into text form, allows the user to change how that
+    * data is displayed (e.g. Hex, Decimal, etc.), and converts
+    * the data back from text to bytes when the user editing is completed.
+    * If this returns false, this DataType class must
+    * convert the internal data into a text string that
+    * can be displayed (and edited, if allowed) in a TextField
+    * or TextArea, and must handle all
+    * user key strokes related to editing of that data.
+    */
+   public boolean useBinaryEditingPanel() {
+<span class="nc" id="L361">      return false;</span>
+   }
+
+
+   /*
+     * Now the functions for the Popup-related operations.
+     */
+
+   /**
+    * Returns true if data type may be edited in the popup,
+    * false if not.
+    */
+   public boolean isEditableInPopup(Object originalValue) {
+<span class="nc" id="L374">      return true;</span>
+   }
+
+   /*
+     * Return a JTextArea usable in the CellPopupDialog
+     * and fill in the value.
+     */
+    public JTextArea getJTextArea(Object value) {
+<span class="nc" id="L382">      _textComponent = new RestorableJTextArea();</span>
+
+      // value is a simple string representation of the data,
+      // the same one used in Text and in-cell operations.
+<span class="nc" id="L386">      ((RestorableJTextArea)_textComponent).setText(renderObject(value));</span>
+
+      // special handling of operations while editing this data type
+<span class="nc" id="L389">      ((RestorableJTextArea)_textComponent).addKeyListener(new KeyTextHandler());</span>
+
+<span class="nc" id="L391">      return (RestorableJTextArea)_textComponent;</span>
+    }
+
+   /**
+    * Validating and converting in Popup is identical to cell-related operation.
+    */
+   public Object validateAndConvertInPopup(String value, Object originalValue, StringBuffer messageBuffer) {
+<span class="nc" id="L398">      return validateAndConvert(value, originalValue, messageBuffer);</span>
+   }
+
+   /*
+     * The following is used in both cell and popup operations.
+     */
+
+   /*
+     * Internal class for handling key events during editing
+     * of both JTextField and JTextArea.
+     */
+<span class="nc" id="L409">    private class KeyTextHandler extends BaseKeyTextHandler {</span>
+       public void keyTyped(KeyEvent e) {
+<span class="nc" id="L411">            char c = e.getKeyChar();</span>
+
+            // as a coding convenience, create a reference to the text component
+            // that is typecast to JTextComponent.  this is not essential, as we
+            // could typecast every reference, but this makes the code cleaner
+<span class="nc" id="L416">            JTextComponent _theComponent = (JTextComponent)DataTypeTime.this._textComponent;</span>
+<span class="nc" id="L417">            String text = _theComponent.getText();</span>
+
+            // tabs and newlines get put into the text before this check,
+            // so remove them
+            // This only applies to Popup editing since these chars are
+            // not passed to this level by the in-cell editor.
+<span class="nc bnc" id="L423" title="All 4 branches missed.">            if (c == KeyEvent.VK_TAB || c == KeyEvent.VK_ENTER) {</span>
+               // remove all instances of the offending char
+<span class="nc" id="L425">               int index = text.indexOf(c);</span>
+<span class="nc bnc" id="L426" title="All 2 branches missed.">               if (index == text.length() -1) {</span>
+<span class="nc" id="L427">                  text = text.substring(0, text.length()-1);	// truncate string</span>
+               }
+               else {
+<span class="nc" id="L430">                  text = text.substring(0, index) + text.substring(index+1);</span>
+               }
+<span class="nc" id="L432">               ((IRestorableTextComponent)_theComponent).updateText( text);</span>
+<span class="nc" id="L433">               _beepHelper.beep(_theComponent);</span>
+<span class="nc" id="L434">               e.consume();</span>
+            }
+
+
+            // handle cases of null
+            // The processing is different when nulls are allowed and when they are not.
+            //
+
+<span class="nc bnc" id="L442" title="All 2 branches missed.">            if ( DataTypeTime.this._isNullable) {</span>
+
+               // user enters something when field is null
+<span class="nc bnc" id="L445" title="All 2 branches missed.">               if (text.equals(&quot;&lt;null&gt;&quot;)) {</span>
+<span class="nc bnc" id="L446" title="All 4 branches missed.">                  if ((c==KeyEvent.VK_BACK_SPACE) || (c == KeyEvent.VK_DELETE)) {</span>
+                     // delete when null =&gt; original value
+<span class="nc" id="L448">                     DataTypeTime.this._textComponent.restoreText();</span>
+<span class="nc" id="L449">                     e.consume();</span>
+                  }
+                  else {
+                     // non-delete when null =&gt; clear field and add text
+<span class="nc" id="L453">                     DataTypeTime.this._textComponent.updateText(&quot;&quot;);</span>
+                     // fall through to normal processing of this key stroke
+                  }
+               }
+               else {
+                  // check for user deletes last thing in field
+<span class="nc bnc" id="L459" title="All 4 branches missed.">                  if ((c == KeyEvent.VK_BACK_SPACE) || (c == KeyEvent.VK_DELETE)) {</span>
+<span class="nc bnc" id="L460" title="All 2 branches missed.">                     if (text.length() &lt;= 1 ) {</span>
+                        // about to delete last thing in field, so replace with null
+<span class="nc" id="L462">                        DataTypeTime.this._textComponent.updateText(&quot;&lt;null&gt;&quot;);</span>
+<span class="nc" id="L463">                        e.consume();</span>
+                     }
+                  }
+               }
+            }
+            else {
+                    // field is not nullable
+                    //
+<span class="nc" id="L471">                    handleNotNullableField(text, c, e, _textComponent);</span>
+            }
+<span class="nc" id="L473">         }</span>
+      }
+
+
+   /*
+     * DataBase-related functions
+     */
+
+    /**
+     * On input from the DB, read the data from the ResultSet into the appropriate
+     * type of object to be stored in the table cell.
+     */
+   public Object readResultSet(ResultSet rs, int index, boolean limitDataRead)
+      throws java.sql.SQLException {
+
+<span class="nc" id="L488">      Time data = rs.getTime(index);</span>
+<span class="nc bnc" id="L489" title="All 2 branches missed.">      if (rs.wasNull())</span>
+<span class="nc" id="L490">         return null;</span>
+<span class="nc" id="L491">      else return data;</span>
+   }
+
+   /**
+    * When updating the database, generate a string form of this object value
+    * that can be used in the WHERE clause to match the value in the database.
+    * A return value of null means that this column cannot be used in the WHERE
+    * clause, while a return of &quot;null&quot; (or &quot;is null&quot;, etc) means that the column
+    * can be used in the WHERE clause and the value is actually a null value.
+    * This function must also include the column label so that its output
+    * is of the form:
+    * 	&quot;columnName = value&quot;
+    * or
+    * 	&quot;columnName is null&quot;
+    * or whatever is appropriate for this column in the database.
+    */
+   public IWhereClausePart getWhereClauseValue(Object value, ISQLDatabaseMetaData md) {
+<span class="nc bnc" id="L508" title="All 6 branches missed.">      if (value == null || value.toString() == null || value.toString().length() == 0)</span>
+<span class="nc" id="L509">         return new IsNullWhereClausePart(_colDef);</span>
+      else
+<span class="nc" id="L511">         return new NoParameterWhereClausePart(_colDef, _colDef.getColumnName() + &quot;={t '&quot; + value.toString() +&quot;'}&quot;);</span>
+   }
+
+
+   /**
+    * When updating the database, insert the appropriate datatype into the
+    * prepared statment at the given variable position.
+    */
+   public void setPreparedStatementValue(PreparedStatement pstmt, Object value, int position)
+      throws java.sql.SQLException {
+<span class="nc bnc" id="L521" title="All 2 branches missed.">      if (value == null) {</span>
+<span class="nc" id="L522">         pstmt.setNull(position, _colDef.getSqlType());</span>
+      }
+      else {
+<span class="nc" id="L525">         pstmt.setTime(position, ((Time)value));</span>
+      }
+<span class="nc" id="L527">   }</span>
+
+   /**
+    * Get a default value for the table used to input data for a new row
+    * to be inserted into the DB.
+    */
+   public Object getDefaultValue(String dbDefaultValue) {
+<span class="nc bnc" id="L534" title="All 2 branches missed.">      if (dbDefaultValue != null) {</span>
+         // try to use the DB default value
+<span class="nc" id="L536">         StringBuffer mbuf = new StringBuffer();</span>
+<span class="nc" id="L537">         Object newObject = validateAndConvert(dbDefaultValue, null, mbuf);</span>
+
+         // if there was a problem with converting, then just fall through
+         // and continue as if there was no default given in the DB.
+         // Otherwise, use the converted object
+<span class="nc bnc" id="L542" title="All 2 branches missed.">         if (mbuf.length() == 0)</span>
+<span class="nc" id="L543">            return newObject;</span>
+      }
+
+      // no default in DB.  If nullable, use null.
+<span class="nc bnc" id="L547" title="All 2 branches missed.">      if (_isNullable)</span>
+<span class="nc" id="L548">         return null;</span>
+
+      // field is not nullable, so create a reasonable default value
+<span class="nc" id="L551">      return new Time(new java.util.Date().getTime());</span>
+   }
+
+
+   /*
+     * File IO related functions
+     */
+
+
+    /**
+     * Say whether or not object can be exported to and imported from
+     * a file.  We put both export and import together in one test
+     * on the assumption that all conversions can be done both ways.
+     */
+    public boolean canDoFileIO() {
+<span class="nc" id="L566">       return true;</span>
+    }
+
+    /**
+     * Read a file and construct a valid object from its contents.
+     * Errors are returned by throwing an IOException containing the
+     * cause of the problem as its message.
+     * &lt;P&gt;
+     * DataType is responsible for validating that the imported
+     * data can be converted to an object, and then must return
+     * a text string that can be used in the Popup window text area.
+     * This object-to-text conversion is the same as is done by
+     * the DataType object internally in the getJTextArea() method.
+     *
+     * &lt;P&gt;
+     * File is assumed to be and ASCII string of digits
+     * representing a value of this data type.
+     */
+   public String importObject(FileInputStream inStream)
+       throws IOException {
+
+<span class="nc" id="L587">       InputStreamReader inReader = new InputStreamReader(inStream);</span>
+
+<span class="nc" id="L589">       int fileSize = inStream.available();</span>
+
+<span class="nc" id="L591">       char charBuf[] = new char[fileSize];</span>
+
+<span class="nc" id="L593">       int count = inReader.read(charBuf, 0, fileSize);</span>
+
+<span class="nc bnc" id="L595" title="All 2 branches missed.">       if (count != fileSize)</span>
+<span class="nc" id="L596">          throw new IOException(</span>
+             &quot;Could read only &quot;+ count +
+             &quot; chars from a total file size of &quot; + fileSize +
+             &quot;. Import failed.&quot;);
+
+       // convert file text into a string
+       // Special case: some systems tack a newline at the end of
+       // the text read.  Assume that if last char is a newline that
+       // we want everything else in the line.
+       String fileText;
+<span class="nc bnc" id="L606" title="All 2 branches missed.">       if (charBuf[count-1] == KeyEvent.VK_ENTER)</span>
+<span class="nc" id="L607">          fileText = new String(charBuf, 0, count-1);</span>
+<span class="nc" id="L608">       else fileText = new String(charBuf);</span>
+
+       // test that the string is valid by converting it into an
+       // object of this data type
+<span class="nc" id="L612">       StringBuffer messageBuffer = new StringBuffer();</span>
+<span class="nc" id="L613">       validateAndConvertInPopup(fileText, null, messageBuffer);</span>
+<span class="nc bnc" id="L614" title="All 2 branches missed.">       if (messageBuffer.length() &gt; 0) {</span>
+          // convert number conversion issue into IO issue for consistancy
+<span class="nc" id="L616">          throw new IOException(</span>
+<span class="nc" id="L617">             &quot;Text does not represent data of type &quot;+getClassName()+</span>
+             &quot;.  Text was:\n&quot;+fileText);
+       }
+
+       // return the text from the file since it does
+       // represent a valid data value
+<span class="nc" id="L623">       return fileText;</span>
+   }
+
+
+    /**
+     * Construct an appropriate external representation of the object
+     * and write it to a file.
+     * Errors are returned by throwing an IOException containing the
+     * cause of the problem as its message.
+     * &lt;P&gt;
+     * DataType is responsible for validating that the given text
+     * text from a Popup JTextArea can be converted to an object.
+     * This text-to-object conversion is the same as validateAndConvertInPopup,
+     * which may be used internally by the object to do the validation.
+     * &lt;P&gt;
+     * The DataType object must flush and close the output stream before returning.
+     * Typically it will create another object (e.g. an OutputWriter), and
+     * that is the object that must be flushed and closed.
+     *
+     * &lt;P&gt;
+     * File is assumed to be and ASCII string of digits
+     * representing a value of this data type.
+     */
+    public void exportObject(FileOutputStream outStream, String text)
+       throws IOException {
+
+<span class="nc" id="L649">       OutputStreamWriter outWriter = new OutputStreamWriter(outStream);</span>
+
+       // check that the text is a valid representation
+<span class="nc" id="L652">       StringBuffer messageBuffer = new StringBuffer();</span>
+<span class="nc" id="L653">       validateAndConvertInPopup(text, null, messageBuffer);</span>
+<span class="nc bnc" id="L654" title="All 2 branches missed.">       if (messageBuffer.length() &gt; 0) {</span>
+          // there was an error in the conversion
+<span class="nc" id="L656">          throw new IOException(new String(messageBuffer));</span>
+       }
+
+       // just send the text to the output file
+<span class="nc" id="L660">      outWriter.write(text);</span>
+<span class="nc" id="L661">      outWriter.flush();</span>
+<span class="nc" id="L662">      outWriter.close();</span>
+<span class="nc" id="L663">    }</span>
+
+
+   /*
+     * Property change control panel
+     */
+
+    /**
+     * Generate a JPanel containing controls that allow the user
+     * to adjust the properties for this DataType.
+     * All properties are static accross all instances of this DataType.
+     * However, the class may choose to apply the information differentially,
+     * such as keeping a list (also entered by the user) of table/column names
+     * for which certain properties should be used.
+     * &lt;P&gt;
+     * This is called ONLY if there is at least one property entered into the DTProperties
+     * for this class.
+     * &lt;P&gt;
+     * Since this method is called by reflection on the Method object derived from this class,
+     * it does not need to be included in the Interface.
+     * It would be nice to include this in the Interface for consistancy, documentation, etc,
+     * but the Interface does not seem to like static methods.
+     */
+    public static OkJPanel getControlPanel() {
+
+      /*
+         * If you add this method to one of the standard DataTypes in the
+         * fw/datasetviewer/cellcomponent directory, you must also add the name
+         * of that DataType class to the list in CellComponentFactory, method
+         * getControlPanels, variable named initialClassNameList.
+         * If the class is being registered with the factory using registerDataType,
+         * then you should not include the class name in the list (it will be found
+         * automatically), but if the DataType is part of the case statement in the
+         * factory method getDataTypeObject, then it does need to be explicitly listed
+         * in the getControlPanels method also.
+         */
+
+       // if this panel is called before any instances of the class have been
+       // created, we need to load the properties from the DTProperties.
+<span class="nc" id="L702">       loadProperties();</span>
+
+<span class="nc" id="L704">      return new TimeOkJPanel();</span>
+    }
+
+   // Class that displays the various formats available for dates
+   public static class DateFormatTypeCombo extends JComboBox
+   {
+    private static final long serialVersionUID = 1L;
+
+    public DateFormatTypeCombo()
+<span class="nc" id="L713">      {</span>
+         // i18n[dataTypeTime.full=Full ({0})]
+<span class="nc" id="L715">         addItem(s_stringMgr.getString(&quot;dataTypeTime.full&quot;, DateFormat.getTimeInstance(DateFormat.FULL).format(new java.util.Date())));</span>
+         // i18n[dataTypeTime.long=Long ({0})]
+<span class="nc" id="L717">         addItem(s_stringMgr.getString(&quot;dataTypeTime.long&quot;, DateFormat.getTimeInstance(DateFormat.LONG).format(new java.util.Date())));</span>
+         // i18n[dataTypeTime.medium=Medium ({0})]
+<span class="nc" id="L719">         addItem(s_stringMgr.getString(&quot;dataTypeTime.medium&quot;, DateFormat.getTimeInstance(DateFormat.MEDIUM).format(new java.util.Date())));</span>
+         // i18n[dataTypeTime.short=Short ({0})]
+<span class="nc" id="L721">         addItem(s_stringMgr.getString(&quot;dataTypeTime.short&quot;, DateFormat.getTimeInstance(DateFormat.SHORT).format(new java.util.Date())));</span>
+<span class="nc" id="L722">      }</span>
+
+      public void setSelectedIndex(int option) {
+<span class="nc bnc" id="L725" title="All 2 branches missed.">         if (option == DateFormat.SHORT)</span>
+<span class="nc" id="L726">            super.setSelectedIndex(3);</span>
+<span class="nc bnc" id="L727" title="All 2 branches missed.">         else if (option == DateFormat.MEDIUM)</span>
+<span class="nc" id="L728">            super.setSelectedIndex(2);</span>
+<span class="nc bnc" id="L729" title="All 2 branches missed.">         else if (option == DateFormat.LONG)</span>
+<span class="nc" id="L730">            super.setSelectedIndex(1);</span>
+<span class="nc" id="L731">         else super.setSelectedIndex(0);</span>
+<span class="nc" id="L732">      }</span>
+
+      public int getValue() {
+<span class="nc bnc" id="L735" title="All 2 branches missed.">         if (getSelectedIndex() == 3)</span>
+<span class="nc" id="L736">            return DateFormat.SHORT;</span>
+<span class="nc bnc" id="L737" title="All 2 branches missed.">         else if (getSelectedIndex() == 2)</span>
+<span class="nc" id="L738">            return DateFormat.MEDIUM;</span>
+<span class="nc bnc" id="L739" title="All 2 branches missed.">         else if (getSelectedIndex() == 1)</span>
+<span class="nc" id="L740">            return DateFormat.LONG;</span>
+<span class="nc" id="L741">         else return DateFormat.FULL;</span>
+      }
+   }
+
+
+    /**
+     * Inner class that extends OkJPanel so that we can call the ok()
+     * method to save the data when the user is happy with it.
+     */
+    private static class TimeOkJPanel extends OkJPanel
+    {
+        private static final long serialVersionUID = 1L;
+        /*
+         * GUI components - need to be here because they need to be
+         * accessible from the event handlers to alter each other's state.
+         */
+       // check box for whether to use Java Default or a Locale-dependent format
+
+
+<span class="nc" id="L760">       private JCheckBox useJavaDefaultFormatChk =</span>
+          // i18n[dataTypeTime.useDefaultFormat=Use default format ({0})]
+<span class="nc" id="L762">          new JCheckBox(s_stringMgr.getString(&quot;dataTypeTime.useDefaultFormat&quot;, new Time(new java.util.Date().getTime()).toString()));</span>
+
+       // label for the date format combo, used to enable/disable text
+       // i18n[dataTypeTime.useDefaultFormat2= or locale-dependent format:]
+<span class="nc" id="L766">       private RightLabel dateFormatTypeDropLabel = new RightLabel(s_stringMgr.getString(&quot;dataTypeTime.useDefaultFormat2&quot;));</span>
+
+       // Combo box for read-all/read-part of blob
+<span class="nc" id="L769">       private DateFormatTypeCombo dateFormatTypeDrop = new DateFormatTypeCombo();</span>
+
+       // checkbox for whether to interpret input leniently or not
+       // i18n[dataTypeTime.inexact=allow inexact format on input]
+<span class="nc" id="L773">       private JCheckBox lenientChk = new JCheckBox(s_stringMgr.getString(&quot;dataTypeTime.inexact&quot;));</span>
+
+
+       public TimeOkJPanel()
+<span class="nc" id="L777">       {</span>
+
+          /* set up the controls */
+          // checkbox for Java default/non-default format
+<span class="nc" id="L781">          useJavaDefaultFormatChk.setSelected(useJavaDefaultFormat);</span>
+<span class="nc" id="L782">          useJavaDefaultFormatChk.addChangeListener(new ChangeListener()</span>
+<span class="nc" id="L783">          {</span>
+             public void stateChanged(ChangeEvent e)
+             {
+<span class="nc bnc" id="L786" title="All 2 branches missed.">                dateFormatTypeDrop.setEnabled(! useJavaDefaultFormatChk.isSelected());</span>
+<span class="nc bnc" id="L787" title="All 2 branches missed.">                dateFormatTypeDropLabel.setEnabled(! useJavaDefaultFormatChk.isSelected());</span>
+<span class="nc bnc" id="L788" title="All 2 branches missed.">                lenientChk.setEnabled(! useJavaDefaultFormatChk.isSelected());</span>
+<span class="nc" id="L789">             }</span>
+          });
+
+          // Combo box for read-all/read-part of blob
+<span class="nc" id="L793">          dateFormatTypeDrop = new DateFormatTypeCombo();</span>
+<span class="nc" id="L794">          dateFormatTypeDrop.setSelectedIndex(localeFormat);</span>
+
+          // lenient checkbox
+<span class="nc" id="L797">          lenientChk.setSelected(lenient);</span>
+
+          // handle cross-connection between fields
+<span class="nc bnc" id="L800" title="All 2 branches missed.">          dateFormatTypeDrop.setEnabled(! useJavaDefaultFormatChk.isSelected());</span>
+<span class="nc bnc" id="L801" title="All 2 branches missed.">          dateFormatTypeDropLabel.setEnabled(! useJavaDefaultFormatChk.isSelected());</span>
+<span class="nc bnc" id="L802" title="All 2 branches missed.">          lenientChk.setEnabled(! useJavaDefaultFormatChk.isSelected());</span>
+
+          /*
+              * Create the panel and add the GUI items to it
+             */
+
+<span class="nc" id="L808">          setLayout(new GridBagLayout());</span>
+
+
+          // i18n[dataTypeTime.typeTime=Time   (SQL type 92)]
+<span class="nc" id="L812">          setBorder(BorderFactory.createTitledBorder(s_stringMgr.getString(&quot;dataTypeTime.typeTime&quot;)));</span>
+<span class="nc" id="L813">          final GridBagConstraints gbc = new GridBagConstraints();</span>
+<span class="nc" id="L814">          gbc.fill = GridBagConstraints.HORIZONTAL;</span>
+<span class="nc" id="L815">          gbc.insets = new Insets(4, 4, 4, 4);</span>
+<span class="nc" id="L816">          gbc.anchor = GridBagConstraints.WEST;</span>
+
+<span class="nc" id="L818">          gbc.gridx = 0;</span>
+<span class="nc" id="L819">          gbc.gridy = 0;</span>
+
+<span class="nc" id="L821">          gbc.gridwidth = GridBagConstraints.REMAINDER;</span>
+<span class="nc" id="L822">          add(useJavaDefaultFormatChk, gbc);</span>
+
+<span class="nc" id="L824">          gbc.gridwidth = 1;</span>
+<span class="nc" id="L825">          gbc.gridx = 0;</span>
+<span class="nc" id="L826">          ++gbc.gridy;</span>
+<span class="nc" id="L827">          add(dateFormatTypeDropLabel, gbc);</span>
+
+<span class="nc" id="L829">          ++gbc.gridx;</span>
+<span class="nc" id="L830">          add(dateFormatTypeDrop, gbc);</span>
+
+<span class="nc" id="L832">          gbc.gridx = 0;</span>
+<span class="nc" id="L833">          ++gbc.gridy;</span>
+<span class="nc" id="L834">          add(lenientChk, gbc);</span>
+
+<span class="nc" id="L836">       } // end of constructor for inner class</span>
+
+
+       /**
+        * User has clicked OK in the surrounding JPanel,
+        * so save the current state of all variables
+        */
+       public void ok()
+       {
+          // get the values from the controls and set them in the static properties
+<span class="nc" id="L846">          useJavaDefaultFormat = useJavaDefaultFormatChk.isSelected();</span>
+<span class="nc" id="L847">          DTProperties.put(thisClassName,</span>
+                          &quot;useJavaDefaultFormat&quot;, 
+<span class="nc" id="L849">                          Boolean.valueOf(useJavaDefaultFormat).toString());</span>
+
+
+<span class="nc" id="L852">          localeFormat = dateFormatTypeDrop.getValue();</span>
+<span class="nc" id="L853">          dateFormat = new ThreadSafeDateFormat(localeFormat, true);	// lenient is set next</span>
+<span class="nc" id="L854">          DTProperties.put(thisClassName,</span>
+                           &quot;localeFormat&quot;, 
+<span class="nc" id="L856">                           Integer.toString(localeFormat));</span>
+
+<span class="nc" id="L858">          lenient = lenientChk.isSelected();</span>
+<span class="nc" id="L859">          dateFormat.setLenient(lenient);</span>
+<span class="nc" id="L860">          DTProperties.put(thisClassName,</span>
+                           &quot;lenient&quot;, 
+<span class="nc" id="L862">                           Boolean.valueOf(lenient).toString());</span>
+
+<span class="nc" id="L864">          initDateFormat(localeFormat, lenient);</span>
+          
+<span class="nc" id="L866">       }</span>
+
+    } // end of inner class
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

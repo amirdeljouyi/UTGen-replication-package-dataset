@@ -1,0 +1,288 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LargeTigrContigFileDataStore.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.assembly.tigr.tasm</a> &gt; <span class="el_source">LargeTigrContigFileDataStore.java</span></div><h1>LargeTigrContigFileDataStore.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+package org.jcvi.jillion.assembly.tigr.tasm;
+
+import java.io.File;
+import java.io.IOException;
+
+import org.jcvi.jillion.core.datastore.DataStore;
+import org.jcvi.jillion.core.datastore.DataStoreClosedException;
+import org.jcvi.jillion.core.datastore.DataStoreException;
+import org.jcvi.jillion.core.datastore.DataStoreFilter;
+import org.jcvi.jillion.core.util.iter.StreamingIterator;
+import org.jcvi.jillion.internal.core.datastore.DataStoreStreamingIterator;
+import org.jcvi.jillion.internal.core.util.iter.AbstractBlockingStreamingIterator;
+/**
+ * {@code LargeTasmContigFileDataStore}
+ * is a {@link TasmContigDataStore}
+ * implementation that does not store
+ * any records in memory.  This keeps
+ * memory usage very low at the cost
+ * of having the reparse the file each 
+ * time a contig is requested.
+ * @author dkatzel
+ *
+ */
+final class LargeTasmContigFileDataStore implements TasmContigDataStore{
+
+	private static final String ERROR_PARSING_CONTIG_FILE = &quot;error parsing contig file&quot;;
+	private final DataStoreFilter filter;
+	private final File contigFile;
+	private final DataStore&lt;Long&gt; fullLengthSequences;
+	/**
+	 * Lazy loaded.
+	 */
+<span class="nc" id="L53">	private Long size=null;</span>
+	
+<span class="nc" id="L55">	private volatile boolean closed=false;</span>
+	
+	public LargeTasmContigFileDataStore(File contigFile,
+			DataStore&lt;Long&gt; fullLengthSequences, DataStoreFilter filter) {
+<span class="nc" id="L59">		super();</span>
+<span class="nc" id="L60">		this.contigFile = contigFile;</span>
+<span class="nc" id="L61">		this.fullLengthSequences = fullLengthSequences;</span>
+<span class="nc" id="L62">		this.filter = filter;</span>
+<span class="nc" id="L63">	}</span>
+
+	private void checkNotClosed(){
+<span class="nc bnc" id="L66" title="All 2 branches missed.">		if(closed){</span>
+<span class="nc" id="L67">			throw new DataStoreClosedException(&quot;datastore is closed&quot;);</span>
+		}
+<span class="nc" id="L69">	}</span>
+	@Override
+	public StreamingIterator&lt;String&gt; idIterator() throws DataStoreException {
+<span class="nc" id="L72">		checkNotClosed();</span>
+<span class="nc" id="L73">		IdIterator iter = new IdIterator();</span>
+<span class="nc" id="L74">		iter.start();</span>
+<span class="nc" id="L75">		return DataStoreStreamingIterator.create(this, iter);</span>
+	}
+
+	@Override
+	public TasmContig get(String id) throws DataStoreException {
+		//if it doesn't pass the filter 
+		//we won't find it even if it's in the file
+<span class="nc bnc" id="L82" title="All 2 branches missed.">		if(!filter.accept(id)){</span>
+<span class="nc" id="L83">			return null;</span>
+		}
+<span class="nc" id="L85">		GetVisitor visitor = new GetVisitor(id);</span>
+		try {
+<span class="nc" id="L87">			TasmFileParser.create(contigFile).accept(visitor);</span>
+<span class="nc" id="L88">			return visitor.getContig();</span>
+<span class="nc" id="L89">		} catch (IOException e) {</span>
+<span class="nc" id="L90">			throw new DataStoreException(ERROR_PARSING_CONTIG_FILE, e);</span>
+		}
+	}
+
+	@Override
+	public boolean contains(String id) throws DataStoreException {
+		//if it doesn't pass the filter
+		//we won't find it
+<span class="nc bnc" id="L98" title="All 2 branches missed.">		if(!filter.accept(id)){</span>
+<span class="nc" id="L99">			return false;</span>
+		}
+<span class="nc" id="L101">		ContainsVisitor visitor = new ContainsVisitor(id);</span>
+		try {
+<span class="nc" id="L103">			TasmFileParser.create(contigFile).accept(visitor);</span>
+<span class="nc" id="L104">			return visitor.contains();</span>
+<span class="nc" id="L105">		} catch (IOException e) {</span>
+<span class="nc" id="L106">			throw new DataStoreException(ERROR_PARSING_CONTIG_FILE, e);</span>
+		}
+	}
+
+	@Override
+	public synchronized long getNumberOfRecords() throws DataStoreException {
+<span class="nc bnc" id="L112" title="All 2 branches missed.">		if(size ==null){</span>
+<span class="nc" id="L113">			SizeVisitor visitor = new SizeVisitor();</span>
+			try {
+<span class="nc" id="L115">				TasmFileParser.create(contigFile).accept(visitor);</span>
+<span class="nc" id="L116">				size = visitor.getSize();</span>
+<span class="nc" id="L117">			} catch (IOException e) {</span>
+<span class="nc" id="L118">				throw new DataStoreException(ERROR_PARSING_CONTIG_FILE, e);</span>
+<span class="nc" id="L119">			}</span>
+		}
+<span class="nc" id="L121">		return size.longValue();</span>
+	}
+
+	@Override
+	public boolean isClosed() {
+<span class="nc" id="L126">		return closed;</span>
+	}
+
+	@Override
+	public StreamingIterator&lt;TasmContig&gt; iterator() throws DataStoreException {
+<span class="nc" id="L131">		checkNotClosed();</span>
+<span class="nc" id="L132">		return DataStoreStreamingIterator.create(this, </span>
+<span class="nc" id="L133">					TasmContigFileContigIterator.create(contigFile, fullLengthSequences, filter));</span>
+	}
+
+	@Override
+	public void close() throws IOException {
+<span class="nc" id="L138">		closed=true;</span>
+		
+<span class="nc" id="L140">	}</span>
+	
+	
+<span class="nc" id="L143">	private class IdIterator extends AbstractBlockingStreamingIterator&lt;String&gt;{</span>
+		
+		@Override
+		protected void backgroundThreadRunMethod() throws RuntimeException {
+<span class="nc" id="L147">			TasmFileVisitor visitor = new TasmFileVisitor() {</span>
+				
+				@Override
+				public void halted() {
+					//no-op				
+<span class="nc" id="L152">				}</span>
+				
+				@Override
+				public void visitEnd() {
+					//no-op				
+<span class="nc" id="L157">				}</span>
+				
+				@Override
+				public TasmContigVisitor visitContig(TasmContigVisitorCallback callback,
+						String contigId) {
+<span class="nc bnc" id="L162" title="All 2 branches missed.">					if(filter.accept(contigId)){</span>
+<span class="nc" id="L163">						blockingPut(contigId);</span>
+					}
+<span class="nc" id="L165">					return null;</span>
+				}
+			};
+			
+			try {
+<span class="nc" id="L170">				TasmFileParser.create(contigFile).accept(visitor);</span>
+<span class="nc" id="L171">			} catch (IOException e) {</span>
+<span class="nc" id="L172">				throw new RuntimeException(ERROR_PARSING_CONTIG_FILE,e);</span>
+<span class="nc" id="L173">			}</span>
+<span class="nc" id="L174">		}</span>
+	}
+	
+	private static final class ContainsVisitor implements TasmFileVisitor{
+		private final String id;
+<span class="nc" id="L179">		private boolean contains=false;</span>
+		
+<span class="nc" id="L181">		public ContainsVisitor(String id) {</span>
+<span class="nc" id="L182">			this.id = id;</span>
+<span class="nc" id="L183">		}</span>
+
+		@Override
+		public TasmContigVisitor visitContig(
+				TasmContigVisitorCallback callback, String contigId) {
+<span class="nc bnc" id="L188" title="All 2 branches missed.">			if(id.equals(contigId)){</span>
+<span class="nc" id="L189">				contains=true;</span>
+<span class="nc" id="L190">				callback.halt();</span>
+			}
+<span class="nc" id="L192">			return null;</span>
+		}
+
+		public boolean contains() {
+<span class="nc" id="L196">			return contains;</span>
+		}
+
+		@Override
+		public void halted() {
+			//no-op
+<span class="nc" id="L202">		}</span>
+
+		@Override
+		public void visitEnd() {
+			//no-op			
+<span class="nc" id="L207">		}</span>
+		
+	}
+	
+	private class GetVisitor implements TasmFileVisitor{
+		private final String id;
+		
+		private TasmContig contig;
+		
+<span class="nc" id="L216">		public GetVisitor(String id) {</span>
+<span class="nc" id="L217">			this.id = id;</span>
+<span class="nc" id="L218">		}</span>
+
+		@Override
+		public TasmContigVisitor visitContig(
+				final TasmContigVisitorCallback callback, String contigId) {
+<span class="nc bnc" id="L223" title="All 2 branches missed.">			if(id.equals(contigId)){</span>
+<span class="nc" id="L224">				return new AbstractTasmContigBuilderVisitor(contigId, fullLengthSequences) {</span>
+					
+					@Override
+					protected void visitRecord(TasmContigBuilder builder) {
+<span class="nc" id="L228">						GetVisitor.this.contig = builder.build();</span>
+<span class="nc" id="L229">						callback.halt();</span>
+<span class="nc" id="L230">					}</span>
+				};
+			}
+<span class="nc" id="L233">			return null;</span>
+		}
+
+		
+
+		public TasmContig getContig() {
+<span class="nc" id="L239">			return contig;</span>
+		}
+
+		@Override
+		public void halted() {
+			//no-op
+<span class="nc" id="L245">		}</span>
+
+		@Override
+		public void visitEnd() {
+			//no-op			
+<span class="nc" id="L250">		}</span>
+		
+	}
+	
+	
+	
+<span class="nc" id="L256">	private class SizeVisitor implements TasmFileVisitor{</span>
+<span class="nc" id="L257">		private long size = 0L;</span>
+
+		@Override
+		public TasmContigVisitor visitContig(
+				TasmContigVisitorCallback callback, String contigId) {
+<span class="nc bnc" id="L262" title="All 2 branches missed.">			if(filter.accept(contigId)){</span>
+<span class="nc" id="L263">				size++;</span>
+			}
+<span class="nc" id="L265">			return null;</span>
+		}
+
+		
+
+		public long getSize() {
+<span class="nc" id="L271">			return size;</span>
+		}
+
+
+
+		@Override
+		public void halted() {
+			//no-op			
+<span class="nc" id="L279">		}</span>
+
+		@Override
+		public void visitEnd() {
+			//no-op			
+<span class="nc" id="L284">		}</span>
+		
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

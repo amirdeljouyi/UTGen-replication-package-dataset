@@ -1,0 +1,319 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MessageMgr.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.messagemgr</a> &gt; <span class="el_source">MessageMgr.java</span></div><h1>MessageMgr.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2000-2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ */
+package org.exolab.jms.messagemgr;
+
+import java.sql.Connection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+import javax.jms.DeliveryMode;
+import javax.jms.Destination;
+import javax.jms.InvalidDestinationException;
+import javax.jms.JMSException;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import org.exolab.jms.client.JmsDestination;
+import org.exolab.jms.message.MessageImpl;
+import org.exolab.jms.persistence.DatabaseService;
+import org.exolab.jms.persistence.PersistenceException;
+import org.exolab.jms.service.Service;
+import org.exolab.jms.service.ServiceException;
+
+
+/**
+ * This is the active message handling component within the JMS server. Messages
+ * are passed in and added to the appropriate dispatchers for delivery to the
+ * clients.
+ *
+ * @author &lt;a href=&quot;mailto:mourikis@intalio.com&quot;&gt;Jim Mourikis&lt;/a&gt;
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.5 $ $Date: 2005/11/12 12:27:40 $
+ */
+public class MessageMgr extends Service implements MessageManager {
+
+    /**
+     * The database service.
+     */
+    private final DatabaseService _database;
+
+    /**
+     * The destination manager.
+     */
+    private DestinationManager _destinations;
+
+    /**
+     * A map of &lt;code&gt;MessageHanagerEventListener instances, keyed on
+     * &lt;code&gt;JmsDestination&lt;/ocde&gt;.
+     */
+<span class="nc" id="L91">    private Map _listeners = Collections.synchronizedMap(new HashMap(1023));</span>
+
+    /**
+     * The seed to allocate to messages to differentiate messages arriving at
+     * the same time.
+     */
+<span class="nc" id="L97">    private long _sequenceNoSeed = 0;</span>
+
+    /**
+     * Lock for accessing _sequenceNoSeed.
+     */
+<span class="nc" id="L102">    private final Object _lock = new Object();</span>
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L107">    private static final Log _log = LogFactory.getLog(MessageMgr.class);</span>
+
+
+    /**
+     * Construct a new &lt;code&gt;MessageMgr&lt;/code&gt;.
+     *
+     * @param database the database service
+     */
+<span class="nc" id="L115">    public MessageMgr(DatabaseService database) {</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">        if (database == null) {</span>
+<span class="nc" id="L117">            throw new IllegalArgumentException(&quot;Argument 'database' is null&quot;);</span>
+        }
+<span class="nc" id="L119">        _database = database;</span>
+<span class="nc" id="L120">    }</span>
+
+    /**
+     * Sets the destination manager.
+     *
+     * @param manager the destination manager
+     */
+    public void setDestinationManager(DestinationManager manager) {
+<span class="nc" id="L128">        _destinations = manager;</span>
+<span class="nc" id="L129">    }</span>
+
+    /**
+     * Prepares a message prior to it being passed through the system.
+     *
+     * @param message the message
+     * @throws JMSException if the message is invalid or cannot be prep'ed
+     */
+    public void prepare(MessageImpl message)
+            throws JMSException {
+<span class="nc bnc" id="L139" title="All 2 branches missed.">        if (message == null) {</span>
+<span class="nc" id="L140">            throw new JMSException(&quot;Null message&quot;);</span>
+        }
+<span class="nc" id="L142">        Destination destination = message.getJMSDestination();</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">        if (destination == null) {</span>
+<span class="nc" id="L144">            throw new InvalidDestinationException(&quot;Message has no destination&quot;);</span>
+        }
+<span class="nc bnc" id="L146" title="All 2 branches missed.">        if (!(destination instanceof JmsDestination)) {</span>
+<span class="nc" id="L147">            throw new InvalidDestinationException(</span>
+                    &quot;Destination not a JmsDestination&quot;);
+        }
+
+        // mark the message as accepted and attach a sequence number
+<span class="nc" id="L152">        message.setAcceptedTime((new Date()).getTime());</span>
+<span class="nc" id="L153">        message.setSequenceNumber(getNextSequenceNumber());</span>
+<span class="nc" id="L154">        message.setReadOnly(true);</span>
+<span class="nc" id="L155">    }</span>
+
+    /**
+     * Add a message.
+     *
+     * @param message the message to add
+     * @throws JMSException if the message cannot be added
+     */
+    public void add(MessageImpl message) throws JMSException {
+<span class="nc" id="L164">        prepare(message);</span>
+
+<span class="nc" id="L166">        JmsDestination destination =</span>
+<span class="nc" id="L167">                (JmsDestination) message.getJMSDestination();</span>
+<span class="nc" id="L168">        final JmsDestination existing</span>
+<span class="nc" id="L169">                = _destinations.getDestination(destination.getName());</span>
+<span class="nc bnc" id="L170" title="All 2 branches missed.">        final boolean persistent = (existing != null)</span>
+<span class="nc" id="L171">                ? existing.getPersistent() : false;</span>
+
+        try {
+<span class="nc" id="L174">            _database.begin(); // need a transaction for any database access</span>
+
+            // if the message's delivery mode is PERSISTENT, and the destination
+            // is also persistent, then then process it accordingly, otherwise use
+            // the non-persistent quality of service
+<span class="nc bnc" id="L179" title="All 4 branches missed.">            if (message.getJMSDeliveryMode() == DeliveryMode.PERSISTENT</span>
+                    &amp;&amp; persistent) {
+<span class="nc" id="L181">                addPersistentMessage(message);</span>
+            } else {
+<span class="nc" id="L183">                addNonPersistentMessage(message);</span>
+            }
+<span class="nc" id="L185">            _database.commit();</span>
+<span class="nc" id="L186">        } catch (Exception exception) {</span>
+<span class="nc" id="L187">            final String msg = &quot;Failed to process message&quot;;</span>
+<span class="nc" id="L188">            _log.error(msg, exception);</span>
+            try {
+<span class="nc bnc" id="L190" title="All 2 branches missed.">                if (_database.isTransacted()) {</span>
+<span class="nc" id="L191">                    _database.rollback();</span>
+                }
+<span class="nc" id="L193">            } catch (PersistenceException error) {</span>
+<span class="nc" id="L194">                _log.error(error, error);</span>
+<span class="nc" id="L195">            }</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">            if (exception instanceof JMSException) {</span>
+<span class="nc" id="L197">                throw (JMSException) exception;</span>
+            }
+<span class="nc" id="L199">            throw new JMSException(msg + &quot;: &quot; + exception.getMessage());</span>
+<span class="nc" id="L200">        }</span>
+<span class="nc" id="L201">    }</span>
+
+    /**
+     * Register a listener for a specific destination, to be notified when
+     * messages for the destination arrive.
+     *
+     * @param destination the destination to register the listener for
+     * @param listener    the listener to notify
+     */
+    public void addEventListener(JmsDestination destination,
+                                 MessageManagerEventListener listener) {
+<span class="nc" id="L212">        _listeners.put(destination, listener);</span>
+<span class="nc" id="L213">    }</span>
+
+    /**
+     * Remove the listener for the specified destination.
+     *
+     * @param destination the destination to remove the listener for
+     */
+    public void removeEventListener(JmsDestination destination) {
+<span class="nc" id="L221">        _listeners.remove(destination);</span>
+<span class="nc" id="L222">    }</span>
+
+    /**
+     * Start the service.
+     *
+     * @throws ServiceException if the service fails to start
+     */
+    protected void doStart() throws ServiceException {
+<span class="nc bnc" id="L230" title="All 2 branches missed.">        if (_destinations == null) {</span>
+<span class="nc" id="L231">            throw new ServiceException(</span>
+                    &quot;Cannot start service: DestinationManager not initialised&quot;);
+        }
+<span class="nc" id="L234">    }</span>
+
+    /**
+     * Processes a non-persistent message.
+     *
+     * @param message the message to add
+     * @throws JMSException if the message cannot be processed
+     */
+    private void addNonPersistentMessage(MessageImpl message)
+            throws JMSException {
+
+        // notify the listener for the destination
+<span class="nc" id="L246">        JmsDestination destination</span>
+<span class="nc" id="L247">                = (JmsDestination) message.getJMSDestination();</span>
+
+<span class="nc" id="L249">        MessageManagerEventListener listener = getEventListener(destination);</span>
+<span class="nc" id="L250">        listener.messageAdded(destination, message);</span>
+<span class="nc" id="L251">    }</span>
+
+    /**
+     * Stop the service.
+     *
+     * @throws ServiceException if the service fails to stop
+     */
+    protected void doStop() throws ServiceException {
+<span class="nc" id="L259">        _listeners.clear();</span>
+<span class="nc" id="L260">    }</span>
+
+    /**
+     * Add a persistent message.
+     *
+     * @param message the message to add
+     * @throws JMSException if the message cannot be processed
+     * @throws PersistenceException for any persistence error
+     */
+    private void addPersistentMessage(MessageImpl message)
+            throws JMSException, PersistenceException {
+<span class="nc" id="L271">        JmsDestination destination =</span>
+<span class="nc" id="L272">                (JmsDestination) message.getJMSDestination();</span>
+
+<span class="nc" id="L274">        Connection connection = _database.getConnection();</span>
+
+            // add the message to the database
+<span class="nc" id="L277">        _database.getAdapter().addMessage(connection, message);</span>
+
+        // notify the listener that a persistent message has arrived
+<span class="nc" id="L280">        MessageManagerEventListener listener = getEventListener(destination);</span>
+<span class="nc" id="L281">        listener.persistentMessageAdded(destination, message);</span>
+<span class="nc" id="L282">    }</span>
+
+    /**
+     * Returns the event listener for the specified destination.
+     * &lt;p/&gt;
+     * If no event listener is registered, it falls back to the destination
+     * manager.
+     *
+     * @param destination the destination
+     * @return the event listener registgered for &lt;code&gt;destination&lt;/code&gt;, or
+     *         the destination manager if no is registered
+     */
+    private MessageManagerEventListener getEventListener(
+            JmsDestination destination) {
+<span class="nc" id="L296">        MessageManagerEventListener listener =</span>
+<span class="nc" id="L297">                (MessageManagerEventListener) _listeners.get(destination);</span>
+
+<span class="nc bnc" id="L299" title="All 2 branches missed.">        if (listener == null) {</span>
+            // no registered destination cache, so let the destination manager
+            // handle it
+<span class="nc" id="L302">            listener = _destinations;</span>
+        }
+<span class="nc" id="L304">        return listener;</span>
+    }
+
+    /**
+     * Returns the next seed value to be allocated to a new message.
+     *
+     * @return a unique identifier for a message
+     */
+    private long getNextSequenceNumber() {
+<span class="nc" id="L313">        synchronized (_lock) {</span>
+<span class="nc" id="L314">            return ++_sequenceNoSeed;</span>
+        }
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

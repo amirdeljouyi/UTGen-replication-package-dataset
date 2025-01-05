@@ -1,0 +1,451 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JipViewer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">51_jiprof</a> &gt; <a href="index.source.html" class="el_package">com.tivo.jipviewer</a> &gt; <span class="el_source">JipViewer.java</span></div><h1>JipViewer.java</h1><pre class="source lang-java linenums">/*/////////////////////////////////////////////////////////////////////
+
+Copyright (C) 2006 TiVo Inc.  All rights reserved.
+
+Redistribution and use in source and binary forms, with or without 
+modification, are permitted provided that the following conditions are met:
+
++ Redistributions of source code must retain the above copyright notice, 
+  this list of conditions and the following disclaimer.
++ Redistributions in binary form must reproduce the above copyright notice, 
+  this list of conditions and the following disclaimer in the documentation 
+  and/or other materials provided with the distribution.
++ Neither the name of TiVo Inc nor the names of its contributors may be 
+  used to endorse or promote products derived from this software without 
+  specific prior written permission.
+
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS &quot;AS IS&quot; 
+  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
+  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+  ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE 
+  LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
+  CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+  SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS 
+  INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN 
+  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) 
+  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
+  POSSIBILITY OF SUCH DAMAGE.
+
+/////////////////////////////////////////////////////////////////////*/
+
+/*/////////////////////////////////////////////////////////////////////
+BUGS &amp; RFES
+
+  swing-specific cluelessness on my part
+  * where are the headers on self section?  some layout problem.
+  * i don't think i should have to add keyListeners to all components
+    &quot;manually&quot; to handle the keys globally.  is there something i can
+    override?
+
+  * set default sort orders? (either explicitly or in the way i fill
+    in the tables)
+  * some coloring?
+  * some filtering?
+
+  * add a pane for connecting to a remote profiler,
+    clearing, starting, stopping, and fetching results.
+
+  * make call tree more useful?
+    * make stats more regular
+    * color?
+    * auto-expand?
+      * all
+      * smart (by cost)
+      * and select based on selection in another view...
+    * filter (by cost)
+
+  * display class allocation information.
+
+  * why so many interactions?  combine?
+  * it'd be cool if we could label &quot;interactions&quot;
+  * it'd be cool if we could compress &quot;similar&quot; interactions
+
+Suggestions for jip output:
+  * either consistently use the class name table or ditch it
+    (i'm inclined to ditch it)
+
+Suggestions for jip runtime:
+  * make it so we can fetch the xml over the client socket
+/////////////////////////////////////////////////////////////////////*/
+
+
+package com.tivo.jipviewer;
+
+import java.awt.Dimension;
+import java.awt.Rectangle;
+import java.awt.event.KeyEvent;
+import java.awt.event.KeyListener;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+
+import javax.swing.JFrame;
+import javax.swing.JScrollPane;
+import javax.swing.JSplitPane;
+import javax.swing.JTabbedPane;
+import javax.swing.JTable;
+import javax.swing.JTree;
+import javax.swing.ListSelectionModel;
+import javax.swing.event.ListSelectionEvent;
+import javax.swing.event.ListSelectionListener;
+import javax.swing.event.TreeSelectionEvent;
+import javax.swing.event.TreeSelectionListener;
+import javax.swing.tree.DefaultMutableTreeNode;
+import javax.swing.tree.TreePath;
+import javax.swing.tree.TreeSelectionModel;
+
+/**
+ * Use JipViewer to open a top-level window viewing the contents of a jip
+ * profile.xml file.
+ */
+public class JipViewer extends JFrame
+    implements TreeSelectionListener, ListSelectionListener, KeyListener,
+    ChangeListener {
+    private JTable mTable;
+    private JTree  mCallTree;
+    private JTable mMethods;
+    private ByPackageViewer mPkgViewer;
+    private RemoteController mRemoteController;
+
+    private TreeNode mCallTreeRoot;
+<span class="nc" id="L113">    private ValueModel&lt;JipMethod&gt; mMethodModel = new ValueModel&lt;JipMethod&gt;();</span>
+<span class="nc" id="L114">    private MethodRowTableModel mAllMethodsModel = new MethodRowTableModel();</span>
+    private TableSorter         mAllMethodsSorterModel;
+    
+    public static void main(String[] args) throws Exception {
+<span class="nc" id="L118">        String filename = &quot;&quot;;</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">        if(args.length == 1) {</span>
+<span class="nc" id="L120">            filename = args[0];</span>
+        } else {
+<span class="nc" id="L122">            System.out.println(&quot;usage: JipViewer filename&quot;);</span>
+<span class="nc" id="L123">            System.exit(1); // error;</span>
+        }
+<span class="nc" id="L125">        JipRun run = JipParser.parse(filename);</span>
+        //System.out.println(run);
+        
+<span class="nc" id="L128">        long totalTimeForAllThreads = run.getTotalTimeForAllThreads();</span>
+<span class="nc" id="L129">        long msec = (long) Math.floor(toMsec(totalTimeForAllThreads));</span>
+<span class="nc" id="L130">        String title = &quot;&quot; + msec +&quot; msec -- &quot;+ filename;</span>
+
+<span class="nc" id="L132">        new JipViewer(title, run);</span>
+<span class="nc" id="L133">    }</span>
+    
+    public JipViewer(String title, JipRun run) {
+<span class="nc" id="L136">        super(title);</span>
+
+<span class="nc" id="L138">        addKeyListener(this);</span>
+<span class="nc" id="L139">        mMethodModel.addChangeListener(this);</span>
+        
+        // build the call tree
+<span class="nc" id="L142">        mCallTreeRoot = new TreeNode(title);</span>
+<span class="nc" id="L143">        buildTree(run, mCallTreeRoot);</span>
+
+<span class="nc" id="L145">        mCallTree = new JTree(mCallTreeRoot);</span>
+<span class="nc" id="L146">        mCallTree.getSelectionModel().setSelectionMode(</span>
+            TreeSelectionModel.SINGLE_TREE_SELECTION);
+<span class="nc" id="L148">        mCallTree.addTreeSelectionListener(this);</span>
+<span class="nc" id="L149">        mCallTree.addKeyListener(this);</span>
+
+        // build the allMethods table
+<span class="nc" id="L152">        Collection&lt;JipRun.PerMethodInfo&gt; perMethodInfos =</span>
+<span class="nc" id="L153">            run.perMethodsInTotalTimeOrder();</span>
+<span class="nc" id="L154">        long totalTimeForAllThreads = run.getTotalTimeForAllThreads();</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">        for (JipRun.PerMethodInfo perMethod: perMethodInfos) {</span>
+<span class="nc" id="L156">            MethodRow row = new MethodRow(perMethod.getMethod());</span>
+<span class="nc bnc" id="L157" title="All 2 branches missed.">            for (JipFrame frame: perMethod.allFrames()) {</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">                if (!frame.isReentrant()) {</span>
+<span class="nc" id="L159">                    row.addFrame(frame);</span>
+                }
+<span class="nc" id="L161">                row.setTimeDenominator(totalTimeForAllThreads);</span>
+<span class="nc" id="L162">            }</span>
+<span class="nc" id="L163">            mAllMethodsModel.add(row);</span>
+<span class="nc" id="L164">        }</span>
+<span class="nc" id="L165">        mMethods = MethodViewer.makeTableForMethodRows(mAllMethodsModel);</span>
+<span class="nc" id="L166">        mMethods.getSelectionModel().addListSelectionListener(this);</span>
+<span class="nc" id="L167">        mMethods.addKeyListener(this);</span>
+<span class="nc" id="L168">        mAllMethodsSorterModel = (TableSorter) mMethods.getModel();</span>
+
+        // make the ByPackageViewer
+<span class="nc" id="L171">        mPkgViewer = new ByPackageViewer(run);</span>
+<span class="nc" id="L172">        mPkgViewer.addKeyListener(this);</span>
+
+        // make the RemoteController
+<span class="nc" id="L175">        mRemoteController = new RemoteController();</span>
+<span class="nc" id="L176">        mRemoteController.addKeyListener(this);</span>
+
+        // make the methodViewer
+<span class="nc" id="L179">        MethodViewer methodViewer = new MethodViewer(run, mMethodModel);</span>
+
+        // combine all the views
+<span class="nc" id="L182">        JTabbedPane tabPane = new JTabbedPane();</span>
+<span class="nc" id="L183">        tabPane.addTab(&quot;call tree&quot;, new JScrollPane(mCallTree));</span>
+<span class="nc" id="L184">        tabPane.addTab(&quot;methods&quot;, new JScrollPane(mMethods));</span>
+<span class="nc" id="L185">        tabPane.addTab(&quot;by package&quot;, new JScrollPane(mPkgViewer));</span>
+<span class="nc" id="L186">        tabPane.addTab(&quot;remote control&quot;, mRemoteController);</span>
+<span class="nc" id="L187">        tabPane.addTab(&quot;help&quot;, new HelpViewer());</span>
+<span class="nc" id="L188">        tabPane.addKeyListener(this);</span>
+<span class="nc" id="L189">        tabPane.setMinimumSize(new Dimension(100, 200));</span>
+
+<span class="nc" id="L191">        JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT,</span>
+                                          tabPane,
+                                          methodViewer);
+<span class="nc" id="L194">        setContentPane(split);</span>
+
+<span class="nc" id="L196">        pack();</span>
+<span class="nc" id="L197">        setSize(new Dimension(1024, 768));</span>
+<span class="nc" id="L198">        setVisible(true);</span>
+<span class="nc" id="L199">        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);</span>
+<span class="nc" id="L200">    }</span>
+
+    public void valueChanged(ListSelectionEvent e) {
+<span class="nc bnc" id="L203" title="All 2 branches missed.">        if (e.getValueIsAdjusting()) {</span>
+<span class="nc" id="L204">            return;</span>
+        }
+
+<span class="nc" id="L207">        JipMethod method = null;</span>
+<span class="nc" id="L208">        ListSelectionModel selectionModel = mMethods.getSelectionModel();</span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">        if (!selectionModel.isSelectionEmpty()) {</span>
+<span class="nc" id="L210">            int iSelected = selectionModel.getMinSelectionIndex();</span>
+<span class="nc" id="L211">            iSelected = mAllMethodsSorterModel.modelIndex(iSelected);</span>
+<span class="nc" id="L212">            MethodRow row = mAllMethodsModel.getRow(iSelected);</span>
+<span class="nc" id="L213">            method = row.getMethod();</span>
+        }
+        //System.out.println(&quot;valueChanged(&quot;+perMethod+&quot;)&quot;);
+<span class="nc" id="L216">        mMethodModel.setValue(method);</span>
+<span class="nc" id="L217">    }</span>
+
+    static class TreeNode extends DefaultMutableTreeNode {
+        // we either represent a frame or a random node.
+        // if we represent a frame, mFrame is set.
+        // otherwise, mLabel is set.
+        JipFrame mFrame;
+
+        String mLabel;
+        
+        
+<span class="nc" id="L228">        TreeNode(JipFrame frame) {</span>
+<span class="nc" id="L229">            mFrame = frame;</span>
+<span class="nc" id="L230">        }</span>
+
+<span class="nc" id="L232">        TreeNode(String label) {</span>
+<span class="nc" id="L233">            mLabel = label;</span>
+<span class="nc" id="L234">        }</span>
+
+        JipFrame getFrameOrNull() {
+<span class="nc" id="L237">            return mFrame;</span>
+        }
+
+        JipMethod getMethodOrNull() {
+<span class="nc bnc" id="L241" title="All 2 branches missed.">            return (mFrame == null) ? null : mFrame.getMethod();</span>
+        }
+
+        public String toString() {
+<span class="nc bnc" id="L245" title="All 2 branches missed.">            if (mFrame == null) {</span>
+<span class="nc" id="L246">                return mLabel;</span>
+            }
+
+<span class="nc" id="L249">            String label = (&quot;(&quot; +</span>
+<span class="nc" id="L250">                            toMsec(mFrame.getTotalTime()) + &quot; &quot; +</span>
+<span class="nc" id="L251">                            toMsec(mFrame.getNetTime()) + &quot; &quot; +</span>
+<span class="nc" id="L252">                            mFrame.getCount() + &quot;) &quot; +</span>
+<span class="nc" id="L253">                            mFrame.getMethod().getMethodName());</span>
+<span class="nc" id="L254">            return label;</span>
+        }
+
+        // returns the first node that has the given method (or null if none)
+        private TreeNode findNodeForMethod(TreeNode node,
+                                           JipMethod seekingMethod) {
+<span class="nc" id="L260">            JipMethod method = node.getMethodOrNull();</span>
+<span class="nc bnc" id="L261" title="All 4 branches missed.">            if ((method != null) &amp;&amp; method.equals(seekingMethod)) {</span>
+<span class="nc" id="L262">                return node;</span>
+            }
+
+<span class="nc" id="L265">            int nKid = node.getChildCount();</span>
+<span class="nc bnc" id="L266" title="All 2 branches missed.">            for (int iKid=0; iKid &lt; nKid; iKid++) {</span>
+<span class="nc" id="L267">                TreeNode kidNode = (TreeNode) node.getChildAt(iKid);</span>
+<span class="nc" id="L268">                TreeNode match = findNodeForMethod(kidNode, seekingMethod);</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">                if (match != null) {</span>
+<span class="nc" id="L270">                    return match;</span>
+                }
+            }
+
+<span class="nc" id="L274">            return null;</span>
+        }
+
+        // returns TreePath to the first TreeNode for seekingMethod
+        // or null if none.
+        TreePath findPathForMethod(JipMethod seekingMethod) {
+<span class="nc" id="L280">            TreeNode match = findNodeForMethod(this, seekingMethod);</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">            if (match == null) {</span>
+<span class="nc" id="L282">                return null;</span>
+            }
+
+<span class="nc" id="L285">            List&lt;TreeNode&gt; vNode = new ArrayList&lt;TreeNode&gt;();</span>
+
+<span class="nc" id="L287">            TreeNode scan = match;</span>
+<span class="nc bnc" id="L288" title="All 2 branches missed.">            while (scan != null) {</span>
+<span class="nc" id="L289">                vNode.add(scan);</span>
+<span class="nc" id="L290">                scan = (TreeNode) scan.getParent();</span>
+            }
+<span class="nc" id="L292">            Collections.reverse(vNode);</span>
+
+<span class="nc" id="L294">            return new TreePath(vNode.toArray());</span>
+        }
+    }
+
+    private void buildTree(JipRun run, DefaultMutableTreeNode root) {
+<span class="nc bnc" id="L299" title="All 2 branches missed.">        for(Long threadId: run.threads()) {</span>
+<span class="nc" id="L300">            int i = 1;</span>
+<span class="nc bnc" id="L301" title="All 2 branches missed.">            for (JipFrame f: run.interactions(threadId)) {</span>
+<span class="nc" id="L302">                String label = (&quot;thread &quot; + threadId + &quot; interaction &quot; + i +</span>
+<span class="nc" id="L303">                                &quot; (&quot; + toMsec(f.getTotalTime()) + &quot; msec)&quot;);</span>
+<span class="nc" id="L304">                TreeNode interactionNode = new TreeNode(label);</span>
+<span class="nc" id="L305">                root.add(interactionNode);</span>
+
+<span class="nc" id="L307">                buildFrameTree(interactionNode, f);</span>
+<span class="nc" id="L308">                i++;</span>
+<span class="nc" id="L309">            }</span>
+<span class="nc" id="L310">        }</span>
+<span class="nc" id="L311">    }</span>
+
+    private static double toMsec(long time) {
+<span class="nc" id="L314">        final double timeToMsec = 1000.0 * 1000.0;</span>
+<span class="nc" id="L315">        return Math.floor((time / timeToMsec) * 10) / 10.0;</span>
+    }
+
+    private void buildFrameTree(TreeNode parent, JipFrame frame) {
+        // compare for reverse total time.
+<span class="nc" id="L320">        Comparator cmp = new Comparator&lt;JipFrame&gt;() {</span>
+            public int compare(JipFrame a, JipFrame b) {
+<span class="nc" id="L322">                long timeA = a.getTotalTime();</span>
+<span class="nc" id="L323">                long timeB = b.getTotalTime();</span>
+<span class="nc bnc" id="L324" title="All 2 branches missed.">                if (timeA &gt; timeB) {</span>
+<span class="nc" id="L325">                    return -1;</span>
+<span class="nc bnc" id="L326" title="All 2 branches missed.">                } else if (timeA &lt; timeB) {</span>
+<span class="nc" id="L327">                    return 1;</span>
+                } else {
+<span class="nc" id="L329">                    String nameA = a.getMethod().getMethodName();</span>
+<span class="nc" id="L330">                    String nameB = a.getMethod().getMethodName();</span>
+<span class="nc" id="L331">                    return nameB.compareToIgnoreCase(nameA);</span>
+                }
+            }
+        };
+        
+<span class="nc" id="L336">        TreeNode frameNode = new TreeNode(frame);</span>
+<span class="nc" id="L337">        parent.add(frameNode);</span>
+
+<span class="nc" id="L339">        List&lt;JipFrame&gt; vKid = frame.getChildren();</span>
+<span class="nc" id="L340">        Collections.sort(vKid, cmp);</span>
+<span class="nc bnc" id="L341" title="All 2 branches missed.">        for (JipFrame childFrame: vKid) {</span>
+<span class="nc" id="L342">            buildFrameTree(frameNode, childFrame);</span>
+<span class="nc" id="L343">        }        </span>
+<span class="nc" id="L344">    }</span>
+    
+    public void valueChanged(TreeSelectionEvent e) {
+<span class="nc" id="L347">        TreeNode node = (TreeNode) e.getPath().getLastPathComponent();</span>
+        //System.out.println(&quot;valueChanged(&quot;+node+&quot;)&quot;);
+
+<span class="nc" id="L350">        JipFrame frame = node.getFrameOrNull();</span>
+<span class="nc bnc" id="L351" title="All 2 branches missed.">        JipMethod method = (frame == null) ? null : frame.getMethod();</span>
+<span class="nc" id="L352">        mMethodModel.setValue(method);</span>
+<span class="nc" id="L353">    }</span>
+
+    //
+    // KeyListener
+    //
+
+    public void keyPressed(KeyEvent e) {
+<span class="nc" id="L360">    }</span>
+
+    public void keyReleased(KeyEvent e) {
+<span class="nc" id="L363">    }</span>
+
+    public void keyTyped(KeyEvent e) {
+<span class="nc bnc" id="L366" title="All 2 branches missed.">        if (e.getKeyChar() == 'q') {</span>
+<span class="nc" id="L367">            System.exit(0);</span>
+        }
+<span class="nc" id="L369">    }</span>
+
+    //
+    // ChangeListener
+    //
+
+    public void changed(Object source) {
+<span class="nc bnc" id="L376" title="All 2 branches missed.">        if (source != mMethodModel) {</span>
+<span class="nc" id="L377">            throw new RuntimeException(&quot;i wish i used asserts!&quot;);</span>
+        }
+
+<span class="nc" id="L380">        JipMethod selectedMethod = mMethodModel.getValue();</span>
+<span class="nc" id="L381">        selectInAllMethods(selectedMethod);</span>
+<span class="nc" id="L382">        selectInCallTree(selectedMethod);</span>
+<span class="nc" id="L383">    }</span>
+
+
+    private void selectInAllMethods(JipMethod selectedMethod) {
+
+<span class="nc bnc" id="L388" title="All 2 branches missed.">        if (selectedMethod == null) {</span>
+<span class="nc" id="L389">            mMethods.clearSelection();</span>
+<span class="nc" id="L390">            return;</span>
+        }
+
+        // which row should we select?
+<span class="nc" id="L394">        boolean foundIt = false;</span>
+<span class="nc" id="L395">        int nRow = mAllMethodsModel.getRowCount();</span>
+        int iRow;
+<span class="nc bnc" id="L397" title="All 2 branches missed.">        for (iRow = 0; iRow &lt; nRow; iRow++) {</span>
+<span class="nc" id="L398">            MethodRow scan = mAllMethodsModel.getRow(iRow);</span>
+<span class="nc bnc" id="L399" title="All 2 branches missed.">            if (scan.getMethod().equals(selectedMethod)) {</span>
+<span class="nc" id="L400">                foundIt = true;</span>
+<span class="nc" id="L401">                break;</span>
+            }
+        }
+<span class="nc bnc" id="L404" title="All 2 branches missed.">        if (!foundIt) {</span>
+<span class="nc" id="L405">            System.out.println(&quot;couldn't find &quot;+ selectedMethod.getName());</span>
+<span class="nc" id="L406">            return;</span>
+        }
+            
+        // update the listSelectionModel
+<span class="nc" id="L410">        int iRowInView = mAllMethodsSorterModel.viewIndex(iRow);</span>
+<span class="nc" id="L411">        mMethods.getSelectionModel().setSelectionInterval(iRowInView,</span>
+                                                          iRowInView);
+        
+        // scroll to contain the new selection
+<span class="nc" id="L415">        Rectangle selectionRect = mMethods.getCellRect(iRowInView,</span>
+                                                       0,
+                                                       true);
+<span class="nc" id="L418">        mMethods.scrollRectToVisible(selectionRect);</span>
+<span class="nc" id="L419">    }</span>
+
+    private void selectInCallTree(JipMethod selectedMethod) {
+
+<span class="nc bnc" id="L423" title="All 2 branches missed.">        if (selectedMethod == null) {</span>
+<span class="nc" id="L424">            mCallTree.clearSelection();</span>
+<span class="nc" id="L425">            return;</span>
+        }
+
+        // is this method already selected?
+<span class="nc" id="L429">        TreePath curPath = mCallTree.getSelectionPath();</span>
+<span class="nc bnc" id="L430" title="All 2 branches missed.">        if (curPath != null) {</span>
+<span class="nc" id="L431">            TreeNode  curNode = (TreeNode) curPath.getLastPathComponent();</span>
+<span class="nc" id="L432">            JipMethod curMethod = curNode.getMethodOrNull();</span>
+<span class="nc bnc" id="L433" title="All 2 branches missed.">            if (curMethod != null &amp;&amp;</span>
+<span class="nc bnc" id="L434" title="All 2 branches missed.">                curMethod.equals(selectedMethod)) {</span>
+                // we're done.
+<span class="nc" id="L436">                return;</span>
+            }
+        }
+
+<span class="nc" id="L440">        TreePath newPath = mCallTreeRoot.findPathForMethod(selectedMethod);</span>
+<span class="nc bnc" id="L441" title="All 2 branches missed.">        if (newPath == null) {</span>
+<span class="nc" id="L442">            System.out.println(&quot;no path to &quot; + selectedMethod);</span>
+<span class="nc" id="L443">            return;</span>
+        }
+
+
+<span class="nc" id="L447">        mCallTree.setSelectionPath(newPath);</span>
+<span class="nc" id="L448">        mCallTree.scrollPathToVisible(newPath);</span>
+<span class="nc" id="L449">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

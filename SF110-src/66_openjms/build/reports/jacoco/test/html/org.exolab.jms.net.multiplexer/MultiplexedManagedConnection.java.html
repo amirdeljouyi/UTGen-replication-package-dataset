@@ -1,0 +1,474 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MultiplexedManagedConnection.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.net.multiplexer</a> &gt; <span class="el_source">MultiplexedManagedConnection.java</span></div><h1>MultiplexedManagedConnection.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2004-2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: MultiplexedManagedConnection.java,v 1.10 2006/12/16 12:37:17 tanderson Exp $
+ */
+package org.exolab.jms.net.multiplexer;
+
+import java.io.IOException;
+import java.security.Principal;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import org.exolab.jms.net.connector.AbstractManagedConnection;
+import org.exolab.jms.net.connector.Authenticator;
+import org.exolab.jms.net.connector.Caller;
+import org.exolab.jms.net.connector.CallerImpl;
+import org.exolab.jms.net.connector.ConnectException;
+import org.exolab.jms.net.connector.Connection;
+import org.exolab.jms.net.connector.IllegalStateException;
+import org.exolab.jms.net.connector.InvocationHandler;
+import org.exolab.jms.net.connector.Request;
+import org.exolab.jms.net.connector.ResourceException;
+import org.exolab.jms.net.connector.Response;
+import org.exolab.jms.net.connector.SecurityException;
+import org.exolab.jms.net.connector.ManagedConnectionListener;
+import org.exolab.jms.net.uri.URI;
+
+
+/**
+ * A &lt;code&gt;ManagedConnection&lt;/code&gt; that uses a {@link Multiplexer} to multiplex
+ * data over an {@link Endpoint}
+ *
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.10 $ $Date: 2006/12/16 12:37:17 $
+ */
+public abstract class MultiplexedManagedConnection
+        extends AbstractManagedConnection
+        implements MultiplexerListener {
+
+    /**
+     * The multiplexer.
+     */
+    private Multiplexer _multiplexer;
+
+    /**
+     * The thread used to run {@link #_multiplexer}.
+     */
+    private Thread _multiplexThread;
+
+    /**
+     * The endpoint to multiplex data over.
+     */
+    private Endpoint _endpoint;
+
+    /**
+     * The invocation handler.
+     */
+    private InvocationHandler _invoker;
+
+    /**
+     * The security principal.
+     */
+    private Principal _principal;
+
+    /**
+     * The connection authenticator, for server side instances.
+     */
+    private Authenticator _authenticator;
+
+    /**
+     * Cached caller instance. Non-null if this is a server-side instance.
+     */
+    private Caller _caller;
+
+    /**
+     * The thread group to associate any allocated threads with.
+     */
+    private ThreadGroup _group;
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L123">    private static final Log _log =</span>
+<span class="nc" id="L124">            LogFactory.getLog(MultiplexedManagedConnection.class);</span>
+
+
+    /**
+     * Construct a new client &lt;code&gt;MultiplexedManagedConnection&lt;/code&gt;.
+     *
+     * @param principal the security principal. May be &lt;code&gt;null&lt;/code&gt;
+     */
+<span class="nc" id="L132">    public MultiplexedManagedConnection(Principal principal) {</span>
+<span class="nc" id="L133">        _principal = principal;</span>
+<span class="nc" id="L134">    }</span>
+
+    /**
+     * Construct a new server &lt;code&gt;MultiplexedManagedConnection&lt;/code&gt;.
+     *
+     * @param authenticator the connection authenticator
+     */
+<span class="nc" id="L141">    public MultiplexedManagedConnection(Authenticator authenticator) {</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">        if (authenticator == null) {</span>
+<span class="nc" id="L143">            throw new IllegalArgumentException(</span>
+                    &quot;Argument 'authenticator' is null&quot;);
+        }
+<span class="nc" id="L146">        _authenticator = authenticator;</span>
+<span class="nc" id="L147">    }</span>
+
+    /**
+     * Registers a handler for handling invocations on objects exported via this
+     * connection. Once a handler is registered, it cannot be de-registered.
+     *
+     * @param handler the invocation handler
+     * @throws IllegalStateException if a handler is already registered
+     * @throws ResourceException     for any error
+     */
+    public void setInvocationHandler(InvocationHandler handler)
+            throws ResourceException {
+<span class="nc bnc" id="L159" title="All 2 branches missed.">        if (_invoker != null) {</span>
+<span class="nc" id="L160">            throw new IllegalStateException(</span>
+                    &quot;An invocation handler is already registered&quot;);
+        }
+<span class="nc" id="L163">        _invoker = handler;</span>
+        try {
+<span class="nc" id="L165">            _endpoint = createEndpoint();</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">            if (isClient()) {</span>
+<span class="nc" id="L167">                _multiplexer = createMultiplexer(_endpoint, _principal);</span>
+            } else {
+<span class="nc" id="L169">                _multiplexer = createMultiplexer(_endpoint, _authenticator);</span>
+<span class="nc" id="L170">                _principal = _multiplexer.getPrincipal();</span>
+<span class="nc" id="L171">                _caller = new CallerImpl(getRemoteURI(), getLocalURI());</span>
+            }
+<span class="nc" id="L173">            String name = getDisplayName() + &quot;-Multiplexer&quot;;</span>
+<span class="nc" id="L174">            _multiplexThread = new Thread(getThreadGroup(), _multiplexer,</span>
+                                          name);
+<span class="nc" id="L176">            _multiplexThread.start();</span>
+<span class="nc" id="L177">        } catch (IOException exception) {</span>
+<span class="nc" id="L178">            throw new ConnectException(&quot;Failed to start multiplexer&quot;,</span>
+                                       exception);
+<span class="nc" id="L180">        }</span>
+<span class="nc" id="L181">    }</span>
+
+    /**
+     * Creates a new connection handle for the underlying physical connection.
+     *
+     * @return a new connection handle
+     * @throws IllegalStateException if an invocation handler hasn't been
+     *                               registered
+     */
+    public synchronized Connection getConnection()
+            throws IllegalStateException {
+<span class="nc bnc" id="L192" title="All 2 branches missed.">        if (_invoker == null) {</span>
+<span class="nc" id="L193">            throw new IllegalStateException(&quot;No InvocationHandler registered&quot;);</span>
+        }
+<span class="nc" id="L195">        return new MultiplexedConnection(this);</span>
+    }
+
+    /**
+     * Ping the connection. The connection event listener will be notified
+     * if the ping succeeds.
+     *
+     * @throws IllegalStateException if a connection is not established
+     * @throws ResourceException for any error
+     */
+    public void ping() throws ResourceException {
+        Multiplexer multiplexer;
+<span class="nc" id="L207">        synchronized (this) {</span>
+<span class="nc" id="L208">            multiplexer = _multiplexer;</span>
+<span class="nc" id="L209">        }</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">        if (multiplexer != null) {</span>
+            try {
+<span class="nc" id="L212">                multiplexer.ping(0);</span>
+<span class="nc" id="L213">            } catch (IOException exception) {</span>
+<span class="nc" id="L214">                throw new ResourceException(exception.getMessage(), exception);</span>
+<span class="nc" id="L215">            }</span>
+        } else {
+<span class="nc" id="L217">            throw new IllegalStateException(&quot;Connection not established&quot;);</span>
+        }
+<span class="nc" id="L219">    }</span>
+
+    /**
+     * Destroys the physical connection.
+     *
+     * @throws ResourceException for any error
+     */
+    public void destroy() throws ResourceException {
+        Multiplexer multiplexer;
+        Thread thread;
+        Endpoint endpoint;
+
+<span class="nc" id="L231">        synchronized (this) {</span>
+<span class="nc" id="L232">            multiplexer = _multiplexer;</span>
+<span class="nc" id="L233">            thread = _multiplexThread;</span>
+<span class="nc" id="L234">            endpoint = _endpoint;</span>
+<span class="nc" id="L235">        }</span>
+        try {
+<span class="nc bnc" id="L237" title="All 2 branches missed.">            if (multiplexer != null) {</span>
+                // multiplexer handles endpoint closure
+<span class="nc" id="L239">                multiplexer.close();</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">                if (thread != Thread.currentThread()) {</span>
+                    try {
+                        // wait for the multiplexer thread to terminate
+<span class="nc" id="L243">                        thread.join();</span>
+<span class="nc" id="L244">                    } catch (InterruptedException exception) {</span>
+<span class="nc" id="L245">                        _log.debug(exception);</span>
+<span class="nc" id="L246">                    }</span>
+                }
+            } else {
+<span class="nc bnc" id="L249" title="All 2 branches missed.">                if (endpoint != null) {</span>
+                    try {
+<span class="nc" id="L251">                        endpoint.close();</span>
+<span class="nc" id="L252">                    } catch (IOException exception) {</span>
+<span class="nc" id="L253">                        throw new ResourceException(&quot;Failed to close endpoint&quot;,</span>
+                                                    exception);
+<span class="nc" id="L255">                    }</span>
+                }
+            }
+        } finally {
+<span class="nc" id="L259">            synchronized (this) {</span>
+<span class="nc" id="L260">                _multiplexer = null;</span>
+<span class="nc" id="L261">                _multiplexThread = null;</span>
+<span class="nc" id="L262">                _endpoint = null;</span>
+<span class="nc" id="L263">            }</span>
+        }
+<span class="nc" id="L265">    }</span>
+
+    /**
+     * Returns the principal associated with this connection.
+     *
+     * @return the principal associated with this connection,
+     *         or &lt;code&gt;null&lt;code&gt; if none is set
+     */
+    public Principal getPrincipal() {
+<span class="nc" id="L274">        return _principal;</span>
+    }
+
+    /**
+     * Determines if the security principal that owns this connection is the
+     * same as that supplied.
+     * &lt;p/&gt;
+     * NOTE: If this is a server-side instance, the principal is only available
+     * once the connection has been established, by {@link
+     * #setInvocationHandler}
+     *
+     * @param principal the principal to compare. May be &lt;code&gt;null&lt;/code&gt;.
+     * @return &lt;code&gt;true&lt;/code&gt; if the principal that owns this connection is
+     *         the same as &lt;code&gt;principal&lt;/code&gt;
+     */
+    public boolean hasPrincipal(Principal principal) {
+<span class="nc" id="L290">        boolean result = false;</span>
+<span class="nc bnc" id="L291" title="All 8 branches missed.">        if ((_principal != null &amp;&amp; _principal.equals(principal))</span>
+                || (_principal == null &amp;&amp; principal == null)) {
+<span class="nc" id="L293">            result = true;</span>
+        }
+<span class="nc" id="L295">        return result;</span>
+    }
+
+    /**
+     * Invoked for an invocation request.
+     *
+     * @param channel the channel the invocation is on
+     */
+    public void request(Channel channel) {
+<span class="nc" id="L304">        _invoker.invoke(new ChannelInvocation(channel, getCaller()));</span>
+<span class="nc" id="L305">    }</span>
+
+    /**
+     * Invoked when the connection is closed by the peer.
+     */
+    public void closed() {
+<span class="nc" id="L311">        notifyClosed();</span>
+<span class="nc" id="L312">    }</span>
+
+    /**
+     * Invoked when an error occurs on the multiplexer.
+     *
+     * @param error the error
+     */
+    public void error(Throwable error) {
+<span class="nc" id="L320">        notifyError(error);</span>
+<span class="nc" id="L321">    }</span>
+
+    /**
+     * Notifies of a successful ping.
+     *
+     * @param token the token sent in the ping
+     */
+    public void pinged(int token) {
+<span class="nc" id="L329">        ManagedConnectionListener listener = getConnectionEventListener();</span>
+<span class="nc bnc" id="L330" title="All 2 branches missed.">        if (listener != null) {</span>
+<span class="nc" id="L331">            listener.pinged(this);</span>
+        }
+<span class="nc" id="L333">    }</span>
+
+    /**
+     * Invoke a method on a remote object.
+     *
+     * @param connection the connection invoking the request
+     * @param request    the request
+     * @return the response
+     */
+    protected Response invoke(Connection connection, Request request) {
+        Response response;
+        Multiplexer multiplexer;
+<span class="nc" id="L345">        synchronized (this) {</span>
+<span class="nc" id="L346">            multiplexer = _multiplexer;</span>
+<span class="nc" id="L347">        }</span>
+<span class="nc bnc" id="L348" title="All 2 branches missed.">        if (multiplexer != null) {</span>
+<span class="nc" id="L349">            Channel channel = null;</span>
+            try {
+<span class="nc" id="L351">                channel = multiplexer.getChannel();</span>
+<span class="nc" id="L352">                response = channel.invoke(request);</span>
+<span class="nc" id="L353">                channel.release();</span>
+<span class="nc" id="L354">            } catch (Exception exception) {</span>
+<span class="nc" id="L355">                _log.debug(exception, exception);</span>
+<span class="nc" id="L356">                response = new Response(exception);</span>
+<span class="nc bnc" id="L357" title="All 2 branches missed.">                if (channel != null) {</span>
+<span class="nc" id="L358">                    channel.destroy();</span>
+                }
+<span class="nc" id="L360">            }</span>
+<span class="nc" id="L361">        } else {</span>
+<span class="nc" id="L362">            response = new Response(new ResourceException(&quot;Connection lost&quot;));</span>
+        }
+
+<span class="nc" id="L365">        return response;</span>
+    }
+
+    /**
+     * Creates the endpoint to multiplex data over.
+     *
+     * @return the endpoint to multiplex data over
+     * @throws IOException for any I/O error
+     */
+    protected abstract Endpoint createEndpoint() throws IOException;
+
+    /**
+     * Create a new client-side multiplexer.
+     *
+     * @param endpoint  the endpoint to multiplex messages over
+     * @param principal the security principal
+     * @return a new client-side multiplexer
+     * @throws IOException       if an I/O error occurs
+     * @throws SecurityException if connection is refused by the server
+     */
+    protected Multiplexer createMultiplexer(Endpoint endpoint,
+                                            Principal principal)
+            throws IOException, SecurityException {
+<span class="nc" id="L388">        return new Multiplexer(this, endpoint, principal);</span>
+    }
+
+    /**
+     * Create a new server-side multiplexer.
+     *
+     * @param endpoint      the endpoint to multiplex messages over
+     * @param authenticator the connection authetnicator
+     * @return a new server-side multiplexer
+     * @throws IOException       if an I/O error occurs
+     * @throws ResourceException if the authenticator cannot authenticate
+     */
+    protected Multiplexer createMultiplexer(Endpoint endpoint,
+                                            Authenticator authenticator)
+            throws IOException, ResourceException {
+<span class="nc" id="L403">        return new Multiplexer(this, endpoint, authenticator);</span>
+    }
+
+    /**
+     * Helper to determine if this is a client-side or server side instance.
+     *
+     * @return &lt;code&gt;true&lt;/code&gt; if this is a client-side instance, otherwise
+     *         &lt;code&gt;false&lt;/code&gt;
+     */
+    protected boolean isClient() {
+<span class="nc bnc" id="L413" title="All 2 branches missed.">        return (_authenticator == null);</span>
+    }
+
+    /**
+     * Helper to return an {@link Caller} instance, denoting the client
+     * performing a method invocation. Only applicable for server-side, and only
+     * after the multiplexer has been created.
+     *
+     * @return the caller instance, or &lt;code&gt;null&lt;/code&gt; if it hasn't been
+     *         initialised
+     */
+    protected Caller getCaller() {
+<span class="nc" id="L425">        return _caller;</span>
+    }
+
+    /**
+     * Returns the thread group to associate with allocated threads.
+     *
+     * @return the thread group to associate with allocated threads, or
+     *         &lt;code&gt;null&lt;/code&gt; to use the default thread group.
+     */
+    protected synchronized ThreadGroup getThreadGroup() {
+<span class="nc bnc" id="L435" title="All 2 branches missed.">        if (_group == null) {</span>
+<span class="nc" id="L436">            _group = new ThreadGroup(getDisplayName());</span>
+        }
+<span class="nc" id="L438">        return _group;</span>
+    }
+
+    /**
+     * Helper to generate a descriptive name, for display purposes.
+     * &lt;p/&gt;
+     * This implementation returns the remote URI, concatenated with &quot;[client]&quot;
+     * if this is a client connection, or &quot;[server]&quot; if it is a server
+     * connection.
+     *
+     * @return the display name
+     */
+    protected String getDisplayName() {
+<span class="nc" id="L451">        StringBuffer name = new StringBuffer();</span>
+<span class="nc" id="L452">        URI uri = null;</span>
+        try {
+<span class="nc" id="L454">            uri = getRemoteURI();</span>
+<span class="nc" id="L455">        } catch (ResourceException ignore) {</span>
+<span class="nc bnc" id="L456" title="All 2 branches missed.">            if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L457">                _log.debug(&quot;Failed to determine remote URI&quot;, ignore);</span>
+            }
+<span class="nc" id="L459">        }</span>
+<span class="nc bnc" id="L460" title="All 2 branches missed.">        if (uri != null) {</span>
+<span class="nc" id="L461">            name.append(uri.toString());</span>
+        } else {
+<span class="nc" id="L463">            name.append(&quot;&lt;unknown&gt;&quot;);</span>
+        }
+<span class="nc bnc" id="L465" title="All 2 branches missed.">        if (isClient()) {</span>
+<span class="nc" id="L466">            name.append(&quot;[client]&quot;);</span>
+        } else {
+<span class="nc" id="L468">            name.append(&quot;[server]&quot;);</span>
+        }
+<span class="nc" id="L470">        return name.toString();</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,849 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RecordTypeManipulator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.protocol.records</a> &gt; <span class="el_source">RecordTypeManipulator.java</span></div><h1>RecordTypeManipulator.java</h1><pre class="source lang-java linenums">package net.sf.xbus.protocol.records;
+
+import java.io.IOException;
+import java.util.Iterator;
+import java.util.List;
+import java.util.TreeMap;
+import java.util.Vector;
+
+import javax.xml.parsers.DocumentBuilder;
+
+import net.sf.xbus.base.bytearraylist.ByteArrayConverter;
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.core.config.Configuration;
+import net.sf.xbus.base.xml.XDomSupport;
+
+import org.w3c.dom.Document;
+import org.w3c.dom.DocumentType;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import org.xml.sax.SAXException;
+
+/**
+ * &lt;code&gt;RecordTypeManipulator&lt;/code&gt; contains all things common to the
+ * {@link net.sf.xbus.protocol.records.RecordTypeParser RecordTypeParser}and
+ * {@link net.sf.xbus.protocol.records.RecordTypeSerializer RecordTypeSerializer}.
+ * The fields concerning the interface structure description are as well shared
+ * with
+ * {@link net.sf.xbus.protocol.records.RecordTypeTestDataGenerator RecordTypeTestDataGenerator}.
+ * 
+ * @author Stephan Duwel
+ */
+abstract class RecordTypeManipulator
+{
+
+	// //////////////////////
+	// Object bound fields
+	// //////////////////////
+
+	/**
+	 * &lt;code&gt;sourceType&lt;/code&gt; contains the name for the parsed structure as
+	 * it is derived from a
+	 * {@link net.sf.xbus.protocol.records.RecordTypeMessage RecordTypeMessage}.
+	 * &lt;code&gt;RecordTypeManipulator&lt;/code&gt; does not garuantee the consistency
+	 * of &lt;code&gt;sourceType&lt;/code&gt;,{@link #contentType}and
+	 * {@link #interfaceStructure}.
+	 */
+	protected String sourceType;
+
+	/**
+	 * &lt;code&gt;contentType&lt;/code&gt; contains the name for the parsed structure as
+	 * it is derived from a {@link #interfaceStructure}.
+	 * &lt;code&gt;RecordTypeManipulator&lt;/code&gt; does not garuantee the consistency
+	 * of &lt;code&gt;contentType&lt;/code&gt; and {@link #sourceType}
+	 */
+	protected String contentType;
+
+	/**
+	 * &lt;code&gt;interfaceStructure&lt;/code&gt; holds the structure description used
+	 * for parsing/serializing. But &lt;code&gt;RecordTypeManipulator&lt;/code&gt; does
+	 * not load the structure description itself from a file nor does it
+	 * garuantee the consistency of {@link #sourceType}with
+	 * &lt;code&gt;interfaceStructure&lt;/code&gt;.
+	 */
+	protected Document interfaceStructure;
+
+	/**
+	 * &lt;code&gt;headerSpec&lt;/code&gt; is a shortcut into the
+	 * {@link #interfaceStructure}for the file/string header.
+	 */
+	protected Element headerSpec;
+
+	/**
+	 * &lt;code&gt;linesSpec&lt;/code&gt; is a shortcut into the
+	 * {@link #interfaceStructure}for the lines specification.
+	 */
+	protected Element linesSpec;
+
+	/**
+	 * &lt;code&gt;recordTypesSpec&lt;/code&gt; is a shortcut into the
+	 * {@link #interfaceStructure}for the specification section of record
+	 * types.
+	 */
+	protected Node recordTypesSpec;
+
+	/**
+	 * &lt;code&gt;trailerSpec&lt;/code&gt; is a shortcut into the
+	 * {@link #interfaceStructure}for the file/string trailer.
+	 */
+	protected Element trailerSpec;
+
+	/**
+	 * &lt;code&gt;groupsSpec&lt;/code&gt; is a shortcut into the
+	 * {@link #interfaceStructure}for the specification section of field
+	 * groups.
+	 */
+	protected Node groupsSpec;
+
+	/**
+	 * &lt;code&gt;recIdentMethod&lt;/code&gt; indicates how the records with the parsed
+	 * string are identified during parsing. Possible values are:
+	 * &lt;ul&gt;
+	 * &lt;li&gt;&quot;TypeIdentifier&quot; - The records are identified by a contained id
+	 * field.&lt;/li&gt;
+	 * &lt;li&gt;&quot;RecordOrder&quot; - The record type is determined by the line order.
+	 * Works only with &lt;code&gt;recOrder&lt;/code&gt; =&quot;Ordered&quot; / &quot;Structured&quot;.&lt;/li&gt;
+	 * &lt;/ul&gt;
+	 */
+	protected String recIdentMethod;
+
+	/**
+	 * &lt;code&gt;recOrder&lt;/code&gt; determines in which order the differnt record
+	 * types occurr in the parsed string. Possible values are:
+	 * &lt;ul&gt;
+	 * &lt;li&gt;&quot;Arbitrary&quot; - The records are in arbitrary order. Works only with
+	 * &lt;code&gt;recIdentMethod&lt;/code&gt; =&quot;TypeIdentifier&quot;.&lt;/li&gt;
+	 * &lt;li&gt;&quot;Ordered&quot; - The records are orderd due to the record type order in
+	 * this list. Record types - despite of the first one - may be optional.
+	 * Together with &lt;code&gt;recIdentMethod&lt;/code&gt; =&quot;RecordOrder&quot; all optional
+	 * record types must have an existance indicator.&lt;/li&gt;
+	 * &lt;li&gt;&quot;Structured&quot; - Records of different types belong together and this
+	 * is expressed by their order. Groups of records appear repeatedly. Each
+	 * group repects the record type order in this list. Record types - despite
+	 * of the first one - may be optional. Together with
+	 * &lt;code&gt;recIdentMethod&lt;/code&gt; =&quot;RecordOrder&quot; all optional record types
+	 * must have an existance indicator.&lt;/li&gt;
+	 * &lt;/ul&gt;
+	 */
+	protected String recOrder;
+
+	/**
+	 * Is the checking of the structrure description activated?
+	 */
+	protected boolean checkingActivated;
+
+	/**
+	 * The &lt;code&gt;RecordTypeManipulator&lt;/code&gt; is able to treat interface file
+	 * contents as strings or as byte array lists.
+	 * &lt;code&gt;interfaceContentClass&lt;/code&gt; contains the information which of
+	 * these media is used.
+	 */
+	protected int interfaceContentClass;
+
+	/**
+	 * For converting between byte arrays and strings. Necessary because
+	 * internal format for transformations is always string.
+	 */
+	ByteArrayConverter byteArrayConverter;
+
+	/**
+	 * Length of interface file in sense of &lt;br&gt;
+	 * (a) characters if the content is represented as string &lt;br&gt;
+	 * (b) bytes if the content is represented as byte array list
+	 */
+	protected int interfaceContentLength;
+
+	// //////////////////////
+	// Constructors
+	// //////////////////////
+
+	/**
+	 * Just the standard constructor.
+	 */
+	protected RecordTypeManipulator() throws XException
+<span class="nc" id="L166">	{</span>
+<span class="nc" id="L167">		sourceType = null;</span>
+<span class="nc" id="L168">		contentType = null;</span>
+<span class="nc" id="L169">		interfaceContentClass = Constants.IFCONTENTCLASS_BYTEARRAYLIST;</span>
+		// The more complicated case. It will work well even if pure string
+		// handling is sufficient.
+<span class="nc" id="L172">		interfaceStructure = null;</span>
+<span class="nc" id="L173">		headerSpec = null;</span>
+<span class="nc" id="L174">		linesSpec = null;</span>
+<span class="nc" id="L175">		recordTypesSpec = null;</span>
+<span class="nc" id="L176">		trailerSpec = null;</span>
+<span class="nc" id="L177">		groupsSpec = null;</span>
+<span class="nc" id="L178">		recIdentMethod = null;</span>
+<span class="nc" id="L179">		recOrder = null;</span>
+<span class="nc" id="L180">		checkingActivated = Configuration.getInstance(&quot;xbus&quot;)</span>
+<span class="nc" id="L181">				.getValueAsBoolean(&quot;ParserSettings&quot;, &quot;RecordTypeMessage&quot;,</span>
+						&quot;CheckingActivated&quot;);
+		// Configuration entry: Should the interface description be checked?
+<span class="nc" id="L184">	} // RecordTypeManipulator()</span>
+
+	// //////////////////////
+	// Object bound methods
+	// //////////////////////
+
+	/**
+	 * &lt;code&gt;getSourceType&lt;/code&gt; retrieves the name for the parsed structure
+	 * as it is derived from a
+	 * {@link net.sf.xbus.protocol.records.RecordTypeMessage RecordTypeMessage}.
+	 * &lt;code&gt;RecordTypeManipulator&lt;/code&gt; does not garuantee the consistency
+	 * of &lt;code&gt;sourceType&lt;/code&gt;,{@link #contentType}and
+	 * {@link #interfaceStructure}.
+	 */
+	public String getSourceType()
+	{
+<span class="nc" id="L200">		return sourceType;</span>
+	} // getSourceType()
+
+	/**
+	 * &lt;code&gt;getInterfaceContentClass&lt;/code&gt; retrieves the mode (string or
+	 * byte array list) in which the &lt;code&gt;RecordTypeManipulator&lt;/code&gt; is
+	 * working in.
+	 */
+	public int getInterfaceContentClass()
+	{
+<span class="nc" id="L210">		return interfaceContentClass;</span>
+	} // getInterfaceContentClass()
+
+	/**
+	 * &lt;source&gt;getInterfaceDescription &lt;/source&gt; extracts the name of the
+	 * interface description file.
+	 * 
+	 * @param system the origin of the message
+	 * @return name of the interface description file
+	 * @throws XException in case that the interface file name can not be
+	 *             retrieved
+	 */
+	protected String getInterfaceDescription(String system) throws XException
+	{
+<span class="nc" id="L224">		Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L225">		String fileName = config.getValue(&quot;System&quot;, system, &quot;DescriptionFile&quot;);</span>
+<span class="nc" id="L226">		return Constants.XBUS_ETC + &quot;InterfaceDescriptions&quot;</span>
+				+ Constants.FILE_SEPERATOR + fileName;
+	} // getInterfaceDescription(XBUSSystem source)
+
+	/**
+	 * &lt;code&gt;initialize&lt;/code&gt; sets the name for the parsed structure and the
+	 * structure description used for parsing/serializing. The structure
+	 * description is checked if this option is activated in the configuration.
+	 * &lt;code&gt;RecordTypeManipulator&lt;/code&gt; does not load the structure
+	 * description itself from a file nor does it garuantee the consistency of
+	 * {@link #sourceType}with {@link #interfaceStructure}.
+	 * 
+	 * @param system the name for the parsed structure as it is derived from a
+	 *            {@link net.sf.xbus.protocol.records.RecordTypeMessage RecordTypeMessage}
+	 * @param ifContentClass the mode (string or byte array list) in which the
+	 *            &lt;code&gt;RecordTypeManipulator&lt;/code&gt; is working in
+	 * @param builder ???
+	 * @throws XException in case of an illegal structure description. In this
+	 *             case the description is not set!
+	 */
+	public void initialize(String system, int ifContentClass,
+			DocumentBuilder builder) throws XException
+	{
+<span class="nc" id="L249">		String interfaceDescription = getInterfaceDescription(system);</span>
+		// The path of the interface description file (xml)
+<span class="nc bnc" id="L251" title="All 4 branches missed.">		if (interfaceDescription == null || interfaceDescription.length() == 0)</span>
+<span class="nc" id="L252">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;91&quot;);
+		else
+		{
+<span class="nc" id="L257">			interfaceStructure = null;</span>
+			// For the interface structure parsed from a xml file
+			try
+			// for casting to XException
+			{
+<span class="nc" id="L262">				interfaceStructure = builder.parse(interfaceDescription);</span>
+				// The record type structure description we have as DOM tree.
+			} // try
+<span class="nc" id="L265">			catch (IOException e)</span>
+			{
+<span class="nc" id="L267">				throw new XException(Constants.LOCATION_INTERN,</span>
+						Constants.LAYER_PROTOCOL,
+						Constants.PACKAGE_PROTOCOL_RECORDS, &quot;0&quot;, e);
+			} // catch (IOException e)
+<span class="nc" id="L271">			catch (SAXException e)</span>
+			{
+<span class="nc" id="L273">				throw new XException(Constants.LOCATION_INTERN,</span>
+						Constants.LAYER_PROTOCOL,
+						Constants.PACKAGE_PROTOCOL_RECORDS, &quot;0&quot;, e);
+<span class="nc" id="L276">			} // catch (SAXException e)</span>
+			// Initialize the parser/serialiser with the interface file type as
+			// name
+			// and as structure description.
+			// This may induce a check on the description file. Some of the
+			// checks may be done by validating the document against its DTD.
+			// &quot;builder.isValidating()&quot; indicates whether the used parser does
+			// such a check.
+
+			try
+			// try-catch block for casting standard exceptions to XException
+			{
+<span class="nc" id="L288">				DocumentType docType = interfaceStructure.getDoctype();</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">				if (docType != null</span>
+<span class="nc bnc" id="L290" title="All 2 branches missed.">						&amp;&amp; !docType.getName().equals(&quot;InterfaceSpec&quot;))</span>
+<span class="nc" id="L291">					throw new XException(Constants.LOCATION_INTERN,</span>
+							Constants.LAYER_PROTOCOL,
+							Constants.PACKAGE_PROTOCOL_RECORDS, &quot;67&quot;);
+<span class="nc bnc" id="L294" title="All 4 branches missed.">				if (system == null || system.length() == 0)</span>
+<span class="nc" id="L295">					throw new XException(Constants.LOCATION_INTERN,</span>
+							Constants.LAYER_PROTOCOL,
+							Constants.PACKAGE_PROTOCOL_RECORDS, &quot;68&quot;);
+				// content type as derived from a RecordTypeMessage
+
+<span class="nc" id="L300">				Element root = interfaceStructure.getDocumentElement();</span>
+<span class="nc" id="L301">				contentType = root.getAttribute(&quot;Name&quot;);</span>
+				// content type as specified in the structure description
+
+<span class="nc" id="L304">				NodeList toplevel = root.getChildNodes();</span>
+<span class="nc" id="L305">				int topLevelCount = toplevel.getLength();</span>
+
+<span class="nc bnc" id="L307" title="All 2 branches missed.">				if (topLevelCount &lt; 2)</span>
+					// Extension if no prior validating:
+					// At least there must be the lines and the record type
+					// specs section.
+<span class="nc" id="L311">					throw new XException(Constants.LOCATION_INTERN,</span>
+							Constants.LAYER_PROTOCOL,
+							Constants.PACKAGE_PROTOCOL_RECORDS, &quot;69&quot;);
+
+<span class="nc" id="L315">				int pos = 0;</span>
+				// Counting the top level nodes.
+
+<span class="nc" id="L318">				headerSpec = (Element) toplevel.item(pos);</span>
+				// The header is optional.
+<span class="nc bnc" id="L320" title="All 2 branches missed.">				if (headerSpec.getNodeName().equals(&quot;Header&quot;))</span>
+<span class="nc" id="L321">					pos++;</span>
+				else
+<span class="nc" id="L323">					headerSpec = null;</span>
+
+<span class="nc" id="L325">				linesSpec = (Element) toplevel.item(pos);</span>
+				// The lines section is mandatory but a quick check does not
+				// harm.
+<span class="nc bnc" id="L328" title="All 2 branches missed.">				if (linesSpec.getNodeName().equals(&quot;Lines&quot;))</span>
+<span class="nc" id="L329">					pos++;</span>
+				else
+<span class="nc" id="L331">					throw new XException(Constants.LOCATION_INTERN,</span>
+							Constants.LAYER_PROTOCOL,
+							Constants.PACKAGE_PROTOCOL_RECORDS, &quot;70&quot;);
+
+				// How to identify the record types
+<span class="nc" id="L336">				recIdentMethod = linesSpec.getAttribute(&quot;RecordIdentification&quot;);</span>
+<span class="nc" id="L337">				recOrder = linesSpec.getAttribute(&quot;RecordOrder&quot;);</span>
+
+<span class="nc bnc" id="L339" title="All 2 branches missed.">				if (pos &lt; topLevelCount)</span>
+				{ // Some top level nodes left.
+<span class="nc" id="L341">					recordTypesSpec = toplevel.item(pos);</span>
+					// The record type specifications are mandatory but a quick
+					// ckeck does not harm
+<span class="nc bnc" id="L344" title="All 2 branches missed.">					if (recordTypesSpec.getNodeName().equals(&quot;RecordTypes&quot;))</span>
+<span class="nc" id="L345">						pos++;</span>
+					else
+<span class="nc" id="L347">						throw new XException(Constants.LOCATION_INTERN,</span>
+								Constants.LAYER_PROTOCOL,
+								Constants.PACKAGE_PROTOCOL_RECORDS, &quot;71&quot;);
+				} // then (pos&lt;topLevelCount) - before trying record type
+				// specifications section
+				else
+					// The record type specifications are missing.
+<span class="nc" id="L354">					throw new XException(Constants.LOCATION_INTERN,</span>
+							Constants.LAYER_PROTOCOL,
+							Constants.PACKAGE_PROTOCOL_RECORDS, &quot;69&quot;);
+
+<span class="nc bnc" id="L358" title="All 2 branches missed.">				if (pos &lt; topLevelCount)</span>
+				{ // Some top level nodes left.
+<span class="nc" id="L360">					trailerSpec = (Element) toplevel.item(pos);</span>
+					// The trailer is optional.
+<span class="nc bnc" id="L362" title="All 2 branches missed.">					if (trailerSpec.getNodeName().equals(&quot;Trailer&quot;))</span>
+<span class="nc" id="L363">						pos++;</span>
+					else
+<span class="nc" id="L365">						trailerSpec = null;</span>
+
+<span class="nc bnc" id="L367" title="All 2 branches missed.">					if (pos &lt; topLevelCount)</span>
+					{
+<span class="nc" id="L369">						groupsSpec = toplevel.item(pos);</span>
+						// Field groups may be defined or not.
+<span class="nc bnc" id="L371" title="All 2 branches missed.">						if (!groupsSpec.getNodeName().equals(&quot;Groups&quot;))</span>
+						{ // Unexpected tag.
+<span class="nc" id="L373">							List params = new Vector();</span>
+<span class="nc" id="L374">							params.add(groupsSpec.getNodeName());</span>
+<span class="nc" id="L375">							params.add(&quot;Groups&quot;);</span>
+<span class="nc" id="L376">							throw new XException(Constants.LOCATION_INTERN,</span>
+									Constants.LAYER_PROTOCOL,
+									Constants.PACKAGE_PROTOCOL_RECORDS, &quot;85&quot;,
+									params);
+						} // if (!groupsSpec.getNodeName().equals(&quot;Groups&quot;))
+					} // if (pos&lt;topLevelCount) - before trying groups section
+				} // if (pos&lt;topLevelCount) - before trying trailer
+
+<span class="nc bnc" id="L384" title="All 2 branches missed.">				if (checkingActivated)</span>
+				{ // Check structure description for consistency refering to
+					// the
+					// single parts.
+					RecordTypeDescriptionChecker checker = RecordTypeDescriptionChecker
+<span class="nc" id="L389">							.getInstance();</span>
+
+<span class="nc bnc" id="L391" title="All 2 branches missed.">					if (headerSpec != null)</span>
+<span class="nc" id="L392">						checker.checkHeaderSpecification(headerSpec,</span>
+<span class="nc" id="L393">								groupsSpec, builder.isValidating());</span>
+
+<span class="nc" id="L395">					Object[] checkInfos = checker.checkLinesSpecification(</span>
+<span class="nc" id="L396">							linesSpec, builder.isValidating());</span>
+					// record type names and existance indicator declarations
+					// stored for
+					// further consistency checks
+
+					// Check the record type specifications.
+					// In particular mark in &lt;checkInfos&gt; all specified record
+					// types
+					// and all existance indicators pointing to an existing
+					// field.
+<span class="nc" id="L406">					checker.checkRecordTypesSpecification(recordTypesSpec,</span>
+<span class="nc" id="L407">							groupsSpec, checkInfos, builder.isValidating());</span>
+
+					// Everthing in &lt;checkInfos&gt; found?
+<span class="nc bnc" id="L410" title="All 2 branches missed.">					for (int i = 0; i &lt; ((String[]) checkInfos[0]).length; i++)</span>
+<span class="nc bnc" id="L411" title="All 2 branches missed.">						if (((String[]) checkInfos[0])[i] != null)</span>
+						{ // &lt;null&gt; indicates that the declared record type is
+							// specified.
+<span class="nc" id="L414">							List params = new Vector();</span>
+<span class="nc" id="L415">							params.add(((String[]) checkInfos[0])[i]);</span>
+<span class="nc" id="L416">							throw new XException(Constants.LOCATION_INTERN,</span>
+									Constants.LAYER_PROTOCOL,
+									Constants.PACKAGE_PROTOCOL_RECORDS, &quot;74&quot;,
+									params);
+						} // if (((String[]) checkInfos[0])[i] != null)
+
+					// Existance indicators as second checkInfos component
+					// are optional: not used if
+					// &lt;recIdentMethod&gt;==&quot;TypeIdentifier&quot;.
+<span class="nc bnc" id="L425" title="All 2 branches missed.">					if (checkInfos[1] != null)</span>
+					{ // &lt;checkInfos[1]&gt; contains all existance indicators
+						// which
+						// point from any record type to any other.
+<span class="nc bnc" id="L429" title="All 2 branches missed.">						for (int i = 0; i &lt; ((TreeMap[]) checkInfos[1]).length; i++)</span>
+						{ // loop over all record types in the role of a
+							// preceding
+							// record containg an existance indicator for a
+							// suceeding
+							// record type
+<span class="nc" id="L435">							TreeMap existanceIndicators = ((TreeMap[]) checkInfos[1])[i];</span>
+							// the existance indicators from one specific record
+							// type to others
+<span class="nc bnc" id="L438" title="All 2 branches missed.">							if (existanceIndicators != null)</span>
+							{ // some existance indicators depending on fields
+								// on
+								// this record type
+								// Look if all of them point to existing fields.
+<span class="nc" id="L443">								Iterator it = existanceIndicators.values()</span>
+<span class="nc" id="L444">										.iterator();</span>
+<span class="nc bnc" id="L445" title="All 2 branches missed.">								while (it.hasNext())</span>
+								{ // loop over all existance indicators for
+									// each
+									// record type
+<span class="nc" id="L449">									String value = (String) it.next();</span>
+<span class="nc bnc" id="L450" title="All 2 branches missed.">									if (!value.equals(&quot;Found&quot;))</span>
+									{ // &quot;Found&quot; indicates that the respective
+										// field specification exists.
+<span class="nc" id="L453">										List params = new Vector();</span>
+<span class="nc" id="L454">										params.add(value);</span>
+<span class="nc" id="L455">										throw new XException(</span>
+												Constants.LOCATION_INTERN,
+												Constants.LAYER_PROTOCOL,
+												Constants.PACKAGE_PROTOCOL_RECORDS,
+												&quot;75&quot;, params);
+									} // if (!value.equals(&quot;Found&quot;))
+<span class="nc" id="L461">								} // while (it.hasNext())</span>
+							} // if (existanceIndicators!=null)
+						} // for (int i=0;
+							// i&lt;((TreeMap[])checkInfos[1]).length;
+						// i++)
+					} // if (checkInfos[1]!=null)
+
+<span class="nc bnc" id="L468" title="All 2 branches missed.">					if (trailerSpec != null)</span>
+<span class="nc" id="L469">						checker.checkTrailerSpecification(trailerSpec,</span>
+<span class="nc" id="L470">								groupsSpec, builder.isValidating());</span>
+
+<span class="nc bnc" id="L472" title="All 2 branches missed.">					if (groupsSpec != null)</span>
+<span class="nc" id="L473">						checker.checkGroupsSpecification(groupsSpec, builder</span>
+<span class="nc" id="L474">								.isValidating());</span>
+				} // if (checkingActivated)
+
+				// Everything checked - if desired - thus store the structure
+				// information
+<span class="nc" id="L479">				sourceType = system;</span>
+
+				// the working mode details (string / byte array list)
+<span class="nc" id="L482">				interfaceContentClass = ifContentClass;</span>
+<span class="nc" id="L483">				byteArrayConverter = getByteArrayConverter();</span>
+			} // try
+<span class="nc" id="L485">			catch (Exception e) // i.e. DOMException, ClassCastException</span>
+			{
+<span class="nc" id="L487">				throw new XException(Constants.LOCATION_INTERN,</span>
+						Constants.LAYER_PROTOCOL,
+						Constants.PACKAGE_PROTOCOL_RECORDS, &quot;0&quot;, e);
+<span class="nc" id="L490">			} // catch</span>
+		} // else (interfaceDescription==null ||
+		// interfaceDescription.length()==0)
+<span class="nc" id="L493">	} // initialize(String system, int ifContentClass, DocumentBuilder</span>
+		// builder)
+
+	/**
+	 * &lt;code&gt;getByteArrayConverter&lt;/code&gt; retrieves a byte array converter
+	 * (conversion between strings and byte arrays) according to the specific
+	 * interface needs. Its is abstract because subclasses use different ways of
+	 * determining the correct interface name.
+	 * 
+	 * @return ByteArrayConverter for string-byte array conversion in the
+	 *         specific interface situation
+	 */
+	abstract protected ByteArrayConverter getByteArrayConverter()
+			throws XException;
+
+	/**
+	 * &lt;code&gt;getRecordTypePositionInLines&lt;/code&gt; retrieves the position of a
+	 * record type in the lines section.
+	 * 
+	 * @param recordType as node in the lines section
+	 * @return the position of the record type in the lines section (starting at
+	 *         0) - relative to the record group if {@link #recOrder}
+	 *         ==&quot;Structured&quot;
+	 * @throws XException in case that the record type cannot be found
+	 */
+	protected int getRecordTypePositionInLines(Element recordType)
+			throws XException
+	{
+<span class="nc" id="L521">		int pos = -1;</span>
+		// for the position
+<span class="nc" id="L523">		NodeList recordTypes = recordType.getParentNode().getChildNodes();</span>
+		// Complicated to serve for both situations - with and without record
+		// groups
+<span class="nc bnc" id="L526" title="All 4 branches missed.">		for (int i = 0; i &lt; recordTypes.getLength() &amp;&amp; pos == -1; i++)</span>
+			// loop over record type declarations below the same parent node
+<span class="nc bnc" id="L528" title="All 2 branches missed.">			if (XDomSupport.getTrimedNodeText(recordTypes.item(i)).equals(</span>
+<span class="nc" id="L529">					XDomSupport.getTrimedNodeText(recordType)))</span>
+				// Found
+<span class="nc" id="L531">				pos = i;</span>
+<span class="nc bnc" id="L532" title="All 2 branches missed.">		if (pos == -1)</span>
+		{
+<span class="nc" id="L534">			List params = new Vector();</span>
+<span class="nc" id="L535">			params.add(XDomSupport.getTrimedNodeText(recordType));</span>
+<span class="nc" id="L536">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;77&quot;, params);
+		}
+<span class="nc" id="L540">		return pos;</span>
+	} // getPositionInLines(Element recordType)
+
+	/**
+	 * &lt;code&gt;getRecordTypeByID&lt;/code&gt; retrieves the record type declaration
+	 * within the lines section by the type identifier.
+	 * 
+	 * @param searchedId the type identifier
+	 * @return the record type declaration node in the lines section as as
+	 *         {@link org.w3c.dom.Element}
+	 * @throws XException in case that the record type cannot be found
+	 */
+	protected Element getRecordTypeById(String searchedId) throws XException
+	{
+<span class="nc" id="L554">		Node recordGroup = linesSpec;</span>
+<span class="nc bnc" id="L555" title="All 2 branches missed.">		if (recOrder.equals(&quot;Structured&quot;))</span>
+			// Go to record group level
+<span class="nc" id="L557">			recordGroup = linesSpec.getFirstChild();</span>
+<span class="nc" id="L558">		Element result = null;</span>
+		try
+		// for casting to XException
+		{
+<span class="nc bnc" id="L562" title="All 4 branches missed.">			while (recordGroup != null &amp;&amp; result == null)</span>
+			{ // loop over record groups
+<span class="nc" id="L564">				NodeList recordTypes = recordGroup.getChildNodes();</span>
+				// record types in this group
+<span class="nc bnc" id="L566" title="All 4 branches missed.">				for (int i = 0; i &lt; recordTypes.getLength() &amp;&amp; result == null; i++)</span>
+				{ // loop over record types in the group
+<span class="nc" id="L568">					result = (Element) recordTypes.item(i);</span>
+<span class="nc" id="L569">					String id = result.getAttribute(&quot;Identifier&quot;);</span>
+<span class="nc bnc" id="L570" title="All 2 branches missed.">					if (id.length() &gt; 0)</span>
+					{ // type id specified as single value
+<span class="nc bnc" id="L572" title="All 2 branches missed.">						if (!id.equals(searchedId))</span>
+							// not the right one
+<span class="nc" id="L574">							result = null;</span>
+					} // then (id.length()&gt;0)
+					else
+					{ // type id specified as interval
+<span class="nc" id="L578">						String idLo = result.getAttribute(&quot;IdentifierLow&quot;);</span>
+<span class="nc" id="L579">						String idHi = result.getAttribute(&quot;IdentifierHigh&quot;);</span>
+<span class="nc bnc" id="L580" title="All 4 branches missed.">						if (idLo.length() == 0 || idHi.length() == 0</span>
+<span class="nc bnc" id="L581" title="All 2 branches missed.">								|| idLo.compareTo(searchedId) &gt; 0</span>
+<span class="nc bnc" id="L582" title="All 2 branches missed.">								|| idHi.compareTo(searchedId) &lt; 0)</span>
+							// searched id not comtained in interval
+<span class="nc" id="L584">							result = null;</span>
+					} // else (id.length()&gt;0)
+				} // for (int i=0; i&lt;recordTypes.getLength()&amp;&amp;result==null;
+					// i++)
+
+<span class="nc bnc" id="L589" title="All 2 branches missed.">				if (recordGroup.getNodeName().equals(&quot;RecordGroup&quot;))</span>
+					// Next record group
+<span class="nc" id="L591">					recordGroup = recordGroup.getNextSibling();</span>
+				else
+					// If there are nor groups, just finish the record group
+					// loop
+<span class="nc" id="L595">					recordGroup = null;</span>
+<span class="nc" id="L596">			} // while (recordGroup!=null &amp;&amp; result==null)</span>
+		} // try
+<span class="nc" id="L598">		catch (ClassCastException e)</span>
+		{
+<span class="nc" id="L600">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;0&quot;, e);
+<span class="nc" id="L603">		} // catch</span>
+<span class="nc bnc" id="L604" title="All 2 branches missed.">		if (result == null)</span>
+		{
+<span class="nc" id="L606">			List params = new Vector();</span>
+<span class="nc" id="L607">			params.add(searchedId);</span>
+<span class="nc" id="L608">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;79&quot;, params);
+		}
+<span class="nc" id="L612">		return result;</span>
+	} // getRecordTypePosById(String searchedId)
+
+	/**
+	 * &lt;code&gt;getRecordTypeSpec&lt;/code&gt; retrieves the record type specification
+	 * from the record types section to a record type name.
+	 * 
+	 * @param recordType the record type name
+	 * @return the record type specification as {@link org.w3c.dom.Node node}in
+	 *         the interface structure description
+	 * @throws XException in case that the record type specification cannot be
+	 *             found
+	 */
+	protected Node getRecordTypeSpec(String recordType) throws XException
+	{
+		try
+		// for casting to XException
+		{
+<span class="nc" id="L630">			List candidates = XDomSupport.getChildNodesByAttrValue(</span>
+					recordTypesSpec, &quot;Name&quot;, recordType, &quot;RecordTypeSpec&quot;);
+<span class="nc bnc" id="L632" title="All 2 branches missed.">			if (candidates.size() != 1)</span>
+			{
+<span class="nc" id="L634">				List params = new Vector();</span>
+<span class="nc" id="L635">				params.add(recordType);</span>
+<span class="nc" id="L636">				throw new XException(Constants.LOCATION_INTERN,</span>
+						Constants.LAYER_PROTOCOL,
+						Constants.PACKAGE_PROTOCOL_RECORDS, &quot;80&quot;, params);
+			} // if (candidates.size() != 1)
+<span class="nc" id="L640">			return (Node) candidates.get(0);</span>
+		} // try
+<span class="nc" id="L642">		catch (ClassCastException e)</span>
+		{
+<span class="nc" id="L644">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;0&quot;, e);
+		} // catch
+	} // getRecordTypeSpec(String recordType)
+
+	/**
+	 * &lt;code&gt;getFieldPos&lt;/code&gt; determines the position of a field within the
+	 * surrounding record type - including header and trailer.
+	 * 
+	 * @param fieldSpec the field as {@link org.w3c.dom.Element elementnode}
+	 * @param parentSpec the specification of the surrounding record type
+	 * @return the field position within the record type
+	 * @throws XException in case of problems with the description file
+	 */
+	protected int getFieldPos(Element fieldSpec, Node parentSpec)
+			throws XException
+	{
+<span class="nc" id="L662">		int pos = 0;</span>
+		// for the result
+<span class="nc" id="L664">		boolean searching = true;</span>
+		try
+		// for casting to XException
+		{
+<span class="nc" id="L668">			String fieldName = fieldSpec.getAttribute(&quot;Name&quot;);</span>
+<span class="nc bnc" id="L669" title="All 4 branches missed.">			if (fieldName == null || fieldName.length() == 0)</span>
+			{
+<span class="nc" id="L671">				List params = new Vector();</span>
+<span class="nc" id="L672">				params.add(&quot;Name&quot;);</span>
+<span class="nc" id="L673">				params.add(((Element) fieldSpec.getParentNode())</span>
+<span class="nc" id="L674">						.getAttribute(&quot;Name&quot;));</span>
+<span class="nc" id="L675">				params.add(fieldSpec.toString());</span>
+<span class="nc" id="L676">				throw new XException(Constants.LOCATION_INTERN,</span>
+						Constants.LAYER_PROTOCOL,
+						Constants.PACKAGE_PROTOCOL_RECORDS, &quot;82&quot;, params);
+			} // if (fieldName == null || fieldName.length() == 0)
+<span class="nc" id="L680">			NodeList fieldSpecs = parentSpec.getChildNodes();</span>
+<span class="nc bnc" id="L681" title="All 4 branches missed.">			for (int i = 0; i &lt; fieldSpecs.getLength() &amp;&amp; searching; i++)</span>
+			{ // loop over fields and group references within record type
+<span class="nc" id="L683">				Element searchedFieldSpec = (Element) fieldSpecs.item(i);</span>
+<span class="nc bnc" id="L684" title="All 2 branches missed.">				if (searchedFieldSpec.getNodeName().equals(&quot;Field&quot;))</span>
+					// a single field, compare its name
+<span class="nc" id="L686">					if (fieldName</span>
+<span class="nc bnc" id="L687" title="All 2 branches missed.">							.equals(searchedFieldSpec.getAttribute(&quot;Name&quot;)))</span>
+<span class="nc" id="L688">						searching = false;</span>
+					else
+<span class="nc" id="L690">						pos++;</span>
+<span class="nc bnc" id="L691" title="All 2 branches missed.">				else if (searchedFieldSpec.getNodeName().equals(&quot;Group&quot;))</span>
+				{ // an entire field group
+<span class="nc" id="L693">					NodeList groupFields = RecordTypeDescriptionChecker</span>
+<span class="nc" id="L694">							.getGroupSpec(</span>
+<span class="nc" id="L695">									searchedFieldSpec.getAttribute(&quot;Name&quot;),</span>
+<span class="nc" id="L696">									groupsSpec).getChildNodes();</span>
+<span class="nc bnc" id="L697" title="All 2 branches missed.">					for (int j = 0; j &lt; groupFields.getLength(); j++)</span>
+					{ // loop over group fields
+<span class="nc" id="L699">						searchedFieldSpec = (Element) groupFields.item(j);</span>
+						// now a single field, compare its name
+<span class="nc bnc" id="L701" title="All 2 branches missed.">						if (fieldName.equals(searchedFieldSpec</span>
+<span class="nc" id="L702">								.getAttribute(&quot;Name&quot;)))</span>
+<span class="nc" id="L703">							searching = false;</span>
+						else
+<span class="nc" id="L705">							pos++;</span>
+					} // for (int j=0; j&lt;groupFields.getLength(); j++)
+				} // if (searchedFieldSpec.getNodeName().equals(&quot;Group&quot;))
+			} // for (int i=0; i&lt;fieldSpecs.getLength()&amp;&amp;searching; i++)
+		} // try
+<span class="nc" id="L710">		catch (ClassCastException e)</span>
+		{
+<span class="nc" id="L712">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;0&quot;, e);
+<span class="nc" id="L715">		} // catch</span>
+<span class="nc bnc" id="L716" title="All 2 branches missed.">		if (searching)</span>
+		{ // Field not found
+<span class="nc" id="L718">			List params = new Vector();</span>
+<span class="nc" id="L719">			params.add(((Element) fieldSpec.getParentNode())</span>
+<span class="nc" id="L720">					.getAttribute(&quot;Name&quot;));</span>
+<span class="nc" id="L721">			params.add(fieldSpec.getAttribute(&quot;Name&quot;));</span>
+<span class="nc" id="L722">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;84&quot;, params);
+		}
+<span class="nc" id="L726">		return pos;</span>
+	} // getFieldPos(Element fieldSpec, Node parentSpec)
+
+	/**
+	 * &lt;code&gt;getTypeIdentifier&lt;/code&gt; retrieves the type identifier field.
+	 * 
+	 * @param idPosString the identifier position in the record line - in sense
+	 *            of char counting if the interface contant is treated as
+	 *            string; in sense of byte counting if a byte array list is used
+	 *            instead
+	 * @param recordTypeSpec the record type specification to search in
+	 * @return the name of the type identifier field - null if it could not be
+	 *         found
+	 * @throws XException in case of problems with the description file or the
+	 *             identifier position
+	 */
+	protected String getTypeIdentifier(String idPosString, Node recordTypeSpec)
+			throws XException
+	{
+<span class="nc" id="L745">		String result = null;</span>
+		try
+		// for casting to XException
+		{ // the identifier position
+<span class="nc" id="L749">			int idPos = Integer.parseInt(idPosString);</span>
+			// the field specifications
+<span class="nc" id="L751">			NodeList fields = recordTypeSpec.getChildNodes();</span>
+<span class="nc" id="L752">			int i = 0;</span>
+<span class="nc" id="L753">			int[] pos =</span>
+			{0};
+			// the search position - array for call by reference to search in
+			// groups
+<span class="nc bnc" id="L757" title="All 6 branches missed.">			for (; result == null &amp;&amp; i &lt; fields.getLength() &amp;&amp; pos[0] &lt;= idPos; i++)</span>
+			{ // loop over fields until identifier position is reached
+<span class="nc" id="L759">				Element fieldSpec = (Element) fields.item(i);</span>
+<span class="nc bnc" id="L760" title="All 2 branches missed.">				if (fieldSpec.getNodeName().equals(&quot;Field&quot;))</span>
+					// a single field
+<span class="nc bnc" id="L762" title="All 2 branches missed.">					if (pos[0] == idPos)</span>
+						// identifier position reached
+<span class="nc" id="L764">						result = fieldSpec.getAttribute(&quot;Name&quot;);</span>
+					else
+						// Go further.
+<span class="nc" id="L767">						pos[0] += Integer.parseInt(fieldSpec</span>
+<span class="nc" id="L768">								.getAttribute(&quot;Length&quot;));</span>
+<span class="nc bnc" id="L769" title="All 2 branches missed.">				else if (fieldSpec.getNodeName().equals(&quot;Group&quot;))</span>
+					// an entire field group
+<span class="nc" id="L771">					result = getTypeIdentifierFromGroup(idPos, fieldSpec, pos);</span>
+				else
+				{
+<span class="nc" id="L774">					List params = new Vector();</span>
+<span class="nc" id="L775">					params.add(fieldSpec.getNodeName());</span>
+<span class="nc" id="L776">					params.add(&quot;Field or Group&quot;);</span>
+<span class="nc" id="L777">					throw new XException(Constants.LOCATION_INTERN,</span>
+							Constants.LAYER_PROTOCOL,
+							Constants.PACKAGE_PROTOCOL_RECORDS, &quot;85&quot;, params);
+				} // else (fieldSpec.getNodeName().equals(&quot;Group&quot;))
+			} // for (; i&lt;fields.getLength()&amp;&amp;pos[0]&lt;=idPos; i++)
+		} // try
+<span class="nc" id="L783">		catch (NumberFormatException e)</span>
+		{
+<span class="nc" id="L785">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;0&quot;, e);
+		} // catch (NumberFormatException e)
+<span class="nc" id="L789">		catch (ClassCastException e)</span>
+		{
+<span class="nc" id="L791">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;0&quot;, e);
+<span class="nc" id="L794">		} // catch (ClassCastException e)</span>
+<span class="nc" id="L795">		return result;</span>
+	} // getTypeIdentifier(String idPosInString, Node recordTypeSpec)
+
+	/**
+	 * &lt;code&gt;getTypeIdentifierFromGroup&lt;/code&gt; searches the type identifier
+	 * field within a field group.
+	 * 
+	 * @param idPos the identifier position in the record line - in sense of
+	 *            char counting if the interface contant is treated as string;
+	 *            in sense of byte counting if a byte array list is used instead
+	 * @param groupRef the group reference
+	 * @param pos the actual search position, will be augmented - array for call
+	 *            by reference
+	 * @return the name of the type identifier field - null if it could not be
+	 *         found
+	 * @throws XException in case of problems with the description file
+	 */
+	private String getTypeIdentifierFromGroup(int idPos, Element groupRef,
+			int[] pos) throws XException
+	{
+		try
+		// for casting to XException
+		{ // the group fields
+<span class="nc" id="L818">			NodeList fieldSpecs = RecordTypeDescriptionChecker.getGroupSpec(</span>
+<span class="nc" id="L819">					groupRef.getAttribute(&quot;Name&quot;), groupsSpec).getChildNodes();</span>
+			// fields in the group
+<span class="nc bnc" id="L821" title="All 4 branches missed.">			for (int i = 0; i &lt; fieldSpecs.getLength() &amp;&amp; pos[0] &lt;= idPos; i++)</span>
+			{ // Loop over group fields until identifier position is reached
+<span class="nc" id="L823">				Element fieldSpec = (Element) fieldSpecs.item(i);</span>
+				// identifier position reached
+<span class="nc bnc" id="L825" title="All 2 branches missed.">				if (pos[0] == idPos)</span>
+<span class="nc" id="L826">					fieldSpec.getAttribute(&quot;Name&quot;);</span>
+				else
+					// Go further.
+<span class="nc" id="L829">					pos[0] += Integer</span>
+<span class="nc" id="L830">							.parseInt(fieldSpec.getAttribute(&quot;Length&quot;));</span>
+			} // for (int i=0; i&lt;fieldSpecs.getLength(); i++)
+		} // try
+<span class="nc" id="L833">		catch (NumberFormatException e)</span>
+		{
+<span class="nc" id="L835">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;0&quot;, e);
+		} // catch (NumberFormatException e)
+<span class="nc" id="L839">		catch (ClassCastException e)</span>
+		{
+<span class="nc" id="L841">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_PROTOCOL,
+					Constants.PACKAGE_PROTOCOL_RECORDS, &quot;0&quot;, e);
+<span class="nc" id="L844">		} // catch</span>
+<span class="nc" id="L845">		return null;</span>
+	} // getTypeIdentifierFromGroup(int idPos, Element groupRef, int[] pos)
+
+} // RecordTypeManipulator
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

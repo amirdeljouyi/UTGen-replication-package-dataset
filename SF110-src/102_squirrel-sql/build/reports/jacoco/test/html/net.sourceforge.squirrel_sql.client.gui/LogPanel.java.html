@@ -1,0 +1,391 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LogPanel.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.gui</a> &gt; <span class="el_source">LogPanel.java</span></div><h1>LogPanel.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.gui;
+/*
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+import net.sourceforge.squirrel_sql.client.IApplication;
+import net.sourceforge.squirrel_sql.client.mainframe.action.ViewLogsCommand;
+import net.sourceforge.squirrel_sql.client.resources.SquirrelResources;
+import net.sourceforge.squirrel_sql.fw.gui.ErrorDialog;
+import net.sourceforge.squirrel_sql.fw.util.log.ILoggerListener;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.util.Vector;
+import java.util.Date;
+import java.text.DateFormat;
+
+
+/**
+ * This is the Status bar's Log panel.
+ * It recieves all logs through the ILoggerListener interface.
+ * It updates its status all 200 millis, see _displayLastLogTimer.
+ *
+ * The traffic lights color of the last log is displayed on the JButton _btnLastLog.
+ * If no new log arrives the last log color is displayed for 5000 millis and is the replaced
+ * by the &quot;white&quot; icon, see _whiteIconTimer. This allows the user to have an eye an the logs
+ * without much disturbance.
+ *
+ */
+public class LogPanel extends JPanel
+{
+    private static final long serialVersionUID = -2886311809367056785L;
+
+<span class="nc" id="L52">    private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L53">		StringManagerFactory.getStringManager(MemoryPanel.class);</span>
+
+
+	transient private SquirrelResources _resources;
+
+	private static final int LOG_TYPE_INFO = 0;
+	private static final int LOG_TYPE_WARN = 1;
+	private static final int LOG_TYPE_ERROR = 2;
+
+
+<span class="nc" id="L63">	private JButton _btnLastLog = new JButton();</span>
+<span class="nc" id="L64">	private JLabel _lblLogInfo = new JLabel();</span>
+<span class="nc" id="L65">	private JButton _btnViewLogs = new JButton();</span>
+
+	private Timer _displayLastLogTimer;
+	private Timer _whiteIconTimer;
+
+<span class="nc" id="L70">	private final Vector&lt;LogData&gt; _logsDuringDisplayDelay = new Vector&lt;LogData&gt;();</span>
+	transient private LogData _curlogToDisplay;
+    transient private IApplication _app;
+
+
+<span class="nc" id="L75">    transient private LogStatistics _statistics = new LogStatistics();</span>
+
+	public LogPanel(IApplication app)
+<span class="nc" id="L78">	{</span>
+<span class="nc" id="L79">		_app = app;</span>
+<span class="nc" id="L80">		_resources = _app.getResources();</span>
+<span class="nc" id="L81">		createGui();</span>
+
+
+<span class="nc" id="L84">		setIconForCurLogType();</span>
+
+<span class="nc" id="L86">		_whiteIconTimer = new Timer(5000, new ActionListener()</span>
+<span class="nc" id="L87">		{</span>
+			public void actionPerformed(ActionEvent e)
+			{
+<span class="nc" id="L90">				_btnLastLog.setIcon(_resources.getIcon(SquirrelResources.IImageNames.WHITE_GEM));</span>
+<span class="nc" id="L91">			}</span>
+		});
+
+<span class="nc" id="L94">		_whiteIconTimer.setRepeats(false);</span>
+
+<span class="nc" id="L96">		int displayDelay = 200;</span>
+<span class="nc" id="L97">		_displayLastLogTimer = new Timer(displayDelay, new ActionListener()</span>
+<span class="nc" id="L98">		{</span>
+			public void actionPerformed(ActionEvent e)
+			{
+<span class="nc" id="L101">				updatePanel();</span>
+<span class="nc" id="L102">			}</span>
+		});
+
+<span class="nc" id="L105">		_displayLastLogTimer.setRepeats(false);</span>
+
+<span class="nc" id="L107">		LoggerController.addLoggerListener(new ILoggerListener()</span>
+<span class="nc" id="L108">		{</span>
+			public void info(Class&lt;?&gt; source, Object message)
+			{
+<span class="nc" id="L111">				_statistics.setInfoCount(_statistics._infoCount + 1);</span>
+<span class="nc" id="L112">				addLog(LOG_TYPE_INFO, source.getName(), message, null);</span>
+<span class="nc" id="L113">			}</span>
+
+			public void info(Class&lt;?&gt; source, Object message, Throwable th)
+			{
+<span class="nc" id="L117">				_statistics.setInfoCount(_statistics._infoCount + 1);</span>
+<span class="nc" id="L118">				addLog(LOG_TYPE_INFO, source.getName(), message, th);</span>
+<span class="nc" id="L119">			}</span>
+
+			public void warn(Class&lt;?&gt; source, Object message)
+			{
+<span class="nc" id="L123">				_statistics.setWarnCount(_statistics._warnCount + 1);</span>
+<span class="nc" id="L124">				addLog(LOG_TYPE_WARN, source.getName(), message, null);</span>
+<span class="nc" id="L125">			}</span>
+
+			public void warn(Class&lt;?&gt; source, Object message, Throwable th)
+			{
+<span class="nc" id="L129">				_statistics.setWarnCount(_statistics._warnCount + 1);</span>
+<span class="nc" id="L130">				addLog(LOG_TYPE_WARN, source.getName(), message, th);</span>
+<span class="nc" id="L131">			}</span>
+
+			public void error(Class&lt;?&gt; source, Object message)
+			{
+<span class="nc" id="L135">				_statistics.setErrorCount(_statistics._errorCount + 1);</span>
+<span class="nc bnc" id="L136" title="All 2 branches missed.">				addLog(LOG_TYPE_ERROR, source.getName(), message, message instanceof Throwable ? (Throwable)message:null);</span>
+<span class="nc" id="L137">			}</span>
+
+			public void error(Class&lt;?&gt; source, Object message, Throwable th)
+			{
+<span class="nc" id="L141">				_statistics.setErrorCount(_statistics._errorCount + 1);</span>
+<span class="nc" id="L142">				addLog(LOG_TYPE_ERROR, source.getName(), message, th);</span>
+<span class="nc" id="L143">			}</span>
+		});
+
+
+<span class="nc" id="L147">		_btnLastLog.addMouseListener(new MouseAdapter()</span>
+<span class="nc" id="L148">		{</span>
+			public void mouseEntered(MouseEvent e)
+			{
+<span class="nc" id="L151">				setIconForCurLogType();</span>
+<span class="nc" id="L152">			}</span>
+
+			public void mouseExited(MouseEvent e)
+			{
+<span class="nc bnc" id="L156" title="All 2 branches missed.">				if(false == _whiteIconTimer.isRunning())</span>
+				{
+<span class="nc" id="L158">					_btnLastLog.setIcon(_resources.getIcon(SquirrelResources.IImageNames.WHITE_GEM));</span>
+				}
+<span class="nc" id="L160">			}</span>
+		});
+
+<span class="nc" id="L163">		_btnLastLog.addActionListener(new ActionListener()</span>
+<span class="nc" id="L164">		{</span>
+			public void actionPerformed(ActionEvent e)
+			{
+<span class="nc" id="L167">				showLogInDialog();</span>
+<span class="nc" id="L168">			}</span>
+		});
+
+<span class="nc" id="L171">		_btnViewLogs.addActionListener(new ActionListener()</span>
+<span class="nc" id="L172">		{</span>
+			public void actionPerformed(ActionEvent e)
+			{
+<span class="nc" id="L175">				new ViewLogsCommand(_app).execute();</span>
+<span class="nc" id="L176">			}</span>
+		});
+
+<span class="nc" id="L179">	}</span>
+
+	private void createGui()
+	{
+<span class="nc" id="L183">		setLayout(new BorderLayout(5,0));</span>
+
+<span class="nc" id="L185">		ImageIcon viewLogsIcon = _resources.getIcon(SquirrelResources.IImageNames.LOGS);</span>
+<span class="nc" id="L186">		_btnViewLogs.setIcon(viewLogsIcon);</span>
+
+<span class="nc" id="L188">		Dimension prefButtonSize = new Dimension(viewLogsIcon.getIconWidth(), viewLogsIcon.getIconHeight());</span>
+<span class="nc" id="L189">		_btnLastLog.setPreferredSize(prefButtonSize);</span>
+<span class="nc" id="L190">		_btnViewLogs.setPreferredSize(prefButtonSize);</span>
+
+<span class="nc" id="L192">		_btnLastLog.setBorder(null);</span>
+<span class="nc" id="L193">		_btnViewLogs.setBorder(null);</span>
+
+<span class="nc" id="L195">		JPanel pnlButtons = new JPanel(new GridLayout(1,2,3,0));</span>
+<span class="nc" id="L196">		pnlButtons.add(_btnLastLog);</span>
+<span class="nc" id="L197">		pnlButtons.add(_btnViewLogs);</span>
+
+<span class="nc" id="L199">		add(pnlButtons, BorderLayout.EAST);</span>
+<span class="nc" id="L200">		add(_lblLogInfo, BorderLayout.CENTER);</span>
+
+		// i18n[LogPanel.viewLastLog=Press to view last log entry]
+<span class="nc" id="L203">		_btnLastLog.setToolTipText(s_stringMgr.getString(&quot;LogPanel.viewLastLog&quot;));</span>
+
+		// i18n[LogPanel.openLogs=Press to open logs]
+<span class="nc" id="L206">		_btnViewLogs.setToolTipText(s_stringMgr.getString(&quot;LogPanel.openLogs&quot;));</span>
+<span class="nc" id="L207">	}</span>
+
+
+	private void showLogInDialog()
+	{
+<span class="nc bnc" id="L212" title="All 2 branches missed.">		if(null != _curlogToDisplay)</span>
+		{
+<span class="nc" id="L214">			Object[] params = new Object[]</span>
+				{
+					_curlogToDisplay.source,
+					_curlogToDisplay.logTime,
+					_curlogToDisplay.message
+				};
+
+			// i18n[LogPanel.logMsg=Logged by {0} at {1}:\n\n {2}]
+<span class="nc" id="L222">			String extMsg = s_stringMgr.getString(&quot;LogPanel.logMsg&quot;, params);</span>
+<span class="nc" id="L223">			ErrorDialog errorDialog = new ErrorDialog(_app.getMainFrame(), extMsg, _curlogToDisplay.throwable);</span>
+
+			String title;
+
+<span class="nc bnc" id="L227" title="All 4 branches missed.">			switch(_curlogToDisplay.logType)</span>
+			{
+				case LOG_TYPE_INFO:
+					// i18n[LogPanel.titleInfo=Last log entry (Entry type: Info)]
+<span class="nc" id="L231">					title = s_stringMgr.getString(&quot;LogPanel.titleInfo&quot;);</span>
+<span class="nc" id="L232">					break;</span>
+				case LOG_TYPE_WARN:
+					// i18n[LogPanel.titleWarn=Last log entry (Entry type: Warning)]
+<span class="nc" id="L235">					title = s_stringMgr.getString(&quot;LogPanel.titleWarn&quot;);</span>
+<span class="nc" id="L236">					break;</span>
+				case LOG_TYPE_ERROR:
+					// i18n[LogPanel.titleError=Last log entry (Entry type: ERROR)]
+<span class="nc" id="L239">					title = s_stringMgr.getString(&quot;LogPanel.titleError&quot;);</span>
+<span class="nc" id="L240">					break;</span>
+				default:
+					// i18n[LogPanel.titleUnknown=Last log entry (Entry type: Unknown)]
+<span class="nc" id="L243">					title = s_stringMgr.getString(&quot;LogPanel.titleUnknown&quot;);</span>
+					break;
+			}
+
+<span class="nc" id="L247">			errorDialog.setTitle(title);</span>
+<span class="nc" id="L248">			errorDialog.setVisible(true);</span>
+		}
+<span class="nc" id="L250">	}</span>
+
+
+	private void addLog(int logType, String source, Object message, Throwable t)
+	{
+<span class="nc" id="L255">		LogData log = new LogData();</span>
+<span class="nc" id="L256">		log.logType = logType;</span>
+<span class="nc" id="L257">		log.source = source;</span>
+<span class="nc" id="L258">		log.message = message;</span>
+<span class="nc" id="L259">		log.throwable = t;</span>
+
+
+<span class="nc" id="L262">		synchronized(_logsDuringDisplayDelay)</span>
+		{
+<span class="nc" id="L264">			_logsDuringDisplayDelay.add(log);</span>
+<span class="nc" id="L265">		}</span>
+
+<span class="nc" id="L267">		_displayLastLogTimer.restart();</span>
+<span class="nc" id="L268">	}</span>
+
+
+	private void updatePanel()
+	{
+		LogData[] logs;
+<span class="nc" id="L274">		synchronized(_logsDuringDisplayDelay)</span>
+		{
+<span class="nc" id="L276">			logs = _logsDuringDisplayDelay.toArray(new LogData[_logsDuringDisplayDelay.size()]);</span>
+<span class="nc" id="L277">			_logsDuringDisplayDelay.clear();</span>
+<span class="nc" id="L278">		}</span>
+
+<span class="nc" id="L280">		_curlogToDisplay = null;</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">		for (int i = 0; i &lt; logs.length; i++)</span>
+		{
+<span class="nc bnc" id="L283" title="All 2 branches missed.">			if(null == _curlogToDisplay)</span>
+			{
+<span class="nc" id="L285">				_curlogToDisplay = logs[i];</span>
+			}
+<span class="nc bnc" id="L287" title="All 2 branches missed.">			else if(_curlogToDisplay.logType &lt;= logs[i].logType)</span>
+			{
+<span class="nc" id="L289">				_curlogToDisplay = logs[i];</span>
+			}
+		}
+
+
+<span class="nc" id="L294">		_lblLogInfo.setText(_statistics.toString());</span>
+
+
+<span class="nc" id="L297">		setIconForCurLogType();</span>
+
+<span class="nc" id="L299">		_whiteIconTimer.restart();</span>
+<span class="nc" id="L300">	}</span>
+
+	private void setIconForCurLogType()
+	{
+<span class="nc bnc" id="L304" title="All 2 branches missed.">		if(null == _curlogToDisplay)</span>
+		{
+<span class="nc" id="L306">			_btnLastLog.setIcon(_resources.getIcon(SquirrelResources.IImageNames.WHITE_GEM));</span>
+<span class="nc" id="L307">			return;</span>
+		}
+
+<span class="nc bnc" id="L310" title="All 4 branches missed.">		switch(_curlogToDisplay.logType)</span>
+		{
+			case LOG_TYPE_INFO:
+<span class="nc" id="L313">				_btnLastLog.setIcon(_resources.getIcon(SquirrelResources.IImageNames.GREEN_GEM));</span>
+<span class="nc" id="L314">				break;</span>
+			case LOG_TYPE_WARN:
+<span class="nc" id="L316">				_btnLastLog.setIcon(_resources.getIcon(SquirrelResources.IImageNames.YELLOW_GEM));</span>
+<span class="nc" id="L317">				break;</span>
+			case LOG_TYPE_ERROR:
+<span class="nc" id="L319">				_btnLastLog.setIcon(_resources.getIcon(SquirrelResources.IImageNames.RED_GEM));</span>
+				break;
+		}
+<span class="nc" id="L322">	}</span>
+
+	private static class LogData
+	{
+<span class="nc" id="L326">		int logType = -1;</span>
+<span class="nc" id="L327">		Object message = null;</span>
+<span class="nc" id="L328">		Throwable throwable = null;</span>
+		String source;
+		String logTime;
+
+		public LogData()
+<span class="nc" id="L333">		{</span>
+<span class="nc" id="L334">			logTime = DateFormat.getInstance().format(new Date());</span>
+<span class="nc" id="L335">		}</span>
+
+	}
+
+	private static class LogStatistics
+	{
+		private int _errorCount;
+		private int _warnCount;
+		private int _infoCount;
+
+<span class="nc" id="L345">		private String _toString = &quot;&quot;;</span>
+
+		public LogStatistics()
+<span class="nc" id="L348">		{</span>
+<span class="nc" id="L349">			updateToString();</span>
+<span class="nc" id="L350">		}</span>
+
+
+		public String toString()
+		{
+<span class="nc" id="L355">			return _toString;</span>
+		}
+
+		void setErrorCount(int errorCount)
+		{
+<span class="nc" id="L360">			this._errorCount = errorCount;</span>
+<span class="nc" id="L361">			updateToString();</span>
+<span class="nc" id="L362">		}</span>
+
+		private void updateToString()
+		{
+<span class="nc" id="L366">			Object[] params = new Integer[]</span>
+				{
+<span class="nc" id="L368">					Integer.valueOf(_errorCount),</span>
+<span class="nc" id="L369">                    Integer.valueOf(_warnCount),</span>
+<span class="nc" id="L370">                    Integer.valueOf(_infoCount),</span>
+				};
+			// i18n[LogPanel.logInfoLabel=Logs: Errors {0}, Warnings {1}, Infos {2}]
+<span class="nc" id="L373">			_toString = s_stringMgr.getString(&quot;LogPanel.logInfoLabel&quot;, params);</span>
+<span class="nc" id="L374">		}</span>
+
+		void setWarnCount(int warnCount)
+		{
+<span class="nc" id="L378">			this._warnCount = warnCount;</span>
+<span class="nc" id="L379">			updateToString();</span>
+<span class="nc" id="L380">		}</span>
+
+		void setInfoCount(int infoCount)
+		{
+<span class="nc" id="L384">			this._infoCount = infoCount;</span>
+<span class="nc" id="L385">			updateToString();</span>
+<span class="nc" id="L386">		}</span>
+	}
+
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

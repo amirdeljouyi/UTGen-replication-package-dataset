@@ -1,0 +1,879 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HTMLSerializer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">52_lagoon</a> &gt; <a href="index.source.html" class="el_package">nu.staldal.xodus</a> &gt; <span class="el_source">HTMLSerializer.java</span></div><h1>HTMLSerializer.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2005, Mikael St�ldal
+ * All rights reserved.
+ * 
+ * Redistribution and use in source and binary forms, with or without 
+ * modification, are permitted provided that the following conditions 
+ * are met:
+ * 
+ * 1. Redistributions of source code must retain the above copyright 
+ * notice, this list of conditions and the following disclaimer.
+ * 
+ * 2. Redistributions in binary form must reproduce the above copyright 
+ * notice, this list of conditions and the following disclaimer in the 
+ * documentation and/or other materials provided with the distribution.
+ * 
+ * 3. Neither the name of the author nor the names of its contributors 
+ * may be used to endorse or promote products derived from this software 
+ * without specific prior written permission. 
+ * 
+ * 
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS 
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT 
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR 
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR 
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, 
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, 
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR 
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY 
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT 
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * 
+ * 
+ * Note: This is known as &quot;the modified BSD license&quot;. It's an approved 
+ * Open Source and Free Software license, see 
+ * http://www.opensource.org/licenses/ 
+ * and
+ * http://www.gnu.org/philosophy/license-list.html
+ */
+
+package nu.staldal.xodus;
+
+import java.util.*;
+import java.io.*;
+import java.net.URL;
+import java.net.URLConnection;
+
+import org.xml.sax.*;
+import org.xml.sax.ext.LexicalHandler;
+import org.xml.sax.ext.DeclHandler;
+import org.xml.sax.helpers.NamespaceSupport;
+import org.xml.sax.helpers.AttributesImpl;
+
+import javax.xml.transform.Result;
+import javax.xml.transform.stream.StreamResult;
+
+
+public class HTMLSerializer extends Serializer
+{
+<span class="nc" id="L60">    private boolean disableOutputEscaping = false;</span>
+<span class="nc" id="L61">    private boolean emptyElement = false;</span>
+<span class="nc" id="L62">    private int nestedCDATA = 0;</span>
+<span class="nc" id="L63">    private boolean inDTD = false;</span>
+<span class="nc" id="L64">    private boolean dtdContent = false;</span>
+<span class="nc" id="L65">    private boolean addDTD = true;</span>
+       
+<span class="nc" id="L67">    private int elementDepth = 0;</span>
+<span class="nc" id="L68">    private boolean wasEndTag = false;</span>
+<span class="nc" id="L69">    private boolean wasStartTag = false;</span>
+<span class="nc" id="L70">    private int inFormattedElement = 0;</span>
+<span class="nc" id="L71">    private int inNotEscapeElement = 0;</span>
+    
+    private final Set emptyElements;
+    private final Set formattedElements;
+    private final Set notEscapeElements;
+    private final Set booleanAttributes;
+    
+    
+    HTMLSerializer(StreamResult result, OutputConfig outputConfig)
+        throws IllegalArgumentException, IOException, 
+            UnsupportedEncodingException
+    {
+<span class="nc" id="L83">        super(result, outputConfig);</span>
+                
+<span class="nc" id="L85">        emptyElements = new HashSet(13);</span>
+<span class="nc" id="L86">        emptyElements.add(&quot;area&quot;);</span>
+<span class="nc" id="L87">        emptyElements.add(&quot;base&quot;);</span>
+<span class="nc" id="L88">        emptyElements.add(&quot;basefont&quot;);</span>
+<span class="nc" id="L89">        emptyElements.add(&quot;br&quot;);</span>
+<span class="nc" id="L90">        emptyElements.add(&quot;col&quot;);</span>
+<span class="nc" id="L91">        emptyElements.add(&quot;hr&quot;);</span>
+<span class="nc" id="L92">        emptyElements.add(&quot;img&quot;);</span>
+<span class="nc" id="L93">        emptyElements.add(&quot;input&quot;);</span>
+<span class="nc" id="L94">        emptyElements.add(&quot;link&quot;);</span>
+<span class="nc" id="L95">        emptyElements.add(&quot;meta&quot;);</span>
+<span class="nc" id="L96">        emptyElements.add(&quot;frame&quot;);</span>
+<span class="nc" id="L97">        emptyElements.add(&quot;isindex&quot;);</span>
+<span class="nc" id="L98">        emptyElements.add(&quot;param&quot;);</span>
+
+<span class="nc" id="L100">        formattedElements = new HashSet(4);</span>
+<span class="nc" id="L101">        formattedElements.add(&quot;pre&quot;);</span>
+<span class="nc" id="L102">        formattedElements.add(&quot;script&quot;);</span>
+<span class="nc" id="L103">        formattedElements.add(&quot;style&quot;);</span>
+<span class="nc" id="L104">        formattedElements.add(&quot;textarea&quot;);</span>
+
+<span class="nc" id="L106">        notEscapeElements = new HashSet(2);</span>
+<span class="nc" id="L107">        notEscapeElements.add(&quot;script&quot;);</span>
+<span class="nc" id="L108">        notEscapeElements.add(&quot;style&quot;);</span>
+        
+<span class="nc" id="L110">        booleanAttributes = new HashSet(13);        </span>
+<span class="nc" id="L111">        booleanAttributes.add(&quot;selected&quot;);</span>
+<span class="nc" id="L112">        booleanAttributes.add(&quot;disabled&quot;);</span>
+<span class="nc" id="L113">        booleanAttributes.add(&quot;readonly&quot;);       </span>
+<span class="nc" id="L114">        booleanAttributes.add(&quot;checked&quot;);        </span>
+<span class="nc" id="L115">        booleanAttributes.add(&quot;nohref&quot;);</span>
+<span class="nc" id="L116">        booleanAttributes.add(&quot;ismap&quot;);        </span>
+<span class="nc" id="L117">        booleanAttributes.add(&quot;declare&quot;);</span>
+<span class="nc" id="L118">        booleanAttributes.add(&quot;noshade&quot;);</span>
+<span class="nc" id="L119">        booleanAttributes.add(&quot;compact&quot;);        </span>
+<span class="nc" id="L120">        booleanAttributes.add(&quot;multiple&quot;);</span>
+<span class="nc" id="L121">        booleanAttributes.add(&quot;nowrap&quot;);</span>
+<span class="nc" id="L122">        booleanAttributes.add(&quot;noresize&quot;);        </span>
+<span class="nc" id="L123">        booleanAttributes.add(&quot;defer&quot;);</span>
+<span class="nc" id="L124">    }</span>
+
+    
+    // ContentHandler implementation
+    
+    /**
+     * Does nothing.
+     */
+    public void setDocumentLocator(Locator locator)
+    {
+        // nothing to do    
+<span class="nc" id="L135">    }</span>
+
+    
+    public void startDocument()
+	    throws SAXException
+    {
+<span class="nc" id="L141">        wasEndTag = false;</span>
+<span class="nc" id="L142">        wasStartTag = false;        </span>
+<span class="nc" id="L143">    }</span>
+
+    
+    public void startPrefixMapping(String prefix, String uri)
+	    throws SAXException
+    {
+        // nothing to do
+<span class="nc" id="L150">    }</span>
+
+
+    public void endPrefixMapping(String prefix)
+	    throws SAXException
+    {
+        // nothing to do
+<span class="nc" id="L157">    }</span>
+
+
+    private void writeAttribute(String attQName, String attValue)
+        throws IOException
+    {
+<span class="nc bnc" id="L163" title="All 4 branches missed.">        if (attQName.equals(&quot;xmlns&quot;) || attQName.startsWith(&quot;xmlns:&quot;))</span>
+        {
+            // do not output XML namespace declarations
+<span class="nc" id="L166">            return;</span>
+        }
+        
+<span class="nc" id="L169">        out.write(' ');</span>
+<span class="nc" id="L170">        out.write(attQName);</span>
+        
+<span class="nc bnc" id="L172" title="All 2 branches missed.">        if (booleanAttributes.contains(attQName.toLowerCase())</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">                &amp;&amp; attValue.equalsIgnoreCase(attQName))</span>
+        {
+            // boolean attribute    
+        }
+        else
+        {        
+<span class="nc" id="L179">            out.write(&quot;=\&quot;&quot;);</span>
+            
+<span class="nc bnc" id="L181" title="All 2 branches missed.">            if (disableOutputEscaping)</span>
+            {
+<span class="nc" id="L183">                out.write(attValue);</span>
+            }
+            else
+            {
+<span class="nc" id="L187">                out.enableEscaping();</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">                for (int i = 0; i&lt;attValue.length(); i++)</span>
+                {
+<span class="nc" id="L190">                    char c = attValue.charAt(i);</span>
+<span class="nc bnc" id="L191" title="All 3 branches missed.">                    switch (c)</span>
+                    {
+                    case '&amp;':
+<span class="nc bnc" id="L194" title="All 4 branches missed.">                        if (i&lt;attValue.length() &amp;&amp; attValue.charAt(i+1)=='{')</span>
+                        {
+                            // do not escape &amp; immediately before { in HTML
+<span class="nc" id="L197">                            out.write('&amp;');    </span>
+                        }
+                        else
+                        {
+<span class="nc" id="L201">                            out.write(&quot;&amp;amp;&quot;);</span>
+                        }
+<span class="nc" id="L203">                        break;</span>
+    
+                    case '\&quot;':
+<span class="nc" id="L206">                        out.write(&quot;&amp;quot;&quot;);</span>
+<span class="nc" id="L207">                        break;</span>
+                    
+                    default:
+<span class="nc" id="L210">                        out.write(c);</span>
+                    }
+                }
+<span class="nc" id="L213">                out.disableEscaping();</span>
+            }
+            
+<span class="nc" id="L216">            out.write('\&quot;');</span>
+        }
+<span class="nc" id="L218">    }</span>
+    
+    
+    public void startElement(String namespaceURI, String localName,
+			      String qName, Attributes atts)
+	    throws SAXException
+    {
+<span class="nc" id="L225">        fixTag();</span>
+
+<span class="nc bnc" id="L227" title="All 4 branches missed.">        if (localName == null || localName.length() == 0)</span>
+        {
+<span class="nc" id="L229">            localName = qName;</span>
+        }        
+<span class="nc" id="L231">        int colon = localName.indexOf(':');</span>
+<span class="nc bnc" id="L232" title="All 2 branches missed.">        if (colon &gt; -1)</span>
+        {
+<span class="nc" id="L234">            localName = localName.substring(colon+1);</span>
+        }
+                
+        try {
+<span class="nc bnc" id="L238" title="All 2 branches missed.">            if (addDTD)</span>
+            {
+<span class="nc bnc" id="L240" title="All 2 branches missed.">                if (outputConfig.doctype_system != null)</span>
+                {
+<span class="nc" id="L242">                    out.write(&quot;&lt;!DOCTYPE &quot;);</span>
+<span class="nc" id="L243">                    out.write(localName);</span>
+<span class="nc" id="L244">                    out.write(' ');</span>
+<span class="nc" id="L245">                    writeExternalId(outputConfig.doctype_public,</span>
+                        outputConfig.doctype_system);
+<span class="nc" id="L247">                    out.write('&gt;');</span>
+<span class="nc bnc" id="L248" title="All 2 branches missed.">                    if (outputConfig.indent)</span>
+                    {                
+<span class="nc" id="L250">                        newline();</span>
+                    }
+                }  
+<span class="nc" id="L253">                addDTD = false;</span>
+            }
+            
+<span class="nc bnc" id="L256" title="All 8 branches missed.">            if (outputConfig.indent &amp;&amp; (wasStartTag || wasEndTag) &amp;&amp; inFormattedElement == 0)</span>
+            {
+<span class="nc bnc" id="L258" title="All 2 branches missed.">                if (elementDepth &gt; 0)</span>
+                {
+<span class="nc" id="L260">                    newline();</span>
+<span class="nc bnc" id="L261" title="All 2 branches missed.">                    for (int i = 0; i&lt;elementDepth*2; i++)</span>
+                    {
+<span class="nc" id="L263">                        out.write(' ');</span>
+                    }
+                }
+            }
+<span class="nc" id="L267">            out.write('&lt;');</span>
+<span class="nc" id="L268">            out.write(localName);</span>
+
+<span class="nc bnc" id="L270" title="All 2 branches missed.">            for (int j = 0; j&lt;atts.getLength(); j++)</span>
+            {
+<span class="nc" id="L272">                String attQName = atts.getQName(j);</span>
+<span class="nc bnc" id="L273" title="All 4 branches missed.">                if (attQName == null || attQName.length() == 0)</span>
+                {
+<span class="nc" id="L275">                    attQName = atts.getLocalName(j);</span>
+                }
+<span class="nc" id="L277">                writeAttribute(attQName, atts.getValue(j));                </span>
+            }            
+        }
+<span class="nc" id="L280">        catch (IOException e)</span>
+        {
+<span class="nc" id="L282">            throw new SAXException(e);    </span>
+<span class="nc" id="L283">        }            </span>
+
+<span class="nc bnc" id="L285" title="All 2 branches missed.">        if (formattedElements.contains(localName.toLowerCase()))</span>
+<span class="nc" id="L286">            inFormattedElement++;</span>
+        
+<span class="nc bnc" id="L288" title="All 2 branches missed.">        if (notEscapeElements.contains(localName.toLowerCase()))</span>
+<span class="nc" id="L289">            inNotEscapeElement++;</span>
+        
+<span class="nc" id="L291">        elementDepth++; </span>
+<span class="nc" id="L292">        emptyElement = true;</span>
+<span class="nc" id="L293">        wasStartTag = true;</span>
+
+<span class="nc bnc" id="L295" title="All 2 branches missed.">        if (localName.equalsIgnoreCase(&quot;head&quot;))</span>
+        {
+<span class="nc" id="L297">            AttributesImpl metaAtts = new AttributesImpl();</span>
+<span class="nc" id="L298">            metaAtts.addAttribute(&quot;&quot;, &quot;http-equiv&quot;, &quot;&quot;, &quot;CDATA&quot;, </span>
+                &quot;Content-Type&quot;);
+<span class="nc" id="L300">            metaAtts.addAttribute(&quot;&quot;, &quot;content&quot;, &quot;&quot;, &quot;CDATA&quot;, </span>
+                outputConfig.media_type+&quot;; charset=&quot;+outputConfig.encoding);
+<span class="nc bnc" id="L302" title="All 2 branches missed.">            String meta = (localName.charAt(0) == 'H') ? &quot;META&quot; : &quot;meta&quot;;                </span>
+<span class="nc" id="L303">            startElement(&quot;&quot;, meta, &quot;&quot;, metaAtts);</span>
+<span class="nc" id="L304">            endElement(&quot;&quot;, meta, &quot;&quot;);</span>
+        }
+<span class="nc" id="L306">    }</span>
+
+
+    private void fixTag()
+	    throws SAXException
+    {
+        try {
+<span class="nc bnc" id="L313" title="All 2 branches missed.">            if (emptyElement)</span>
+            {
+<span class="nc" id="L315">                out.write('&gt;');    </span>
+<span class="nc" id="L316">                emptyElement = false;</span>
+            }
+        }
+<span class="nc" id="L319">        catch (IOException e)</span>
+        {
+<span class="nc" id="L321">            throw new SAXException(e);    </span>
+<span class="nc" id="L322">        }        </span>
+<span class="nc" id="L323">    }</span>
+    
+
+    public void endElement(String namespaceURI, String localName, String qName)
+	    throws SAXException
+    {        
+<span class="nc" id="L329">        elementDepth--;</span>
+                
+<span class="nc bnc" id="L331" title="All 4 branches missed.">        if (localName == null || localName.length() == 0)</span>
+        {
+<span class="nc" id="L333">            localName = qName;</span>
+        }
+<span class="nc" id="L335">        int colon = localName.indexOf(':');</span>
+<span class="nc bnc" id="L336" title="All 2 branches missed.">        if (colon &gt; -1)</span>
+        {
+<span class="nc" id="L338">            localName = localName.substring(colon+1);</span>
+        }
+                
+        try {
+<span class="nc bnc" id="L342" title="All 4 branches missed.">            if (emptyElement &amp;&amp; emptyElements.contains(localName.toLowerCase())) </span>
+            {
+<span class="nc" id="L344">                out.write('&gt;');</span>
+<span class="nc" id="L345">                emptyElement = false;</span>
+            }
+            else
+            {
+<span class="nc bnc" id="L349" title="All 2 branches missed.">                if (emptyElement)</span>
+                {
+<span class="nc" id="L351">                    out.write('&gt;');</span>
+                }
+                
+<span class="nc bnc" id="L354" title="All 6 branches missed.">                if (outputConfig.indent &amp;&amp; wasEndTag &amp;&amp; inFormattedElement == 0)</span>
+                {
+<span class="nc" id="L356">                    newline();</span>
+<span class="nc bnc" id="L357" title="All 2 branches missed.">                    for (int i = 0; i&lt;elementDepth*2; i++)</span>
+                    {
+<span class="nc" id="L359">                        out.write(' ');</span>
+                    }
+                }
+<span class="nc" id="L362">                out.write(&quot;&lt;/&quot;);</span>
+<span class="nc" id="L363">                out.write(localName);</span>
+<span class="nc" id="L364">                out.write('&gt;');</span>
+            }
+<span class="nc" id="L366">            emptyElement = false;</span>
+        }
+<span class="nc" id="L368">        catch (IOException e)</span>
+        {
+<span class="nc" id="L370">            throw new SAXException(e);    </span>
+<span class="nc" id="L371">        }</span>
+
+<span class="nc bnc" id="L373" title="All 2 branches missed.">        if (formattedElements.contains(localName.toLowerCase()))</span>
+<span class="nc" id="L374">            inFormattedElement--;</span>
+        
+<span class="nc bnc" id="L376" title="All 2 branches missed.">        if (notEscapeElements.contains(localName.toLowerCase()))</span>
+<span class="nc" id="L377">            inNotEscapeElement++;        </span>
+        
+<span class="nc" id="L379">        wasEndTag = true;</span>
+<span class="nc" id="L380">    }</span>
+
+
+    public void characters(char ch[], int start, int length)
+	    throws SAXException
+    {
+<span class="nc" id="L386">        wasEndTag = false;</span>
+<span class="nc" id="L387">        wasStartTag = false;</span>
+
+<span class="nc" id="L389">        fixTag();</span>
+        
+        try {
+<span class="nc bnc" id="L392" title="All 6 branches missed.">            if (disableOutputEscaping || nestedCDATA &gt; 0</span>
+                    || inNotEscapeElement &gt; 0)
+            {
+<span class="nc" id="L395">                out.write(ch, start, length);</span>
+            }
+            else
+            {
+<span class="nc" id="L399">                out.enableEscaping();</span>
+<span class="nc bnc" id="L400" title="All 2 branches missed.">                for (int i = start; i&lt;start+length; i++)</span>
+                {
+<span class="nc" id="L402">                    char c = ch[i];</span>
+<span class="nc bnc" id="L403" title="All 4 branches missed.">                    switch (c)</span>
+                    {
+                    case '&lt;':
+<span class="nc" id="L406">                        out.write(&quot;&amp;lt;&quot;);</span>
+<span class="nc" id="L407">                        break;</span>
+
+                    case '&gt;':
+<span class="nc" id="L410">                        out.write(&quot;&amp;gt;&quot;);</span>
+<span class="nc" id="L411">                        break;</span>
+                    
+                    case '&amp;':
+<span class="nc" id="L414">                        out.write(&quot;&amp;amp;&quot;);</span>
+<span class="nc" id="L415">                        break;</span>
+                    
+                    default:
+<span class="nc" id="L418">                        out.write(c);</span>
+                    }
+                }
+<span class="nc" id="L421">                out.disableEscaping();</span>
+            }
+        }
+<span class="nc" id="L424">        catch (IOException e)</span>
+        {
+<span class="nc" id="L426">            throw new SAXException(e);    </span>
+<span class="nc" id="L427">        }</span>
+<span class="nc" id="L428">    }</span>
+
+
+    public void ignorableWhitespace(char ch[], int start, int length)
+	    throws SAXException
+    {
+<span class="nc" id="L434">        characters(ch, start, length);</span>
+<span class="nc" id="L435">    }</span>
+
+
+    /**
+     * Will honor 
+     * {@link javax.xml.transform.Result#PI_DISABLE_OUTPUT_ESCAPING} 
+     * and 
+     * {@link javax.xml.transform.Result#PI_ENABLE_OUTPUT_ESCAPING}. 
+     */
+    public void processingInstruction(String target, String data)
+	    throws SAXException
+    {
+<span class="nc bnc" id="L447" title="All 4 branches missed.">        if (target == null || target.length() == 0)</span>
+<span class="nc" id="L448">            throw new NullPointerException(&quot;No PI target&quot;);</span>
+        
+<span class="nc bnc" id="L450" title="All 2 branches missed.">        if (target.equals(Result.PI_DISABLE_OUTPUT_ESCAPING))</span>
+        {
+<span class="nc" id="L452">            disableOutputEscaping = true;    </span>
+        }
+<span class="nc bnc" id="L454" title="All 2 branches missed.">        else if (target.equals(Result.PI_ENABLE_OUTPUT_ESCAPING)) </span>
+        {
+<span class="nc" id="L456">            disableOutputEscaping = false;    </span>
+        }
+        else
+        {
+<span class="nc" id="L460">            fixDTD();        </span>
+<span class="nc" id="L461">            fixTag();</span>
+                    
+            try {
+<span class="nc" id="L464">                out.write(&quot;&lt;?&quot;);</span>
+<span class="nc" id="L465">                out.write(target);</span>
+<span class="nc bnc" id="L466" title="All 4 branches missed.">                if (data != null &amp;&amp; data.length() &gt; 0)</span>
+                {
+<span class="nc" id="L468">                    out.write(' ');</span>
+<span class="nc" id="L469">                    out.write(data);</span>
+                }
+<span class="nc" id="L471">                out.write('&gt;');</span>
+            }
+<span class="nc" id="L473">            catch (IOException e)</span>
+            {
+<span class="nc" id="L475">                throw new SAXException(e);    </span>
+<span class="nc" id="L476">            }            </span>
+        }
+<span class="nc" id="L478">    }</span>
+
+    
+    public void skippedEntity(String name)
+	    throws SAXException
+    {
+<span class="nc" id="L484">        wasEndTag = false;</span>
+<span class="nc" id="L485">        wasStartTag = false;</span>
+
+<span class="nc" id="L487">        fixTag();</span>
+        
+        try {
+<span class="nc bnc" id="L490" title="All 2 branches missed.">            if (name.charAt(0) == '%')</span>
+            {
+<span class="nc" id="L492">                out.write(name);</span>
+<span class="nc" id="L493">                out.write(';');</span>
+            }
+<span class="nc bnc" id="L495" title="All 2 branches missed.">            else if (name.equals(&quot;[dtd]&quot;))</span>
+            {
+                // nothing to do    
+            }
+            else
+            {
+<span class="nc" id="L501">                out.write('&amp;');</span>
+<span class="nc" id="L502">                out.write(name);</span>
+<span class="nc" id="L503">                out.write(';');</span>
+            }
+        }
+<span class="nc" id="L506">        catch (IOException e)</span>
+        {
+<span class="nc" id="L508">            throw new SAXException(e);    </span>
+<span class="nc" id="L509">        }            </span>
+<span class="nc" id="L510">    }</span>
+    
+
+    public void endDocument()
+	    throws SAXException
+    {
+<span class="nc" id="L516">        fixTag();</span>
+        
+        try {
+<span class="nc bnc" id="L519" title="All 2 branches missed.">            if (outputConfig.indent)</span>
+            {                
+<span class="nc" id="L521">                newline();</span>
+            }
+<span class="nc" id="L523">            finishOutput();</span>
+        }
+<span class="nc" id="L525">        catch (IOException e)</span>
+        {
+<span class="nc" id="L527">            throw new SAXException(e);    </span>
+<span class="nc" id="L528">        }</span>
+<span class="nc" id="L529">    }</span>
+    
+    
+    // LexicalHandler implementation
+
+    private void writeExternalId(String publicId, String systemId)
+        throws IOException
+    {
+<span class="nc bnc" id="L537" title="All 2 branches missed.">        if (publicId != null)</span>
+        {
+<span class="nc" id="L539">            out.write(&quot;PUBLIC \&quot;&quot;);</span>
+<span class="nc" id="L540">            out.write(publicId);</span>
+<span class="nc" id="L541">            out.write('\&quot;');</span>
+<span class="nc bnc" id="L542" title="All 4 branches missed.">            if (systemId != null &amp;&amp; systemId.length() &gt; 0)</span>
+            {
+<span class="nc" id="L544">                out.write(&quot; \&quot;&quot;);</span>
+<span class="nc" id="L545">                out.write(systemId);</span>
+<span class="nc" id="L546">                out.write('\&quot;');</span>
+            }
+        }
+        else
+        {
+<span class="nc" id="L551">            out.write(&quot;SYSTEM \&quot;&quot;);</span>
+<span class="nc" id="L552">            out.write(systemId);</span>
+<span class="nc" id="L553">            out.write('\&quot;');                    </span>
+        }        
+<span class="nc" id="L555">    }</span>
+       
+
+    public void startDTD(String name, String publicId, String systemId)
+	    throws SAXException
+    {
+        try {
+<span class="nc" id="L562">            out.write(&quot;&lt;!DOCTYPE &quot;);</span>
+<span class="nc" id="L563">            out.write(name);</span>
+            
+<span class="nc bnc" id="L565" title="All 2 branches missed.">            if (outputConfig.doctype_system != null)</span>
+<span class="nc" id="L566">                systemId = outputConfig.doctype_system;</span>
+<span class="nc bnc" id="L567" title="All 2 branches missed.">            if (outputConfig.doctype_public != null)</span>
+<span class="nc" id="L568">                publicId = outputConfig.doctype_public;</span>
+            
+<span class="nc bnc" id="L570" title="All 2 branches missed.">            if (systemId != null)</span>
+            {
+<span class="nc" id="L572">                out.write(' ');</span>
+<span class="nc" id="L573">                writeExternalId(publicId, systemId);</span>
+            }
+<span class="nc" id="L575">            inDTD = true;</span>
+<span class="nc" id="L576">            addDTD = false;</span>
+        }
+<span class="nc" id="L578">        catch (IOException e)</span>
+        {
+<span class="nc" id="L580">            throw new SAXException(e);    </span>
+<span class="nc" id="L581">        }        </span>
+<span class="nc" id="L582">    }</span>
+
+
+    private void fixDTD()
+        throws SAXException
+    {
+<span class="nc bnc" id="L588" title="All 2 branches missed.">        if (inDTD)</span>
+        {
+<span class="nc bnc" id="L590" title="All 2 branches missed.">            if (!dtdContent)</span>
+            {
+                try {                    
+<span class="nc" id="L593">                    out.write(&quot; [&quot;);</span>
+<span class="nc" id="L594">                    dtdContent = true;</span>
+                }
+<span class="nc" id="L596">                catch (IOException e)</span>
+                {
+<span class="nc" id="L598">                    throw new SAXException(e);    </span>
+<span class="nc" id="L599">                }                            </span>
+            }
+        }
+<span class="nc" id="L602">    }</span>
+
+
+    public void endDTD()
+	    throws SAXException
+    {
+<span class="nc" id="L608">        inDTD = false;</span>
+        
+        try {
+<span class="nc bnc" id="L611" title="All 2 branches missed.">            if (dtdContent)</span>
+            {
+<span class="nc" id="L613">                out.write(']');                </span>
+            }
+<span class="nc" id="L615">            out.write('&gt;');</span>
+<span class="nc bnc" id="L616" title="All 2 branches missed.">            if (outputConfig.indent)</span>
+            {                
+<span class="nc" id="L618">                newline();</span>
+            }
+        }
+<span class="nc" id="L621">        catch (IOException e)</span>
+        {
+<span class="nc" id="L623">            throw new SAXException(e);    </span>
+<span class="nc" id="L624">        }        </span>
+<span class="nc" id="L625">    }</span>
+    
+    
+    /**
+     * Does nothing.
+     */
+    public void startEntity(String name)
+	    throws SAXException
+    {
+        // nothing to do
+<span class="nc" id="L635">    }</span>
+
+
+    /**
+     * Does nothing.
+     */
+    public void endEntity(String name)
+	    throws SAXException
+    {
+        // nothing to do
+<span class="nc" id="L645">    }</span>
+
+
+    public void startCDATA()
+	    throws SAXException
+    {
+<span class="nc" id="L651">        fixTag();</span>
+        
+        try {
+<span class="nc bnc" id="L654" title="All 2 branches missed.">            if (nestedCDATA == 0)</span>
+            {
+<span class="nc" id="L656">                out.write(&quot;&lt;![CDATA[&quot;);</span>
+            }
+<span class="nc" id="L658">            nestedCDATA++;</span>
+        }
+<span class="nc" id="L660">        catch (IOException e)</span>
+        {
+<span class="nc" id="L662">            throw new SAXException(e);    </span>
+<span class="nc" id="L663">        }        </span>
+<span class="nc" id="L664">    }</span>
+
+
+    public void endCDATA()
+	    throws SAXException
+    {        
+        try {
+<span class="nc bnc" id="L671" title="All 2 branches missed.">            if (nestedCDATA &gt; 0)</span>
+            {
+<span class="nc" id="L673">                nestedCDATA--;</span>
+<span class="nc bnc" id="L674" title="All 2 branches missed.">                if (nestedCDATA == 0)</span>
+                {
+<span class="nc" id="L676">                    out.write(&quot;]]&gt;&quot;);</span>
+                }
+            }
+            else
+            {
+<span class="nc" id="L681">                throw new SAXException(&quot;endCDATA without startCDATA&quot;);    </span>
+            }
+        }
+<span class="nc" id="L684">        catch (IOException e)</span>
+        {
+<span class="nc" id="L686">            throw new SAXException(e);    </span>
+<span class="nc" id="L687">        }</span>
+<span class="nc" id="L688">    }</span>
+
+
+    public void comment(char ch[], int start, int length)
+	    throws SAXException
+    {
+<span class="nc" id="L694">        fixDTD();        </span>
+<span class="nc" id="L695">        fixTag();</span>
+        
+        try {
+<span class="nc" id="L698">            out.write(&quot;&lt;!-- &quot;);</span>
+<span class="nc" id="L699">            out.write(ch, start, length);            </span>
+<span class="nc" id="L700">            out.write(&quot; --&gt;&quot;);</span>
+        }
+<span class="nc" id="L702">        catch (IOException e)</span>
+        {
+<span class="nc" id="L704">            throw new SAXException(e);    </span>
+<span class="nc" id="L705">        }        </span>
+<span class="nc" id="L706">    }</span>
+    
+
+    // DTDHandler implementation
+
+    public void notationDecl(String name, String publicId, String systemId)
+	    throws SAXException
+    {
+<span class="nc" id="L714">        fixDTD();</span>
+
+        try {
+<span class="nc" id="L717">            out.write(&quot;&lt;!NOTATION &quot;);</span>
+<span class="nc" id="L718">            out.write(name);</span>
+<span class="nc" id="L719">            out.write(' ');</span>
+<span class="nc bnc" id="L720" title="All 4 branches missed.">            if (publicId != null &amp;&amp; systemId != null)</span>
+            {
+<span class="nc" id="L722">                out.write(&quot;PUBLIC \&quot;&quot;);</span>
+<span class="nc" id="L723">                out.write(publicId);</span>
+<span class="nc" id="L724">                out.write(&quot;\&quot; \&quot;&quot;);</span>
+<span class="nc" id="L725">                out.write(systemId);</span>
+<span class="nc" id="L726">                out.write('\&quot;');                    </span>
+            }
+<span class="nc bnc" id="L728" title="All 2 branches missed.">            else if (systemId != null)</span>
+            {
+<span class="nc" id="L730">                out.write(&quot;SYSTEM \&quot;&quot;);</span>
+<span class="nc" id="L731">                out.write(systemId);</span>
+<span class="nc" id="L732">                out.write('\&quot;');                    </span>
+            }
+<span class="nc bnc" id="L734" title="All 2 branches missed.">            else if (publicId != null)</span>
+            {
+<span class="nc" id="L736">                out.write(&quot;PUBLIC \&quot;&quot;);</span>
+<span class="nc" id="L737">                out.write(publicId);</span>
+<span class="nc" id="L738">                out.write('\&quot;');                    </span>
+            }
+            else
+            {
+<span class="nc" id="L742">                throw new SAXException(&quot;notationDecl without publicId or systemId&quot;);    </span>
+            }
+<span class="nc" id="L744">            out.write('&gt;');</span>
+        }
+<span class="nc" id="L746">        catch (IOException e)</span>
+        {
+<span class="nc" id="L748">            throw new SAXException(e);    </span>
+<span class="nc" id="L749">        }                </span>
+<span class="nc" id="L750">    }</span>
+    
+    
+    public void unparsedEntityDecl(String name, String publicId,
+					               String systemId, String notationName)
+        throws SAXException
+    {        
+<span class="nc" id="L757">        fixDTD();</span>
+
+        try {
+<span class="nc" id="L760">            out.write(&quot;&lt;!ENTITY &quot;);</span>
+<span class="nc" id="L761">            out.write(name);</span>
+<span class="nc" id="L762">            out.write(' ');</span>
+<span class="nc" id="L763">            writeExternalId(publicId, systemId);</span>
+<span class="nc" id="L764">            out.write(&quot; NDATA &quot;);</span>
+<span class="nc" id="L765">            out.write(notationName);</span>
+<span class="nc" id="L766">            out.write('&gt;');</span>
+        }
+<span class="nc" id="L768">        catch (IOException e)</span>
+        {
+<span class="nc" id="L770">            throw new SAXException(e);    </span>
+<span class="nc" id="L771">        }                                </span>
+<span class="nc" id="L772">    }</span>
+    
+
+    // DeclHandler implementation
+      
+    public void elementDecl(String name, String model)
+	    throws SAXException
+    {        
+<span class="nc" id="L780">        fixDTD();</span>
+
+        try {
+<span class="nc" id="L783">            out.write(&quot;&lt;!ELEMENT &quot;);</span>
+<span class="nc" id="L784">            out.write(name);</span>
+<span class="nc" id="L785">            out.write(' ');</span>
+<span class="nc" id="L786">            out.write(model);</span>
+<span class="nc" id="L787">            out.write('&gt;');</span>
+        }
+<span class="nc" id="L789">        catch (IOException e)</span>
+        {
+<span class="nc" id="L791">            throw new SAXException(e);    </span>
+<span class="nc" id="L792">        }                                </span>
+<span class="nc" id="L793">    }</span>
+
+
+    public void attributeDecl(String eName, String aName,
+					          String type, String mode, String value)
+        throws SAXException
+    {        
+<span class="nc" id="L800">        fixDTD();</span>
+
+        try {
+<span class="nc" id="L803">            out.write(&quot;&lt;!ATTLIST &quot;);</span>
+<span class="nc" id="L804">            out.write(eName);</span>
+<span class="nc" id="L805">            out.write(' ');</span>
+<span class="nc" id="L806">            out.write(aName);</span>
+<span class="nc" id="L807">            out.write(' ');</span>
+<span class="nc" id="L808">            out.write(type);</span>
+<span class="nc bnc" id="L809" title="All 2 branches missed.">            if (mode != null)</span>
+            {
+<span class="nc" id="L811">                out.write(' ');</span>
+<span class="nc" id="L812">                out.write(mode);</span>
+            }
+<span class="nc bnc" id="L814" title="All 2 branches missed.">            if (value != null)</span>
+            {
+<span class="nc" id="L816">                out.write(&quot; \&quot;&quot;);</span>
+<span class="nc" id="L817">                out.write(value);</span>
+<span class="nc" id="L818">                out.write('\&quot;');</span>
+            }                            
+<span class="nc" id="L820">            out.write('&gt;');</span>
+        }
+<span class="nc" id="L822">        catch (IOException e)</span>
+        {
+<span class="nc" id="L824">            throw new SAXException(e);    </span>
+<span class="nc" id="L825">        }                                        </span>
+<span class="nc" id="L826">    }</span>
+
+
+    public void internalEntityDecl(String name, String value)
+	    throws SAXException
+    {        
+<span class="nc" id="L832">        fixDTD();        </span>
+
+<span class="nc bnc" id="L834" title="All 2 branches missed.">        if (name.charAt(0) == '%')</span>
+        {
+<span class="nc" id="L836">            name = &quot;% &quot; + name.substring(1);    </span>
+        }
+        
+        try {
+<span class="nc" id="L840">            out.write(&quot;&lt;!ENTITY &quot;);</span>
+<span class="nc" id="L841">            out.write(name);</span>
+<span class="nc" id="L842">            out.write(&quot; \&quot;&quot;);</span>
+<span class="nc" id="L843">            out.write(value);</span>
+<span class="nc" id="L844">            out.write(&quot;\&quot;&gt;&quot;);</span>
+        }
+<span class="nc" id="L846">        catch (IOException e)</span>
+        {
+<span class="nc" id="L848">            throw new SAXException(e);    </span>
+<span class="nc" id="L849">        }                                </span>
+<span class="nc" id="L850">    }</span>
+
+
+    public void externalEntityDecl(String name, String publicId,
+					               String systemId)
+        throws SAXException
+    {        
+<span class="nc" id="L857">        fixDTD();        </span>
+
+<span class="nc bnc" id="L859" title="All 2 branches missed.">        if (name.charAt(0) == '%')</span>
+        {
+<span class="nc" id="L861">            name = &quot;% &quot; + name.substring(1);    </span>
+        }
+        
+        try {
+<span class="nc" id="L865">            out.write(&quot;&lt;!ENTITY &quot;);</span>
+<span class="nc" id="L866">            out.write(name);</span>
+<span class="nc" id="L867">            out.write(' ');</span>
+<span class="nc" id="L868">            writeExternalId(publicId, systemId);</span>
+<span class="nc" id="L869">            out.write('&gt;');</span>
+        }
+<span class="nc" id="L871">        catch (IOException e)</span>
+        {
+<span class="nc" id="L873">            throw new SAXException(e);    </span>
+<span class="nc" id="L874">        }                                </span>
+<span class="nc" id="L875">    }</span>
+    
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

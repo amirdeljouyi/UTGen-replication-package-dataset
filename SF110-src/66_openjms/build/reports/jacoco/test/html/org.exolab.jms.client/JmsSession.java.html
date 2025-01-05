@@ -1,0 +1,1363 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JmsSession.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.client</a> &gt; <span class="el_source">JmsSession.java</span></div><h1>JmsSession.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2000-2004 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: JmsSession.java,v 1.6 2007/01/24 12:00:28 tanderson Exp $
+ */
+package org.exolab.jms.client;
+
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Vector;
+import javax.jms.BytesMessage;
+import javax.jms.Connection;
+import javax.jms.Destination;
+import javax.jms.IllegalStateException;
+import javax.jms.InvalidDestinationException;
+import javax.jms.InvalidSelectorException;
+import javax.jms.JMSException;
+import javax.jms.MapMessage;
+import javax.jms.Message;
+import javax.jms.MessageConsumer;
+import javax.jms.MessageListener;
+import javax.jms.MessageProducer;
+import javax.jms.ObjectMessage;
+import javax.jms.Queue;
+import javax.jms.QueueBrowser;
+import javax.jms.Session;
+import javax.jms.StreamMessage;
+import javax.jms.TemporaryQueue;
+import javax.jms.TemporaryTopic;
+import javax.jms.TextMessage;
+import javax.jms.Topic;
+import javax.jms.TopicSubscriber;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import org.exolab.jms.message.BytesMessageImpl;
+import org.exolab.jms.message.MapMessageImpl;
+import org.exolab.jms.message.MessageConverter;
+import org.exolab.jms.message.MessageConverterFactory;
+import org.exolab.jms.message.MessageImpl;
+import org.exolab.jms.message.MessageSessionIfc;
+import org.exolab.jms.message.ObjectMessageImpl;
+import org.exolab.jms.message.StreamMessageImpl;
+import org.exolab.jms.message.TextMessageImpl;
+import org.exolab.jms.server.ServerSession;
+
+
+/**
+ * Client implementation of the &lt;code&gt;javax.jms.Session&lt;/code&gt; interface.
+ *
+ * @author &lt;a href=&quot;mailto:jima@exoffice.com&quot;&gt;Jim Alateras&lt;/a&gt;
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.6 $ $Date: 2007/01/24 12:00:28 $
+ */
+class JmsSession implements Session, JmsMessageListener, MessageSessionIfc {
+
+    /**
+     * The owner of the session.
+     */
+    private JmsConnection _connection;
+
+    /**
+     * The proxy to the remote session implementation.
+     */
+<span class="nc" id="L107">    private ServerSession _session = null;</span>
+
+    /**
+     * If true, indicates that the session has been closed.
+     */
+<span class="nc" id="L112">    private volatile boolean _closed = false;</span>
+
+    /**
+     * Determines if this session is being closed.
+     */
+<span class="nc" id="L117">    private boolean _closing = false;</span>
+
+    /**
+     * Synchronization helper, used during close().
+     */
+<span class="nc" id="L122">    private final Object _closeLock = new Object();</span>
+
+    /**
+     * This flag determines whether message delivery is enabled or disabled.
+     * Message delivery if disabled if the enclosing connection is stopped.
+     */
+<span class="nc" id="L128">    private boolean _stopped = true;</span>
+
+    /**
+     * Indicates whether the consumer or the client will acknowledge any
+     * messages it receives. Ignored if the session is transacted. Legal values
+     * are &lt;code&gt;Session.AUTO_ACKNOWLEDGE&lt;/code&gt;, &lt;code&gt;Session.CLIENT_ACKNOWLEDGE&lt;/code&gt;
+     * and &lt;code&gt;Session.DUPS_OK_ACKNOWLEDGE&lt;/code&gt;.
+     */
+    private final int _ackMode;
+
+    /**
+     * Maintains the a map of JmsMessageConsumer.getConsumerId() -&gt;
+     * JmsMessageConsumer objects.
+     */
+<span class="nc" id="L142">    private HashMap _consumers = new HashMap();</span>
+
+    /**
+     * Maintains a list of producers for the session.
+     */
+<span class="nc" id="L147">    private List _producers = new ArrayList();</span>
+
+    /**
+     * Maintain a collection of acked messages for a transacted session. These
+     * messages are only sent to the server on commit.
+     */
+<span class="nc" id="L153">    private List _messagesToSend = new ArrayList();</span>
+
+    /**
+     * This is the session's session listener which is used to receive all
+     * messages associated with all consumers registered with this session.
+     */
+<span class="nc" id="L159">    private MessageListener _listener = null;</span>
+
+    /**
+     * The message cache holds all messages for the session, allocated by a
+     * JmsConnectionConsumer.
+     */
+<span class="nc" id="L165">    private Vector _messageCache = new Vector();</span>
+
+    /**
+     * Monitor used to block consumers, if the session has been stopped, or no
+     * messages are available.
+     */
+<span class="nc" id="L171">    private final Object _receiveLock = new Object();</span>
+
+    /**
+     * The identitifier of the consumer performing a blocking receive, or
+     * &lt;code&gt;-1&lt;/code&gt; if no consumer is currently performing a blocking
+     * receive.
+     */
+<span class="nc" id="L178">    private long _blockingConsumer = -1;</span>
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L183">    private static final Log _log = LogFactory.getLog(JmsSession.class);</span>
+
+
+    /**
+     * Construct a new &lt;code&gt;JmsSession&lt;/code&gt;
+     *
+     * @param connection the owner of the session
+     * @param transacted if &lt;code&gt;true&lt;/code&gt;, the session is transacted.
+     * @param ackMode    indicates whether the consumer or the client will
+     *                   acknowledge any messages it receives. This parameter
+     *                   will be ignored if the session is transacted. Legal
+     *                   values are &lt;code&gt;Session.AUTO_ACKNOWLEDGE&lt;/code&gt;,
+     *                   &lt;code&gt;Session.CLIENT_ACKNOWLEDGE&lt;/code&gt; and
+     *                   &lt;code&gt;Session.DUPS_OK_ACKNOWLEDGE&lt;/code&gt;.
+     * @throws JMSException if the session cannot be created
+     */
+    public JmsSession(JmsConnection connection, boolean transacted,
+<span class="nc" id="L200">                      int ackMode) throws JMSException {</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">        if (connection == null) {</span>
+<span class="nc" id="L202">            throw new IllegalArgumentException(&quot;Argument 'connection' is null&quot;);</span>
+        }
+
+<span class="nc" id="L205">        _connection = connection;</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">        _ackMode = (transacted) ? SESSION_TRANSACTED : ackMode;</span>
+
+        // construct the remote stub
+<span class="nc" id="L209">        _session = connection.getServerConnection().createSession(_ackMode,</span>
+                                                                  transacted);
+
+        // set up this instance to be a message listener
+<span class="nc" id="L213">        _session.setMessageListener(this);</span>
+
+        // now we need to check whether we should start the session
+<span class="nc bnc" id="L216" title="All 2 branches missed.">        if (!connection.isStopped()) {</span>
+<span class="nc" id="L217">            start();</span>
+        }
+<span class="nc" id="L219">    }</span>
+
+    /**
+     * Creates a &lt;code&gt;BytesMessage&lt;/code&gt; object. A &lt;code&gt;BytesMessage&lt;/code&gt;
+     * object is used to send a message containing a stream of uninterpreted
+     * bytes.
+     *
+     * @throws JMSException if the JMS provider fails to create this message due
+     *                      to some internal error.
+     */
+    public BytesMessage createBytesMessage() throws JMSException {
+<span class="nc" id="L230">        ensureOpen();</span>
+<span class="nc" id="L231">        return new BytesMessageImpl();</span>
+    }
+
+    /**
+     * Creates a &lt;code&gt;MapMessage&lt;/code&gt; object. A &lt;code&gt;MapMessage&lt;/code&gt;
+     * object is used to send a self-defining set of name-value pairs, where
+     * names are &lt;code&gt;String&lt;/code&gt; objects and values are primitive values in
+     * the Java programming language.
+     *
+     * @throws JMSException if the JMS provider fails to create this message due
+     *                      to some internal error.
+     */
+    public MapMessage createMapMessage() throws JMSException {
+<span class="nc" id="L244">        ensureOpen();</span>
+<span class="nc" id="L245">        return new MapMessageImpl();</span>
+    }
+
+    /**
+     * Creates a &lt;code&gt;Message&lt;/code&gt; object. The &lt;code&gt;Message&lt;/code&gt; interface
+     * is the root interface of all JMS messages. A &lt;code&gt;Message&lt;/code&gt; object
+     * holds all the standard message header information. It can be sent when a
+     * message containing only header information is sufficient.
+     *
+     * @throws JMSException if the JMS provider fails to create this message due
+     *                      to some internal error.
+     */
+    public Message createMessage() throws JMSException {
+<span class="nc" id="L258">        ensureOpen();</span>
+<span class="nc" id="L259">        return new MessageImpl();</span>
+    }
+
+    /**
+     * Creates an &lt;code&gt;ObjectMessage&lt;/code&gt; object. An &lt;code&gt;ObjectMessage&lt;/code&gt;
+     * object is used to send a message that contains a serializable Java
+     * object.
+     *
+     * @throws JMSException if the JMS provider fails to create this message due
+     *                      to some internal error.
+     */
+    public ObjectMessage createObjectMessage() throws JMSException {
+<span class="nc" id="L271">        ensureOpen();</span>
+<span class="nc" id="L272">        return new ObjectMessageImpl();</span>
+    }
+
+    /**
+     * Creates an initialized &lt;code&gt;ObjectMessage&lt;/code&gt; object. An
+     * &lt;code&gt;ObjectMessage&lt;/code&gt; object is used to send a message that contains
+     * a serializable Java object.
+     *
+     * @param object the object to use to initialize this message
+     * @throws JMSException if the JMS provider fails to create this message due
+     *                      to some internal error.
+     */
+    public ObjectMessage createObjectMessage(Serializable object)
+            throws JMSException {
+<span class="nc" id="L286">        ensureOpen();</span>
+<span class="nc" id="L287">        ObjectMessageImpl result = new ObjectMessageImpl();</span>
+<span class="nc" id="L288">        result.setObject(object);</span>
+<span class="nc" id="L289">        return result;</span>
+    }
+
+    /**
+     * Creates a &lt;code&gt;StreamMessage&lt;/code&gt; object. A &lt;code&gt;StreamMessage&lt;/code&gt;
+     * object is used to send a self-defining stream of primitive values in the
+     * Java programming language.
+     *
+     * @throws JMSException if the JMS provider fails to create this message due
+     *                      to some internal error.
+     */
+    public StreamMessage createStreamMessage() throws JMSException {
+<span class="nc" id="L301">        ensureOpen();</span>
+<span class="nc" id="L302">        return new StreamMessageImpl();</span>
+    }
+
+    /**
+     * Creates a &lt;code&gt;TextMessage&lt;/code&gt; object. A &lt;code&gt;TextMessage&lt;/code&gt;
+     * object is used to send a message containing a &lt;code&gt;String&lt;/code&gt;
+     * object.
+     *
+     * @throws JMSException if the JMS provider fails to create this message due
+     *                      to some internal error.
+     */
+    public TextMessage createTextMessage() throws JMSException {
+<span class="nc" id="L314">        ensureOpen();</span>
+<span class="nc" id="L315">        return new TextMessageImpl();</span>
+    }
+
+    /**
+     * Creates an initialized &lt;code&gt;TextMessage&lt;/code&gt; object. A
+     * &lt;code&gt;TextMessage&lt;/code&gt; object is used to send a message containing a
+     * &lt;code&gt;String&lt;/code&gt;.
+     *
+     * @param text the string used to initialize this message
+     * @throws JMSException if the JMS provider fails to create this message due
+     *                      to some internal error.
+     */
+    public TextMessage createTextMessage(String text) throws JMSException {
+<span class="nc" id="L328">        ensureOpen();</span>
+<span class="nc" id="L329">        TextMessageImpl result = new TextMessageImpl();</span>
+<span class="nc" id="L330">        result.setText(text);</span>
+<span class="nc" id="L331">        return result;</span>
+    }
+
+    /**
+     * Determines if the session is transacted.
+     *
+     * @return &lt;code&gt;true&lt;/code&gt; if the session is transacted
+     * @throws JMSException if the session is closed
+     */
+    public boolean getTransacted() throws JMSException {
+<span class="nc" id="L341">        ensureOpen();</span>
+<span class="nc bnc" id="L342" title="All 2 branches missed.">        return (_ackMode == SESSION_TRANSACTED);</span>
+    }
+
+    /**
+     * Returns the acknowledgement mode of the session. The acknowledgement mode
+     * is set at the time that the session is created. If the session is
+     * transacted, the acknowledgement mode is ignored.
+     *
+     * @return If the session is not transacted, returns the current
+     *         acknowledgement mode for the session. If the session is
+     *         transacted, returns SESSION_TRANSACTED.
+     * @throws JMSException if the JMS provider fails to return the
+     *                      acknowledgment mode due to some internal error.
+     * @see Connection#createSession
+     */
+    public int getAcknowledgeMode() throws JMSException {
+<span class="nc" id="L358">        ensureOpen();</span>
+<span class="nc" id="L359">        return _ackMode;</span>
+    }
+
+    /**
+     * Creates a &lt;code&gt;MessageProducer&lt;/code&gt; to send messages to the specified
+     * destination.
+     *
+     * @param destination the &lt;code&gt;Destination&lt;/code&gt; to send to, or null if
+     *                    this is a producer which does not have a specified
+     *                    destination.
+     * @throws JMSException                if the session fails to create a
+     *                                     MessageProducer due to some internal
+     *                                     error.
+     * @throws InvalidDestinationException if an invalid destination is
+     *                                     specified.
+     */
+    public MessageProducer createProducer(Destination destination)
+            throws JMSException {
+<span class="nc" id="L377">        ensureOpen();</span>
+<span class="nc" id="L378">        return new JmsMessageProducer(this, destination);</span>
+    }
+
+    /**
+     * Creates a &lt;code&gt;MessageConsumer&lt;/code&gt; for the specified destination.
+     *
+     * @param destination the &lt;code&gt;Destination&lt;/code&gt; to access.
+     * @throws JMSException                if the session fails to create a
+     *                                     consumer due to some internal error.
+     * @throws InvalidDestinationException if an invalid destination is
+     *                                     specified.
+     */
+
+    public MessageConsumer createConsumer(Destination destination)
+            throws JMSException {
+<span class="nc" id="L393">        return createConsumer(destination, null);</span>
+    }
+
+    /**
+     * Creates a &lt;code&gt;MessageProducer&lt;/code&gt; to receive messages from the
+     * specified destination, matching particular selection criteria
+     *
+     * @param destination     the &lt;code&gt;Destination&lt;/code&gt; to access
+     * @param messageSelector only messages with properties matching the message
+     *                        selector expression are delivered. A value of null
+     *                        or an empty string indicates that there is no
+     *                        message selector for the message consumer.
+     * @throws JMSException                if the session fails to create a
+     *                                     MessageConsumer due to some internal
+     *                                     error.
+     * @throws InvalidDestinationException if an invalid destination is
+     *                                     specified.
+     * @throws InvalidSelectorException    if the message selector is invalid.
+     */
+    public MessageConsumer createConsumer(Destination destination,
+                                          String messageSelector)
+            throws JMSException {
+<span class="nc" id="L415">        return createConsumer(destination, messageSelector, false);</span>
+    }
+
+    /**
+     * Creates a &lt;code&gt;MessageConsumer&lt;/code&gt; to receive messages from the
+     * specified destination, matching particular selection criteria. This
+     * method can specify whether messages published by its own connection
+     * should be delivered to it, if the destination is a topic. &lt;P&gt;In some
+     * cases, a connection may both publish and subscribe to a topic. The
+     * consumer &lt;code&gt;noLocal&lt;/code&gt; attribute allows a consumer to inhibit the
+     * delivery of messages published by its own connection. The default value
+     * for this attribute is false. The &lt;code&gt;noLocal&lt;/code&gt; value must be
+     * supported by destinations that are topics.
+     *
+     * @param destination     the &lt;code&gt;Destination&lt;/code&gt; to access
+     * @param messageSelector only messages with properties matching the message
+     *                        selector expression are delivered. A value of null
+     *                        or an empty string indicates that there is no
+     *                        message selector for the message consumer.
+     * @param noLocal         if true, and the destination is a topic, inhibits
+     *                        the delivery of messages published by its own
+     *                        connection.  The behavior for &lt;code&gt;noLocal&lt;/code&gt;
+     *                        is not specified if the destination is a queue.
+     * @throws JMSException                if the session fails to create a
+     *                                     MessageConsumer due to some internal
+     *                                     error.
+     * @throws InvalidDestinationException if an invalid destination is
+     *                                     specified.
+     * @throws InvalidSelectorException    if the message selector is invalid.
+     */
+    public MessageConsumer createConsumer(Destination destination,
+                                          String messageSelector,
+                                          boolean noLocal) throws JMSException {
+<span class="nc" id="L448">        long consumerId = allocateConsumer(destination, messageSelector,</span>
+                                           noLocal);
+<span class="nc" id="L450">        JmsMessageConsumer consumer = new JmsMessageConsumer(this, consumerId,</span>
+                                                             destination,
+                                                             messageSelector);
+<span class="nc" id="L453">        addConsumer(consumer);</span>
+<span class="nc" id="L454">        return consumer;</span>
+    }
+
+    /**
+     * Creates a queue identity given a &lt;code&gt;Queue&lt;/code&gt; name.
+     * &lt;p/&gt;
+     * &lt;P&gt;This facility is provided for the rare cases where clients need to
+     * dynamically manipulate queue identity. It allows the creation of a queue
+     * identity with a provider-specific name. Clients that depend on this
+     * ability are not portable.
+     * &lt;p/&gt;
+     * &lt;P&gt;Note that this method is not for creating the physical queue. The
+     * physical creation of queues is an administrative task and is not to be
+     * initiated by the JMS API. The one exception is the creation of temporary
+     * queues, which is accomplished with the &lt;code&gt;createTemporaryQueue&lt;/code&gt;
+     * method.
+     *
+     * @param queueName the name of this &lt;code&gt;Queue&lt;/code&gt;
+     * @return a &lt;code&gt;Queue&lt;/code&gt; with the given name
+     * @throws JMSException if the session fails to create a queue due to some
+     *                      internal error.
+     */
+    public Queue createQueue(String queueName) throws JMSException {
+<span class="nc" id="L477">        ensureOpen();</span>
+
+        JmsQueue queue;
+
+<span class="nc bnc" id="L481" title="All 4 branches missed.">        if (queueName != null &amp;&amp; queueName.length() &gt; 0) {</span>
+<span class="nc" id="L482">            queue = new JmsQueue(queueName);</span>
+        } else {
+<span class="nc" id="L484">            throw new JMSException(</span>
+                    &quot;Cannot create a queue with null or empty name&quot;);
+        }
+
+<span class="nc" id="L488">        return queue;</span>
+    }
+
+    /**
+     * Creates a topic identity given a &lt;code&gt;Topic&lt;/code&gt; name.
+     * &lt;p/&gt;
+     * &lt;P&gt;This facility is provided for the rare cases where clients need to
+     * dynamically manipulate topic identity. This allows the creation of a
+     * topic identity with a provider-specific name. Clients that depend on this
+     * ability are not portable.
+     * &lt;p/&gt;
+     * &lt;P&gt;Note that this method is not for creating the physical topic. The
+     * physical creation of topics is an administrative task and is not to be
+     * initiated by the JMS API. The one exception is the creation of temporary
+     * topics, which is accomplished with the &lt;code&gt;createTemporaryTopic&lt;/code&gt;
+     * method.
+     *
+     * @param topicName the name of this &lt;code&gt;Topic&lt;/code&gt;
+     * @return a &lt;code&gt;Topic&lt;/code&gt; with the given name
+     * @throws JMSException if the session fails to create a topic due to some
+     *                      internal error.
+     */
+    public Topic createTopic(String topicName) throws JMSException {
+<span class="nc" id="L511">        ensureOpen();</span>
+
+        JmsTopic topic;
+
+<span class="nc bnc" id="L515" title="All 4 branches missed.">        if (topicName != null &amp;&amp; topicName.length() &gt; 0) {</span>
+<span class="nc" id="L516">            topic = new JmsTopic(topicName);</span>
+        } else {
+<span class="nc" id="L518">            throw new JMSException(&quot;Invalid or null topic name specified&quot;);</span>
+        }
+
+<span class="nc" id="L521">        return topic;</span>
+    }
+
+    /**
+     * Creates a durable subscriber to the specified topic.
+     * &lt;p/&gt;
+     * &lt;P&gt;If a client needs to receive all the messages published on a topic,
+     * including the ones published while the subscriber is inactive, it uses a
+     * durable &lt;code&gt;TopicSubscriber&lt;/code&gt;. The JMS provider retains a record
+     * of this durable subscription and insures that all messages from the
+     * topic's publishers are retained until they are acknowledged by this
+     * durable subscriber or they have expired.
+     * &lt;p/&gt;
+     * &lt;P&gt;Sessions with durable subscribers must always provide the same client
+     * identifier. In addition, each client must specify a name that uniquely
+     * identifies (within client identifier) each durable subscription it
+     * creates. Only one session at a time can have a &lt;code&gt;TopicSubscriber&lt;/code&gt;
+     * for a particular durable subscription.
+     * &lt;p/&gt;
+     * &lt;P&gt;A client can change an existing durable subscription by creating a
+     * durable &lt;code&gt;TopicSubscriber&lt;/code&gt; with the same name and a new topic
+     * and/or message selector. Changing a durable subscriber is equivalent to
+     * unsubscribing (deleting) the old one and creating a new one.
+     * &lt;p/&gt;
+     * &lt;P&gt;In some cases, a connection may both publish and subscribe to a topic.
+     * The subscriber &lt;code&gt;noLocal&lt;/code&gt; attribute allows a subscriber to
+     * inhibit the delivery of messages published by its own connection. The
+     * default value for this attribute is false.
+     *
+     * @param topic the non-temporary &lt;code&gt;Topic&lt;/code&gt; to subscribe to
+     * @param name  the name used to identify this subscription
+     * @throws JMSException                if the session fails to create a
+     *                                     subscriber due to some internal
+     *                                     error.
+     * @throws InvalidDestinationException if an invalid topic is specified.
+     */
+    public TopicSubscriber createDurableSubscriber(Topic topic, String name)
+            throws JMSException {
+<span class="nc" id="L559">        return createDurableSubscriber(topic, name, null, false);</span>
+    }
+
+    /**
+     * Creates a durable subscriber to the specified topic, using a message
+     * selector and specifying whether messages published by its own connection
+     * should be delivered to it.
+     * &lt;p/&gt;
+     * &lt;P&gt;If a client needs to receive all the messages published on a topic,
+     * including the ones published while the subscriber is inactive, it uses a
+     * durable &lt;code&gt;TopicSubscriber&lt;/code&gt;. The JMS provider retains a record
+     * of this durable subscription and insures that all messages from the
+     * topic's publishers are retained until they are acknowledged by this
+     * durable subscriber or they have expired.
+     * &lt;p/&gt;
+     * &lt;P&gt;Sessions with durable subscribers must always provide the same client
+     * identifier. In addition, each client must specify a name which uniquely
+     * identifies (within client identifier) each durable subscription it
+     * creates. Only one session at a time can have a &lt;code&gt;TopicSubscriber&lt;/code&gt;
+     * for a particular durable subscription. An inactive durable subscriber is
+     * one that exists but does not currently have a message consumer associated
+     * with it.
+     * &lt;p/&gt;
+     * &lt;P&gt;A client can change an existing durable subscription by creating a
+     * durable &lt;code&gt;TopicSubscriber&lt;/code&gt; with the same name and a new topic
+     * and/or message selector. Changing a durable subscriber is equivalent to
+     * unsubscribing (deleting) the old one and creating a new one.
+     *
+     * @param topic           the non-temporary &lt;code&gt;Topic&lt;/code&gt; to subscribe
+     *                        to
+     * @param name            the name used to identify this subscription
+     * @param messageSelector only messages with properties matching the message
+     *                        selector expression are delivered.  A value of
+     *                        null or an empty string indicates that there is no
+     *                        message selector for the message consumer.
+     * @param noLocal         if set, inhibits the delivery of messages
+     *                        published by its own connection
+     * @throws JMSException                if the session fails to create a
+     *                                     subscriber due to some internal
+     *                                     error.
+     * @throws InvalidDestinationException if an invalid topic is specified.
+     * @throws InvalidSelectorException    if the message selector is invalid.
+     */
+    public TopicSubscriber createDurableSubscriber(Topic topic, String name,
+                                                   String messageSelector,
+                                                   boolean noLocal)
+            throws JMSException {
+<span class="nc" id="L606">        ensureOpen();</span>
+
+<span class="nc bnc" id="L608" title="All 2 branches missed.">        if (topic == null) {</span>
+<span class="nc" id="L609">            throw new InvalidDestinationException(&quot;Cannot create durable subscriber: argument 'topic' is &quot;</span>
+                                                  + &quot; null&quot;);
+        }
+<span class="nc bnc" id="L612" title="All 4 branches missed.">        if (name == null || name.trim().length() == 0) {</span>
+<span class="nc" id="L613">            throw new JMSException(&quot;Invalid subscription name specified&quot;);</span>
+        }
+
+        // check to see if the topic is a temporary topic. You cannot
+        // create a durable subscriber for a temporary topic
+<span class="nc bnc" id="L618" title="All 2 branches missed.">        if (((JmsTopic) topic).isTemporaryDestination()) {</span>
+<span class="nc" id="L619">            throw new InvalidDestinationException(</span>
+                    &quot;Cannot create a durable subscriber for a temporary topic&quot;);
+        }
+
+<span class="nc" id="L623">        long consumerId = _session.createDurableConsumer((JmsTopic) topic, name,</span>
+                                                         messageSelector,
+                                                         noLocal);
+<span class="nc" id="L626">        JmsTopicSubscriber subscriber = new JmsTopicSubscriber(this,</span>
+                                                               consumerId,
+                                                               topic,
+                                                               messageSelector,
+                                                               noLocal);
+<span class="nc" id="L631">        addConsumer(subscriber);</span>
+
+<span class="nc" id="L633">        return subscriber;</span>
+    }
+
+    /**
+     * Creates a &lt;code&gt;QueueBrowser&lt;/code&gt; object to peek at the messages on the
+     * specified queue.
+     *
+     * @param queue the queue to access
+     * @throws JMSException                if the session fails to create a
+     *                                     browser due to some internal error.
+     * @throws InvalidDestinationException if an invalid destination is
+     *                                     specified
+     */
+    public QueueBrowser createBrowser(Queue queue) throws JMSException {
+<span class="nc" id="L647">        return createBrowser(queue, null);</span>
+    }
+
+    /**
+     * Creates a &lt;code&gt;QueueBrowser&lt;/code&gt; object to peek at the messages on the
+     * specified queue using a message selector.
+     *
+     * @param queue           the &lt;code&gt;queue&lt;/code&gt; to access
+     * @param messageSelector only messages with properties matching the message
+     *                        selector expression are delivered. A value of null
+     *                        or an empty string indicates that there is no
+     *                        message selector for the message consumer.
+     * @throws JMSException                if the session fails to create a
+     *                                     browser due to some internal error.
+     * @throws InvalidDestinationException if an invalid destination is
+     *                                     specified
+     * @throws InvalidSelectorException    if the message selector is invalid.
+     */
+    public QueueBrowser createBrowser(Queue queue, String messageSelector)
+            throws JMSException {
+<span class="nc" id="L667">        ensureOpen();</span>
+<span class="nc bnc" id="L668" title="All 2 branches missed.">        if (!(queue instanceof JmsQueue)) {</span>
+<span class="nc" id="L669">            throw new InvalidDestinationException(&quot;Cannot create QueueBrowser for destination=&quot;</span>
+                                                  + queue);
+        }
+
+<span class="nc" id="L673">        JmsQueue dest = (JmsQueue) queue;</span>
+        // check to see if the queue is temporary. A temporary queue
+        // can only be used within the context of the owning connection
+<span class="nc bnc" id="L676" title="All 2 branches missed.">        if (!checkForValidTemporaryDestination(dest)) {</span>
+<span class="nc" id="L677">            throw new InvalidDestinationException(</span>
+                    &quot;Cannot create a queue browser for a temporary queue &quot;
+                    + &quot;that is not bound to this connection&quot;);
+        }
+
+<span class="nc" id="L682">        long consumerId = _session.createBrowser(dest, messageSelector);</span>
+<span class="nc" id="L683">        JmsQueueBrowser browser = new JmsQueueBrowser(this, consumerId, queue,</span>
+                                                      messageSelector);
+<span class="nc" id="L685">        addConsumer(browser);</span>
+<span class="nc" id="L686">        return browser;</span>
+    }
+
+    /**
+     * Creates a &lt;code&gt;TemporaryQueue&lt;/code&gt; object. Its lifetime will be that
+     * of the &lt;code&gt;Connection&lt;/code&gt; unless it is deleted earlier.
+     *
+     * @return a temporary queue identity
+     * @throws JMSException if the session fails to create a temporary queue due
+     *                      to some internal error.
+     */
+    public TemporaryQueue createTemporaryQueue() throws JMSException {
+<span class="nc" id="L698">        ensureOpen();</span>
+<span class="nc" id="L699">        return JmsTemporaryQueue.create(getConnection());</span>
+    }
+
+    /**
+     * Creates a &lt;code&gt;TemporaryTopic&lt;/code&gt; object. Its lifetime will be that
+     * of the &lt;code&gt;Connection&lt;/code&gt; unless it is deleted earlier.
+     *
+     * @return a temporary topic identity
+     * @throws JMSException if the session fails to create a temporary topic due
+     *                      to some internal error.
+     */
+    public TemporaryTopic createTemporaryTopic() throws JMSException {
+<span class="nc" id="L711">        ensureOpen();</span>
+<span class="nc" id="L712">        return JmsTemporaryTopic.create(getConnection());</span>
+    }
+
+    /**
+     * Unsubscribes a durable subscription that has been created by a client.
+     * &lt;p/&gt;
+     * &lt;P&gt;This method deletes the state being maintained on behalf of the
+     * subscriber by its provider.
+     * &lt;p/&gt;
+     * &lt;P&gt;It is erroneous for a client to delete a durable subscription while
+     * there is an active &lt;code&gt;MessageConsumer&lt;/code&gt; or
+     * &lt;code&gt;TopicSubscriber&lt;/code&gt; for the subscription, or while a consumed
+     * message is part of a pending transaction or has not been acknowledged in
+     * the session.
+     *
+     * @param name the name used to identify this subscription
+     * @throws JMSException                if the session fails to unsubscribe
+     *                                     to the durable subscription due to
+     *                                     some internal error.
+     * @throws InvalidDestinationException if an invalid subscription name is
+     *                                     specified.
+     */
+    public void unsubscribe(String name) throws JMSException {
+<span class="nc" id="L735">        ensureOpen();</span>
+<span class="nc" id="L736">        _session.unsubscribe(name);</span>
+<span class="nc" id="L737">    }</span>
+
+    /**
+     * Commit all messages done in this transaction
+     *
+     * @throws JMSException if the transaction cannot be committed
+     */
+    public void commit() throws JMSException {
+<span class="nc" id="L745">        ensureOpen();</span>
+<span class="nc" id="L746">        ensureTransactional();</span>
+
+        // send all the cached messages to the server
+<span class="nc" id="L749">        getServerSession().send(_messagesToSend);</span>
+<span class="nc" id="L750">        _messagesToSend.clear();</span>
+
+        // commit the session
+<span class="nc" id="L753">        getServerSession().commit();</span>
+<span class="nc" id="L754">    }</span>
+
+    /**
+     * Rollback any messages done in this transaction
+     *
+     * @throws JMSException if the transaction cannot be rolled back
+     */
+    public void rollback() throws JMSException {
+<span class="nc" id="L762">        ensureOpen();</span>
+<span class="nc" id="L763">        ensureTransactional();</span>
+
+        // clear all the cached messages
+<span class="nc" id="L766">        _messagesToSend.clear();</span>
+
+        // rollback the session
+<span class="nc" id="L769">        getServerSession().rollback();</span>
+<span class="nc" id="L770">    }</span>
+
+    /**
+     * Close the session. This call will block until a receive or message
+     * listener in progress has completed. A blocked message consumer receive
+     * call returns &lt;code&gt;null&lt;/code&gt; when this session is closed.
+     *
+     * @throws JMSException if the session can't be closed
+     */
+    public void close() throws JMSException {
+        boolean closing;
+<span class="nc" id="L781">        synchronized (_closeLock) {</span>
+<span class="nc" id="L782">            closing = _closing;</span>
+<span class="nc" id="L783">            _closing = true;</span>
+<span class="nc" id="L784">        }</span>
+<span class="nc bnc" id="L785" title="All 2 branches missed.">        if (!closing) {</span>
+            // must stop first to ensure any active listener completes
+<span class="nc" id="L787">            stop();</span>
+
+            // wake up any blocking consumer
+<span class="nc" id="L790">            synchronized (_receiveLock) {</span>
+<span class="nc" id="L791">                _receiveLock.notifyAll();</span>
+<span class="nc" id="L792">            }</span>
+
+<span class="nc" id="L794">            _closed = true;</span>
+
+            // close the producers
+<span class="nc" id="L797">            JmsMessageProducer[] producers =</span>
+<span class="nc" id="L798">                    (JmsMessageProducer[]) _producers.toArray(</span>
+                            new JmsMessageProducer[0]);
+<span class="nc bnc" id="L800" title="All 2 branches missed.">            for (int i = 0; i &lt; producers.length; ++i) {</span>
+<span class="nc" id="L801">                JmsMessageProducer producer = producers[i];</span>
+<span class="nc" id="L802">                producer.close();</span>
+            }
+
+            // close the consumers
+<span class="nc" id="L806">            JmsMessageConsumer[] consumers =</span>
+<span class="nc" id="L807">                    (JmsMessageConsumer[]) _consumers.values().toArray(</span>
+                            new JmsMessageConsumer[0]);
+<span class="nc bnc" id="L809" title="All 2 branches missed.">            for (int i = 0; i &lt; consumers.length; ++i) {</span>
+<span class="nc" id="L810">                JmsMessageConsumer consumer = consumers[i];</span>
+<span class="nc" id="L811">                consumer.close();</span>
+            }
+
+            // deregister this with the connection
+<span class="nc" id="L815">            _connection.removeSession(this);</span>
+<span class="nc" id="L816">            _connection = null;</span>
+
+            // clear any cached messages
+<span class="nc" id="L819">            _messagesToSend.clear();</span>
+
+            // issue a close to the remote session. This will release any
+            // allocated remote resources
+<span class="nc" id="L823">            getServerSession().close();</span>
+<span class="nc" id="L824">            _session = null;</span>
+        }
+<span class="nc" id="L826">    }</span>
+
+    /**
+     * Stop message delivery in this session, and restart sending messages with
+     * the oldest unacknowledged message
+     *
+     * @throws JMSException if the session can't be recovered
+     */
+    public void recover() throws JMSException {
+<span class="nc" id="L835">        ensureOpen();</span>
+<span class="nc bnc" id="L836" title="All 2 branches missed.">        if (getTransacted()) {</span>
+<span class="nc" id="L837">            throw new IllegalStateException(</span>
+                    &quot;Cannot recover from a transacted session&quot;);
+        }
+
+<span class="nc" id="L841">        getServerSession().recover();</span>
+<span class="nc" id="L842">    }</span>
+
+    /**
+     * Returns the message listener associated with the session
+     *
+     * @return the message listener associated with the session, or
+     *         &lt;code&gt;null&lt;/code&gt; if no listener is registered
+     * @throws JMSException if the session is closed
+     */
+    public MessageListener getMessageListener() throws JMSException {
+<span class="nc" id="L852">        ensureOpen();</span>
+<span class="nc" id="L853">        return _listener;</span>
+    }
+
+    /**
+     * Sets the session's message listener.
+     *
+     * @param listener the session's message listener
+     * @throws JMSException if the session is closed
+     */
+    public void setMessageListener(MessageListener listener)
+            throws JMSException {
+<span class="nc" id="L864">        ensureOpen();</span>
+<span class="nc" id="L865">        _listener = listener;</span>
+<span class="nc" id="L866">    }</span>
+
+    /**
+     * Iterates through the list of messages added by an {@link
+     * JmsConnectionConsumer}, sending them to the registered listener
+     */
+    public void run() {
+        try {
+<span class="nc bnc" id="L874" title="All 2 branches missed.">            while (!_messageCache.isEmpty()) {</span>
+<span class="nc" id="L875">                Message message = (Message) _messageCache.remove(0);</span>
+<span class="nc" id="L876">                _listener.onMessage(message);</span>
+<span class="nc" id="L877">            }</span>
+<span class="nc" id="L878">        } catch (Exception exception) {</span>
+<span class="nc" id="L879">            _log.error(&quot;Error in the Session.run()&quot;, exception);</span>
+        } finally {
+            // Clear message cache
+<span class="nc" id="L882">            _messageCache.clear();</span>
+        }
+<span class="nc" id="L884">    }</span>
+
+    /**
+     * Set the message listener for a particular consumer.
+     * &lt;p/&gt;
+     * If a listener is already registered for the consumer, it will be
+     * automatically overwritten
+     *
+     * @param listener the message listener
+     * @throws JMSException if the listener can't be set
+     */
+    public void setMessageListener(JmsMessageConsumer listener)
+            throws JMSException {
+<span class="nc" id="L897">        ensureOpen();</span>
+<span class="nc" id="L898">        setAsynchronous(listener.getConsumerId(), true);</span>
+<span class="nc" id="L899">    }</span>
+
+    /**
+     * Remove a message listener
+     *
+     * @param listener the message listener to remove
+     * @throws JMSException if the listener can't be removed
+     */
+    public void removeMessageListener(JmsMessageConsumer listener)
+            throws JMSException {
+<span class="nc" id="L909">        ensureOpen();</span>
+<span class="nc" id="L910">        setAsynchronous(listener.getConsumerId(), false);</span>
+<span class="nc" id="L911">    }</span>
+
+    /**
+     * This will start message delivery to this session. If message delivery has
+     * already started, or the session is currently being closed then this is a
+     * no-op.
+     *
+     * @throws JMSException if message delivery can't be started
+     */
+    public void start() throws JMSException {
+<span class="nc" id="L921">        ensureOpen();</span>
+<span class="nc" id="L922">        synchronized (_closeLock) {</span>
+<span class="nc bnc" id="L923" title="All 4 branches missed.">            if (_stopped &amp;&amp; !_closing) {</span>
+<span class="nc" id="L924">                getServerSession().start();</span>
+<span class="nc" id="L925">                _stopped = false;</span>
+            }
+<span class="nc" id="L927">        }</span>
+<span class="nc" id="L928">    }</span>
+
+    /**
+     * This will stop message delivery to this session. If message delivery has
+     * already stoped then this is a no-op.
+     *
+     * @throws JMSException if message delivery can't be stopped
+     */
+    public void stop() throws JMSException {
+<span class="nc" id="L937">        ensureOpen();</span>
+<span class="nc" id="L938">        synchronized (_closeLock) {</span>
+<span class="nc bnc" id="L939" title="All 2 branches missed.">            if (!_stopped) {</span>
+<span class="nc" id="L940">                getServerSession().stop();</span>
+<span class="nc" id="L941">                _stopped = true;</span>
+            }
+<span class="nc" id="L943">        }</span>
+<span class="nc" id="L944">    }</span>
+
+    /**
+     * Acknowledge the specified message. This is only applicable for
+     * CLIENT_ACKNOWLEDGE sessions. For other session types, the request is
+     * ignored.
+     * &lt;p/&gt;
+     * Acking a message automatically acks all those that have come before it.
+     *
+     * @param message the message to acknowledge
+     * @throws JMSException if the message can't be acknowledged
+     */
+    public void acknowledgeMessage(Message message) throws JMSException {
+<span class="nc" id="L957">        ensureOpen();</span>
+<span class="nc bnc" id="L958" title="All 2 branches missed.">        if (_ackMode == Session.CLIENT_ACKNOWLEDGE) {</span>
+<span class="nc" id="L959">            MessageImpl impl = (MessageImpl) message;</span>
+<span class="nc" id="L960">            getServerSession().acknowledgeMessage(impl.getConsumerId(),</span>
+<span class="nc" id="L961">                                                  impl.getAckMessageID());</span>
+        }
+<span class="nc" id="L963">    }</span>
+
+    /**
+     * Enable or disable asynchronous message delivery for the specified
+     * consumer.
+     *
+     * @param consumerId the consumer identifier
+     * @param enable     &lt;code&gt;true&lt;/code&gt; to enable; &lt;code&gt;false&lt;/code&gt; to
+     *                   disable
+     * @throws JMSException if message delivery cannot be enabled or disabled
+     */
+    public void setAsynchronous(long consumerId, boolean enable)
+            throws JMSException {
+<span class="nc" id="L976">        ensureOpen();</span>
+<span class="nc" id="L977">        getServerSession().setAsynchronous(consumerId, enable);</span>
+<span class="nc" id="L978">    }</span>
+
+    /**
+     * Deliver a message.
+     *
+     * @param message the message to deliver
+     * @return &lt;code&gt;true&lt;/code&gt; if the message was delivered; otherwise
+     *         &lt;code&gt;false&lt;/code&gt;.
+     */
+    public boolean onMessage(MessageImpl message) {
+<span class="nc" id="L988">        boolean delivered = false;</span>
+<span class="nc" id="L989">        message.setJMSXRcvTimestamp(System.currentTimeMillis());</span>
+
+<span class="nc" id="L991">        long consumerId = message.getConsumerId();</span>
+<span class="nc" id="L992">        JmsMessageConsumer consumer</span>
+<span class="nc" id="L993">                = (JmsMessageConsumer) _consumers.get(new Long(consumerId));</span>
+        // tag the session that received this message
+<span class="nc" id="L995">        message.setSession(this);</span>
+<span class="nc bnc" id="L996" title="All 2 branches missed.">        if (consumer != null) {</span>
+            // if a listener is defined for the session then send all the
+            // messages to that listener regardless if any consumers are
+            // have registered listeners...bit confusing but this is what
+            // I believe it should do
+<span class="nc bnc" id="L1001" title="All 2 branches missed.">            if (_listener != null) {</span>
+                try {
+<span class="nc" id="L1003">                    _listener.onMessage(message);</span>
+<span class="nc" id="L1004">                    delivered = true;</span>
+<span class="nc" id="L1005">                } catch (Throwable exception) {</span>
+<span class="nc" id="L1006">                    _log.error(&quot;MessageListener threw exception&quot;, exception);</span>
+<span class="nc" id="L1007">                }</span>
+            } else {
+<span class="nc" id="L1009">                delivered = consumer.onMessage(message);</span>
+            }
+        } else {
+<span class="nc" id="L1012">            _log.error(&quot;Received a message for an inactive consumer&quot;);</span>
+        }
+<span class="nc" id="L1014">        return delivered;</span>
+    }
+
+    /**
+     * Inform the session that there is a message available for a synchronous
+     * consumer.
+     */
+    public void onMessageAvailable() {
+        // wake up any blocking consumer
+<span class="nc" id="L1023">        notifyConsumer();</span>
+<span class="nc" id="L1024">    }</span>
+
+    /**
+     * Receive the next message that arrives within the specified timeout
+     * interval. This call blocks until a message arrives, the timeout expires,
+     * or this message consumer is closed. A timeout of &lt;code&gt;0&lt;/code&gt; never
+     * expires and the call blocks indefinitely.
+     *
+     * @param consumerId the consumer identifier
+     * @param timeout    the timeout interval, in milliseconds
+     * @return the next message produced for the consumer, or &lt;code&gt;null&lt;/code&gt;
+     *         if the timeout expires or the consumer concurrently closed
+     * @throws JMSException if the next message can't be received
+     */
+    public MessageImpl receive(long consumerId, long timeout)
+            throws JMSException {
+<span class="nc" id="L1040">        MessageImpl message = null;</span>
+<span class="nc" id="L1041">        ensureOpen();</span>
+
+<span class="nc" id="L1043">        synchronized (_receiveLock) {</span>
+<span class="nc bnc" id="L1044" title="All 2 branches missed.">            if (_blockingConsumer != -1) {</span>
+<span class="nc" id="L1045">                throw new IllegalStateException(</span>
+                        &quot;Session cannot be accessed concurrently&quot;);
+            }
+
+<span class="nc" id="L1049">            _blockingConsumer = consumerId;</span>
+
+<span class="nc bnc" id="L1051" title="All 2 branches missed.">            long start = (timeout != 0) ? System.currentTimeMillis() : 0;</span>
+            try {
+<span class="nc bnc" id="L1053" title="All 4 branches missed.">                while (message == null &amp;&amp; !isClosed()) {</span>
+<span class="nc bnc" id="L1054" title="All 2 branches missed.">                    if (timeout == 0) {</span>
+<span class="nc" id="L1055">                        message = getServerSession().receive(consumerId, 0);</span>
+                    } else {
+<span class="nc" id="L1057">                        message = getServerSession().receive(consumerId,</span>
+                                                             timeout);
+                    }
+<span class="nc bnc" id="L1060" title="All 4 branches missed.">                    if (message == null &amp;&amp; !isClosed()) {</span>
+                        // no message received in the required time.
+                        // Wait for a notification from the server that
+                        // a message has become available.
+                        try {
+<span class="nc bnc" id="L1065" title="All 2 branches missed.">                            if (timeout == 0) {</span>
+<span class="nc" id="L1066">                                _receiveLock.wait();</span>
+                            } else {
+<span class="nc" id="L1068">                                long elapsed = System.currentTimeMillis()</span>
+                                        - start;
+<span class="nc bnc" id="L1070" title="All 2 branches missed.">                                if (elapsed &gt;= timeout) {</span>
+                                    // no message received in the required time
+<span class="nc" id="L1072">                                    break;</span>
+                                } else {
+                                    // adjust the timeout so that the client
+                                    // only waits as long as the original
+                                    // timeout
+<span class="nc" id="L1077">                                    timeout -= elapsed;</span>
+                                }
+<span class="nc" id="L1079">                                _receiveLock.wait(timeout);</span>
+                            }
+<span class="nc" id="L1081">                        } catch (InterruptedException ignore) {</span>
+                            // no-op
+<span class="nc" id="L1083">                        }</span>
+                    }
+                }
+
+<span class="nc bnc" id="L1087" title="All 2 branches missed.">                if (message != null) {</span>
+<span class="nc" id="L1088">                    message.setSession(this);</span>
+<span class="nc bnc" id="L1089" title="All 4 branches missed.">                    if (_ackMode == AUTO_ACKNOWLEDGE</span>
+                            || _ackMode == DUPS_OK_ACKNOWLEDGE) {
+<span class="nc" id="L1091">                        getServerSession().acknowledgeMessage(</span>
+<span class="nc" id="L1092">                                message.getConsumerId(),</span>
+<span class="nc" id="L1093">                                message.getMessageId().toString());</span>
+                    }
+                }
+            } finally {
+<span class="nc" id="L1097">                _blockingConsumer = -1;</span>
+            }
+<span class="nc" id="L1099">        }</span>
+<span class="nc" id="L1100">        return message;</span>
+    }
+
+    /**
+     * Receive the next message if one is immediately available.
+     *
+     * @param consumerId the consumer identifier
+     * @return the next message produced for this consumer, or &lt;code&gt;null&lt;/code&gt;
+     *         if one is not available
+     * @throws JMSException if the next message can't be received
+     */
+    public MessageImpl receiveNoWait(long consumerId) throws JMSException {
+<span class="nc" id="L1112">        ensureOpen();</span>
+<span class="nc" id="L1113">        MessageImpl message = getServerSession().receiveNoWait(consumerId);</span>
+<span class="nc bnc" id="L1114" title="All 2 branches missed.">        if (message != null) {</span>
+<span class="nc" id="L1115">            message.setSession(this);</span>
+<span class="nc bnc" id="L1116" title="All 4 branches missed.">            if (_ackMode == AUTO_ACKNOWLEDGE</span>
+                    || _ackMode == DUPS_OK_ACKNOWLEDGE) {
+<span class="nc" id="L1118">                getServerSession().acknowledgeMessage(</span>
+<span class="nc" id="L1119">                        message.getConsumerId(),</span>
+<span class="nc" id="L1120">                        message.getMessageId().toString());</span>
+            }
+        }
+<span class="nc" id="L1123">        return message;</span>
+    }
+
+    /**
+     * Browse up to count messages.
+     *
+     * @param consumerId the consumer identifier
+     * @param count      the maximum number of messages to receive
+     * @return a list of {@link MessageImpl} instances
+     * @throws JMSException for any JMS error
+     */
+    public List browse(long consumerId, int count)
+            throws JMSException {
+<span class="nc" id="L1136">        ensureOpen();</span>
+<span class="nc" id="L1137">        return getServerSession().browse(consumerId, count);</span>
+    }
+
+    /**
+     * Send the specified message to the server.
+     *
+     * @param message the message to send
+     * @throws JMSException if the message can't be sent
+     */
+    protected void sendMessage(Message message) throws JMSException {
+<span class="nc bnc" id="L1147" title="All 2 branches missed.">        if (getTransacted()) {</span>
+            // if the session is transacted then cache the message locally.
+            // and wait for a commit or a rollback
+<span class="nc bnc" id="L1150" title="All 2 branches missed.">            if (message instanceof MessageImpl) {</span>
+                try {
+<span class="nc" id="L1152">                    message = (Message) ((MessageImpl) message).clone();</span>
+<span class="nc" id="L1153">                } catch (CloneNotSupportedException error) {</span>
+<span class="nc" id="L1154">                    throw new JMSException(error.getMessage());</span>
+<span class="nc" id="L1155">                }</span>
+            } else {
+<span class="nc" id="L1157">                message = convert(message);</span>
+            }
+<span class="nc" id="L1159">            _messagesToSend.add(message);</span>
+        } else {
+<span class="nc bnc" id="L1161" title="All 2 branches missed.">            if (!(message instanceof MessageImpl)) {</span>
+<span class="nc" id="L1162">                message = convert(message);</span>
+            }
+<span class="nc" id="L1164">            getServerSession().send((MessageImpl) message);</span>
+        }
+<span class="nc" id="L1166">    }</span>
+
+    /**
+     * Returns the server session.
+     *
+     * @return the server session
+     */
+    protected ServerSession getServerSession() {
+<span class="nc" id="L1174">        return _session;</span>
+    }
+
+    /**
+     * Return a reference to the connection that created this session.
+     *
+     * @return the owning connection
+     */
+    protected JmsConnection getConnection() {
+<span class="nc" id="L1183">        return _connection;</span>
+    }
+
+    /**
+     * Creates a new message consumer, returning its identity.
+     *
+     * @param destination the destination to access
+     * @param selector    the message selector. May be &lt;code&gt;null&lt;/code&gt;
+     * @param noLocal     if true, and the destination is a topic, inhibits the
+     *                    delivery of messages published by its own connection.
+     *                    The behavior for &lt;code&gt;noLocal&lt;/code&gt; is not specified
+     *                    if the destination is a queue.
+     * @throws JMSException                if the session fails to create a
+     *                                     MessageConsumer due to some internal
+     *                                     error.
+     * @throws InvalidDestinationException if an invalid destination is
+     *                                     specified.
+     * @throws InvalidSelectorException    if the message selector is invalid.
+     */
+    protected long allocateConsumer(Destination destination,
+                                    String selector, boolean noLocal)
+            throws JMSException {
+<span class="nc" id="L1205">        ensureOpen();</span>
+
+<span class="nc bnc" id="L1207" title="All 2 branches missed.">        if (!(destination instanceof JmsDestination)) {</span>
+<span class="nc" id="L1208">            throw new InvalidDestinationException(&quot;Cannot create MessageConsumer for destination=&quot;</span>
+                                                  + destination);
+        }
+<span class="nc" id="L1211">        JmsDestination dest = (JmsDestination) destination;</span>
+
+        // check to see if the destination is temporary. A temporary destination
+        // can only be used within the context of the owning connection
+<span class="nc bnc" id="L1215" title="All 2 branches missed.">        if (!checkForValidTemporaryDestination(dest)) {</span>
+<span class="nc" id="L1216">            throw new InvalidDestinationException(</span>
+                    &quot;Trying to create a MessageConsumer for a temporary &quot;
+                    + &quot;destination that is not bound to this connection&quot;);
+        }
+
+<span class="nc" id="L1221">        return _session.createConsumer(dest, selector, noLocal);</span>
+    }
+
+    /**
+     * This method checks the destination. If the destination is not temporary
+     * then return true. If it is a temporary destination and it is owned by
+     * this session's connection then it returns true. If it is a tmeporary
+     * destination and it is owned by another connection then it returns false
+     *
+     * @param destination the destination to check
+     * @return &lt;code&gt;true&lt;/code&gt; if the destination is valid
+     */
+    protected boolean checkForValidTemporaryDestination(
+            JmsDestination destination) {
+<span class="nc" id="L1235">        boolean result = false;</span>
+
+<span class="nc bnc" id="L1237" title="All 2 branches missed.">        if (destination.isTemporaryDestination()) {</span>
+<span class="nc" id="L1238">            JmsTemporaryDestination temp =</span>
+                    (JmsTemporaryDestination) destination;
+
+            // check  that this temp destination is owned by the session's
+            // connection.
+<span class="nc bnc" id="L1243" title="All 2 branches missed.">            if (temp.validForConnection(getConnection())) {</span>
+<span class="nc" id="L1244">                result = true;</span>
+            }
+<span class="nc" id="L1246">        } else {</span>
+<span class="nc" id="L1247">            result = true;</span>
+        }
+
+<span class="nc" id="L1250">        return result;</span>
+    }
+
+    /**
+     * Add a consumer to the list of consumers managed by this session.
+     *
+     * @param consumer the consumer to add
+     */
+    protected void addConsumer(JmsMessageConsumer consumer) {
+<span class="nc" id="L1259">        _consumers.put(new Long(consumer.getConsumerId()), consumer);</span>
+<span class="nc" id="L1260">    }</span>
+
+    /**
+     * Remove a consumer, deregistering it on the server.
+     *
+     * @param consumer the consumer to remove
+     * @throws JMSException if removal fails
+     */
+    protected void removeConsumer(JmsMessageConsumer consumer)
+            throws JMSException {
+<span class="nc" id="L1270">        long consumerId = consumer.getConsumerId();</span>
+        try {
+<span class="nc" id="L1272">            _session.closeConsumer(consumerId);</span>
+        } finally {
+<span class="nc" id="L1274">            _consumers.remove(new Long(consumerId));</span>
+        }
+<span class="nc" id="L1276">    }</span>
+
+    /**
+     * Add a producer to the list of producers managed by this session.
+     *
+     * @param producer the producer to add
+     */
+    protected void addProducer(JmsMessageProducer producer) {
+<span class="nc" id="L1284">        _producers.add(producer);</span>
+<span class="nc" id="L1285">    }</span>
+
+    /**
+     * Remove the producer from the list of managed producers.
+     *
+     * @param producer the producer to remove
+     */
+    protected void removeProducer(JmsMessageProducer producer) {
+<span class="nc" id="L1293">        _producers.remove(producer);</span>
+<span class="nc" id="L1294">    }</span>
+
+    /**
+     * Check if the session is closed.
+     *
+     * @return &lt;code&gt;true&lt;/code&gt; if the session is closed
+     */
+    protected final boolean isClosed() {
+<span class="nc" id="L1302">        return _closed;</span>
+    }
+
+    /**
+     * Add a message to the message cache. This message will be processed when
+     * the run() method is called.
+     *
+     * @param message the message to add.
+     */
+    protected void addMessage(Message message) {
+<span class="nc" id="L1312">        _messageCache.add(message);</span>
+<span class="nc" id="L1313">    }</span>
+
+    /**
+     * Verifies that the session isn't closed.
+     *
+     * @throws IllegalStateException if the session is closed
+     */
+    protected void ensureOpen() throws IllegalStateException {
+<span class="nc bnc" id="L1321" title="All 2 branches missed.">        if (isClosed()) {</span>
+<span class="nc" id="L1322">            throw new IllegalStateException(</span>
+                    &quot;Cannot perform operation - session has been closed&quot;);
+        }
+<span class="nc" id="L1325">    }</span>
+
+    /**
+     * Verifies that the session is transactional.
+     *
+     * @throws IllegalStateException if the session isn't transactional
+     */
+    private void ensureTransactional() throws IllegalStateException {
+<span class="nc bnc" id="L1333" title="All 2 branches missed.">        if (_ackMode != SESSION_TRANSACTED) {</span>
+<span class="nc" id="L1334">            throw new IllegalStateException(</span>
+                    &quot;Cannot perform operatiorn - session is not transactional&quot;);
+        }
+<span class="nc" id="L1337">    }</span>
+
+    /**
+     * Notifies any blocking synchronous consumer.
+     */
+    private void notifyConsumer() {
+<span class="nc" id="L1343">        synchronized (_receiveLock) {</span>
+<span class="nc" id="L1344">            _receiveLock.notifyAll();</span>
+<span class="nc" id="L1345">        }</span>
+<span class="nc" id="L1346">    }</span>
+
+    /**
+     * Convert a message to its corresponding OpenJMS implementation.
+     *
+     * @param message the message to convert
+     * @return the OpenJMS implementation of the message
+     * @throws JMSException for any error
+     */
+    private Message convert(Message message) throws JMSException {
+<span class="nc" id="L1356">        MessageConverter converter =</span>
+<span class="nc" id="L1357">                MessageConverterFactory.create(message);</span>
+<span class="nc" id="L1358">        return converter.convert(message);</span>
+    }
+
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

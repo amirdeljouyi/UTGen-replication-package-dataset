@@ -1,0 +1,696 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MessageHandles.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.persistence</a> &gt; <span class="el_source">MessageHandles.java</span></div><h1>MessageHandles.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2000-2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ */
+package org.exolab.jms.persistence;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.Vector;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import org.exolab.jms.client.JmsDestination;
+import org.exolab.jms.client.JmsTopic;
+import org.exolab.jms.messagemgr.PersistentMessageHandle;
+import org.exolab.jms.messagemgr.MessageHandle;
+
+
+/**
+ * This class provides persistency for MessageHandle objects
+ * in an RDBMS database
+ *
+ * @version     $Revision: 1.5 $ $Date: 2007/04/16 02:50:21 $
+ * @author      &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ */
+class MessageHandles {
+
+    /**
+     * The destination manager.
+     */
+    private final Destinations _destinations;
+
+    /**
+     * The consumer manager.
+     */
+    private final Consumers _consumers;
+
+    /**
+     * prepared statement for inserting a message handle
+     */
+    private static final String INSERT_MSG_HANDLE_STMT =
+            &quot;insert into message_handles (messageId, destinationId, consumerId, &quot;
+            + &quot;priority, acceptedTime, sequenceNumber, expiryTime, delivered) &quot;
+            + &quot;values (?,?,?,?,?,?,?,?)&quot;;
+
+    /**
+     * prepared statements for deleting message handle
+     */
+    private static final String DELETE_MSG_HANDLE_STMT1 =
+        &quot;delete from message_handles where messageId=? and consumerId=?&quot;;
+    private static final String DELETE_MSG_HANDLE_STMT2 =
+        &quot;delete from message_handles where messageId=? and destinationId=? &quot; +
+        &quot;and consumerId=?&quot;;
+
+    /**
+     * Delete all message handles with the specified message id
+     */
+    private static final String DELETE_MSG_HANDLES_STMT =
+        &quot;delete from message_handles where messageId=?&quot;;
+
+    /**
+     * Update a row in the message handles table
+     */
+    private static final String UPDATE_MSG_HANDLE_STMT =
+        &quot;update message_handles set delivered=? where messageId=? and &quot; +
+        &quot;destinationId=? and consumerId=?&quot;;
+
+    /**
+     * Delete all message handles for a destination
+     */
+    private static final String DELETE_MSG_HANDLES_FOR_DEST =
+        &quot;delete from message_handles where destinationId=?&quot;;
+
+    /**
+     * Retrieve all message handles for a particular consumer
+     */
+    private static final String GET_MSG_HANDLES_FOR_DEST =
+        &quot;select messageId, destinationId, consumerId, priority, acceptedTime, &quot;
+        + &quot;sequenceNumber, expiryTime, delivered from message_handles &quot;
+        + &quot;where consumerId=? order by acceptedTime asc&quot;;
+
+    /**
+     * Retrieve a range of message handles between the specified times
+     */
+    private static final String GET_MESSAGE_HANDLES_IN_RANGE =
+        &quot;select distinct messageId from message_handles where &quot; +
+        &quot; acceptedTime &gt;= ? and acceptedTime &lt;=?&quot;;
+
+    /**
+     * Retrieve a handle with the specified id
+     */
+    private static final String GET_MESSAGE_HANDLE_WITH_ID =
+        &quot;select distinct messageId from message_handles where messageId=?&quot;;
+
+    /**
+     * Return the number of messages and a specified destination and cousmer
+     */
+    private static final String GET_MSG_HANDLE_COUNT_FOR_DEST_AND_CONSUMER =
+        &quot;select count(messageId) from message_handles where destinationId=? &quot; +
+        &quot;and consumerId=?&quot;;
+
+    /**
+     * Return the number of messages and a specified consumer
+     */
+    private static final String GET_MSG_HANDLE_COUNT_FOR_CONSUMER =
+        &quot;select count(messageId) from message_handles where consumerId=?&quot;;
+
+    /**
+     * Delete all expired messages
+     */
+    private static final String DELETE_EXPIRED_MESSAGES =
+        &quot;delete from message_handles where consumerId=? and expiryTime != 0 &quot; +
+        &quot;and expiryTime&lt;?&quot;;
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L159">    private static final Log _log = LogFactory.getLog(MessageHandles.class);</span>
+
+
+    /**
+     * Construct a new &lt;code&gt;MessageHandles&lt;/code&gt;.
+     *
+     * @param destinations the destinations manager
+     * @param consumers the consumers manager
+     */
+<span class="nc" id="L168">    public MessageHandles(Destinations destinations, Consumers consumers) {</span>
+<span class="nc" id="L169">        _destinations = destinations;</span>
+<span class="nc" id="L170">        _consumers = consumers;</span>
+<span class="nc" id="L171">    }</span>
+
+    /**
+     * Add the specified message handle to the database.
+     *
+     * @param connection - the connection to use
+     * @param handle - message handle to add
+     * @throws PersistenceException - if add does not complete
+     */
+    public void addMessageHandle(Connection connection,
+                                 MessageHandle handle)
+        throws PersistenceException {
+
+<span class="nc bnc" id="L184" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L185">            _log.debug(&quot;addMessageHandle(handle=[consumer=&quot;</span>
+<span class="nc" id="L186">                       + handle.getConsumerPersistentId()</span>
+<span class="nc" id="L187">                       + &quot;, destination=&quot; + handle.getDestination() </span>
+<span class="nc" id="L188">                       + &quot;, id=&quot; + handle.getMessageId() + &quot;])&quot;);</span>
+        }
+
+<span class="nc" id="L191">        PreparedStatement insert = null;</span>
+        try {
+            // map the destination name to an actual identity
+<span class="nc" id="L194">            long destinationId = _destinations.getId(</span>
+<span class="nc" id="L195">                handle.getDestination().getName());</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">            if (destinationId == 0) {</span>
+<span class="nc" id="L197">                throw new PersistenceException(</span>
+<span class="nc" id="L198">                    &quot;Cannot add message handle id=&quot; + handle.getMessageId() +</span>
+<span class="nc" id="L199">                    &quot; for destination=&quot; + handle.getDestination().getName() +</span>
+<span class="nc" id="L200">                    &quot; and consumer=&quot; + handle.getConsumerPersistentId() +</span>
+                    &quot; since the destination cannot be mapped to an id&quot;);
+            }
+
+            // map the consumer name ot an identity
+<span class="nc" id="L205">            long consumerId = _consumers.getConsumerId(</span>
+<span class="nc" id="L206">                handle.getConsumerPersistentId());</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">            if (consumerId == 0) {</span>
+<span class="nc" id="L208">                throw new PersistenceException(</span>
+<span class="nc" id="L209">                    &quot;Cannot add message handle id=&quot; + handle.getMessageId() +</span>
+<span class="nc" id="L210">                    &quot; for destination=&quot; + handle.getDestination().getName() +</span>
+<span class="nc" id="L211">                    &quot; and consumer=&quot; + handle.getConsumerPersistentId() +</span>
+                    &quot; since the consumer cannot be mapped to an id&quot;);
+            }
+
+<span class="nc" id="L215">            insert = connection.prepareStatement(INSERT_MSG_HANDLE_STMT);</span>
+<span class="nc" id="L216">            insert.setString(1, handle.getMessageId());</span>
+<span class="nc" id="L217">            insert.setLong(2, destinationId);</span>
+<span class="nc" id="L218">            insert.setLong(3, consumerId);</span>
+<span class="nc" id="L219">            insert.setInt(4, handle.getPriority());</span>
+<span class="nc" id="L220">            insert.setLong(5, handle.getAcceptedTime());</span>
+<span class="nc" id="L221">            insert.setLong(6, handle.getSequenceNumber());</span>
+<span class="nc" id="L222">            insert.setLong(7, handle.getExpiryTime());</span>
+<span class="nc bnc" id="L223" title="All 2 branches missed.">            insert.setInt(8, (handle.getDelivered()) ? 1 : 0);</span>
+
+            // execute the insert
+<span class="nc bnc" id="L226" title="All 2 branches missed.">            if (insert.executeUpdate() != 1) {</span>
+<span class="nc" id="L227">                _log.error(</span>
+                    &quot;Failed to execute addMessageHandle for handle=&quot;
+<span class="nc" id="L229">                    + handle.getMessageId() + &quot;, destination Id=&quot;</span>
+                    + destinationId);
+            }
+<span class="nc" id="L232">        } catch (SQLException exception) {</span>
+<span class="nc" id="L233">            throw new PersistenceException(&quot;Failed to add message handle=&quot; +</span>
+                handle, exception);
+        } finally {
+<span class="nc" id="L236">            SQLHelper.close(insert);</span>
+        }
+<span class="nc" id="L238">    }</span>
+
+    /**
+     * Remove the specified message handle from the database. Once the handle
+     * has been removed check to see whether there are any more message handles
+     * referencing the same message. If there are not then remove the
+     * corresponding message from the messages tables.
+     *
+     * @param connection - the connection to use
+     * @param  handle - the handle to remove
+     * @throws  PersistenceException - sql releated exception
+     */
+    public void removeMessageHandle(Connection connection,
+                                    MessageHandle handle)
+        throws PersistenceException {
+
+<span class="nc bnc" id="L254" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L255">            _log.debug(&quot;removeMessageHandle(handle=[consumer=&quot;</span>
+<span class="nc" id="L256">                       + handle.getConsumerPersistentId()</span>
+<span class="nc" id="L257">                       + &quot;, destination=&quot; + handle.getDestination() </span>
+<span class="nc" id="L258">                       + &quot;, id=&quot; + handle.getMessageId() + &quot;])&quot;);</span>
+        }
+
+<span class="nc" id="L261">        PreparedStatement delete = null;</span>
+<span class="nc" id="L262">        PreparedStatement select = null;</span>
+<span class="nc" id="L263">        ResultSet rs = null;</span>
+
+        try {
+            // first check to see that the consumer exists and only
+            // proceed if it non-zero.
+<span class="nc" id="L268">            long consumerId = _consumers.getConsumerId(</span>
+<span class="nc" id="L269">                handle.getConsumerPersistentId());</span>
+<span class="nc bnc" id="L270" title="All 2 branches missed.">            if (consumerId != 0) {</span>
+                // get the message id
+<span class="nc" id="L272">                String id = handle.getMessageId();</span>
+
+                // map the destination name to an actual identity. If it is
+                // null then the destination does not currently exist but we
+                // may need to delete orphaned handles
+<span class="nc" id="L277">                long destinationId = _destinations.getId(</span>
+<span class="nc" id="L278">                    handle.getDestination().getName());</span>
+
+<span class="nc bnc" id="L280" title="All 2 branches missed.">                if (destinationId == 0) {</span>
+<span class="nc" id="L281">                    delete = connection.prepareStatement(</span>
+                        DELETE_MSG_HANDLE_STMT1);
+<span class="nc" id="L283">                    delete.setString(1, id);</span>
+<span class="nc" id="L284">                    delete.setLong(2, consumerId);</span>
+
+                } else {
+<span class="nc" id="L287">                    delete = connection.prepareStatement(</span>
+                        DELETE_MSG_HANDLE_STMT2);
+<span class="nc" id="L289">                    delete.setString(1, id);</span>
+<span class="nc" id="L290">                    delete.setLong(2, destinationId);</span>
+<span class="nc" id="L291">                    delete.setLong(3, consumerId);</span>
+                }
+
+                // execute the delete
+<span class="nc bnc" id="L295" title="All 4 branches missed.">                if (delete.executeUpdate() != 1 &amp;&amp; !handle.hasExpired()) {</span>
+                    // only log if the message hasn't been garbage
+                    // collected
+<span class="nc" id="L298">                    _log.error(&quot;Failed to execute removeMessageHandle for &quot;</span>
+                        + &quot;handle=&quot; + id + &quot; destination id=&quot;
+                        + destinationId + &quot; consumer id=&quot; + consumerId);
+                }
+            }
+<span class="nc" id="L303">        } catch (SQLException exception) {</span>
+<span class="nc" id="L304">            throw new PersistenceException(&quot;Failed to remove message handle=&quot; +</span>
+                handle, exception);
+        } finally {
+<span class="nc" id="L307">            SQLHelper.close(rs);</span>
+<span class="nc" id="L308">            SQLHelper.close(delete);</span>
+<span class="nc" id="L309">            SQLHelper.close(select);</span>
+        }
+<span class="nc" id="L311">    }</span>
+
+    /**
+     * Update the specified message handle from the database
+     *
+     * @param connection - the connection to use
+     * @param  handle - the handle to update
+     * @throws  PersistenceException - sql releated exception
+     */
+    public void updateMessageHandle(Connection connection,
+                                    MessageHandle handle)
+        throws PersistenceException {
+<span class="nc" id="L323">        PreparedStatement update = null;</span>
+
+<span class="nc bnc" id="L325" title="All 2 branches missed.">        if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L326">            _log.debug(&quot;updateMessageHandle(handle=[consumer=&quot;</span>
+<span class="nc" id="L327">                       + handle.getConsumerPersistentId()</span>
+<span class="nc" id="L328">                       + &quot;, destination=&quot; + handle.getDestination() </span>
+<span class="nc" id="L329">                       + &quot;, id=&quot; + handle.getMessageId() + &quot;])&quot;);</span>
+        }
+
+        try {
+            // get the message id
+<span class="nc" id="L334">            String id = handle.getMessageId();</span>
+
+            // map the destination name to an actual identity
+<span class="nc" id="L337">            long destinationId = _destinations.getId(</span>
+<span class="nc" id="L338">                handle.getDestination().getName());</span>
+<span class="nc bnc" id="L339" title="All 2 branches missed.">            if (destinationId == 0) {</span>
+<span class="nc" id="L340">                throw new PersistenceException(</span>
+                    &quot;Cannot update message handle id=&quot; +
+<span class="nc" id="L342">                    handle.getMessageId() + &quot; for destination=&quot; +</span>
+<span class="nc" id="L343">                    handle.getDestination().getName() + &quot; and consumer=&quot; +</span>
+<span class="nc" id="L344">                    handle.getConsumerPersistentId() +</span>
+                    &quot; since the destination cannot be mapped to an id&quot;);
+            }
+
+            // map the consumer name to an identity
+<span class="nc" id="L349">            long consumerId = _consumers.getConsumerId(</span>
+<span class="nc" id="L350">                handle.getConsumerPersistentId());</span>
+<span class="nc bnc" id="L351" title="All 2 branches missed.">            if (consumerId == 0) {</span>
+<span class="nc" id="L352">                throw new PersistenceException(</span>
+                    &quot;Cannot update message handle id=&quot; +
+<span class="nc" id="L354">                    handle.getMessageId() + &quot; for destination=&quot; +</span>
+<span class="nc" id="L355">                    handle.getDestination().getName() + &quot; and consumer=&quot; +</span>
+<span class="nc" id="L356">                    handle.getConsumerPersistentId() +</span>
+                    &quot; since the consumer cannot be mapped to an id&quot;);
+            }
+
+<span class="nc" id="L360">            update = connection.prepareStatement(UPDATE_MSG_HANDLE_STMT);</span>
+<span class="nc bnc" id="L361" title="All 2 branches missed.">            update.setInt(1, handle.getDelivered() ? 1 : 0);</span>
+<span class="nc" id="L362">            update.setString(2, id);</span>
+<span class="nc" id="L363">            update.setLong(3, destinationId);</span>
+<span class="nc" id="L364">            update.setLong(4, consumerId);</span>
+
+            // execute the delete
+<span class="nc bnc" id="L367" title="All 4 branches missed.">            if (update.executeUpdate() != 1 &amp;&amp; !handle.hasExpired()) {</span>
+                // only log if the message hasn't been garbage collected
+<span class="nc" id="L369">                _log.error(</span>
+                    &quot;Failed to execute updateMessageHandle for handle=&quot; +
+                    id + &quot;, destination id=&quot; + destinationId +
+                    &quot;, consumer id=&quot; + consumerId);
+            }
+<span class="nc" id="L374">        } catch (SQLException exception) {</span>
+<span class="nc" id="L375">            throw new PersistenceException(&quot;Failed to update message handle=&quot; +</span>
+                handle, exception);
+        } finally {
+<span class="nc" id="L378">            SQLHelper.close(update);</span>
+        }
+<span class="nc" id="L380">    }</span>
+
+    /**
+     * Remove all the message handles associated with the specified destination
+     *
+     * @param connection - the connection to use
+     * @param  destination the name of the destination
+     * @throws  PersistenceException - sql releated exception
+     */
+    public void removeMessageHandles(Connection connection, String destination)
+        throws PersistenceException {
+
+<span class="nc" id="L392">        PreparedStatement delete = null;</span>
+
+        try {
+            // map the destination name to an actual identity
+<span class="nc" id="L396">            long destinationId = _destinations.getId(destination);</span>
+<span class="nc bnc" id="L397" title="All 2 branches missed.">            if (destinationId == 0) {</span>
+<span class="nc" id="L398">                throw new PersistenceException(</span>
+                    &quot;Cannot remove message handles for destination=&quot; +
+                    destination + &quot; since the destination cannot be &quot; +
+                    &quot;mapped to an id&quot;);
+            }
+
+<span class="nc" id="L404">            delete = connection.prepareStatement(DELETE_MSG_HANDLES_FOR_DEST);</span>
+<span class="nc" id="L405">            delete.setLong(1, destinationId);</span>
+<span class="nc" id="L406">            delete.executeUpdate();</span>
+<span class="nc" id="L407">        } catch (SQLException exception) {</span>
+<span class="nc" id="L408">            throw new PersistenceException(</span>
+                &quot;Failed to remove message handles for destination=&quot; +
+                destination, exception);
+        } finally {
+<span class="nc" id="L412">            SQLHelper.close(delete);</span>
+        }
+<span class="nc" id="L414">    }</span>
+
+    /**
+     * Remove all the message handles for the specified messageid
+     *
+     * @param connection - the connection to use
+     * @param messageId the message identity
+     * @throws  PersistenceException - sql releated exception
+     */
+    public void removeMessageHandles(Connection connection, long messageId)
+        throws PersistenceException {
+
+<span class="nc" id="L426">        PreparedStatement delete = null;</span>
+
+        try {
+<span class="nc" id="L429">            delete = connection.prepareStatement(DELETE_MSG_HANDLES_STMT);</span>
+<span class="nc" id="L430">            delete.setLong(1, messageId);</span>
+<span class="nc" id="L431">            delete.executeUpdate();</span>
+<span class="nc" id="L432">        } catch (SQLException exception) {</span>
+<span class="nc" id="L433">            throw new PersistenceException(</span>
+                &quot;Failed to remove message handles for message id=&quot; + messageId,
+                exception);
+        } finally {
+<span class="nc" id="L437">            SQLHelper.close(delete);</span>
+        }
+<span class="nc" id="L439">    }</span>
+
+    /**
+     * Retrieve the message handle for the specified desitation and consumer
+     * name
+     *
+     * @param connection - the connection to use
+     * @param destination - destination name
+     * @param name - consumer name
+     * @return Vector - collection of MessageHandle objects
+     * @throws  PersistenceException - sql releated exception
+     */
+    public Vector getMessageHandles(Connection connection, String destination,
+                                    String name)
+        throws PersistenceException {
+
+<span class="nc" id="L455">        Vector result = new Vector();</span>
+<span class="nc" id="L456">        PreparedStatement select = null;</span>
+<span class="nc" id="L457">        ResultSet set = null;</span>
+
+        // if the consumer and/or destination cannot be mapped then
+        // return an empty vector
+<span class="nc" id="L461">        long destinationId = _destinations.getId(destination);</span>
+<span class="nc" id="L462">        long consumerId = _consumers.getConsumerId(name);</span>
+<span class="nc bnc" id="L463" title="All 4 branches missed.">        if ((consumerId == 0) ||</span>
+            (destinationId == 0)) {
+<span class="nc" id="L465">            return result;</span>
+        }
+
+        // all preprequisites have been met so continue processing the
+        // request.
+        try {
+<span class="nc" id="L471">            select = connection.prepareStatement(GET_MSG_HANDLES_FOR_DEST);</span>
+<span class="nc" id="L472">            select.setLong(1, consumerId);</span>
+
+            // iterate through the result set and construct the corresponding
+            // MessageHandles
+<span class="nc" id="L476">            set = select.executeQuery();</span>
+<span class="nc bnc" id="L477" title="All 2 branches missed.">            while (set.next()) {</span>
+                // Attempt to retrieve the corresponding destination
+<span class="nc" id="L479">                JmsDestination dest = _destinations.get(set.getLong(2));</span>
+<span class="nc bnc" id="L480" title="All 2 branches missed.">                if (dest == null) {</span>
+<span class="nc" id="L481">                    throw new PersistenceException(</span>
+                        &quot;Cannot create persistent handle, because &quot; +
+<span class="nc" id="L483">                        &quot;destination mapping failed for &quot; + set.getLong(2));</span>
+                }
+
+<span class="nc" id="L486">                String consumer = _consumers.getConsumerName(set.getLong(3));</span>
+<span class="nc bnc" id="L487" title="All 2 branches missed.">                if (name == null) {</span>
+<span class="nc" id="L488">                    throw new PersistenceException(</span>
+                        &quot;Cannot create persistent handle because &quot; +
+<span class="nc" id="L490">                        &quot;consumer mapping failed for &quot; + set.getLong(3));</span>
+                }
+
+<span class="nc" id="L493">                String messageId = set.getString(1);</span>
+<span class="nc" id="L494">                int priority = set.getInt(4);</span>
+<span class="nc" id="L495">                long acceptedTime = set.getLong(5);</span>
+<span class="nc" id="L496">                long sequenceNumber = set.getLong(6);</span>
+<span class="nc" id="L497">                long expiryTime = set.getLong(7);</span>
+<span class="nc bnc" id="L498" title="All 2 branches missed.">                boolean delivered = (set.getInt(8) == 0) ? false : true;</span>
+<span class="nc" id="L499">                MessageHandle handle = new PersistentMessageHandle(</span>
+                        messageId, priority, acceptedTime, sequenceNumber,
+                        expiryTime, dest, consumer);
+<span class="nc" id="L502">                handle.setDelivered(delivered);</span>
+<span class="nc" id="L503">                result.add(handle);</span>
+<span class="nc" id="L504">            }</span>
+<span class="nc" id="L505">        } catch (SQLException exception) {</span>
+<span class="nc" id="L506">            throw new PersistenceException(</span>
+                &quot;Failed to get message handles for destination=&quot; +
+                destination + &quot;, consumer=&quot; + name, exception);
+        } finally {
+<span class="nc" id="L510">            SQLHelper.close(set);</span>
+<span class="nc" id="L511">            SQLHelper.close(select);</span>
+        }
+
+<span class="nc" id="L514">        return result;</span>
+    }
+
+    /**
+     * Retrieve a distint list of message ids, in this table, between the min
+     * and max times inclusive.
+     *
+     * @param connection - the connection to use
+     * @param min - the minimum time in milliseconds
+     * @param max - the maximum time in milliseconds
+     * @return Vector - collection of String objects
+     * @throws  PersistenceException - sql related exception
+     */
+    public Vector getMessageIds(Connection connection, long min, long max)
+        throws PersistenceException {
+
+<span class="nc" id="L530">        Vector result = new Vector();</span>
+<span class="nc" id="L531">        PreparedStatement select = null;</span>
+<span class="nc" id="L532">        ResultSet set = null;</span>
+
+        try {
+<span class="nc" id="L535">            select = connection.prepareStatement(GET_MESSAGE_HANDLES_IN_RANGE);</span>
+<span class="nc" id="L536">            select.setLong(1, min);</span>
+<span class="nc" id="L537">            select.setLong(2, max);</span>
+
+            // iterate through the result set and construct the corresponding
+            // MessageHandles
+<span class="nc" id="L541">            set = select.executeQuery();</span>
+<span class="nc bnc" id="L542" title="All 2 branches missed.">            while (set.next()) {</span>
+<span class="nc" id="L543">                result.add(set.getString(1));</span>
+            }
+
+           
+<span class="nc" id="L547">        } catch (SQLException exception) {</span>
+<span class="nc" id="L548">            throw new PersistenceException(&quot;Failed to retrieve message ids&quot;,</span>
+                exception);
+        } finally {
+<span class="nc" id="L551">            SQLHelper.close(set);</span>
+<span class="nc" id="L552">            SQLHelper.close(select);</span>
+        }
+
+<span class="nc" id="L555">        return result;</span>
+    }
+
+    /**
+     * Check if a message with the specified messageId exists in the
+     * table
+     *
+     * @param connection - the connection to use
+     * @param messageId the  message Identifier
+     * @return Vector - collection of MessageHandle objects
+     * @throws  PersistenceException - sql releated exception
+     */
+    public boolean messageExists(Connection connection, long messageId)
+        throws PersistenceException {
+
+<span class="nc" id="L570">        boolean result = false;</span>
+<span class="nc" id="L571">        PreparedStatement select = null;</span>
+<span class="nc" id="L572">        ResultSet set = null;</span>
+
+        try {
+<span class="nc" id="L575">            select = connection.prepareStatement(GET_MESSAGE_HANDLE_WITH_ID);</span>
+<span class="nc" id="L576">            select.setLong(1, messageId);</span>
+<span class="nc" id="L577">            set = select.executeQuery();</span>
+
+<span class="nc bnc" id="L579" title="All 2 branches missed.">            if (set.next()) {</span>
+<span class="nc" id="L580">                result = true;</span>
+            }
+            
+<span class="nc" id="L583">        } catch (SQLException exception) {</span>
+<span class="nc" id="L584">            throw new PersistenceException(</span>
+                &quot;Failed to determine if message exists, id=&quot; + messageId,
+                exception);
+        } finally {
+<span class="nc" id="L588">            SQLHelper.close(set);</span>
+<span class="nc" id="L589">            SQLHelper.close(select);</span>
+        }
+<span class="nc" id="L591">        return result;</span>
+    }
+
+    /**
+     * Returns the number of messages for the specified destination and
+     * consumer
+     *
+     * @param connection - the connection to use
+     * @param destination - destination name
+     * @param name - consumer name
+     * @return Vector - collection of MessageHandle objects
+     * @throws  PersistenceException - sql releated exception
+     */
+    public int getMessageCount(Connection connection, String destination,
+                               String name)
+        throws PersistenceException {
+
+<span class="nc" id="L608">        int result = -1;</span>
+<span class="nc" id="L609">        boolean destinationIsWildCard = false;</span>
+
+        // map the destination name to an actual identity
+<span class="nc" id="L612">        long destinationId = _destinations.getId(destination);</span>
+<span class="nc bnc" id="L613" title="All 2 branches missed.">        if (destinationId == 0) {</span>
+<span class="nc bnc" id="L614" title="All 2 branches missed.">            if (JmsTopic.isWildCard(destination)) {</span>
+<span class="nc" id="L615">                destinationIsWildCard = true;</span>
+            } else {
+<span class="nc" id="L617">                throw new PersistenceException(</span>
+                    &quot;Cannot get message handle count for destination=&quot; +
+                    destination + &quot; and consumer=&quot; + name +
+                    &quot; since the destination cannot be mapped to an id&quot;);
+            }
+        }
+
+        // map the consumer name to an identity
+<span class="nc" id="L625">        long consumerId = _consumers.getConsumerId(name);</span>
+<span class="nc bnc" id="L626" title="All 2 branches missed.">        if (consumerId == 0) {</span>
+<span class="nc" id="L627">            throw new PersistenceException(</span>
+                &quot;Cannot get message handle count for destination=&quot; +
+                destination + &quot; and consumer=&quot; + name +
+                &quot; since the consumer cannot be mapped to an id&quot;);
+        }
+
+<span class="nc" id="L633">        PreparedStatement select = null;</span>
+<span class="nc" id="L634">        ResultSet set = null;</span>
+
+        try {
+<span class="nc bnc" id="L637" title="All 2 branches missed.">            if (destinationIsWildCard) {</span>
+<span class="nc" id="L638">                select = connection.prepareStatement(</span>
+                    GET_MSG_HANDLE_COUNT_FOR_DEST_AND_CONSUMER);
+<span class="nc" id="L640">                select.setLong(1, destinationId);</span>
+<span class="nc" id="L641">                select.setLong(2, consumerId);</span>
+            } else {
+<span class="nc" id="L643">                select = connection.prepareStatement(</span>
+                    GET_MSG_HANDLE_COUNT_FOR_CONSUMER);
+<span class="nc" id="L645">                select.setLong(1, consumerId);</span>
+            }
+
+<span class="nc" id="L648">            set = select.executeQuery();</span>
+<span class="nc bnc" id="L649" title="All 2 branches missed.">            if (set.next()) {</span>
+<span class="nc" id="L650">                result = set.getInt(1);</span>
+            }
+<span class="nc" id="L652">        } catch (SQLException exception) {</span>
+<span class="nc" id="L653">            throw new PersistenceException(</span>
+                &quot;Failed to count messages for destination=&quot; + destination +
+                &quot;, consumer=&quot; + name, exception);
+        } finally {
+<span class="nc" id="L657">            SQLHelper.close(set);</span>
+<span class="nc" id="L658">            SQLHelper.close(select);</span>
+        }
+
+<span class="nc" id="L661">        return result;</span>
+    }
+
+    /**
+     * Remove all expired handles for the specified consumer
+     *
+     * @param connection - the connection to use
+     * @param consumer - consumer name
+     * @throws  PersistenceException - sql releated exception
+     */
+    public void removeExpiredMessageHandles(Connection connection,
+                                            String consumer)
+        throws PersistenceException {
+
+<span class="nc" id="L675">        PreparedStatement delete = null;</span>
+
+        // map the consumer name ot an identity
+<span class="nc" id="L678">        long consumerId = _consumers.getConsumerId(consumer);</span>
+<span class="nc bnc" id="L679" title="All 2 branches missed.">        if (consumerId != 0) {</span>
+            try {
+<span class="nc" id="L681">                delete = connection.prepareStatement(DELETE_EXPIRED_MESSAGES);</span>
+<span class="nc" id="L682">                delete.setLong(1, consumerId);</span>
+<span class="nc" id="L683">                delete.setLong(2, System.currentTimeMillis());</span>
+<span class="nc" id="L684">                delete.executeUpdate();</span>
+<span class="nc" id="L685">            } catch (SQLException exception) {</span>
+<span class="nc" id="L686">                throw new PersistenceException(</span>
+                    &quot;Failed to remove expired message handles&quot;,
+                    exception);
+            } finally {
+<span class="nc" id="L690">                SQLHelper.close(delete);</span>
+            }
+        }
+<span class="nc" id="L693">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

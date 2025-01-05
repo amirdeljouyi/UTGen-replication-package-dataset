@@ -1,0 +1,392 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EditWhereColsPanel.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.session.properties</a> &gt; <span class="el_source">EditWhereColsPanel.java</span></div><h1>EditWhereColsPanel.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.session.properties;
+/*
+ *
+ * Adapted from WhereClausePanel.java by Maury Hammel.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+import java.awt.BorderLayout;
+import java.awt.Dimension;
+import java.awt.GridLayout;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.SortedSet;
+import java.util.TreeSet;
+
+import javax.swing.JButton;
+import javax.swing.JLabel;
+import javax.swing.JList;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.ListModel;
+
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.fw.sql.ITableInfo;
+import net.sourceforge.squirrel_sql.fw.sql.PrimaryKeyInfo;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+
+/**
+ * This panel allows the user to select specific columns from a specific table for use in
+ * the WHERE clause when editing a cell in a table.  This is useful if the table has a large number
+ * of columns and the WHERE clause generated using all the columns exceeds the DBMS limit.
+ */
+@SuppressWarnings(&quot;serial&quot;)
+public class EditWhereColsPanel extends JPanel
+{
+<span class="nc" id="L58">	private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L59">		StringManagerFactory.getStringManager(EditWhereColsPanel.class);</span>
+
+    /** Logger for this class. */
+<span class="nc" id="L62">    private static final ILogger s_log =</span>
+<span class="nc" id="L63">        LoggerController.createLogger(EditWhereColsPanel.class);    </span>
+
+	/** The name of the database table the Where clause applies to. */
+	private String _tableName;
+	
+	/** The name of the table including the URL **/
+	private String _unambiguousTableName;
+	
+	/** The list of all possible columns in the table **/
+	private SortedSet&lt;String&gt; _columnList;
+	
+	/** The list of &quot;to use&quot; column names as seen by the user **/
+	private JList useColsList;
+	
+	/** The list of &quot;to NOT use&quot; column names as seen by the user **/
+	private JList notUseColsList;
+	
+	/** The list of column names to use as calculated when window is created **/
+	private Object[] initalUseColsArray;
+	
+	/** The list of column names to NOT use as calculated when window is created **/
+	private Object[] initalNotUseColsArray;
+    
+<span class="nc" id="L86">	private ISession _session = null;</span>
+    
+<span class="nc" id="L88">    private PrimaryKeyInfo[] primaryKeyInfos = null; </span>
+    
+<span class="nc" id="L90">    EditWhereCols _editWhereCols = new EditWhereCols();</span>
+    
+	/**
+	 * ?? this should be changed to use the I18N file mechanism.
+	 */
+	interface EditWhereColsPanelI18N {
+		// i18n[editWhereColsPanel.limitColsInCell=Limit Columns in Cell Edit]
+<span class="nc" id="L97">		String TITLE = s_stringMgr.getString(&quot;editWhereColsPanel.limitColsInCell&quot;);</span>
+		// i18n[editWhereColsPanel.limitColsInCellHint=Limit columns used in WHERE clause when editing table]
+<span class="nc" id="L99">		String HINT = s_stringMgr.getString(&quot;editWhereColsPanel.limitColsInCellHint&quot;);</span>
+        // i18n[editWhereColsPanel.usePKLabel=Use PK]
+<span class="nc" id="L101">        String USE_PK = s_stringMgr.getString(&quot;editWhereColsPanel.usePKLabel&quot;);</span>
+
+	}
+	
+	/**
+	 * Create a new instance of a WhereClausePanel.
+	 *
+	 * @param	columnList	A list of column names for the database table.
+	 * @param	tableName	The name of the database table that the filter
+	 * 						information will apply to.
+	 * @param unambiguousTableName The name of the table including the URL 
+	 * 				to the specific DBMS
+	 *
+	 * @throws	IllegalArgumentException
+	 *			The exception thrown if invalid arguments are passed.
+	 */
+	public EditWhereColsPanel(ISession session,
+                              ITableInfo ti,                   
+                              SortedSet&lt;String&gt; columnList, 
+                              String unambiguousTableName)
+		throws IllegalArgumentException
+	{
+<span class="nc" id="L123">		super();</span>
+<span class="nc" id="L124">		_session = session;</span>
+<span class="nc" id="L125">        _editWhereCols.setApplication(session.getApplication());</span>
+<span class="nc" id="L126">        getPrimaryKey(ti);</span>
+		// save the input for use later
+<span class="nc" id="L128">		_columnList = columnList;</span>
+<span class="nc" id="L129">		_tableName = ti.getQualifiedName();</span>
+<span class="nc" id="L130">		_unambiguousTableName = unambiguousTableName;</span>
+		
+		// look up the table in the EditWhereCols list
+<span class="nc" id="L133">		HashMap&lt;String, String&gt; colsTable = EditWhereCols.get(unambiguousTableName);</span>
+		
+<span class="nc bnc" id="L135" title="All 2 branches missed.">		if (colsTable == null) {</span>
+			// use all of the columns
+<span class="nc" id="L137">			initalUseColsArray = _columnList.toArray();</span>
+<span class="nc" id="L138">			initalNotUseColsArray = new Object[0];</span>
+		}
+		else {
+			// use just the columns listed in the table, and set the not-used cols to the ones
+			// that are not mentioned in the table
+<span class="nc" id="L143">			SortedSet&lt;Object&gt; initialUseColsSet = new TreeSet&lt;Object&gt;( );</span>
+<span class="nc" id="L144">			SortedSet&lt;Object&gt; initialNotUseColsList = new TreeSet&lt;Object&gt;();</span>
+			
+<span class="nc" id="L146">			Iterator&lt;String&gt; it = _columnList.iterator();</span>
+<span class="nc bnc" id="L147" title="All 2 branches missed.">			while (it.hasNext()) {</span>
+<span class="nc" id="L148">				Object colName = it.next();</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">				if (colsTable.get(colName) != null)</span>
+<span class="nc" id="L150">					initialUseColsSet.add(colName);</span>
+<span class="nc" id="L151">				else initialNotUseColsList.add(colName);</span>
+<span class="nc" id="L152">			}</span>
+<span class="nc" id="L153">			initalUseColsArray = initialUseColsSet.toArray();</span>
+<span class="nc" id="L154">			initalNotUseColsArray = initialNotUseColsList.toArray();</span>
+		}
+
+		// create all of the gui objects now
+<span class="nc" id="L158">		createGUI();</span>
+<span class="nc" id="L159">	}</span>
+
+	private void getPrimaryKey(ITableInfo ti) {
+        try {
+<span class="nc" id="L163">            primaryKeyInfos = _session.getMetaData().getPrimaryKey(ti);</span>
+<span class="nc" id="L164">        } catch (SQLException e) {</span>
+<span class="nc" id="L165">            s_log.error(</span>
+               &quot;Unexpected exception while attempting to get primary key info&quot; +
+<span class="nc" id="L167">               &quot; for table &quot;+ti.getQualifiedName()+&quot;: &quot;+e.getMessage(), e);</span>
+<span class="nc" id="L168">        }</span>
+<span class="nc" id="L169">    }</span>
+    
+	/**
+	 * Get the title of the panel.
+	 *
+	 * @return	Return a string containing the title of the panl.
+	 */
+	public String getTitle()
+	{
+<span class="nc" id="L178">		return EditWhereColsPanelI18N.TITLE;</span>
+	}
+
+	/**
+	 * Get the hint text associated with the panel.
+	 *
+	 * @return A String value containing the hint text associated with the panel.
+	 */
+	public String getHint()
+	{
+<span class="nc" id="L188">		return EditWhereColsPanelI18N.HINT;</span>
+	}
+
+	/**
+	 * Reset the panel to the contents at the time we started editing
+	 * (as set in initialize).
+	 * 
+	 */
+	public void reset() {	
+<span class="nc" id="L197">		useColsList.setListData(initalUseColsArray);</span>
+<span class="nc" id="L198">		notUseColsList.setListData(initalNotUseColsArray);</span>
+<span class="nc" id="L199">	}</span>
+	
+	/**
+	 * Put the current data into the EditWhereCols table.
+	 */
+	public boolean ok() {
+        
+		// if all cols are in the &quot;to use&quot; side, delete from EditWhereCols
+<span class="nc bnc" id="L207" title="All 2 branches missed.">		if (notUseColsList.getModel().getSize() == 0) {</span>
+<span class="nc" id="L208">			_editWhereCols.put(_unambiguousTableName, null);</span>
+		}
+		else {
+			// some cols are not to be used
+<span class="nc" id="L212">			ListModel useColsModel = useColsList.getModel();</span>
+			
+			// do not let user remove everything from the list
+<span class="nc bnc" id="L215" title="All 2 branches missed.">			if (useColsModel.getSize() == 0) {</span>
+<span class="nc" id="L216">				JOptionPane.showMessageDialog(this,</span>
+					// i18n[editWhereColsPanel.cannotRemoveAllCols=You cannot remove all of the fields from the 'use columns' list.]
+<span class="nc" id="L218">					s_stringMgr.getString(&quot;editWhereColsPanel.cannotRemoveAllCols&quot;));</span>
+<span class="nc" id="L219">				return false;</span>
+			}
+			
+			// create the HashMap of names to use and put it in EditWhereCols
+<span class="nc" id="L223">			HashMap&lt;String, String&gt; useColsMap = </span>
+<span class="nc" id="L224">                new HashMap&lt;String, String&gt;(useColsModel.getSize());</span>
+			
+<span class="nc bnc" id="L226" title="All 2 branches missed.">			for (int i=0; i&lt; useColsModel.getSize(); i++) {</span>
+<span class="nc" id="L227">				useColsMap.put((String)useColsModel.getElementAt(i), </span>
+<span class="nc" id="L228">                               (String)useColsModel.getElementAt(i));</span>
+			}
+			
+<span class="nc" id="L231">			_editWhereCols.put(_unambiguousTableName, useColsMap);</span>
+		}
+<span class="nc" id="L233">		return true;</span>
+	}
+	
+	/**
+	 * Move selected fields from &quot;used&quot; to &quot;not used&quot;
+	 */
+	private void moveToNotUsed() {
+		
+		// get the values from the &quot;not use&quot; list and convert to sorted set
+<span class="nc" id="L242">		ListModel notUseColsModel = notUseColsList.getModel();</span>
+<span class="nc" id="L243">		SortedSet&lt;String&gt; notUseColsSet = new TreeSet&lt;String&gt;();</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">		for (int i=0; i&lt;notUseColsModel.getSize(); i++)</span>
+<span class="nc" id="L245">			notUseColsSet.add((String)notUseColsModel.getElementAt(i));</span>
+		
+		// get the values from the &quot;use&quot; list
+<span class="nc" id="L248">		ListModel useColsModel = useColsList.getModel();</span>
+		
+		// create an empty set for the &quot;use&quot; list
+<span class="nc" id="L251">		SortedSet&lt;Object&gt; useColsSet = new TreeSet&lt;Object&gt;();</span>
+
+		// for each element in the &quot;use&quot; set, if selected then add to &quot;not use&quot;,
+		// otherwise add to new &quot;use&quot; set
+<span class="nc bnc" id="L255" title="All 2 branches missed.">		for (int i=0; i&lt;useColsModel.getSize(); i++) {</span>
+<span class="nc" id="L256">			String colName = (String)useColsModel.getElementAt(i);</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">			if (useColsList.isSelectedIndex(i))</span>
+<span class="nc" id="L258">				notUseColsSet.add(colName);</span>
+<span class="nc" id="L259">			else useColsSet.add(colName);</span>
+		}
+		
+<span class="nc" id="L262">		useColsList.setListData(useColsSet.toArray());</span>
+<span class="nc" id="L263">		notUseColsList.setListData(notUseColsSet.toArray());</span>
+<span class="nc" id="L264">	}</span>
+	
+	/**
+	 * Move selected fields from &quot;not used&quot; to &quot;used&quot;
+	 */
+	private void moveToUsed() {
+		// get the values from the &quot;use&quot; list and convert to sorted set
+<span class="nc" id="L271">		ListModel useColsModel = useColsList.getModel();</span>
+<span class="nc" id="L272">		SortedSet&lt;String&gt; useColsSet = new TreeSet&lt;String&gt;();</span>
+<span class="nc bnc" id="L273" title="All 2 branches missed.">		for (int i=0; i&lt;useColsModel.getSize(); i++)</span>
+<span class="nc" id="L274">			useColsSet.add((String)useColsModel.getElementAt(i));</span>
+		
+		// get the values from the &quot;not use&quot; list
+<span class="nc" id="L277">		ListModel notUseColsModel = notUseColsList.getModel();</span>
+		
+		// create an empty set for the &quot;not use&quot; list
+<span class="nc" id="L280">		SortedSet&lt;Object&gt; notUseColsSet = new TreeSet&lt;Object&gt;();</span>
+
+		// for each element in the &quot;not use&quot; set, if selected then add to &quot;use&quot;,
+		// otherwise add to new &quot;not use&quot; set
+<span class="nc bnc" id="L284" title="All 2 branches missed.">		for (int i=0; i&lt;notUseColsModel.getSize(); i++) {</span>
+<span class="nc" id="L285">			String colName = (String)notUseColsModel.getElementAt(i);</span>
+<span class="nc bnc" id="L286" title="All 2 branches missed.">			if (notUseColsList.isSelectedIndex(i))</span>
+<span class="nc" id="L287">				useColsSet.add(colName);</span>
+<span class="nc" id="L288">			else notUseColsSet.add(colName);</span>
+		}
+		
+<span class="nc" id="L291">		useColsList.setListData(useColsSet.toArray());</span>
+<span class="nc" id="L292">		notUseColsList.setListData(notUseColsSet.toArray());</span>
+<span class="nc" id="L293">	}</span>
+	
+    private void usePK() {
+<span class="nc bnc" id="L296" title="All 4 branches missed.">        if (primaryKeyInfos == null || primaryKeyInfos.length &lt;= 0) {</span>
+            // i18n[editWhereColsPanel.noPK=The table ''{0}'' doesn't have a primary key.]
+<span class="nc" id="L298">            String msg = </span>
+<span class="nc" id="L299">                s_stringMgr.getString(&quot;editWhereColsPanel.noPK&quot;, _tableName);</span>
+<span class="nc" id="L300">            JOptionPane.showMessageDialog(this,msg);</span>
+            
+<span class="nc" id="L302">            return;</span>
+        }
+<span class="nc" id="L304">        HashSet&lt;String&gt; pkCols = new HashSet&lt;String&gt;();</span>
+<span class="nc bnc" id="L305" title="All 2 branches missed.">        for (int i = 0; i &lt; primaryKeyInfos.length; i++) {</span>
+<span class="nc" id="L306">            PrimaryKeyInfo pkInfo = primaryKeyInfos[i];</span>
+<span class="nc" id="L307">            pkCols.add(pkInfo.getColumnName());</span>
+        }
+        
+<span class="nc" id="L310">        ArrayList&lt;String&gt; newNotUseList = new ArrayList&lt;String&gt;();</span>
+<span class="nc" id="L311">        ListModel useColsModel = useColsList.getModel();</span>
+<span class="nc" id="L312">        ListModel notUseColsModel = notUseColsList.getModel();</span>
+        
+<span class="nc bnc" id="L314" title="All 2 branches missed.">        for (int i=0; i&lt;useColsModel.getSize(); i++) {</span>
+<span class="nc" id="L315">            Object colName = useColsModel.getElementAt(i);</span>
+<span class="nc bnc" id="L316" title="All 2 branches missed.">            if (!pkCols.contains(colName)) {</span>
+<span class="nc" id="L317">                newNotUseList.add(colName.toString());</span>
+            }
+        }        
+        
+<span class="nc bnc" id="L321" title="All 2 branches missed.">        for (int i=0; i&lt;notUseColsModel.getSize(); i++) {</span>
+<span class="nc" id="L322">            Object colName = notUseColsModel.getElementAt(i);</span>
+<span class="nc bnc" id="L323" title="All 2 branches missed.">            if (!pkCols.contains(colName)) {</span>
+<span class="nc" id="L324">                newNotUseList.add(colName.toString());</span>
+            }
+        }
+        
+<span class="nc" id="L328">        useColsList.setListData(pkCols.toArray());</span>
+<span class="nc" id="L329">        notUseColsList.setListData(newNotUseList.toArray());</span>
+        
+        
+<span class="nc" id="L332">    }</span>
+	
+	/**
+	 * Create the GUI elements for the panel.
+	 */
+	private void createGUI()
+	{
+
+<span class="nc" id="L340">		JPanel useColsPanel = new JPanel(new BorderLayout());</span>
+		// i18n[editWhereColsPanel.useColumns=Use Columns]
+<span class="nc" id="L342">		useColsPanel.add(new JLabel(s_stringMgr.getString(&quot;editWhereColsPanel.useColumns&quot;)), BorderLayout.NORTH);</span>
+<span class="nc" id="L343">		useColsList = new JList(initalUseColsArray);</span>
+<span class="nc" id="L344">		JScrollPane scrollPane = new JScrollPane(useColsList);</span>
+<span class="nc" id="L345">		scrollPane.setPreferredSize(new Dimension(200, 200));</span>
+<span class="nc" id="L346">		useColsPanel.add(scrollPane, BorderLayout.SOUTH);</span>
+<span class="nc" id="L347">		add(useColsPanel);</span>
+
+<span class="nc" id="L349">		JPanel moveButtonsPanel = new JPanel();</span>
+<span class="nc" id="L350">		JPanel buttonPanel = new JPanel(new GridLayout(3,1));</span>
+//????? if desired, get fancy and use icons in buttons instead of text ?????????
+<span class="nc" id="L352">		JButton moveToNotUsedButton = new JButton(&quot;=&gt;&quot;);</span>
+<span class="nc" id="L353">		moveToNotUsedButton.addActionListener(new ActionListener()</span>
+<span class="nc" id="L354">		{</span>
+			public void actionPerformed(ActionEvent evt)
+			{
+<span class="nc" id="L357">				moveToNotUsed();</span>
+<span class="nc" id="L358">			}</span>
+ 		});
+<span class="nc" id="L360">		buttonPanel.add(moveToNotUsedButton);</span>
+<span class="nc" id="L361">		JButton moveToUsedButton = new JButton(&quot;&lt;=&quot;);</span>
+<span class="nc" id="L362">		moveToUsedButton.addActionListener(new ActionListener()</span>
+<span class="nc" id="L363">		{</span>
+			public void actionPerformed(ActionEvent evt)
+			{
+<span class="nc" id="L366">				moveToUsed();</span>
+<span class="nc" id="L367">			}</span>
+			});
+<span class="nc" id="L369">		buttonPanel.add(moveToUsedButton);</span>
+
+<span class="nc" id="L371">        JButton usePKButton = new JButton(EditWhereColsPanelI18N.USE_PK);</span>
+<span class="nc" id="L372">        usePKButton.addActionListener(new ActionListener() {</span>
+            public void actionPerformed(ActionEvent evt) {
+<span class="nc" id="L374">                usePK();</span>
+<span class="nc" id="L375">            }</span>
+        });
+<span class="nc" id="L377">        buttonPanel.add(usePKButton);</span>
+        
+<span class="nc" id="L379">		moveButtonsPanel.add(buttonPanel, BorderLayout.CENTER);</span>
+<span class="nc" id="L380">		add(moveButtonsPanel);</span>
+	  
+<span class="nc" id="L382">		JPanel notUseColsPanel = new JPanel(new BorderLayout());</span>
+		// i18n[editWhereColsPanel.notUseColumns=Not Use Columns]
+<span class="nc" id="L384">		notUseColsPanel.add(new JLabel(s_stringMgr.getString(&quot;editWhereColsPanel.notUseColumns&quot;)), BorderLayout.NORTH);</span>
+<span class="nc" id="L385">		notUseColsList = new JList(initalNotUseColsArray);</span>
+<span class="nc" id="L386"> 		JScrollPane notUseScrollPane = new JScrollPane(notUseColsList);</span>
+<span class="nc" id="L387">		notUseScrollPane.setPreferredSize(new Dimension(200, 200));</span>
+<span class="nc" id="L388">		notUseColsPanel.add(notUseScrollPane, BorderLayout.SOUTH);</span>
+<span class="nc" id="L389">		add(notUseColsPanel);</span>
+<span class="nc" id="L390">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

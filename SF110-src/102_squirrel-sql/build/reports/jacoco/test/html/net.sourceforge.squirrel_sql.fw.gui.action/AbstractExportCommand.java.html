@@ -1,0 +1,423 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractExportCommand.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.fw.gui.action</a> &gt; <span class="el_source">AbstractExportCommand.java</span></div><h1>AbstractExportCommand.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (C) 2011 Stefan Willinger
+ * wis775@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+package net.sourceforge.squirrel_sql.fw.gui.action;
+
+import java.io.File;
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.text.NumberFormat;
+
+import javax.swing.*;
+
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.ClobDescriptor;
+import net.sourceforge.squirrel_sql.fw.gui.GUIUtils;
+import net.sourceforge.squirrel_sql.fw.gui.action.exportData.DataExportCSVWriter;
+import net.sourceforge.squirrel_sql.fw.gui.action.exportData.DataExportExcelWriter;
+import net.sourceforge.squirrel_sql.fw.gui.action.exportData.DataExportXMLWriter;
+import net.sourceforge.squirrel_sql.fw.gui.action.exportData.ExportDataException;
+import net.sourceforge.squirrel_sql.fw.gui.action.exportData.IExportData;
+import net.sourceforge.squirrel_sql.fw.sql.ProgressAbortCallback;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+/**
+ * Abstract command for exporting Data.
+ * This command exports the specified {@link IExportData}. The main configuration of the export could be managed with the {@link TableExportCsvController}.
+ * A {@link ProgressAbortCallback} can monitor the progress, but there must not be a such monitor.
+ * There are several target formats supported:
+ * &lt;li&gt;CSV&lt;/li&gt;
+ * &lt;li&gt;XML&lt;/li&gt;
+ * &lt;li&gt;XLS&lt;/li&gt;
+ * But be aware, exporting to the excel format may use huge heap space, because the data structure must be build in memory.
+ * &lt;p&gt;
+ * The basic idea is, that Squirrel is able to export each table organized data structure by the same way.
+ * Independent, if the source of the data is a JTable, a result set or whatever. Its only important, that the data is tabulated. This is ensured by the
+ * interface {@link IExportData}. There are existing some DataExportWriters for various target formats.
+ * 
+ * &lt;b&gt;Note:&lt;/b&gt; This class is the result of a re-factoring task. The code was taken from TableExportCsvCommand.
+ * @see DataExportCSVWriter
+ * @see DataExportXMLWriter
+ * @see DataExportExcelWriter
+ * 
+ * @author Stefan Willinger
+ * 
+ */
+public abstract class AbstractExportCommand {
+<span class="nc" id="L64">	static final StringManager s_stringMgr = StringManagerFactory</span>
+<span class="nc" id="L65">			.getStringManager(AbstractExportCommand.class);</span>
+	
+	 static interface i18n {
+	       //i18n[TableExportCsvCommand.missingClobDataMsg=Found Clob placeholder 
+	       //({0}) amongst data to be exported. Continue exporting cell data?]
+<span class="nc" id="L70">	       String missingClobDataMsg = </span>
+<span class="nc" id="L71">	           s_stringMgr.getString(&quot;TableExportCsvCommand.missingClobDataMsg&quot;,</span>
+	                                 ClobDescriptor.i18n.CLOB_LABEL);
+	       
+<span class="nc" id="L74">	       String FAILED = s_stringMgr.getString(&quot;AbstractExportCommand.failed&quot;);</span>
+	       
+<span class="nc" id="L76">	       String ANOTHER_EXPORT_IS_ACTIVE = s_stringMgr.getString(&quot;AbstractExportCommand.anotherExportIsActive&quot;);</span>
+<span class="nc" id="L77">	       String TITLE_ANOTHER_EXPORT_IS_ACTIVE = s_stringMgr.getString(&quot;AbstractExportCommand.anotherExportIsActive.title&quot;);</span>
+	   }
+	
+<span class="nc" id="L80">	static ILogger s_log = LoggerController.createLogger(AbstractExportCommand.class);</span>
+<span class="nc" id="L81">	private ProgressAbortCallback progressController = null;</span>
+	private File targetFile;
+	
+	/**
+	 * Container to store all files, referenced by a currently running export process.
+	 */
+<span class="nc" id="L87">	private ExportFileContainer fileContainer = ExportFileContainer.getInstance();</span>
+	
+
+<span class="nc" id="L90">	private long writtenRows = -1;</span>
+	/**
+	 * @param progressController
+	 */
+<span class="nc" id="L94">	public AbstractExportCommand() {</span>
+
+<span class="nc" id="L96">	}</span>
+
+	/**
+	 * Exports the data structure.
+	 * @param ctrl the controller to use
+	 * @param data The data to export
+	 * @return the number of written data rows or a negative value, if not the whole data are exported.
+	 */
+	protected long writeFile(TableExportCsvController ctrl, IExportData data) {
+<span class="nc" id="L105">		File file = null;</span>
+		try {
+
+<span class="nc" id="L108">			file = ctrl.getFile();</span>
+<span class="nc bnc" id="L109" title="All 2 branches missed.">			if (null != file.getParentFile()) {</span>
+<span class="nc" id="L110">				file.getParentFile().mkdirs();</span>
+			}
+
+<span class="nc" id="L113">			boolean includeHeaders = ctrl.includeHeaders();</span>
+
+<span class="nc bnc" id="L115" title="All 2 branches missed.">			if (TableExportCsvController.EXPORT_FORMAT_CSV == ctrl.getExportFormat()) {</span>
+<span class="nc" id="L116">				return new DataExportCSVWriter(file, ctrl, includeHeaders, progressController).write(data);</span>
+<span class="nc bnc" id="L117" title="All 2 branches missed.">			} else if (TableExportCsvController.EXPORT_FORMAT_XLS == ctrl.getExportFormat()) {</span>
+<span class="nc" id="L118">				return new DataExportExcelWriter(file, ctrl, includeHeaders, progressController).write(data);</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">			} else if (TableExportCsvController.EXPORT_FORMAT_XML == ctrl.getExportFormat()) {</span>
+<span class="nc" id="L120">				return new DataExportXMLWriter(file, ctrl, includeHeaders, progressController).write(data);</span>
+			} else {
+<span class="nc" id="L122">				throw new IllegalStateException(&quot;Unknown export format &quot; + ctrl.getExportFormat());</span>
+			}
+
+<span class="nc" id="L125">		} catch (Exception e) {</span>
+
+<span class="nc" id="L127">			Object[] params = new Object[] { file, e.getMessage() };</span>
+			// i18n[TableExportCsvCommand.failedToWriteFile=Failed to write
+			// file\n{0}\nError message\n{1}\nSee last log entry for details.]
+<span class="nc" id="L130">			final String msg = s_stringMgr.getString(&quot;TableExportCsvCommand.failedToWriteFile&quot;, params);</span>
+<span class="nc" id="L131">			s_log.error(msg, e);</span>
+
+<span class="nc" id="L133">         Runnable runnable = new Runnable()</span>
+<span class="nc" id="L134">         {</span>
+            public void run()
+            {
+<span class="nc" id="L137">               JOptionPane.showMessageDialog(GUIUtils.getMainFrame(), msg);</span>
+<span class="nc" id="L138">            }</span>
+         };
+
+<span class="nc" id="L141">         GUIUtils.processOnSwingEventThread(runnable, true);</span>
+
+<span class="nc" id="L143">         return -1;</span>
+		} 
+
+	}
+
+	
+	   private void executeCommand(String command)
+	   {
+	      try
+	      {
+<span class="nc" id="L153">	         Runtime.getRuntime().exec(command);</span>
+	      }
+<span class="nc" id="L155">	      catch (IOException e)</span>
+	      {
+<span class="nc" id="L157">	         Object[] params = new Object[]{command, e.getMessage()};</span>
+	         // i18n[TableExportCsvCommand.failedToExecuteCommand=Failed to execute\n{0}\nError message\n{1}\nSee last log entry for details.]
+<span class="nc" id="L159">	         final String msg = s_stringMgr.getString(&quot;TableExportCsvCommand.failedToExecuteCommand&quot;, params);</span>
+<span class="nc" id="L160">	         s_log.error(msg, e);</span>
+
+<span class="nc" id="L162">            Runnable runnable = new Runnable()</span>
+<span class="nc" id="L163">            {</span>
+               public void run()
+               {
+<span class="nc" id="L166">                  JOptionPane.showMessageDialog(GUIUtils.getMainFrame(), msg);</span>
+<span class="nc" id="L167">               }</span>
+            };
+
+<span class="nc" id="L170">            GUIUtils.processOnSwingEventThread(runnable, true);</span>
+<span class="nc" id="L171">         }</span>
+<span class="nc" id="L172">	   }</span>
+
+   public void execute() throws ExportDataException
+   {
+      try
+      {
+
+<span class="nc" id="L179">         boolean fileIsInUse = false;</span>
+
+         TableExportCsvController ctrl;
+         do
+         {
+<span class="nc" id="L184">            ctrl = createTableExportController();</span>
+
+<span class="nc bnc" id="L186" title="All 2 branches missed.">            if (false == ctrl.isOK())</span>
+            {
+<span class="nc" id="L188">               return;</span>
+            }
+
+<span class="nc bnc" id="L191" title="All 2 branches missed.">            if (checkMissingData(ctrl.getSeparatorChar()))</span>
+            {
+<span class="nc" id="L193">               int choice = JOptionPane.showConfirmDialog(GUIUtils.getMainFrame(),</span>
+                     i18n.missingClobDataMsg);
+<span class="nc bnc" id="L195" title="All 2 branches missed.">               if (choice == JOptionPane.YES_OPTION)</span>
+               {
+                  // Need to somehow call
+                  // SQLResultExecuterPanel.reRunSelectedResultTab(true);
+                  //
+                  // Something like :
+                  // SQLResultExecuterPanel panel = getPanel();
+                  // panel.reRunSelectedResultTab(true);
+                  //
+                  // However, that doesn't apply when the user is exporting from the
+                  // table contents table.  There needs to be a more generic way to
+                  // do this for all tables containing data that is to be exported
+                  // where some of the fields contain placeholders.
+                  // For now, we just inform the user and let them either continue
+                  // or abort and change the configuration manually,
+                  // re-run the query / reload the table data and re-export.
+               }
+<span class="nc bnc" id="L212" title="All 2 branches missed.">               if (choice == JOptionPane.NO_OPTION)</span>
+               {
+                  // abort the export
+<span class="nc" id="L215">                  return;</span>
+               }
+<span class="nc bnc" id="L217" title="All 2 branches missed.">               if (choice == JOptionPane.CANCEL_OPTION)</span>
+               {
+                  // abort the export
+<span class="nc" id="L220">                  return;</span>
+               }
+            }
+
+<span class="nc" id="L224">            this.targetFile = ctrl.getFile();</span>
+
+            /*
+                 * Allow only one export at a time.
+                 */
+<span class="nc bnc" id="L229" title="All 2 branches missed.">            if (fileContainer.add(this.targetFile) == false)</span>
+            {
+<span class="nc" id="L231">               fileIsInUse = true;</span>
+<span class="nc" id="L232">               Runnable runnable = new Runnable()</span>
+<span class="nc" id="L233">               {</span>
+                  public void run()
+                  {
+<span class="nc" id="L236">                     JOptionPane.showMessageDialog(GUIUtils.getMainFrame(), i18n.ANOTHER_EXPORT_IS_ACTIVE, i18n.TITLE_ANOTHER_EXPORT_IS_ACTIVE, JOptionPane.WARNING_MESSAGE);</span>
+<span class="nc" id="L237">                  }</span>
+               };
+
+<span class="nc" id="L240">               GUIUtils.processOnSwingEventThread(runnable, true);</span>
+
+<span class="nc" id="L242">            }</span>
+            else
+            {
+<span class="nc" id="L245">               fileIsInUse = false;</span>
+            }
+
+<span class="nc bnc" id="L248" title="All 2 branches missed.">         } while (fileIsInUse);</span>
+
+
+<span class="nc" id="L251">         this.progressController = createProgressController();</span>
+
+
+         try
+         {
+<span class="nc" id="L256">            writtenRows = writeFile(ctrl, createExportData(ctrl));</span>
+         }
+<span class="nc" id="L258">         catch (ExportDataException e)</span>
+         {
+            // Show an error and re-throw the exception.
+<span class="nc" id="L261">            s_log.error(i18n.FAILED);</span>
+
+<span class="nc" id="L263">            Runnable runnable = new Runnable()</span>
+<span class="nc" id="L264">            {</span>
+               public void run()
+               {
+<span class="nc" id="L267">                  JOptionPane.showMessageDialog(GUIUtils.getMainFrame(), i18n.FAILED);</span>
+<span class="nc" id="L268">               }</span>
+            };
+
+<span class="nc" id="L271">            GUIUtils.processOnSwingEventThread(runnable);</span>
+
+<span class="nc" id="L273">            throw e;</span>
+<span class="nc" id="L274">         }</span>
+
+<span class="nc bnc" id="L276" title="All 2 branches missed.">         if (writtenRows &gt;= 0)</span>
+         {
+<span class="nc" id="L278">            String command = ctrl.getCommand();</span>
+
+<span class="nc bnc" id="L280" title="All 2 branches missed.">            if (null != command)</span>
+            {
+<span class="nc" id="L282">               executeCommand(command);</span>
+            }
+            else
+            {
+               // i18n[TableExportCsvCommand.writeFileSuccess=Export to file
+               // &quot;{0}&quot; is complete.]
+<span class="nc" id="L288">               final String msg =</span>
+<span class="nc" id="L289">                     s_stringMgr.getString(&quot;TableExportCsvCommand.writeFileSuccess&quot;, NumberFormat.getIntegerInstance().format(writtenRows),</span>
+<span class="nc" id="L290">                           ctrl.getFile().getAbsolutePath());</span>
+<span class="nc bnc" id="L291" title="All 2 branches missed.">               if (s_log.isInfoEnabled())</span>
+               {
+<span class="nc" id="L293">                  s_log.info(msg);</span>
+               }
+
+<span class="nc" id="L296">               Runnable runnable = new Runnable()</span>
+<span class="nc" id="L297">               {</span>
+                  public void run()
+                  {
+<span class="nc" id="L300">                     JOptionPane.showMessageDialog(GUIUtils.getMainFrame(), msg);</span>
+<span class="nc" id="L301">                  }</span>
+               };
+
+<span class="nc" id="L304">               GUIUtils.processOnSwingEventThread(runnable, true);</span>
+
+            }
+<span class="nc" id="L307">         }</span>
+         else
+         {
+<span class="nc" id="L310">            s_log.info(i18n.FAILED);</span>
+
+<span class="nc" id="L312">            Runnable runnable = new Runnable()</span>
+<span class="nc" id="L313">            {</span>
+               public void run()
+               {
+<span class="nc" id="L316">                  JOptionPane.showMessageDialog(GUIUtils.getMainFrame(), i18n.FAILED);</span>
+<span class="nc" id="L317">               }</span>
+            };
+
+<span class="nc" id="L320">            GUIUtils.processOnSwingEventThread(runnable, true);</span>
+
+         }
+      }
+      finally
+      {
+<span class="nc bnc" id="L326" title="All 2 branches missed.">         if (this.targetFile != null)</span>
+         {
+<span class="nc" id="L328">            this.fileContainer.remove(this.targetFile);</span>
+         }
+      }
+<span class="nc" id="L331">   }</span>
+
+   /**
+	 * Create a instance of {@link ProgressAbortCallback} if necessary.
+	 * Subclasse may override this.
+	 * @return returns null.
+	 */
+	protected ProgressAbortCallback createProgressController() {
+		// default null;
+<span class="nc" id="L340">		return null;</span>
+	}
+
+	/**
+	 * @return
+	 */
+	protected TableExportCsvController createTableExportController() {
+
+      try
+      {
+<span class="nc" id="L350">         final TableExportCsvController[] buf = new TableExportCsvController[1];</span>
+
+<span class="nc" id="L352">         Runnable runnable = new Runnable()</span>
+<span class="nc" id="L353">         {</span>
+            public void run()
+            {
+<span class="nc" id="L356">               buf[0] = new TableExportCsvController();</span>
+<span class="nc" id="L357">            }</span>
+         };
+<span class="nc" id="L359">         GUIUtils.processOnSwingEventThread(runnable, true);</span>
+
+<span class="nc" id="L361">         return buf[0];</span>
+      }
+<span class="nc" id="L363">      catch (Exception e)</span>
+      {
+<span class="nc" id="L365">         throw new RuntimeException(e);</span>
+      }
+   }
+
+	/**
+	 * @param separatorChar
+	 * @return
+	 */
+	protected abstract boolean checkMissingData(String separatorChar);
+
+	/**
+	 * Creates the export data from the original source.
+	 * @param ctrl the controller to use.
+	 * @return the data for the export.
+	 * @throws ExportDataException if any problem occurs while creating the data.
+	 */
+	protected abstract IExportData createExportData(TableExportCsvController ctrl) throws ExportDataException;
+	
+	/**
+	 * @return the progressController
+	 */
+	public ProgressAbortCallback getProgressController() {
+<span class="nc" id="L387">		return progressController;</span>
+	}
+
+	/**
+	 * @param progressController the progressController to set
+	 */
+	public void setProgressController(ProgressAbortCallback progressController) {
+<span class="nc" id="L394">		this.progressController = progressController;</span>
+<span class="nc" id="L395">	}</span>
+
+	/**
+	 * @param string
+	 */
+	protected void progress(String task) {
+<span class="nc bnc" id="L401" title="All 2 branches missed.">		if(progressController != null){</span>
+<span class="nc" id="L402">			progressController.currentlyLoading(task);</span>
+		}
+<span class="nc" id="L404">	}</span>
+
+	/**
+	 * @return the targetFile
+	 */
+	public File getTargetFile() {
+<span class="nc" id="L410">		return targetFile;</span>
+	}
+
+	/**
+	 * @return the writtenRows
+	 */
+	public long getWrittenRows() {
+<span class="nc" id="L417">		return writtenRows;</span>
+	}
+	
+	
+	
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

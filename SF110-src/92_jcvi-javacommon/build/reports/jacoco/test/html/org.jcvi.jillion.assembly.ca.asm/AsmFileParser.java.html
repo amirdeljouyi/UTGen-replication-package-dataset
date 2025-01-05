@@ -1,0 +1,1633 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AsmFileParser.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.assembly.ca.asm</a> &gt; <span class="el_source">AsmFileParser.java</span></div><h1>AsmFileParser.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+package org.jcvi.jillion.assembly.ca.asm;
+
+import java.io.BufferedInputStream;
+import java.io.Closeable;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Scanner;
+import java.util.Set;
+import java.util.SortedSet;
+import java.util.TreeSet;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.jcvi.jillion.assembly.ca.asm.AsmContigVisitor.VariantRecord;
+import org.jcvi.jillion.assembly.ca.asm.AsmVisitor.AsmVisitorCallback;
+import org.jcvi.jillion.assembly.ca.asm.AsmVisitor.LinkOrientation;
+import org.jcvi.jillion.assembly.ca.asm.AsmVisitor.MatePairEvidence;
+import org.jcvi.jillion.assembly.ca.asm.AsmVisitor.MateStatus;
+import org.jcvi.jillion.assembly.ca.asm.AsmVisitor.OverlapStatus;
+import org.jcvi.jillion.assembly.ca.asm.AsmVisitor.OverlapType;
+import org.jcvi.jillion.assembly.ca.asm.AsmVisitor.UnitigLayoutType;
+import org.jcvi.jillion.assembly.ca.asm.AsmVisitor.UnitigStatus;
+import org.jcvi.jillion.assembly.ca.asm.AsmVisitor.AsmVisitorCallback.AsmVisitorMemento;
+import org.jcvi.jillion.core.DirectedRange;
+import org.jcvi.jillion.core.Range;
+import org.jcvi.jillion.core.Range.CoordinateSystem;
+import org.jcvi.jillion.core.io.IOUtil;
+import org.jcvi.jillion.core.qual.QualitySequence;
+import org.jcvi.jillion.core.qual.QualitySequenceBuilder;
+import org.jcvi.jillion.core.residue.nt.NucleotideSequence;
+import org.jcvi.jillion.core.residue.nt.NucleotideSequenceBuilder;
+import org.jcvi.jillion.internal.core.io.RandomAccessFileInputStream;
+import org.jcvi.jillion.internal.core.io.TextLineParser;
+import org.jcvi.jillion.internal.core.util.JillionUtil;
+
+/**
+ * @author dkatzel
+ *
+ *
+ */
+public abstract class AsmFileParser {
+	
+	
+	/**
+	 * Refactored out split Pattern since String.split() 
+	 * causes a new Pattern to be created and compiled
+	 * for each call.  This is a minor cpu optimization.
+	 */
+<span class="nc" id="L76">	private static final Pattern SPLIT_ON_SLASH = Pattern.compile(&quot;/&quot;);</span>
+	
+	 private static final String END_MESSAGE = &quot;}&quot;;
+	 
+<span class="nc" id="L80">	 private static final Pattern LENGTH_PATTERN = Pattern.compile(&quot;len:(\\d+)&quot;);</span>
+<span class="nc" id="L81">	 private  static final Pattern NUM_READS_PATTERN = Pattern.compile(&quot;n\\S\\S:(\\d+)&quot;);</span>
+     
+	 
+	private AsmFileParser(){
+		//can not instantiate outside this file.
+	}
+	
+	public static AsmFileParser create(File asmFile){
+<span class="nc" id="L89">		return new FileBasedAsmFileParser(asmFile);</span>
+	}
+	
+	public abstract void accept(AsmVisitor visitor) throws IOException;
+	
+	public abstract void accept(AsmVisitor visitor, AsmVisitorMemento memento) throws IOException;
+	
+	
+    protected void  parseAsm(ParserState parserState, AsmVisitor visitor) throws IOException{       
+<span class="nc" id="L98">        AsmMessageHandler.parse(parserState, visitor);</span>
+<span class="nc" id="L99">    }</span>
+    
+    protected abstract class ParserState implements Closeable{
+        private final TextLineParser parser;
+        
+        private long currentOffset;
+        protected long markedOffset;
+<span class="nc" id="L106">        protected final AtomicBoolean keepParsing = new AtomicBoolean(true);</span>
+        
+<span class="nc" id="L108">        ParserState(InputStream inputStream, long initialOffset) throws IOException{</span>
+<span class="nc" id="L109">            this.parser = new TextLineParser(inputStream);</span>
+<span class="nc" id="L110">            currentOffset = initialOffset;</span>
+<span class="nc" id="L111">            markedOffset= currentOffset;</span>
+<span class="nc" id="L112">        }</span>
+        
+        boolean hasNextLine(){
+<span class="nc" id="L115">            return parser.hasNextLine();</span>
+        }
+        
+        String getNextLine() throws IOException{
+<span class="nc" id="L119">            String line= parser.nextLine(); </span>
+<span class="nc" id="L120">            currentOffset += line.length();</span>
+<span class="nc" id="L121">            return line;</span>
+        }
+        /**
+        * {@inheritDoc}
+        */
+        @Override
+        public void close() throws IOException {
+<span class="nc" id="L128">            parser.close();            </span>
+<span class="nc" id="L129">        }</span>
+        public abstract CallBack createCallback();
+
+		public void markCurrentOffset() {
+<span class="nc" id="L133">			markedOffset =currentOffset;</span>
+			
+<span class="nc" id="L135">		}</span>
+
+		public boolean keepParsing() {
+<span class="nc" id="L138">			return keepParsing.get();</span>
+		}
+
+        
+    }
+    
+<span class="nc" id="L144">    enum AsmMessageHandler{</span>
+        /**
+         * Describes a group of mate pairs that belong to the same library.
+         */
+<span class="nc" id="L148">        MODIFIED_DISTANCE_MESSAGE(&quot;MDI&quot;) {</span>
+<span class="nc" id="L149">            private final Pattern refIdPattern = Pattern.compile(&quot;ref:\\((\\S+),(\\d+)\\)&quot;);</span>
+            /**
+             * min can be set to a negative value
+             */
+<span class="nc" id="L153">            private final Pattern minPattern = Pattern.compile(&quot;min:(-?\\d+)&quot;);</span>
+<span class="nc" id="L154">            private final Pattern maxPattern = Pattern.compile(&quot;max:(\\d+)&quot;);</span>
+<span class="nc" id="L155">            private final Pattern histogramBucketPattern = Pattern.compile(&quot;buc:(\\d+)&quot;);</span>
+            @Override
+            protected void handle(ParserState parserState, AsmVisitor visitor) throws IOException {
+<span class="nc" id="L158">                IdTuple idTuple = parseIds(parserState, visitor, refIdPattern);</span>
+<span class="nc" id="L159">                float mean = parseMean(parserState, visitor);                </span>
+<span class="nc" id="L160">                float stdDev = parseStdDev(parserState, visitor);                </span>
+<span class="nc" id="L161">                long min=parseMin(parserState, visitor);</span>
+<span class="nc" id="L162">                long max=parseMax(parserState, visitor);</span>
+                
+<span class="nc" id="L164">                List&lt;Long&gt; histogram=parseHistogram(parserState,visitor);</span>
+<span class="nc" id="L165">                parseEndOfMessage(parserState, this.getMessageCode());</span>
+<span class="nc" id="L166">                visitor.visitLibraryStatistics(idTuple.externalId, idTuple.internalId, </span>
+                        mean, stdDev, min, max, histogram);
+<span class="nc" id="L168">            }</span>
+           
+            private float parseStdDev(ParserState parserState, AsmVisitor visitor) throws IOException {
+<span class="nc" id="L171">                String stdDevLine = parserState.getNextLine();</span>
+<span class="nc" id="L172">                Matcher stdDevMatcher = STD_DEV_PATTERN.matcher(stdDevLine);</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">                if(!stdDevMatcher.find()){</span>
+<span class="nc" id="L174">                    throw new IOException(&quot;invalid asm file: could not parse MDI std dev of distances: &quot;+stdDevLine);</span>
+                }
+<span class="nc" id="L176">                return  Float.parseFloat(stdDevMatcher.group(1));</span>
+            }
+            private float parseMean(ParserState parserState, AsmVisitor visitor) throws IOException {
+<span class="nc" id="L179">                String meanLine = parserState.getNextLine();</span>
+<span class="nc" id="L180">                Matcher meanMatcher = MEAN_PATTERN.matcher(meanLine);</span>
+<span class="nc bnc" id="L181" title="All 2 branches missed.">                if(!meanMatcher.find()){</span>
+<span class="nc" id="L182">                    throw new IOException(&quot;invalid asm file: could not parse MDI mean distance: &quot;+meanLine);</span>
+                }
+<span class="nc" id="L184">                return Float.parseFloat(meanMatcher.group(1));</span>
+            }
+            
+            private long parseMin(ParserState parserState, AsmVisitor visitor) throws IOException {
+<span class="nc" id="L188">                String minLine = parserState.getNextLine();</span>
+<span class="nc" id="L189">                Matcher meanMatcher = minPattern.matcher(minLine);</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">                if(!meanMatcher.find()){</span>
+<span class="nc" id="L191">                    throw new IOException(&quot;invalid asm file: could not parse MDI min distance: &quot;+minLine);</span>
+                }
+<span class="nc" id="L193">                return Long.parseLong(meanMatcher.group(1));</span>
+            }
+            private long parseMax(ParserState parserState, AsmVisitor visitor) throws IOException {
+<span class="nc" id="L196">                String maxLine = parserState.getNextLine();</span>
+<span class="nc" id="L197">                Matcher meanMatcher = maxPattern.matcher(maxLine);</span>
+<span class="nc bnc" id="L198" title="All 2 branches missed.">                if(!meanMatcher.find()){</span>
+<span class="nc" id="L199">                    throw new IOException(&quot;invalid asm file: could not parse MDI max distance: &quot;+maxLine);</span>
+                }
+<span class="nc" id="L201">                return Long.parseLong(meanMatcher.group(1));</span>
+            }
+            
+            private List&lt;Long&gt; parseHistogram(ParserState parserState, AsmVisitor visitor) throws IOException {
+<span class="nc" id="L205">                String histLine =parserState.getNextLine();</span>
+<span class="nc" id="L206">                Matcher bucketMatcher = histogramBucketPattern.matcher(histLine);</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">                if(!bucketMatcher.find()){</span>
+<span class="nc" id="L208">                    throw new IOException(&quot;invalid asm file: could not parse MDI number of histogram buckets: &quot;+histLine);</span>
+                }
+                //even though the ASM spec says
+                //unsigned Int32, there shouldn't
+                //ever be more then Integer.MAX_VALUE buckets!
+                //Even if an ASM file had  a larger number of buckets
+                //we woudn't be able to create the histogram
+                //because List and arrays have a max value of 
+                //Integer.MAX_VALUE.
+                //Integer.parseInt javadoc says it will throw
+                //NumberFormatException if value is too big
+                //so we are covered.
+<span class="nc" id="L220">                int numBuckets = Integer.parseInt(bucketMatcher.group(1));</span>
+<span class="nc" id="L221">                String histogramStart =parserState.getNextLine();</span>
+<span class="nc bnc" id="L222" title="All 2 branches missed.">                if(!histogramStart.startsWith(&quot;his:&quot;)){</span>
+<span class="nc" id="L223">                    throw new IOException(&quot;invalid asm file: could not parse MDI start of histogram values: &quot;+histogramStart);</span>
+                 }
+<span class="nc" id="L225">                List&lt;Long&gt; histogram = new ArrayList&lt;Long&gt;(numBuckets);</span>
+<span class="nc bnc" id="L226" title="All 2 branches missed.">                for(int i=0; i&lt; numBuckets; i++){</span>
+<span class="nc" id="L227">                    String line = parserState.getNextLine();</span>
+<span class="nc" id="L228">                    histogram.add(Long.parseLong(line.trim()));</span>
+                }
+<span class="nc" id="L230">                return histogram;</span>
+            }
+            
+            
+        },
+<span class="nc" id="L235">        FRAGMENT(&quot;AFG&quot;){</span>
+             
+<span class="nc" id="L237">            private final Pattern isSingletonPattern = Pattern.compile(&quot;cha:(\\d+)&quot;);</span>
+<span class="nc" id="L238">            private final Pattern clearRangePattern = Pattern.compile(&quot;clr:(\\d+,\\d+)&quot;);</span>
+            
+            @Override
+            protected void handle(ParserState parserState, AsmVisitor visitor)
+                    throws IOException {
+<span class="nc" id="L243">                IdTuple idTuple =parseIds(parserState, visitor, ACCESSION_PATTERN);</span>
+                //old asm files used to have a scn block 
+                //which should be ignored
+<span class="nc" id="L246">                String scnLine = parserState.getNextLine();</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">                if(scnLine.startsWith(&quot;scn&quot;)){</span>
+<span class="nc bnc" id="L248" title="All 2 branches missed.">                    while(!scnLine.startsWith(&quot;.&quot;)){</span>
+<span class="nc" id="L249">                        scnLine = parserState.getNextLine();</span>
+                    }
+                    //get next line which should be status
+<span class="nc" id="L252">                    scnLine = parserState.getNextLine();</span>
+                }
+<span class="nc" id="L254">                MateStatus mateStatus = parseMateStatus(scnLine);</span>
+                //is chimeric line is now ignored
+                //but we need to visit the line anyway
+                //to correctly update offset counts
+<span class="nc" id="L258">                parserState.getNextLine();                </span>
+<span class="nc" id="L259">                boolean isSingleton = parseIsSingleton(parserState, visitor);</span>
+<span class="nc" id="L260">                Range clearRange = parseClearRange(parserState, visitor);</span>
+<span class="nc" id="L261">                parseEndOfMessage(parserState, this.getMessageCode());</span>
+<span class="nc" id="L262">                visitor.visitRead(idTuple.externalId, idTuple.internalId,</span>
+                        mateStatus, isSingleton, clearRange);
+<span class="nc" id="L264">            }</span>
+
+            private Range parseClearRange(ParserState parserState,
+                    AsmVisitor visitor) throws IOException {
+<span class="nc" id="L268">                String line = parserState.getNextLine();</span>
+<span class="nc" id="L269">                Matcher matcher = clearRangePattern.matcher(line);</span>
+<span class="nc bnc" id="L270" title="All 2 branches missed.">                if(!matcher.find()){</span>
+<span class="nc" id="L271">                    throw new IOException(&quot;invalid asm file: could not parse AFG clear range: &quot;+line);</span>
+                }
+<span class="nc" id="L273">                return Range.parseRange(matcher.group(1),CoordinateSystem.SPACE_BASED);</span>
+            }
+
+            
+            /**
+             * Is singleton if chaff value is set to 1; 0 otherwise.
+             */
+            private boolean parseIsSingleton(ParserState parserState,
+                    AsmVisitor visitor) throws IOException {
+<span class="nc" id="L282">                String line = parserState.getNextLine();</span>
+<span class="nc" id="L283">                Matcher matcher = isSingletonPattern.matcher(line);</span>
+<span class="nc bnc" id="L284" title="All 2 branches missed.">                if(!matcher.find()){</span>
+<span class="nc" id="L285">                    throw new IOException(&quot;invalid asm file: could not parse AFG singlton status: &quot;+line);</span>
+                }
+<span class="nc bnc" id="L287" title="All 2 branches missed.">                return Integer.parseInt(matcher.group(1).trim())==1;</span>
+            }
+            
+        },
+<span class="nc" id="L291">        MATE_PAIR(&quot;AMP&quot;){</span>
+<span class="nc" id="L292">            private final Pattern frgIdPattern = Pattern.compile(&quot;frg:(\\S+)&quot;);</span>
+            @Override
+            protected void handle(ParserState parserState, AsmVisitor visitor)
+                    throws IOException {
+<span class="nc" id="L296">                String id1 = parseReadId(parserState);</span>
+<span class="nc" id="L297">                String id2 = parseReadId(parserState);</span>
+<span class="nc" id="L298">                MateStatus mateStatus = parseMateStatus(parserState);</span>
+<span class="nc" id="L299">                parseEndOfMessage(parserState, this.getMessageCode());</span>
+<span class="nc" id="L300">                visitor.visitMatePair(id1, id2, mateStatus);</span>
+                
+<span class="nc" id="L302">            }</span>
+            private String parseReadId(ParserState parserState) throws IOException {
+<span class="nc" id="L304">                String line = parserState.getNextLine();</span>
+<span class="nc" id="L305">                Matcher matcher = frgIdPattern.matcher(line);</span>
+<span class="nc bnc" id="L306" title="All 2 branches missed.">                if(!matcher.find()){</span>
+<span class="nc" id="L307">                    throw new IOException(&quot;error reading frg id :&quot;+ line);</span>
+                }
+<span class="nc" id="L309">                return matcher.group(1);</span>
+            }
+            
+        },
+<span class="nc" id="L313">        UNITIG(&quot;UTG&quot;){</span>
+            
+            @Override
+            protected void handle(ParserState parserState, AsmVisitor visitor)
+                    throws IOException {
+<span class="nc" id="L318">                IdTuple idTuple =parseIds(parserState, visitor, ACCESSION_PATTERN);</span>
+<span class="nc" id="L319">                String nextLine = parserState.getNextLine();</span>
+                //CA &lt;= 5 had a src block which should be ignored
+                //CA 6+ doesn't have it anymore so need to handle
+                //both cases.
+<span class="nc bnc" id="L323" title="All 2 branches missed.">                if(nextLine.startsWith(&quot;src&quot;)){</span>
+<span class="nc" id="L324">                    skipReservedSource(parserState);</span>
+<span class="nc" id="L325">                    nextLine = parserState.getNextLine();</span>
+                }
+<span class="nc" id="L327">                float aStat = parseAStat(nextLine);</span>
+<span class="nc" id="L328">                nextLine = parserState.getNextLine();</span>
+                //measure of polymorphism
+                //was introduced in CA 6
+                //looks like older versions
+                //had this value inside the src field
+                final float polymorphism;
+<span class="nc bnc" id="L334" title="All 2 branches missed.">                if(nextLine.startsWith(&quot;mhp&quot;)){</span>
+<span class="nc" id="L335">                    polymorphism = parsePolymorphismMeasure(nextLine);</span>
+<span class="nc" id="L336">                    nextLine = parserState.getNextLine();</span>
+                }else{
+<span class="nc" id="L338">                    polymorphism = Float.NaN;</span>
+                }
+<span class="nc" id="L340">                UnitigStatus status = parseUnitigStatus(nextLine);</span>
+<span class="nc" id="L341">                nextLine = parserState.getNextLine();</span>
+                //skip legacy branch point lines
+                //which don't exist in newer versions of CA
+<span class="nc bnc" id="L344" title="All 2 branches missed.">                if(nextLine.startsWith(&quot;abp&quot;)){</span>
+                    //skip bbp as well
+<span class="nc" id="L346">                   parserState.getNextLine();</span>
+<span class="nc" id="L347">                   parserState.getNextLine();</span>
+                }
+               
+<span class="nc" id="L350">                int length = parseLength(nextLine);</span>
+<span class="nc" id="L351">                NucleotideSequence consensus = parseConsensus(parserState, length);</span>
+<span class="nc" id="L352">                QualitySequence consensusQualities = parseConsensusQualities(parserState,length);</span>
+                //skip forced line
+<span class="nc" id="L354">                parserState.getNextLine();</span>
+<span class="nc" id="L355">                long numberOfReads = parseNumberOfReads(parserState);</span>
+<span class="nc" id="L356">                CallBack callback = parserState.createCallback();</span>
+<span class="nc" id="L357">                AsmUnitigVisitor asmUnitigVisitor =visitor.visitUnitig(callback, idTuple.externalId, idTuple.internalId, aStat,</span>
+                        polymorphism, status, consensus, consensusQualities, numberOfReads);
+                //read info is nested in each unitig
+<span class="nc bnc" id="L360" title="All 4 branches missed.">                for(int i=0; parserState.keepParsing() &amp;&amp; i&lt;numberOfReads; i++){</span>
+<span class="nc" id="L361">                    String readHeader = parserState.getNextLine();</span>
+<span class="nc" id="L362">                    Matcher matcher = MESSAGE_HEADER_PATTERN.matcher(readHeader);</span>
+<span class="nc bnc" id="L363" title="All 2 branches missed.">                    if(!matcher.find()){</span>
+<span class="nc" id="L364">                        throw new IOException(</span>
+<span class="nc" id="L365">                                String.format(&quot;error reading read # %d for unitig %s; invalid header :%s&quot;,</span>
+<span class="nc" id="L366">                                        i,idTuple.externalId,readHeader));</span>
+                    }
+<span class="nc" id="L368">                    String code = matcher.group(1);</span>
+<span class="nc bnc" id="L369" title="All 2 branches missed.">                    if(!ReadMapping.INSTANCE.canHandle(code)){</span>
+<span class="nc" id="L370">                        throw new IOException(</span>
+<span class="nc" id="L371">                                String.format(&quot;error reading read # %d for unitig %s; invalid header code :%s&quot;,</span>
+<span class="nc" id="L372">                                        i,idTuple.externalId,code));</span>
+                    
+                    }
+<span class="nc" id="L375">                    ReadMapping.INSTANCE.handleReadLayout(parserState, asmUnitigVisitor);</span>
+                }
+<span class="nc bnc" id="L377" title="All 2 branches missed.">                if(asmUnitigVisitor !=null){</span>
+<span class="nc bnc" id="L378" title="All 2 branches missed.">                	if(parserState.keepParsing()){</span>
+<span class="nc" id="L379">		                parseEndOfMessage(parserState, this.getMessageCode());</span>
+<span class="nc" id="L380">		                asmUnitigVisitor.visitEnd();</span>
+	                }else{
+<span class="nc" id="L382">	                	asmUnitigVisitor.halted();</span>
+	                }
+                }
+<span class="nc" id="L385">            }</span>
+           
+           
+
+            private UnitigStatus parseUnitigStatus(String line) throws IOException {
+<span class="nc" id="L390">                Matcher matcher = STATUS_PATTERN.matcher(line);</span>
+<span class="nc bnc" id="L391" title="All 2 branches missed.">                if(!matcher.find()){</span>
+<span class="nc" id="L392">                    throw new IOException(&quot;error parsing unitig status : &quot;+ line);</span>
+                }
+<span class="nc" id="L394">                return UnitigStatus.parseUnitigStatus(matcher.group(1));</span>
+            }
+
+            private float parseAStat(String line) throws IOException {
+<span class="nc" id="L398">                Matcher matcher = A_STAT_PATTERN.matcher(line);</span>
+<span class="nc bnc" id="L399" title="All 2 branches missed.">                if(!matcher.find()){</span>
+<span class="nc" id="L400">                    throw new IOException(&quot;error reading unitig coverage a stat:&quot;+ line);</span>
+                }
+<span class="nc" id="L402">                return Float.parseFloat(matcher.group(1));</span>
+            }
+            
+            private float parsePolymorphismMeasure(String line) throws IOException {
+<span class="nc" id="L406">                Matcher matcher = POLYMORPHISM_PATTERN.matcher(line);</span>
+<span class="nc bnc" id="L407" title="All 2 branches missed.">                if(!matcher.find()){</span>
+<span class="nc" id="L408">                    throw new IOException(&quot;error reading unitig polymorphism measure:&quot;+ line);</span>
+                }
+<span class="nc" id="L410">                return Float.parseFloat(matcher.group(1));</span>
+            }
+            
+            
+
+            
+            
+        },
+        
+<span class="nc" id="L419">        UNITIG_LINK(&quot;ULK&quot;){</span>
+<span class="nc" id="L420">            private final Pattern unitigIdPattern = Pattern.compile(&quot;ut\\d:(\\S+)&quot;);</span>
+            
+            @Override
+            protected void handle(ParserState parserState, AsmVisitor visitor) throws IOException{
+<span class="nc" id="L424">                handle(parserState, visitor,true);</span>
+<span class="nc" id="L425">            }</span>
+            
+            @Override
+            protected void handle(ParserState parserState, AsmVisitor visitor, boolean shouldParse)
+                    throws IOException {
+<span class="nc" id="L430">                parseLinkMessage(parserState, visitor, shouldParse, unitigIdPattern);</span>
+<span class="nc" id="L431">            }</span>
+            @Override
+            protected void visitLink(AsmVisitor visitor, String unitig1,
+                    String unitig2, LinkOrientation orientation,
+                    OverlapType overlapType, boolean isPossibleChimera,
+                    float mean, float stdDev, int numberOfContributingEdges,
+                    OverlapStatus status, Set&lt;MatePairEvidence&gt; evidenceList) {
+<span class="nc" id="L438">                visitor.visitUnitigLink(unitig1, unitig2, orientation, overlapType, status, </span>
+                        isPossibleChimera, numberOfContributingEdges, mean, stdDev, evidenceList);
+<span class="nc" id="L440">            }</span>
+            
+            
+            
+        },
+<span class="nc" id="L445">        CONTIG(&quot;CCO&quot;){</span>
+<span class="nc" id="L446">            private final Pattern degeneratePattern = Pattern.compile(&quot;pla:(\\S)&quot;);</span>
+            
+            @Override
+            protected void handle(ParserState parserState, AsmVisitor visitor)
+                    throws IOException {
+<span class="nc" id="L451">                IdTuple idTuple =parseIds(parserState, visitor, ACCESSION_PATTERN);</span>
+<span class="nc" id="L452">                boolean isDegenerate = parseIsDegenerateFlag(parserState, visitor);</span>
+<span class="nc" id="L453">                String lengthLine = parserState.getNextLine();</span>
+<span class="nc" id="L454">                int length = parseLength(lengthLine);</span>
+<span class="nc" id="L455">                NucleotideSequence consensus = parseConsensus(parserState, length);</span>
+<span class="nc" id="L456">                QualitySequence consensusQualities = parseConsensusQualities(parserState,length);</span>
+                //skip forced line
+<span class="nc" id="L458">                parserState.getNextLine();</span>
+<span class="nc" id="L459">                long numberOfReads = parseNumberOfReads(parserState);</span>
+<span class="nc" id="L460">                long numberOfUnitigs = parseNumberOfReads(parserState);</span>
+<span class="nc" id="L461">                long numberOfVariants = parseNumberOfReads(parserState);</span>
+<span class="nc" id="L462">                CallBack callback = parserState.createCallback();</span>
+<span class="nc" id="L463">                AsmContigVisitor contigVisitor =visitor.visitContig(callback, idTuple.externalId, idTuple.internalId, isDegenerate, </span>
+									                        consensus, consensusQualities, 
+									                        numberOfReads, numberOfUnitigs, numberOfVariants);
+<span class="nc bnc" id="L466" title="All 2 branches missed.">                if(!parserState.keepParsing()){</span>
+<span class="nc" id="L467">                	return;</span>
+                }
+<span class="nc bnc" id="L469" title="All 2 branches missed.">                if(contigVisitor ==null){</span>
+                	//skip everything
+<span class="nc" id="L471">                	long allSubBlocks = numberOfVariants + numberOfReads + numberOfUnitigs;</span>
+<span class="nc bnc" id="L472" title="All 2 branches missed.">                	for(long i=0; i&lt;allSubBlocks; i++){</span>
+<span class="nc" id="L473">                        skipCurrentBlock(parserState);</span>
+                    }                	
+<span class="nc" id="L475">                }else{</span>
+<span class="nc bnc" id="L476" title="All 4 branches missed.">                	for(long i=0; parserState.keepParsing() &amp;&amp; i&lt;numberOfVariants; i++){</span>
+<span class="nc" id="L477">                        String variantHeader = parserState.getNextLine();</span>
+<span class="nc" id="L478">                        String messageCode = parseMessageCode(variantHeader);</span>
+<span class="nc bnc" id="L479" title="All 2 branches missed.">                        if(!ContigVariant.INSTANCE.canHandle(messageCode)){</span>
+<span class="nc" id="L480">                            throw new IOException(&quot;invalid variant block start : &quot;+ variantHeader);</span>
+                        }
+<span class="nc" id="L482">                        ContigVariant.INSTANCE.handle(parserState, contigVisitor);</span>
+                    }
+                	
+<span class="nc bnc" id="L485" title="All 4 branches missed.">                	for(long i=0; parserState.keepParsing() &amp;&amp; i&lt;numberOfReads; i++){</span>
+<span class="nc" id="L486">                        String readHeader = parserState.getNextLine();</span>
+<span class="nc" id="L487">                        String messageCode = parseMessageCode(readHeader);</span>
+<span class="nc bnc" id="L488" title="All 2 branches missed.">                        if(!ReadMapping.INSTANCE.canHandle(messageCode)){</span>
+<span class="nc" id="L489">                            throw new IOException(&quot;invalid read mapping block start : &quot;+ readHeader);</span>
+                        }
+<span class="nc" id="L491">                        ReadMapping.INSTANCE.handleReadLayout(parserState, contigVisitor);</span>
+                    }
+                	
+<span class="nc bnc" id="L494" title="All 4 branches missed.">                	for(long i=0; parserState.keepParsing() &amp;&amp; i&lt;numberOfUnitigs; i++){</span>
+<span class="nc" id="L495">                        String unitigHeader = parserState.getNextLine();</span>
+<span class="nc" id="L496">                        String messageCode = parseMessageCode(unitigHeader);</span>
+<span class="nc bnc" id="L497" title="All 2 branches missed.">                        if(!ContigUnitigMapping.INSTANCE.canHandle(messageCode)){</span>
+<span class="nc" id="L498">                            throw new IOException(&quot;invalid unitig mapping block start : &quot;+ unitigHeader);</span>
+                        }
+<span class="nc" id="L500">                        ContigUnitigMapping.INSTANCE.handle(parserState, contigVisitor);</span>
+                    }
+<span class="nc bnc" id="L502" title="All 2 branches missed.">                	if(parserState.keepParsing()){</span>
+<span class="nc" id="L503">	                	 parseEndOfMessage(parserState, this.getMessageCode());</span>
+<span class="nc" id="L504">	                	 contigVisitor.visitEnd();</span>
+                	}else{
+<span class="nc" id="L506">                		contigVisitor.halted();</span>
+                	}
+                }
+                
+                
+               
+                
+<span class="nc" id="L513">            }</span>
+
+            private boolean parseIsDegenerateFlag(ParserState parserState,
+                    AsmVisitor visitor) throws IOException {
+<span class="nc" id="L517">                String line = parserState.getNextLine();</span>
+<span class="nc" id="L518">                Matcher matcher = degeneratePattern.matcher(line);</span>
+<span class="nc bnc" id="L519" title="All 2 branches missed.">                if(!matcher.find()){</span>
+<span class="nc" id="L520">                    throw new IOException(&quot;error reading contig placement status (degenerate flag):&quot;+ line);</span>
+                }
+                //P is placed in a scaffold (maybe even a scaffold of just this contig
+                //U is unplaced i.e. degenerate
+<span class="nc bnc" id="L524" title="All 2 branches missed.">                return matcher.group(1).charAt(0)=='U';</span>
+            }
+            
+        },
+        
+        
+<span class="nc" id="L530">        CONTIG_LINK(&quot;CLK&quot;){</span>
+<span class="nc" id="L531">            private final Pattern contigIdPattern = Pattern.compile(&quot;co\\d:(\\S+)&quot;);</span>
+            
+            @Override
+            protected void handle(ParserState parserState, AsmVisitor visitor) throws IOException{
+<span class="nc" id="L535">                handle(parserState, visitor,true);</span>
+<span class="nc" id="L536">            }</span>
+            
+            @Override
+            protected void handle(ParserState parserState, AsmVisitor visitor, boolean shouldParse)
+                    throws IOException {
+<span class="nc" id="L541">                parseLinkMessage(parserState, visitor, shouldParse, contigIdPattern);</span>
+<span class="nc" id="L542">            }</span>
+            @Override
+            protected void visitLink(AsmVisitor visitor, String id1,
+                    String id2, LinkOrientation orientation,
+                    OverlapType overlapType, boolean isPossibleChimera,
+                    float mean, float stdDev, int numberOfContributingEdges,
+                    OverlapStatus status, Set&lt;MatePairEvidence&gt; evidenceList) {
+<span class="nc" id="L549">                visitor.visitContigLink(id1, id2, orientation, overlapType, status, </span>
+                        numberOfContributingEdges, mean, stdDev, evidenceList);
+<span class="nc" id="L551">            }</span>
+            
+        },
+<span class="nc" id="L554">        SCAFFOLD_LINK(&quot;SLK&quot;){</span>
+<span class="nc" id="L555">            private final Pattern scaffoldIdPattern = Pattern.compile(&quot;sc\\d:(\\S+)&quot;);</span>
+            
+            @Override
+            protected void handle(ParserState parserState, AsmVisitor visitor) throws IOException{
+<span class="nc" id="L559">                handle(parserState, visitor,true);</span>
+<span class="nc" id="L560">            }</span>
+            
+            @Override
+            protected void handle(ParserState parserState, AsmVisitor visitor, boolean shouldParse)
+                    throws IOException {
+<span class="nc" id="L565">                parseLinkMessage(parserState, visitor, shouldParse, scaffoldIdPattern);</span>
+<span class="nc" id="L566">            }</span>
+            @Override
+            protected void visitLink(AsmVisitor visitor, String id1,
+                    String id2, LinkOrientation orientation,
+                    OverlapType overlapType, boolean isPossibleChimera,
+                    float mean, float stdDev, int numberOfContributingEdges,
+                    OverlapStatus status, Set&lt;MatePairEvidence&gt; evidenceList) {
+<span class="nc" id="L573">                visitor.visitScaffoldLink(id1, id2, orientation, overlapType, status, </span>
+                        numberOfContributingEdges, mean, stdDev, evidenceList);
+<span class="nc" id="L575">            }</span>
+            
+        },
+        /**
+         * Handles scaffold messages &lt;strong&gt;and&lt;/strong&gt;
+         * nested contig link messages since
+         * there are different kinds of links depending 
+         * on the number of contigs in the scaffold.
+         */
+<span class="nc" id="L584">        SCAFFOLD(&quot;SCF&quot;){</span>
+<span class="nc" id="L585">            final Pattern numPairsPattern = Pattern.compile(&quot;noc:(\\d+)&quot;);</span>
+<span class="nc" id="L586">            final Pattern contigIdPattern = Pattern.compile(&quot;ct\\d:(\\S+)&quot;);</span>
+            @Override
+            protected void handle(ParserState parserState, AsmVisitor visitor)
+                    throws IOException {
+<span class="nc" id="L590">            	CallBack callback = parserState.createCallback();</span>
+<span class="nc" id="L591">                IdTuple idTuple = parseIds(parserState, visitor, ACCESSION_PATTERN);</span>
+<span class="nc" id="L592">                int numberOfContigPairs = parseNumberOfContigPairs(parserState);</span>
+<span class="nc bnc" id="L593" title="All 2 branches missed.">                if(numberOfContigPairs==0){</span>
+                    //only 1 contig
+<span class="nc" id="L595">                    handleSingleContig(callback, parserState, idTuple,visitor);</span>
+                }else{
+                	
+<span class="nc" id="L598">                	AsmScaffoldVisitor scaffoldVisitor = visitor.visitScaffold(callback, idTuple.externalId, idTuple.internalId, numberOfContigPairs);</span>
+<span class="nc bnc" id="L599" title="All 2 branches missed.">                    if(scaffoldVisitor !=null){</span>
+<span class="nc bnc" id="L600" title="All 4 branches missed.">	                    for(int i=0; parserState.keepParsing() &amp;&amp; i&lt; numberOfContigPairs; i++){</span>
+<span class="nc" id="L601">	                        handleContigPairs(parserState, scaffoldVisitor);</span>
+	                    }
+<span class="nc bnc" id="L603" title="All 2 branches missed.">	                    if(parserState.keepParsing()){</span>
+<span class="nc" id="L604">	                    	parseEndOfMessage(parserState, this.getMessageCode());</span>
+<span class="nc" id="L605">	                    	scaffoldVisitor.visitEnd();</span>
+	                    }else{
+<span class="nc" id="L607">	                    	scaffoldVisitor.halted();</span>
+	                    }
+                    }
+                }
+<span class="nc" id="L611">            }</span>
+            
+            private void handleSingleContig(CallBack callback, ParserState parserState,IdTuple idTuple,
+            		AsmVisitor visitor) throws IOException {
+<span class="nc" id="L615">                parsePairStart(parserState);</span>
+<span class="nc" id="L616">                String contigId = parseContigId(parserState);</span>
+                //ids should be the same
+<span class="nc" id="L618">                String duplicateId = parseContigId(parserState);</span>
+<span class="nc bnc" id="L619" title="All 2 branches missed.">                if(!contigId.equals(duplicateId)){</span>
+<span class="nc" id="L620">                    throw new IOException(</span>
+<span class="nc" id="L621">                            String.format(</span>
+                        		&quot;invalid single contig scaffold, contig ids ct1 and ct2 should be identical %s vs %s&quot;,
+                            		contigId, duplicateId));
+                }
+                //only 1 contig mean, stddev and ori should be ignored
+<span class="nc" id="L626">                parserState.getNextLine();</span>
+<span class="nc" id="L627">                parserState.getNextLine();</span>
+<span class="nc" id="L628">                parserState.getNextLine();</span>
+<span class="nc" id="L629">                parseEndOfMessage(parserState, this.getMessageCode());</span>
+<span class="nc" id="L630">                visitor.visitScaffold(callback, idTuple.externalId,idTuple.internalId,contigId);</span>
+                
+<span class="nc" id="L632">            }</span>
+
+            private void handleContigPairs(ParserState parserState,
+            		AsmScaffoldVisitor scaffoldVisitor) throws IOException {
+<span class="nc" id="L636">                parsePairStart(parserState);</span>
+<span class="nc" id="L637">                String contigId1 = parseContigId(parserState); </span>
+<span class="nc" id="L638">                String contigId2 = parseContigId(parserState);                </span>
+<span class="nc" id="L639">                float mean = parseMeanEdgeDistance(parserState);</span>
+<span class="nc" id="L640">                float stdDev = parseStdDevDistance(parserState);</span>
+<span class="nc" id="L641">                LinkOrientation orientation = getLinkOrientation(parserState);</span>
+                
+<span class="nc" id="L643">                parseEndOfMessage(parserState, this.getMessageCode());                </span>
+<span class="nc" id="L644">                scaffoldVisitor.visitContigPair(contigId1, contigId2, mean, stdDev, orientation);</span>
+                
+<span class="nc" id="L646">            }</span>
+            private int parseNumberOfContigPairs(ParserState parserState) throws IOException {
+<span class="nc" id="L648">                String line = parserState.getNextLine();</span>
+<span class="nc" id="L649">                Matcher matcher = numPairsPattern.matcher(line);</span>
+<span class="nc bnc" id="L650" title="All 2 branches missed.">                if(!matcher.find()){</span>
+<span class="nc" id="L651">                    throw new IOException(&quot;error parsing number of contig pairs : &quot;+ line);</span>
+                }
+<span class="nc" id="L653">                return Integer.parseInt(matcher.group(1));</span>
+            }
+            
+            private String parseContigId(ParserState parserState) throws IOException{
+<span class="nc" id="L657">                String line = parserState.getNextLine();</span>
+<span class="nc" id="L658">                Matcher matcher = contigIdPattern.matcher(line);</span>
+<span class="nc bnc" id="L659" title="All 2 branches missed.">                if(!matcher.find()){</span>
+<span class="nc" id="L660">                    throw new IOException(&quot;error contig id :&quot;+ line);</span>
+                }
+<span class="nc" id="L662">                return matcher.group(1);</span>
+            }
+            
+            private void parsePairStart(ParserState parserState) throws IOException {
+<span class="nc" id="L666">                String line = parserState.getNextLine();</span>
+<span class="nc bnc" id="L667" title="All 2 branches missed.">                if(!line.startsWith(&quot;{CTP&quot;)){</span>
+<span class="nc" id="L668">                    throw new IOException(&quot;error parsing contig pair header : &quot;+ line);</span>
+                }
+<span class="nc" id="L670">            }</span>
+            
+        },
+        
+        ;
+        
+        
+        private final String messageCode;
+<span class="nc" id="L678">        static Pattern MESSAGE_HEADER_PATTERN = Pattern.compile(&quot;\\{(\\S+)&quot;);</span>
+<span class="nc" id="L679">        static final Pattern MATE_STATUS_PATTERN = Pattern.compile(&quot;mst:(\\S)&quot;);</span>
+<span class="nc" id="L680">        static final Pattern ACCESSION_PATTERN = Pattern.compile(&quot;acc:\\((\\S+),(\\d+)\\)&quot;);</span>
+<span class="nc" id="L681">        static final Pattern MEAN_PATTERN = Pattern.compile(&quot;mea:(\\S+)&quot;);</span>
+<span class="nc" id="L682">        static final Pattern STD_DEV_PATTERN = Pattern.compile(&quot;std:(\\S+)&quot;);</span>
+        
+<span class="nc" id="L684">        static final Pattern A_STAT_PATTERN = Pattern.compile(&quot;cov:(\\S+)&quot;);</span>
+<span class="nc" id="L685">        static final Pattern POLYMORPHISM_PATTERN = Pattern.compile(&quot;mhp:(\\S+)&quot;);</span>
+<span class="nc" id="L686">        static final Pattern STATUS_PATTERN = Pattern.compile(&quot;sta:(\\S)&quot;);</span>
+        
+        
+<span class="nc" id="L689">        final Pattern linkOrientationPattern = Pattern.compile(&quot;ori:(\\S)&quot;);</span>
+<span class="nc" id="L690">        final Pattern overlapTypePattern = Pattern.compile(&quot;ovt:(\\S)&quot;);</span>
+        
+<span class="nc" id="L692">        final Pattern chimeraFlagPattern = Pattern.compile(&quot;ipc:(\\d)&quot;);</span>
+<span class="nc" id="L693">        final Pattern numEdgesPattern = Pattern.compile(&quot;num:(\\d+)&quot;);</span>
+        
+<span class="nc" id="L695">        final Pattern linkStatusPattern = Pattern.compile(&quot;sta:(\\S)&quot;);</span>
+<span class="nc" id="L696">        final Pattern jumpListPattern = Pattern.compile(&quot;(\\S+),(\\S+),(\\S)&quot;);</span>
+        
+        
+       
+<span class="nc" id="L700">        private AsmMessageHandler(String messageCode){</span>
+<span class="nc" id="L701">            this.messageCode = messageCode;</span>
+<span class="nc" id="L702">        }</span>
+        
+        final boolean canHandle(String messageCode){
+<span class="nc" id="L705">            return this.messageCode.equals(messageCode);</span>
+        }
+        
+        /**
+         * @return the messageCode
+         */
+        public String getMessageCode() {
+<span class="nc" id="L712">            return messageCode;</span>
+        }
+
+        public String parseMessageCode(String line){
+<span class="nc" id="L716">            Matcher matcher = MESSAGE_HEADER_PATTERN.matcher(line);</span>
+<span class="nc bnc" id="L717" title="All 2 branches missed.">            if(matcher.find()){</span>
+<span class="nc" id="L718">                return matcher.group(1);</span>
+            }
+<span class="nc" id="L720">            return null;</span>
+        }
+        protected abstract void handle(ParserState parserState, AsmVisitor visitor) throws IOException;
+        
+        protected void handle(ParserState parserState, AsmVisitor visitor, boolean shouldVisitRecord) throws IOException{
+<span class="nc" id="L725">            handle(parserState, visitor);</span>
+<span class="nc" id="L726">        }</span>
+        public static void parse(ParserState parserState, AsmVisitor visitor) throws IOException{
+<span class="nc bnc" id="L728" title="All 2 branches missed.">            while(parserState.hasNextLine()){</span>
+<span class="nc" id="L729">            	parserState.markCurrentOffset();</span>
+<span class="nc" id="L730">                String line =parserState.getNextLine();</span>
+<span class="nc bnc" id="L731" title="All 2 branches missed.">                if(line !=null){                    </span>
+<span class="nc" id="L732">                    Matcher matcher = MESSAGE_HEADER_PATTERN.matcher(line);</span>
+<span class="nc bnc" id="L733" title="All 2 branches missed.">                    if(matcher.find()){</span>
+<span class="nc" id="L734">                        String header = matcher.group(1);</span>
+<span class="nc bnc" id="L735" title="All 2 branches missed.">                        for(AsmMessageHandler handler : values()){</span>
+<span class="nc bnc" id="L736" title="All 2 branches missed.">                            if(handler.canHandle(header)){</span>
+<span class="nc" id="L737">                                handler.handle(parserState, visitor);</span>
+<span class="nc" id="L738">                                break;</span>
+                            }
+                        }
+                    }
+                }
+<span class="nc" id="L743">            }</span>
+<span class="nc bnc" id="L744" title="All 2 branches missed.">            if(parserState.keepParsing()){</span>
+<span class="nc" id="L745">            	visitor.visitEnd();</span>
+            }else{
+<span class="nc" id="L747">            	visitor.halted();</span>
+            }
+<span class="nc" id="L749">        }</span>
+        
+        
+        
+        IdTuple parseIds(ParserState parserState, AsmVisitor visitor, Pattern pattern) throws IOException {
+<span class="nc" id="L754">            String idLine =parserState.getNextLine();</span>
+<span class="nc" id="L755">            Matcher idMatcher = pattern.matcher(idLine);</span>
+<span class="nc bnc" id="L756" title="All 2 branches missed.">            if(!idMatcher.find()){</span>
+<span class="nc" id="L757">                throw new IOException(&quot;invalid asm file: could not parse IDs: &quot;+idLine);</span>
+            }
+<span class="nc" id="L759">            return new IdTuple(idMatcher.group(1), Long.parseLong(idMatcher.group(2)));</span>
+        }
+       
+        
+        MateStatus parseMateStatus(ParserState parserState) throws IOException {
+<span class="nc" id="L764">            String line = parserState.getNextLine();</span>
+<span class="nc" id="L765">            Matcher matcher = MATE_STATUS_PATTERN.matcher(line);</span>
+<span class="nc bnc" id="L766" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L767">                throw new IOException(&quot;invalid asm file: could not parse &quot;+messageCode+&quot; mate status: &quot;+line);</span>
+            }
+<span class="nc" id="L769">            return MateStatus.parseMateStatus(matcher.group(1));</span>
+        }
+        
+        MateStatus parseMateStatus(String line) throws IOException {
+<span class="nc" id="L773">            Matcher matcher = MATE_STATUS_PATTERN.matcher(line);</span>
+<span class="nc bnc" id="L774" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L775">                throw new IOException(&quot;invalid asm file: could not parse &quot;+messageCode+&quot; mate status: &quot;+line);</span>
+            }
+<span class="nc" id="L777">            return MateStatus.parseMateStatus(matcher.group(1));</span>
+        }
+        
+        
+        
+       
+        QualitySequence parseConsensusQualities(
+                ParserState parserState, int length) throws IOException {
+<span class="nc" id="L785">            byte[] qualities = new byte[length];</span>
+            //first line should be qlt
+<span class="nc" id="L787">            String line = parserState.getNextLine();</span>
+<span class="nc bnc" id="L788" title="All 2 branches missed.">            if(!line.startsWith(&quot;qlt:&quot;)){</span>
+<span class="nc" id="L789">               throw new IOException(&quot;expected start quality consensus block :&quot;+line); </span>
+            }
+<span class="nc" id="L791">            line = parserState.getNextLine();</span>
+<span class="nc" id="L792">            int offset=0;</span>
+<span class="nc bnc" id="L793" title="All 2 branches missed.">            while(!line.startsWith(&quot;.&quot;)){</span>
+<span class="nc" id="L794">                String trimmedLine = line.trim();</span>
+<span class="nc bnc" id="L795" title="All 2 branches missed.">                for(int i=0; i&lt;trimmedLine.length(); i++){</span>
+                    //qualities are encoded as value + ascii zero
+<span class="nc" id="L797">                    qualities[offset+i]=(byte)(trimmedLine.charAt(i)- '0');</span>
+                }
+<span class="nc" id="L799">                offset +=trimmedLine.length();</span>
+<span class="nc" id="L800">                line = parserState.getNextLine();</span>
+<span class="nc" id="L801">            }</span>
+<span class="nc bnc" id="L802" title="All 2 branches missed.">            if(offset !=length){</span>
+<span class="nc" id="L803">                throw new IOException( String.format(&quot;incorrect consensus quality length for %s: expected %d but was %d&quot;,</span>
+<span class="nc" id="L804">                        getMessageCode(),</span>
+<span class="nc" id="L805">                        length,offset));</span>
+            }
+<span class="nc" id="L807">            return new QualitySequenceBuilder(qualities).build();</span>
+        }
+        NucleotideSequence parseConsensus(ParserState parserState,
+                int expectedLength) throws IOException {
+<span class="nc" id="L811">            NucleotideSequenceBuilder builder = new NucleotideSequenceBuilder(expectedLength);</span>
+<span class="nc" id="L812">            String line = parserState.getNextLine();</span>
+<span class="nc bnc" id="L813" title="All 2 branches missed.">            if(!line.startsWith(&quot;cns:&quot;)){</span>
+<span class="nc" id="L814">                throw new IOException(&quot;expected begin cns field but was &quot;+line );</span>
+            }
+<span class="nc" id="L816">            line = parserState.getNextLine();</span>
+<span class="nc bnc" id="L817" title="All 2 branches missed.">            while(!line.startsWith(&quot;.&quot;)){</span>
+<span class="nc" id="L818">                builder.append(line.trim());</span>
+<span class="nc" id="L819">                line = parserState.getNextLine();</span>
+            }
+<span class="nc bnc" id="L821" title="All 2 branches missed.">            if(builder.getLength()!=expectedLength){</span>
+<span class="nc" id="L822">                throw new IOException(</span>
+<span class="nc" id="L823">                        String.format(&quot;incorrect consensus length for %s: expected %d but was %d&quot;,</span>
+<span class="nc" id="L824">                                getMessageCode(),</span>
+<span class="nc" id="L825">                                expectedLength,builder.getLength()));</span>
+            }
+<span class="nc" id="L827">            return builder.build();</span>
+        }
+        
+
+        Set&lt;MatePairEvidence&gt; parseMatePairEvidence(
+                int expectedNumberOfMatePairEvidenceRecords,
+                ParserState parserState) throws IOException {
+<span class="nc" id="L834">            Set&lt;MatePairEvidence&gt; set = new LinkedHashSet&lt;MatePairEvidence&gt;();</span>
+<span class="nc bnc" id="L835" title="All 2 branches missed.">            for(int i=0; i&lt;expectedNumberOfMatePairEvidenceRecords; i++){</span>
+<span class="nc" id="L836">                String line = parserState.getNextLine();</span>
+<span class="nc" id="L837">                Matcher matcher = jumpListPattern.matcher(line);</span>
+<span class="nc bnc" id="L838" title="All 2 branches missed.">                if(!matcher.find()){</span>
+<span class="nc" id="L839">                    throw new IOException(&quot;invalid jump list record: &quot;+ line);</span>
+                }
+<span class="nc" id="L841">                set.add(new MatePairEvidenceImpl(matcher.group(1), matcher.group(2)));</span>
+            }
+<span class="nc" id="L843">            return set;</span>
+        }
+
+        OverlapStatus parseOverlapStatus(ParserState parserState) throws IOException {
+<span class="nc" id="L847">            String line = parserState.getNextLine();</span>
+<span class="nc" id="L848">            Matcher matcher = linkStatusPattern.matcher(line);</span>
+<span class="nc bnc" id="L849" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L850">                throw new IOException(&quot;error overlap status&quot;+ line);</span>
+            }
+<span class="nc" id="L852">            return OverlapStatus.parseOverlapStatus(matcher.group(1));</span>
+        }
+
+        int parseNumberOfEdges(ParserState parserState) throws IOException {
+<span class="nc" id="L856">            String line = parserState.getNextLine();</span>
+<span class="nc" id="L857">            Matcher matcher = numEdgesPattern.matcher(line);</span>
+<span class="nc bnc" id="L858" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L859">                throw new IOException(&quot;error reading # of edges&quot;+ line);</span>
+            }
+<span class="nc" id="L861">            return Integer.parseInt(matcher.group(1));</span>
+        }
+
+        float parseMeanEdgeDistance(String nextLine) throws IOException {
+<span class="nc" id="L865">            Matcher matcher = MEAN_PATTERN.matcher(nextLine);</span>
+<span class="nc bnc" id="L866" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L867">                throw new IOException(&quot;error reading is mean edge distance message&quot;+ nextLine);</span>
+            }
+<span class="nc" id="L869">            return Float.parseFloat(matcher.group(1));</span>
+        }
+        float parseMeanEdgeDistance(ParserState parserState) throws IOException {
+<span class="nc" id="L872">            String nextLine = parserState.getNextLine();</span>
+<span class="nc" id="L873">            Matcher matcher = MEAN_PATTERN.matcher(nextLine);</span>
+<span class="nc bnc" id="L874" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L875">                throw new IOException(&quot;error reading is mean edge distance message&quot;+ nextLine);</span>
+            }
+<span class="nc" id="L877">            return Float.parseFloat(matcher.group(1));</span>
+        }
+        
+        float parseStdDevDistance(ParserState parserState) throws IOException {
+<span class="nc" id="L881">            String line = parserState.getNextLine();</span>
+<span class="nc" id="L882">            Matcher matcher = STD_DEV_PATTERN.matcher(line);</span>
+<span class="nc bnc" id="L883" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L884">                throw new IOException(&quot;error reading is std dev edge distance message&quot;+ line);</span>
+            }
+<span class="nc" id="L886">            return Float.parseFloat(matcher.group(1));</span>
+        }
+
+        boolean getChimeraFlag(ParserState parserState) throws IOException {
+<span class="nc" id="L890">            String line = parserState.getNextLine();</span>
+<span class="nc" id="L891">            Matcher matcher = chimeraFlagPattern.matcher(line);</span>
+<span class="nc bnc" id="L892" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L893">                throw new IOException(&quot;error reading is possible chimera message&quot;+ line);</span>
+            }
+<span class="nc" id="L895">            int value = Integer.parseInt(matcher.group(1));</span>
+<span class="nc bnc" id="L896" title="All 2 branches missed.">            return value ==1;</span>
+        }
+
+        LinkOrientation getLinkOrientation(ParserState parserState) throws IOException {
+<span class="nc" id="L900">            String line = parserState.getNextLine();</span>
+<span class="nc" id="L901">            Matcher matcher = linkOrientationPattern.matcher(line);</span>
+<span class="nc bnc" id="L902" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L903">                throw new IOException(&quot;error reading link orientation message&quot;+ line);</span>
+            }
+<span class="nc" id="L905">            return LinkOrientation.parseLinkOrientation(matcher.group(1));</span>
+        }
+        
+        OverlapType getOverlapType(ParserState parserState) throws IOException {
+<span class="nc" id="L909">            String line = parserState.getNextLine();</span>
+<span class="nc" id="L910">            Matcher matcher = overlapTypePattern.matcher(line);</span>
+<span class="nc bnc" id="L911" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L912">                throw new IOException(&quot;error reading overlap type message&quot;+ line);</span>
+            }
+<span class="nc" id="L914">            return OverlapType.parseOverlapType(matcher.group(1));</span>
+        }
+        
+        String getUnitigId(Pattern idPattern, ParserState parserState) throws IOException{
+<span class="nc" id="L918">            String line = parserState.getNextLine();</span>
+<span class="nc" id="L919">            Matcher matcher = idPattern.matcher(line);</span>
+<span class="nc bnc" id="L920" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L921">                throw new IOException(&quot;error reading unitig link message unitig id:&quot;+ line);</span>
+            }
+<span class="nc" id="L923">            return matcher.group(1);</span>
+        }
+
+        void parseLinkMessage(ParserState parserState, AsmVisitor visitor,
+                boolean shouldParse, Pattern idPattern) throws IOException {
+<span class="nc" id="L928">            String unitig1 = getUnitigId(idPattern, parserState);</span>
+<span class="nc" id="L929">            String unitig2 = getUnitigId(idPattern, parserState);</span>
+<span class="nc" id="L930">            LinkOrientation orientation = getLinkOrientation(parserState);</span>
+<span class="nc" id="L931">            OverlapType overlapType = getOverlapType(parserState);</span>
+<span class="nc" id="L932">            boolean isPossibleChimera = getChimeraFlag(parserState);</span>
+            //includes guide was removed in CA 6
+<span class="nc" id="L934">            String nextLine = parserState.getNextLine();</span>
+<span class="nc bnc" id="L935" title="All 2 branches missed.">            if(nextLine.startsWith(&quot;gui:&quot;)){</span>
+<span class="nc" id="L936">                nextLine = parserState.getNextLine();</span>
+            }
+<span class="nc" id="L938">            float mean = parseMeanEdgeDistance(nextLine);</span>
+<span class="nc" id="L939">            float stdDev = parseStdDevDistance(parserState);</span>
+<span class="nc" id="L940">            int numberOfContributingEdges = parseNumberOfEdges(parserState);</span>
+<span class="nc" id="L941">            OverlapStatus status = parseOverlapStatus(parserState);</span>
+<span class="nc" id="L942">            String jumpList = parserState.getNextLine();</span>
+<span class="nc bnc" id="L943" title="All 2 branches missed.">            if(!jumpList.startsWith(&quot;jls:&quot;)){</span>
+<span class="nc" id="L944">                throw new IOException(&quot;invalid jump list block : &quot;+ jumpList);</span>
+            }
+<span class="nc" id="L946">            Set&lt;MatePairEvidence&gt; evidenceList = parseMatePairEvidence(overlapType.getExpectedNumberOfMatePairEvidenceRecords(numberOfContributingEdges), parserState);</span>
+<span class="nc" id="L947">            parseEndOfMessage(parserState, messageCode);</span>
+<span class="nc bnc" id="L948" title="All 2 branches missed.">            if(shouldParse){</span>
+<span class="nc" id="L949">                visitLink(visitor, unitig1, unitig2, orientation,</span>
+                        overlapType, isPossibleChimera, mean, stdDev,
+                        numberOfContributingEdges, status, evidenceList);
+            }
+<span class="nc" id="L953">        }</span>
+        
+        protected void visitLink(AsmVisitor visitor, String unitig1,
+                String unitig2, LinkOrientation orientation,
+                OverlapType overlapType, boolean isPossibleChimera,
+                float mean, float stdDev, int numberOfContributingEdges,
+                OverlapStatus status, Set&lt;MatePairEvidence&gt; evidenceList){
+<span class="nc" id="L960">            throw new IllegalStateException(&quot;invalid state should not contain any links&quot;);</span>
+        }
+
+    }
+    
+<span class="nc" id="L965">    private enum ContigUnitigMapping{</span>
+<span class="nc" id="L966">    	INSTANCE(&quot;UPS&quot;)</span>
+    	;
+    	private final String messageCode;
+    	
+<span class="nc" id="L970">        private final Pattern typePattern = Pattern.compile(&quot;typ:(\\S)&quot;);</span>
+<span class="nc" id="L971">        private final Pattern idPattern = Pattern.compile(&quot;lid:(\\S+)&quot;);</span>
+<span class="nc" id="L972">        private final Pattern rangePattern = Pattern.compile(&quot;pos:(\\d+,\\d+)&quot;);</span>
+<span class="nc" id="L973">        private final Pattern numOffsetsPattern = Pattern.compile(&quot;dln:(\\d+)&quot;);</span>
+        
+<span class="nc" id="L975">        ContigUnitigMapping(String code){</span>
+<span class="nc" id="L976">        	this.messageCode = code;</span>
+<span class="nc" id="L977">        }</span>
+        final boolean canHandle(String messageCode){
+<span class="nc" id="L979">            return this.messageCode.equals(messageCode);</span>
+        }
+
+        protected void handle(ParserState parserState, AsmContigVisitor visitor) throws IOException {
+<span class="nc" id="L983">                UnitigLayoutType type = parseUnitigLayoutType(parserState);</span>
+<span class="nc" id="L984">                String readId = parseReadId(parserState);</span>
+<span class="nc" id="L985">                String nextLine = parserState.getNextLine();</span>
+                //CA &lt;= 5 had a src block which should be ignored
+                //CA 6+ doesn't have it anymore so need to handle
+                //both cases.
+<span class="nc bnc" id="L989" title="All 2 branches missed.">                if(nextLine.startsWith(&quot;src&quot;)){</span>
+<span class="nc" id="L990">                    skipReservedSource(parserState);</span>
+<span class="nc" id="L991">                    nextLine = parserState.getNextLine();</span>
+                }
+                
+<span class="nc" id="L994">                DirectedRange directedRange = parseDirectedRange(nextLine);</span>
+<span class="nc" id="L995">                List&lt;Long&gt; gapOffsets = parseGapOffsets(parserState);</span>
+<span class="nc" id="L996">                parseEndOfMessage(parserState, messageCode);</span>
+           
+<span class="nc" id="L998">                visitor.visitUnitigLayout(type, readId, directedRange, gapOffsets);</span>
+            
+<span class="nc" id="L1000">        }</span>
+        private DirectedRange parseDirectedRange(String line) throws IOException {
+<span class="nc" id="L1002">            Matcher matcher = rangePattern.matcher(line);</span>
+<span class="nc bnc" id="L1003" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L1004">                throw new IOException(&quot;error reading read-to-unitig placed range:&quot;+ line);</span>
+            }
+<span class="nc" id="L1006">            return DirectedRange.parse(matcher.group(1));</span>
+        }
+        private List&lt;Long&gt; parseGapOffsets(ParserState parserState) throws IOException {
+<span class="nc" id="L1009">            String lengthLine = parserState.getNextLine();</span>
+<span class="nc" id="L1010">            Matcher matcher = numOffsetsPattern.matcher(lengthLine);</span>
+<span class="nc bnc" id="L1011" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L1012">                throw new IOException(&quot;error reading read-to-unitig delta encoding length:&quot;+ lengthLine);</span>
+            }
+<span class="nc" id="L1014">            int expectedNumberOfOffsets = Integer.parseInt(matcher.group(1));</span>
+<span class="nc" id="L1015">            String beginDeltaEncodingLine = parserState.getNextLine();</span>
+<span class="nc bnc" id="L1016" title="All 2 branches missed.">            if(!beginDeltaEncodingLine.startsWith(&quot;del:&quot;)){</span>
+<span class="nc" id="L1017">                throw new IOException(&quot;error reading read-to-unitig delta encoding:&quot;+ beginDeltaEncodingLine);</span>
+            }
+<span class="nc" id="L1019">            List&lt;Long&gt; offsets = new ArrayList&lt;Long&gt;(expectedNumberOfOffsets);</span>
+<span class="nc bnc" id="L1020" title="All 2 branches missed.">            while(offsets.size()&lt;expectedNumberOfOffsets){</span>
+<span class="nc" id="L1021">                String offsetLine = parserState.getNextLine();</span>
+                //TODO Scanner is so slow use different implementation?
+<span class="nc" id="L1023">                Scanner scanner = new Scanner(offsetLine);</span>
+<span class="nc bnc" id="L1024" title="All 2 branches missed.">                if(!scanner.hasNextLong()){</span>
+<span class="nc" id="L1025">                    throw new IOException(&quot;error reading read-to-unitig delta encoding not enough values :&quot;+ offsetLine);</span>
+                    
+                }
+<span class="nc bnc" id="L1028" title="All 2 branches missed.">                while(scanner.hasNextLong()){</span>
+<span class="nc" id="L1029">                    offsets.add(scanner.nextLong());</span>
+                }
+<span class="nc" id="L1031">            }</span>
+<span class="nc" id="L1032">            return offsets;</span>
+        }
+        private String parseReadId(ParserState parserState) throws IOException {
+<span class="nc" id="L1035">            String line = parserState.getNextLine();</span>
+<span class="nc" id="L1036">            Matcher matcher = idPattern.matcher(line);</span>
+<span class="nc bnc" id="L1037" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L1038">                throw new IOException(&quot;error reading read-to-unitig read id:&quot;+ line);</span>
+            }
+<span class="nc" id="L1040">            return matcher.group(1);</span>
+        }
+        private UnitigLayoutType parseUnitigLayoutType(ParserState parserState) throws IOException {
+<span class="nc" id="L1043">            String line = parserState.getNextLine();</span>
+<span class="nc" id="L1044">            Matcher matcher = typePattern.matcher(line);</span>
+<span class="nc bnc" id="L1045" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L1046">                throw new IOException(&quot;error reading unitig-to-contig mapping type:&quot;+ line);</span>
+            }
+<span class="nc" id="L1048">            return UnitigLayoutType.parseUnitigLayoutType(matcher.group(1));</span>
+        }
+    }
+    
+    
+<span class="nc" id="L1053">    private enum ContigVariant{</span>
+<span class="nc" id="L1054">    	INSTANCE(&quot;VAR&quot;);</span>
+    	
+    	private final String messageCode;
+<span class="nc" id="L1057">    	 final Pattern positionPattern = Pattern.compile(&quot;pos:(\\d+,\\d+)&quot;);</span>
+<span class="nc" id="L1058">         final Pattern anchorPattern = Pattern.compile(&quot;anc:(\\d+)&quot;);</span>
+<span class="nc" id="L1059">         final Pattern variantIdPattern = Pattern.compile(&quot;vid:(\\d+)&quot;);</span>
+<span class="nc" id="L1060">         final Pattern phasePattern = Pattern.compile(&quot;pid:(\\S+)&quot;);</span>
+         
+<span class="nc" id="L1062">    	ContigVariant(String code){</span>
+<span class="nc" id="L1063">    		this.messageCode = code;</span>
+<span class="nc" id="L1064">    	}</span>
+           
+    	 final boolean canHandle(String messageCode){
+<span class="nc" id="L1067">             return this.messageCode.equals(messageCode);</span>
+         }
+             protected void handle(ParserState parserState, AsmContigVisitor contigVisitor) throws IOException {
+<span class="nc" id="L1070">                Range position = parseVariantPosition(parserState);</span>
+<span class="nc" id="L1071">                long numberOfReads = parseNumberOfReads(parserState);</span>
+                //Java is limited to signed int
+                //throw exception in unlikely even that we have 2^15 coverage.                
+<span class="nc bnc" id="L1074" title="All 2 branches missed.">                if(numberOfReads &gt; Integer.MAX_VALUE){</span>
+<span class="nc" id="L1075">                	throw new NumberFormatException(&quot;too many reads in variant must be &lt; Integer.MAX_VALUE&quot;);</span>
+                }
+<span class="nc" id="L1077">                long numberOfVariants = parseNumberOfVariants(parserState);</span>
+                //Java is limited to signed int
+                //throw exception in unlikely even that we have 2^15 different variants.                
+<span class="nc bnc" id="L1080" title="All 2 branches missed.">                if(numberOfVariants &gt; Integer.MAX_VALUE){</span>
+<span class="nc" id="L1081">                	throw new NumberFormatException(&quot;too many variants must be &lt; Integer.MAX_VALUE&quot;);</span>
+                }
+<span class="nc" id="L1083">                long anchorSize = parseAnchorSize(parserState);</span>
+                //skip length?
+<span class="nc" id="L1085">                parseLength(parserState);</span>
+<span class="nc" id="L1086">                long variantId = parseVariantId(parserState);</span>
+<span class="nc" id="L1087">                long phasedVariantId = parsePhasedVariantId(parserState);</span>
+<span class="nc" id="L1088">                String[] contributingReadCountString = SPLIT_ON_SLASH.split(parseContributingReadcountString(parserState));</span>
+<span class="nc" id="L1089">                String[] weightString = SPLIT_ON_SLASH.split(parseWeightString(parserState));</span>
+<span class="nc" id="L1090">                String[] sequencesString = SPLIT_ON_SLASH.split(parseSequencesString(parserState));</span>
+<span class="nc" id="L1091">                String supportingReadIds = parseSupportingReadsString(parserState);</span>
+<span class="nc" id="L1092">                List&lt;Long&gt; readIds = new ArrayList&lt;Long&gt;((int)numberOfReads);                </span>
+<span class="nc bnc" id="L1093" title="All 2 branches missed.">                for(String id : SPLIT_ON_SLASH.split(supportingReadIds)){</span>
+<span class="nc" id="L1094">                    readIds.add(Long.parseLong(id.trim()));</span>
+                }
+                
+<span class="nc" id="L1097">                parseEndOfMessage(parserState, messageCode);</span>
+                
+<span class="nc" id="L1099">                SortedSet&lt;VariantRecord&gt; variantRecords = new TreeSet&lt;VariantRecord&gt;();</span>
+<span class="nc" id="L1100">                int readCounter=0;</span>
+<span class="nc" id="L1101">                int numberOfVariantsAsInt = (int)numberOfVariants;</span>
+<span class="nc bnc" id="L1102" title="All 2 branches missed.">                for(int i=0; i &lt; numberOfVariantsAsInt; i++){</span>
+<span class="nc" id="L1103">                    int numContributingReads = Integer.parseInt(contributingReadCountString[i].trim());</span>
+<span class="nc" id="L1104">                    int weight = Integer.parseInt(weightString[i].trim());</span>
+<span class="nc" id="L1105">                    NucleotideSequence seq = new NucleotideSequenceBuilder(sequencesString[i]).build();</span>
+<span class="nc" id="L1106">                    List&lt;Long&gt; reads = readIds.subList(readCounter, readCounter+numContributingReads);</span>
+<span class="nc" id="L1107">                    variantRecords.add(new VariantRecordImpl(reads, seq, weight));</span>
+<span class="nc" id="L1108">                    readCounter+=numContributingReads;</span>
+                }
+<span class="nc" id="L1110">                contigVisitor.visitVariance(position, numberOfReads, anchorSize, </span>
+                        variantId, phasedVariantId, 
+                        variantRecords);
+                
+<span class="nc" id="L1114">             }</span>
+            
+            private String parseContributingReadcountString(
+                    ParserState parserState) throws IOException {
+<span class="nc" id="L1118">                return parseVariantBlock(parserState, &quot;nra:&quot;);</span>
+            }
+            private String parseWeightString(ParserState parserState) throws IOException {
+<span class="nc" id="L1121">                return parseVariantBlock(parserState, &quot;wgt:&quot;);</span>
+            }
+            private String parseSequencesString(ParserState parserState) throws IOException {
+<span class="nc" id="L1124">                return parseVariantBlock(parserState, &quot;seq:&quot;);</span>
+            }
+            private String parseSupportingReadsString(ParserState parserState) throws IOException {
+<span class="nc" id="L1127">                return parseVariantBlock(parserState, &quot;rid:&quot;);</span>
+            }
+            private String parseVariantBlock(ParserState parserState, String expectedBlockStart) throws IOException{
+<span class="nc" id="L1130">                String line = parserState.getNextLine();</span>
+<span class="nc bnc" id="L1131" title="All 2 branches missed.">                if(!line.startsWith(expectedBlockStart)){</span>
+<span class="nc" id="L1132">                    throw new IOException(&quot;invalid start of variants block section : &quot;+ line);</span>
+                }
+<span class="nc" id="L1134">                String value = parserState.getNextLine();</span>
+<span class="nc" id="L1135">                String endBlock = parserState.getNextLine();</span>
+<span class="nc bnc" id="L1136" title="All 2 branches missed.">                if(!endBlock.startsWith(&quot;.&quot;)){</span>
+<span class="nc" id="L1137">                    throw new IOException(&quot;invalid end of variant block section : &quot;+ endBlock);</span>
+                }
+<span class="nc" id="L1139">                return value;</span>
+            }
+            private long parseNumberOfVariants(ParserState parserState) throws IOException {
+                // delegate to parse number of reads since the pattern
+                //is close enough, this method name is just
+                //to avoid confusion/ make it intent revealing
+<span class="nc" id="L1145">                return parseNumberOfReads(parserState);</span>
+            }
+            private Range parseVariantPosition(ParserState parserState) throws IOException {
+<span class="nc" id="L1148">                String line = parserState.getNextLine();</span>
+<span class="nc" id="L1149">                Matcher matcher = positionPattern.matcher(line);</span>
+<span class="nc bnc" id="L1150" title="All 2 branches missed.">                if(!matcher.find()){</span>
+<span class="nc" id="L1151">                    throw new IOException(&quot;error reading variant record position:&quot;+ line);</span>
+                }
+<span class="nc" id="L1153">                return Range.parseRange(matcher.group(1), CoordinateSystem.SPACE_BASED);</span>
+            }
+            private long parseAnchorSize(ParserState parserState) throws IOException {
+<span class="nc" id="L1156">                String line = parserState.getNextLine();</span>
+<span class="nc" id="L1157">                Matcher matcher = anchorPattern.matcher(line);</span>
+<span class="nc bnc" id="L1158" title="All 2 branches missed.">                if(!matcher.find()){</span>
+<span class="nc" id="L1159">                    throw new IOException(&quot;error reading variant anchor size:&quot;+ line);</span>
+                }
+<span class="nc" id="L1161">                return Long.parseLong(matcher.group(1));</span>
+            }
+            private long parseVariantId(ParserState parserState) throws IOException {
+<span class="nc" id="L1164">                String line = parserState.getNextLine();</span>
+<span class="nc" id="L1165">                Matcher matcher = variantIdPattern.matcher(line);</span>
+<span class="nc bnc" id="L1166" title="All 2 branches missed.">                if(!matcher.find()){</span>
+<span class="nc" id="L1167">                    throw new IOException(&quot;error reading variant id&quot;+ line);</span>
+                }
+<span class="nc" id="L1169">                return Long.parseLong(matcher.group(1));</span>
+            }
+            private long parsePhasedVariantId(ParserState parserState) throws IOException {
+<span class="nc" id="L1172">                String line = parserState.getNextLine();</span>
+<span class="nc" id="L1173">                Matcher matcher = phasePattern.matcher(line);</span>
+<span class="nc bnc" id="L1174" title="All 2 branches missed.">                if(!matcher.find()){</span>
+<span class="nc" id="L1175">                    throw new IOException(&quot;error reading variant id&quot;+ line);</span>
+                }
+<span class="nc" id="L1177">                return Long.parseLong(matcher.group(1));</span>
+            }
+        }
+    
+    
+<span class="nc" id="L1182">    private enum ReadMapping{</span>
+<span class="nc" id="L1183">    	INSTANCE(&quot;MPS&quot;);</span>
+    	
+    	private final String messageCode;
+<span class="nc" id="L1186">    	ReadMapping(String code){</span>
+<span class="nc" id="L1187">    		this.messageCode = code;</span>
+<span class="nc" id="L1188">    	}</span>
+    
+<span class="nc" id="L1190">        private final Pattern typePattern = Pattern.compile(&quot;typ:(\\S)&quot;);</span>
+<span class="nc" id="L1191">        private final Pattern readIdPattern = Pattern.compile(&quot;mid:(\\S+)&quot;);</span>
+<span class="nc" id="L1192">        private final Pattern rangePattern = Pattern.compile(&quot;pos:(\\d+,\\d+)&quot;);</span>
+<span class="nc" id="L1193">        private final Pattern numOffsetsPattern = Pattern.compile(&quot;dln:(\\d+)&quot;);</span>
+        
+        final boolean canHandle(String messageCode){
+<span class="nc" id="L1196">            return this.messageCode.equals(messageCode);</span>
+        }
+   
+        public void handleReadLayout(ParserState parserState, AsmUnitigVisitor visitor) throws IOException {
+<span class="nc bnc" id="L1200" title="All 2 branches missed.">            if(visitor !=null){</span>
+<span class="nc" id="L1201">               char type = parseReadType(parserState);</span>
+<span class="nc" id="L1202">               String readId = parseReadId(parserState);</span>
+<span class="nc" id="L1203">               String nextLine = parserState.getNextLine();</span>
+               //CA &lt;= 5 had a src block which should be ignored
+               //CA 6+ doesn't have it anymore so need to handle
+               //both cases.
+<span class="nc bnc" id="L1207" title="All 2 branches missed.">               if(nextLine.startsWith(&quot;src&quot;)){</span>
+<span class="nc" id="L1208">                   skipReservedSource(parserState);</span>
+<span class="nc" id="L1209">                   nextLine = parserState.getNextLine();</span>
+               }
+               
+<span class="nc" id="L1212">               DirectedRange directedRange = parseDirectedRange(nextLine);</span>
+<span class="nc" id="L1213">               List&lt;Integer&gt; gapOffsets = parseGapOffsets(parserState);</span>
+<span class="nc" id="L1214">               parseEndOfMessage(parserState, messageCode);                   </span>
+<span class="nc" id="L1215">               visitor.visitReadLayout(type, readId, directedRange, gapOffsets);</span>
+<span class="nc" id="L1216">            }else{</span>
+<span class="nc" id="L1217">                skipCurrentBlock(parserState);</span>
+            }
+<span class="nc" id="L1219">        }</span>
+        
+        public void handleReadLayout(ParserState parserState, AsmContigVisitor visitor) throws IOException {
+<span class="nc bnc" id="L1222" title="All 2 branches missed.">            if(visitor !=null){</span>
+<span class="nc" id="L1223">               char type = parseReadType(parserState);</span>
+<span class="nc" id="L1224">               String readId = parseReadId(parserState);</span>
+<span class="nc" id="L1225">               String nextLine = parserState.getNextLine();</span>
+               //CA &lt;= 5 had a src block which should be ignored
+               //CA 6+ doesn't have it anymore so need to handle
+               //both cases.
+<span class="nc bnc" id="L1229" title="All 2 branches missed.">               if(nextLine.startsWith(&quot;src&quot;)){</span>
+<span class="nc" id="L1230">                   skipReservedSource(parserState);</span>
+<span class="nc" id="L1231">                   nextLine = parserState.getNextLine();</span>
+               }
+               
+<span class="nc" id="L1234">               DirectedRange directedRange = parseDirectedRange(nextLine);</span>
+<span class="nc" id="L1235">               List&lt;Integer&gt; gapOffsets = parseGapOffsets(parserState);</span>
+<span class="nc" id="L1236">               parseEndOfMessage(parserState, messageCode);                   </span>
+<span class="nc" id="L1237">               visitor.visitReadLayout(type, readId, directedRange, gapOffsets);</span>
+<span class="nc" id="L1238">            }else{</span>
+<span class="nc" id="L1239">                skipCurrentBlock(parserState);</span>
+            }
+<span class="nc" id="L1241">        }</span>
+        private DirectedRange parseDirectedRange(String line) throws IOException {
+<span class="nc" id="L1243">            Matcher matcher = rangePattern.matcher(line);</span>
+<span class="nc bnc" id="L1244" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L1245">                throw new IOException(&quot;error reading read-to-unitig placed range:&quot;+ line);</span>
+            }
+<span class="nc" id="L1247">            return DirectedRange.parse(matcher.group(1));</span>
+        }
+        private List&lt;Integer&gt; parseGapOffsets(ParserState parserState) throws IOException {
+<span class="nc" id="L1250">            String lengthLine = parserState.getNextLine();</span>
+<span class="nc" id="L1251">            Matcher matcher = numOffsetsPattern.matcher(lengthLine);</span>
+<span class="nc bnc" id="L1252" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L1253">                throw new IOException(&quot;error reading read-to-unitig delta encoding length:&quot;+ lengthLine);</span>
+            }
+<span class="nc" id="L1255">            int expectedNumberOfOffsets = Integer.parseInt(matcher.group(1));</span>
+<span class="nc" id="L1256">            String beginDeltaEncodingLine = parserState.getNextLine();</span>
+<span class="nc bnc" id="L1257" title="All 2 branches missed.">            if(!beginDeltaEncodingLine.startsWith(&quot;del:&quot;)){</span>
+<span class="nc" id="L1258">                throw new IOException(&quot;error reading read-to-unitig delta encoding:&quot;+ beginDeltaEncodingLine);</span>
+            }
+<span class="nc" id="L1260">            List&lt;Integer&gt; offsets = new ArrayList&lt;Integer&gt;(expectedNumberOfOffsets);</span>
+<span class="nc bnc" id="L1261" title="All 2 branches missed.">            while(offsets.size()&lt;expectedNumberOfOffsets){</span>
+<span class="nc" id="L1262">                String offsetLine = parserState.getNextLine();</span>
+<span class="nc" id="L1263">                Scanner scanner = new Scanner(offsetLine);</span>
+<span class="nc bnc" id="L1264" title="All 2 branches missed.">                if(!scanner.hasNextInt()){</span>
+<span class="nc" id="L1265">                    throw new IOException(&quot;error reading read-to-unitig delta encoding not enough values :&quot;+ offsetLine);</span>
+                    
+                }
+<span class="nc bnc" id="L1268" title="All 2 branches missed.">                while(scanner.hasNextInt()){</span>
+<span class="nc" id="L1269">                    offsets.add(scanner.nextInt());</span>
+                }
+<span class="nc" id="L1271">            }</span>
+<span class="nc" id="L1272">            return offsets;</span>
+        }
+        private String parseReadId(ParserState parserState) throws IOException {
+<span class="nc" id="L1275">            String line = parserState.getNextLine();</span>
+<span class="nc" id="L1276">            Matcher matcher = readIdPattern.matcher(line);</span>
+<span class="nc bnc" id="L1277" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L1278">                throw new IOException(&quot;error reading read-to-unitig read id:&quot;+ line);</span>
+            }
+<span class="nc" id="L1280">            return matcher.group(1);</span>
+        }
+        private char parseReadType(ParserState parserState) throws IOException {
+<span class="nc" id="L1283">            String line = parserState.getNextLine();</span>
+<span class="nc" id="L1284">            Matcher matcher = typePattern.matcher(line);</span>
+<span class="nc bnc" id="L1285" title="All 2 branches missed.">            if(!matcher.find()){</span>
+<span class="nc" id="L1286">                throw new IOException(&quot;error reading read-to-unitig mapping type:&quot;+ line);</span>
+            }
+<span class="nc" id="L1288">            return matcher.group(1).charAt(0);</span>
+        }
+        
+    }
+    static int parseLength(ParserState parserState) throws IOException {
+<span class="nc" id="L1293">        String line = parserState.getNextLine();</span>
+<span class="nc" id="L1294">        return parseLength(line);</span>
+    }
+    private static int parseLength(String line) throws IOException {               
+<span class="nc" id="L1297">        Matcher matcher = LENGTH_PATTERN.matcher(line);</span>
+<span class="nc bnc" id="L1298" title="All 2 branches missed.">        if(!matcher.find()){</span>
+<span class="nc" id="L1299">            throw new IOException(&quot;error reading length:&quot;+ line);</span>
+        }
+<span class="nc" id="L1301">        return Integer.parseInt(matcher.group(1));</span>
+    }
+    private static long parseNumberOfReads(ParserState parserState) throws IOException {
+<span class="nc" id="L1304">        String line = parserState.getNextLine();</span>
+<span class="nc" id="L1305">        Matcher matcher = NUM_READS_PATTERN.matcher(line);</span>
+<span class="nc bnc" id="L1306" title="All 2 branches missed.">        if(!matcher.find()){</span>
+<span class="nc" id="L1307">            throw new IOException(&quot;error parsing unitig number of reads : &quot;+ line);</span>
+        }
+<span class="nc" id="L1309">        return Long.parseLong(matcher.group(1));</span>
+    }
+    private static final class IdTuple{
+        private final String externalId;
+        private final long internalId;
+<span class="nc" id="L1314">        private IdTuple(String externalId, long internalId) {</span>
+<span class="nc" id="L1315">            this.externalId = externalId;</span>
+<span class="nc" id="L1316">            this.internalId = internalId;</span>
+<span class="nc" id="L1317">        }</span>
+        
+    }
+    
+    private static final class MatePairEvidenceImpl implements MatePairEvidence{
+        private final String read1,read2;
+        
+<span class="nc" id="L1324">        private MatePairEvidenceImpl(String read1, String read2) {</span>
+<span class="nc" id="L1325">            this.read1 = read1;</span>
+<span class="nc" id="L1326">            this.read2 = read2;</span>
+<span class="nc" id="L1327">        }</span>
+
+        /**
+        * {@inheritDoc}
+        */
+        @Override
+        public String getRead1() {
+<span class="nc" id="L1334">            return read1;</span>
+        }
+
+        /**
+        * {@inheritDoc}
+        */
+        @Override
+        public String getRead2() {
+<span class="nc" id="L1342">            return read2;</span>
+        }
+
+        /**
+        * {@inheritDoc}
+        */
+        @Override
+        public int hashCode() {
+<span class="nc" id="L1350">            final int prime = 31;</span>
+<span class="nc" id="L1351">            int result = 1;</span>
+<span class="nc bnc" id="L1352" title="All 2 branches missed.">            result = prime * result + ((read1 == null) ? 0 : read1.hashCode());</span>
+<span class="nc bnc" id="L1353" title="All 2 branches missed.">            result = prime * result + ((read2 == null) ? 0 : read2.hashCode());</span>
+<span class="nc" id="L1354">            return result;</span>
+        }
+
+        /**
+        * {@inheritDoc}
+        */
+        @Override
+        public boolean equals(Object obj) {
+<span class="nc bnc" id="L1362" title="All 2 branches missed.">            if (this == obj) {</span>
+<span class="nc" id="L1363">                return true;</span>
+            }
+<span class="nc bnc" id="L1365" title="All 2 branches missed.">            if (obj == null) {</span>
+<span class="nc" id="L1366">                return false;</span>
+            }
+<span class="nc bnc" id="L1368" title="All 2 branches missed.">            if (!(obj instanceof MatePairEvidenceImpl)) {</span>
+<span class="nc" id="L1369">                return false;</span>
+            }
+<span class="nc" id="L1371">            MatePairEvidenceImpl other = (MatePairEvidenceImpl) obj;</span>
+<span class="nc bnc" id="L1372" title="All 2 branches missed.">            if (read1 == null) {</span>
+<span class="nc bnc" id="L1373" title="All 2 branches missed.">                if (other.read1 != null) {</span>
+<span class="nc" id="L1374">                    return false;</span>
+                }
+<span class="nc bnc" id="L1376" title="All 2 branches missed.">            } else if (!read1.equals(other.read1)) {</span>
+<span class="nc" id="L1377">                return false;</span>
+            }
+<span class="nc bnc" id="L1379" title="All 2 branches missed.">            if (read2 == null) {</span>
+<span class="nc bnc" id="L1380" title="All 2 branches missed.">                if (other.read2 != null) {</span>
+<span class="nc" id="L1381">                    return false;</span>
+                }
+<span class="nc bnc" id="L1383" title="All 2 branches missed.">            } else if (!read2.equals(other.read2)) {</span>
+<span class="nc" id="L1384">                return false;</span>
+            }
+<span class="nc" id="L1386">            return true;</span>
+        }
+
+        /**
+        * {@inheritDoc}
+        */
+        @Override
+        public String toString() {
+<span class="nc" id="L1394">            return &quot;MatePairEvidenceImpl [read1=&quot; + read1 + &quot;, read2=&quot; + read2</span>
+                    + &quot;]&quot;;
+        }
+        
+        
+    }
+    
+    private static class VariantRecordImpl implements VariantRecord{
+
+        private final List&lt;Long&gt; readIds;
+        private final NucleotideSequence sequence;
+        private final int weight;
+        
+        
+        public VariantRecordImpl(List&lt;Long&gt; readIds,
+<span class="nc" id="L1409">                NucleotideSequence sequence, int weight) {</span>
+<span class="nc" id="L1410">            this.readIds = Collections.unmodifiableList(readIds);</span>
+<span class="nc" id="L1411">            this.sequence = sequence;</span>
+<span class="nc" id="L1412">            this.weight = weight;</span>
+<span class="nc" id="L1413">        }</span>
+
+        /**
+        * {@inheritDoc}
+        */
+        @Override
+        public List&lt;Long&gt; getContributingReadIIDs() {
+<span class="nc" id="L1420">            return readIds;</span>
+        }
+
+        /**
+        * {@inheritDoc}
+        */
+        @Override
+        public int getWeight() {
+<span class="nc" id="L1428">            return weight;</span>
+        }
+
+        /**
+        * {@inheritDoc}
+        */
+        @Override
+        public NucleotideSequence getVariantSequence() {
+<span class="nc" id="L1436">            return sequence;</span>
+        }
+
+        /**
+        * {@inheritDoc}
+        */
+        @Override
+        public int compareTo(VariantRecord o) {
+<span class="nc" id="L1444">        	return JillionUtil.compare(weight, o.getWeight());			</span>
+        }
+
+        /**
+        * {@inheritDoc}
+        */
+        @Override
+        public int hashCode() {
+<span class="nc" id="L1452">            final int prime = 31;</span>
+<span class="nc" id="L1453">            int result = 1;</span>
+<span class="nc bnc" id="L1454" title="All 2 branches missed.">            result = prime * result</span>
+<span class="nc" id="L1455">                    + ((readIds == null) ? 0 : readIds.hashCode());</span>
+<span class="nc bnc" id="L1456" title="All 2 branches missed.">            result = prime * result</span>
+<span class="nc" id="L1457">                    + ((sequence == null) ? 0 : sequence.hashCode());</span>
+<span class="nc" id="L1458">            result = prime * result + weight;</span>
+<span class="nc" id="L1459">            return result;</span>
+        }
+
+        /**
+        * {@inheritDoc}
+        */
+        @Override
+        public boolean equals(Object obj) {
+<span class="nc bnc" id="L1467" title="All 2 branches missed.">            if (this == obj) {</span>
+<span class="nc" id="L1468">                return true;</span>
+            }
+<span class="nc bnc" id="L1470" title="All 2 branches missed.">            if (obj == null) {</span>
+<span class="nc" id="L1471">                return false;</span>
+            }
+<span class="nc bnc" id="L1473" title="All 2 branches missed.">            if (!(obj instanceof VariantRecordImpl)) {</span>
+<span class="nc" id="L1474">                return false;</span>
+            }
+<span class="nc" id="L1476">            VariantRecordImpl other = (VariantRecordImpl) obj;</span>
+<span class="nc bnc" id="L1477" title="All 2 branches missed.">            if (readIds == null) {</span>
+<span class="nc bnc" id="L1478" title="All 2 branches missed.">                if (other.readIds != null) {</span>
+<span class="nc" id="L1479">                    return false;</span>
+                }
+<span class="nc bnc" id="L1481" title="All 2 branches missed.">            } else if (!readIds.equals(other.readIds)) {</span>
+<span class="nc" id="L1482">                return false;</span>
+            }
+<span class="nc bnc" id="L1484" title="All 2 branches missed.">            if (sequence == null) {</span>
+<span class="nc bnc" id="L1485" title="All 2 branches missed.">                if (other.sequence != null) {</span>
+<span class="nc" id="L1486">                    return false;</span>
+                }
+<span class="nc bnc" id="L1488" title="All 2 branches missed.">            } else if (!sequence.equals(other.sequence)) {</span>
+<span class="nc" id="L1489">                return false;</span>
+            }
+<span class="nc bnc" id="L1491" title="All 2 branches missed.">            if (weight != other.weight) {</span>
+<span class="nc" id="L1492">                return false;</span>
+            }
+<span class="nc" id="L1494">            return true;</span>
+        }
+
+        /**
+        * {@inheritDoc}
+        */
+        @Override
+        public String toString() {
+<span class="nc" id="L1502">            return &quot;VariantRecordImpl [readIds=&quot; + readIds + &quot;, sequence=&quot;</span>
+                    + sequence + &quot;, weight=&quot; + weight + &quot;]&quot;;
+        }
+        
+    }
+    
+    private static void skipReservedSource(ParserState parserState) throws IOException {
+        
+<span class="nc" id="L1510">        String line = &quot;&quot;;</span>
+<span class="nc bnc" id="L1511" title="All 2 branches missed.">        while(!&quot;.\n&quot;.equals(line)){</span>
+<span class="nc" id="L1512">            line = parserState.getNextLine();</span>
+        }
+        
+<span class="nc" id="L1515">    }</span>
+    private  static void parseEndOfMessage(ParserState parserState, String messageCode) throws IOException {
+<span class="nc" id="L1517">        String endLine = parserState.getNextLine();</span>
+<span class="nc bnc" id="L1518" title="All 2 branches missed.">        if(!endLine.startsWith(END_MESSAGE)){</span>
+<span class="nc" id="L1519">            throw new IOException(&quot;invalid asm file: invalid &quot;+ messageCode +&quot; end tag : &quot; + endLine);</span>
+        }
+<span class="nc" id="L1521">    }</span>
+    
+    private static void skipCurrentBlock(ParserState parserState) throws IOException {
+<span class="nc" id="L1524">        String line=null;</span>
+        do{
+<span class="nc" id="L1526">            line = parserState.getNextLine();</span>
+<span class="nc bnc" id="L1527" title="All 4 branches missed.">        }while(line !=null &amp;&amp; !line.startsWith(&quot;}&quot;));</span>
+        
+<span class="nc" id="L1529">    }</span>
+    
+    private static abstract class CallBack implements AsmVisitorCallback{
+    	private final AtomicBoolean keepParsing;
+
+<span class="nc" id="L1534">		public CallBack(AtomicBoolean keepParsing) {</span>
+<span class="nc" id="L1535">			this.keepParsing = keepParsing;</span>
+<span class="nc" id="L1536">		}</span>
+
+		@Override
+		public void haltParsing() {
+<span class="nc" id="L1540">			keepParsing.set(false);			</span>
+<span class="nc" id="L1541">		}</span>
+    	
+    }
+    
+    
+    private static class MementoedCallback extends CallBack{
+
+    	private final long offset;
+    	public MementoedCallback(AtomicBoolean keepParsing, long offset){
+<span class="nc" id="L1550">    		super(keepParsing);</span>
+<span class="nc" id="L1551">    		this.offset = offset;</span>
+<span class="nc" id="L1552">    	}</span>
+		@Override
+		public boolean canCreateMemento() {
+<span class="nc" id="L1555">			return true;</span>
+		}
+
+		@Override
+		public AsmVisitorMemento createMemento() {
+<span class="nc" id="L1560">			return new OffsetMemento(offset);</span>
+		}
+    	
+    }
+    
+    
+    private static class OffsetMemento implements AsmVisitorMemento{
+    	private final long offset;
+
+<span class="nc" id="L1569">		public OffsetMemento(long offset) {</span>
+<span class="nc" id="L1570">			this.offset = offset;</span>
+<span class="nc" id="L1571">		}</span>
+
+		protected final long getOffset() {
+<span class="nc" id="L1574">			return offset;</span>
+		}
+    	
+    }
+    private static class FileBasedAsmFileParser extends AsmFileParser{
+    	private final File asmFile;
+
+<span class="nc" id="L1581">		public FileBasedAsmFileParser(File asmFile) {</span>
+<span class="nc" id="L1582">			this.asmFile = asmFile;</span>
+<span class="nc" id="L1583">		}</span>
+
+		@Override
+		public void accept(AsmVisitor visitor) throws IOException {
+<span class="nc" id="L1587">			InputStream in =null;</span>
+	        try{
+<span class="nc" id="L1589">	            in= new BufferedInputStream(new FileInputStream(asmFile));</span>
+<span class="nc" id="L1590">	            ParserState parserState = new ParserState(in, 0){</span>
+
+					@Override
+					public CallBack createCallback() {
+<span class="nc" id="L1594">						return new MementoedCallback(keepParsing, markedOffset);</span>
+					}
+	            	
+	            };
+<span class="nc" id="L1598">	            parseAsm(parserState,visitor);</span>
+	        }finally{
+<span class="nc" id="L1600">	            IOUtil.closeAndIgnoreErrors(in);</span>
+	        }
+			
+<span class="nc" id="L1603">		}</span>
+
+		@Override
+		public void accept(AsmVisitor visitor, AsmVisitorMemento memento)
+				throws IOException {
+<span class="nc bnc" id="L1608" title="All 2 branches missed.">			if( !(memento instanceof OffsetMemento)){</span>
+<span class="nc" id="L1609">				throw new IllegalArgumentException(&quot;unknown memento type &quot;+ memento + &quot; must use instance created by this parser&quot;);</span>
+			}
+			
+<span class="nc" id="L1612">			long offset = ((OffsetMemento)memento).getOffset();			</span>
+<span class="nc" id="L1613">			InputStream in =null;</span>
+			try{
+<span class="nc" id="L1615">				in = new BufferedInputStream(new RandomAccessFileInputStream(asmFile, offset));</span>
+<span class="nc" id="L1616">				ParserState parserState = new ParserState(in, offset){</span>
+
+					@Override
+					public CallBack createCallback() {
+<span class="nc" id="L1620">						return new MementoedCallback(keepParsing, markedOffset);</span>
+					}
+	            	
+	            };
+<span class="nc" id="L1624">	            parseAsm(parserState,visitor);</span>
+			}finally{
+<span class="nc" id="L1626">				IOUtil.closeAndIgnoreErrors(in);</span>
+			}
+<span class="nc" id="L1628">		}</span>
+    	
+    }
+   
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

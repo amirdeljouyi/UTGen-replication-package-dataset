@@ -1,0 +1,356 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Router.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.application</a> &gt; <span class="el_source">Router.java</span></div><h1>Router.java</h1><pre class="source lang-java linenums">package net.sf.xbus.application;
+
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.core.config.Configuration;
+import net.sf.xbus.base.core.trace.Trace;
+import net.sf.xbus.base.xbussystem.XBUSSystem;
+import net.sf.xbus.protocol.Message;
+import net.sf.xbus.protocol.MessageFactory;
+
+/**
+ * The &lt;code&gt;Router&lt;/code&gt; routes a message to one or more systems. Three
+ * different strategies are implemented:
+ * &lt;ul&gt;
+ * &lt;li&gt;{@link #distribute(Message) distribute} sends the data to one or more
+ * systems and awaits no response data.
+ * &lt;li&gt;{@link #invoke(Message) invoke} implements a chain of senders. This
+ * means the response data of one sender is the request data of the following
+ * sender.
+ * &lt;li&gt;{@link #invokeAndDistribute(Message) invokeAndDistribute} is the
+ * combination of the both. First the data goes through the chain of sender
+ * invocations, then the response data of the last sender is distributed to one
+ * or more systems.
+ * &lt;/ul&gt;
+ * &lt;p&gt;
+ * 
+ * &lt;b&gt;Configuration:&lt;/b&gt;
+ * &lt;p&gt;
+ * &lt;table border&gt;
+ * &lt;tr&gt;
+ * &lt;th&gt;Chapter&lt;/th&gt;
+ * &lt;th&gt;Section&lt;/th&gt;
+ * &lt;th&gt;Key&lt;/th&gt;
+ * &lt;th&gt;Content&lt;/th&gt;
+ * &lt;/tr&gt;
+ * &lt;tr&gt;
+ * &lt;td&gt;Router&lt;/td&gt;
+ * &lt;td&gt;&lt;code&gt;message.getSource() + &quot;.&quot; + message.getFunction()&lt;/code&gt;&lt;/td&gt;
+ * &lt;td&gt;Invoke&lt;i&gt;n&lt;/i&gt;&lt;/td&gt;
+ * &lt;td&gt;System where a message is sent to and from which a response is returned.&lt;/td&gt;
+ * &lt;/tr&gt;
+ * &lt;tr&gt;
+ * &lt;td&gt;Router&lt;/td&gt;
+ * &lt;td&gt;&lt;code&gt;message.getSource() + &quot;.&quot; + message.getFunction()&lt;/code&gt;&lt;/td&gt;
+ * &lt;td&gt;Distribute&lt;i&gt;n&lt;/i&gt;&lt;/td&gt;
+ * &lt;td&gt;System where a message is sent to and from which no response is
+ * returned.&lt;/td&gt;
+ * &lt;/tr&gt;
+ * &lt;/table&gt;
+ */
+<span class="nc" id="L51">public class Router</span>
+{
+	public static final String CHAPTER = &quot;Router&quot;;
+
+<span class="nc" id="L55">	private boolean mResponseFilled = false;</span>
+
+<span class="nc" id="L57">	private class InvokeInternalResult</span>
+	{
+		Message resultMessage;
+		XBUSSystem lastSystem;
+	}
+
+	/**
+	 * The message will be routed depending on the entries of the configuration.
+	 * 
+	 * @param message the request data of this &lt;code&gt;Message&lt;/code&gt; is sent to
+	 *            the first system. It's response data is empty afterwards
+	 *            because the last step is the distribution without responses.
+	 */
+	public void route(Message message) throws XException
+	{
+<span class="nc bnc" id="L72" title="All 2 branches missed.">		if (getRouterEntryOptional(message, &quot;Invoke1&quot;) != null)</span>
+		{
+<span class="nc bnc" id="L74" title="All 2 branches missed.">			if (getRouterEntryOptional(message,</span>
+					&quot;Distribute1&quot;) != null)
+			{
+<span class="nc" id="L77">				invokeAndDistribute(message);</span>
+			}
+			else
+			{
+<span class="nc" id="L81">				invoke(message);</span>
+			}
+		}
+		else
+		{
+<span class="nc" id="L86">			distribute(message);</span>
+		}
+<span class="nc" id="L88">	}</span>
+
+	/**
+	 * The &lt;code&gt;Message&lt;/code&gt; is distributed to one or more systens. This
+	 * means, that the given &lt;code&gt;Message&lt;/code&gt; is sent to the systems (read
+	 * from the &lt;code&gt;Configuration&lt;/code&gt;) one after the other. Because
+	 * there is no response data from the systems awaited, the response data in
+	 * the &lt;code&gt;Message&lt;/code&gt; is empty after the distribution.
+	 * &lt;p&gt;
+	 * 
+	 * If an error occurs when calling one sender, the processing stops, a
+	 * rollback is done and the returncode of the &lt;code&gt;Message&lt;/code&gt; is set
+	 * to &lt;code&gt;RC_NOK&lt;/code&gt;.
+	 * 
+	 * @param message the request data of this &lt;code&gt;Message&lt;/code&gt; is sent to
+	 *            the systems
+	 */
+	public void distribute(Message message) throws XException
+	{
+<span class="nc" id="L107">		distributeInternal(message);</span>
+<span class="nc" id="L108">	}</span>
+
+	/**
+	 * A combination of {@link #invoke(Message) invoke} and
+	 * {@link #distribute(Message) distribute}. First the data goes through a
+	 * chain of sender invocations, then the response data of the last sender is
+	 * distributed to one or more systems.
+	 * &lt;p&gt;
+	 * 
+	 * If an error occurs when calling one sender, the processing stops, a
+	 * rollback is done and the returncode of the &lt;code&gt;Message&lt;/code&gt; is set
+	 * to &lt;code&gt;RC_NOK&lt;/code&gt;.
+	 * 
+	 * @param message the request data of this &lt;code&gt;Message&lt;/code&gt; is sent to
+	 *            the first system. It's response data is empty afterwards
+	 *            because the last step is the distribution without responses.
+	 */
+	public void invokeAndDistribute(Message message) throws XException
+	{
+<span class="nc" id="L127">		InvokeInternalResult invokeResult = invokeInternal(message);</span>
+
+<span class="nc" id="L129">		Message newMessage = invokeResult.resultMessage;</span>
+
+<span class="nc bnc" id="L131" title="All 2 branches missed.">		if (newMessage.getReturncode() == Constants.RC_OK)</span>
+		{
+<span class="nc" id="L133">			distributeInternal(newMessage);</span>
+		}
+
+<span class="nc" id="L136">		message.setReturncode(newMessage.getReturncode());</span>
+<span class="nc" id="L137">		message.setErrorcode(newMessage.getErrorcode());</span>
+<span class="nc" id="L138">		message.setErrortext(newMessage.getErrortext());</span>
+<span class="nc" id="L139">	}</span>
+
+	/**
+	 * A chain of invocations of one or more senders. After a sender has been
+	 * called, the &lt;code&gt;Message&lt;/code&gt; for the next sender is created with
+	 * the response data of the previous sender. After the invocation of the
+	 * last sender, the response data of the initial &lt;code&gt;Message&lt;/code&gt; is
+	 * filled with the response data of the last sender.
+	 * &lt;p&gt;
+	 * 
+	 * If an error occurs when calling one sender, the processing stops, a
+	 * rollback is done and the returncode of the initial &lt;code&gt;Message&lt;/code&gt;
+	 * is set to &lt;code&gt;RC_NOK&lt;/code&gt;.
+	 * 
+	 * @param message the initial &lt;code&gt;Message&lt;/code&gt;
+	 */
+	public void invoke(Message message) throws XException
+	{
+<span class="nc" id="L157">		InvokeInternalResult invokeResult = invokeInternal(message);</span>
+
+<span class="nc" id="L159">		Message newMessage = invokeResult.resultMessage;</span>
+<span class="nc" id="L160">		XBUSSystem lastSystem = invokeResult.lastSystem;</span>
+
+<span class="nc" id="L162">		MessageFactory.transformResponse2Response(lastSystem, message</span>
+<span class="nc" id="L163">				.getSource(), newMessage, message);</span>
+<span class="nc" id="L164">	}</span>
+
+	/**
+	 * Routes the incoming &lt;code&gt;Message&lt;/code&gt;-object to the systems, which
+	 * are read from the &lt;code&gt;Configuration&lt;/code&gt;. For every system, a new
+	 * &lt;code&gt;Message&lt;/code&gt;-object is created via the
+	 * {@link net.sf.xbus.protocol.MessageFactory} and is sent by the
+	 * {@link net.sf.xbus.technical.Adapter}.
+	 * &lt;p&gt;
+	 * 
+	 * When an error occurs, the returncode of the initial &lt;code&gt;Message&lt;/code&gt;-object
+	 * will be set to &lt;code&gt;RC_NOK&lt;/code&gt;.
+	 */
+	private void distributeInternal(Message message) throws XException
+	{
+<span class="nc" id="L179">		String errortext = null;</span>
+
+<span class="nc" id="L181">		String destString = getRouterEntry(message, &quot;Distribute1&quot;);</span>
+		XBUSSystem destination;
+
+<span class="nc" id="L184">		int countSystems = 1;</span>
+<span class="nc" id="L185">		boolean rollback = false;</span>
+<span class="nc" id="L186">		Message sendMessage = null;</span>
+
+<span class="nc bnc" id="L188" title="All 4 branches missed.">		while ((destString != null) &amp;&amp; (!rollback))</span>
+		{
+<span class="nc" id="L190">			sendMessage = null;</span>
+<span class="nc" id="L191">			Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L192">			destination = new XBUSSystem(destString, message.getSource()</span>
+<span class="nc" id="L193">					.getAddresses(), config.getValueAsBooleanOptional(&quot;System&quot;,</span>
+					destString, &quot;Broadcast&quot;));
+			// The last parameter instructs the sender to try a broadcast for
+			// all configured addtional addresses. This will only be active if
+			// the destination address really contains a reference to the
+			// addtional address information.
+			try
+			{
+<span class="nc bnc" id="L201" title="All 2 branches missed.">				if (mResponseFilled)</span>
+				{
+<span class="nc" id="L203">					sendMessage = MessageFactory.createSenderMessage(</span>
+							destination, message,
+							MessageFactory.TRANSFORM_FROM_RESPONSE);
+				}
+				else
+				{
+<span class="nc" id="L209">					sendMessage = MessageFactory.createSenderMessage(</span>
+							destination, message,
+							MessageFactory.TRANSFORM_FROM_REQUEST);
+				}
+
+<span class="nc" id="L214">				Adapter.callSender(sendMessage, destination);</span>
+
+<span class="nc bnc" id="L216" title="All 2 branches missed.">				if (!Constants.RC_OK.equals(sendMessage.getReturncode()))</span>
+				{
+<span class="nc" id="L218">					rollback = true;</span>
+				}
+			}
+<span class="nc" id="L221">			catch (XException e)</span>
+			{
+<span class="nc" id="L223">				rollback = true;</span>
+<span class="nc" id="L224">				errortext = e.getMessage();</span>
+<span class="nc" id="L225">				Trace.error(&quot;Exception while routing messages&quot;);</span>
+<span class="nc" id="L226">			}</span>
+<span class="nc" id="L227">			countSystems++;</span>
+<span class="nc" id="L228">			destString = getRouterEntryOptional(message,</span>
+<span class="nc" id="L229">					new StringBuffer().append(&quot;Distribute&quot;)</span>
+<span class="nc" id="L230">							.append(countSystems).toString());</span>
+<span class="nc" id="L231">		}</span>
+
+<span class="nc bnc" id="L233" title="All 2 branches missed.">		if (rollback)</span>
+		{
+<span class="nc bnc" id="L235" title="All 2 branches missed.">			if (sendMessage != null)</span>
+			{
+<span class="nc" id="L237">				message.setReturncode(sendMessage.getReturncode());</span>
+<span class="nc" id="L238">				message.setErrorcode(sendMessage.getErrorcode());</span>
+<span class="nc" id="L239">				message.setErrortext(sendMessage.getErrortext());</span>
+			}
+			else
+			{
+<span class="nc" id="L243">				message.setReturncode(Constants.RC_NOK);</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">				if (errortext != null)</span>
+				{
+<span class="nc" id="L246">					message.setErrortext(errortext);</span>
+				}
+				else
+				{
+<span class="nc" id="L250">					message.setErrortext(XException.getExceptionInformation());</span>
+				}
+			}
+		}
+		else
+		{
+<span class="nc" id="L256">			message.setReturncode(Constants.RC_OK);</span>
+		}
+<span class="nc" id="L258">	}</span>
+
+	/**
+	 * Calls &lt;code&gt;Metaphase&lt;/code&gt; first and then calls the
+	 * &lt;code&gt;route()&lt;/code&gt;-method of its superclass with the response from
+	 * &lt;code&gt;Metaphase&lt;/code&gt;.
+	 */
+	private InvokeInternalResult invokeInternal(Message message)
+			throws XException
+	{
+<span class="nc" id="L268">		InvokeInternalResult result = new InvokeInternalResult();</span>
+
+<span class="nc" id="L270">		String destString = getRouterEntry(message,	&quot;Invoke1&quot;);</span>
+
+<span class="nc" id="L272">		int countSystems = 1;</span>
+<span class="nc" id="L273">		boolean rollback = false;</span>
+
+<span class="nc" id="L275">		Message sendMessage = message;</span>
+<span class="nc" id="L276">		Message sendMessageNew = null;</span>
+
+<span class="nc bnc" id="L278" title="All 4 branches missed.">		while ((destString != null) &amp;&amp; (!rollback))</span>
+		{
+<span class="nc" id="L280">			result.lastSystem = new XBUSSystem(destString, message.getSource()</span>
+<span class="nc" id="L281">					.getAddresses());</span>
+			try
+			{
+<span class="nc bnc" id="L284" title="All 2 branches missed.">				if (countSystems == 1)</span>
+				{
+<span class="nc" id="L286">					sendMessageNew = MessageFactory.createSenderMessage(</span>
+							result.lastSystem, sendMessage,
+							MessageFactory.TRANSFORM_FROM_REQUEST);
+				}
+				else
+				{
+<span class="nc" id="L292">					sendMessageNew = MessageFactory.createSenderMessage(</span>
+							result.lastSystem, sendMessage,
+							MessageFactory.TRANSFORM_FROM_RESPONSE);
+				}
+
+<span class="nc" id="L297">				Adapter.callSender(sendMessageNew, result.lastSystem);</span>
+
+<span class="nc bnc" id="L299" title="All 2 branches missed.">				if (!sendMessageNew.getReturncode().equals(Constants.RC_OK))</span>
+				{
+<span class="nc" id="L301">					rollback = true;</span>
+				}
+
+<span class="nc" id="L304">				sendMessage = sendMessageNew;</span>
+			}
+<span class="nc" id="L306">			catch (XException e)</span>
+			{
+<span class="nc" id="L308">				rollback = true;</span>
+<span class="nc" id="L309">				sendMessage.setReturncode(Constants.RC_NOK);</span>
+<span class="nc" id="L310">				sendMessage.setErrortext(e.getMessage());</span>
+<span class="nc" id="L311">				Trace.error(&quot;Exception while routing messages&quot;);</span>
+<span class="nc" id="L312">			}</span>
+<span class="nc" id="L313">			countSystems++;</span>
+<span class="nc" id="L314">			destString = getRouterEntryOptional(message,</span>
+<span class="nc" id="L315">					new StringBuffer().append(&quot;Invoke&quot;).append(countSystems)</span>
+<span class="nc" id="L316">							.toString());</span>
+		}
+
+<span class="nc" id="L319">		mResponseFilled = true;</span>
+<span class="nc" id="L320">		result.resultMessage = sendMessage;</span>
+<span class="nc" id="L321">		return result;</span>
+	}
+
+	private String getRouterEntry(Message message, String key) throws XException
+	{
+<span class="nc" id="L326">		Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L327">		String retString = config.getValueOptional(CHAPTER, message.getSource().getName(), key);</span>
+<span class="nc bnc" id="L328" title="All 2 branches missed.">		if (retString == null)</span>
+		{
+<span class="nc" id="L330">			retString = config.getValue(CHAPTER, getSection(message), key);</span>
+		}
+		
+<span class="nc" id="L333">		return retString;</span>
+	}
+	
+	private String getRouterEntryOptional(Message message ,String key) throws XException
+	{
+<span class="nc" id="L338">		Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L339">		String retString = config.getValueOptional(CHAPTER, message.getSource().getName(), key);</span>
+<span class="nc bnc" id="L340" title="All 2 branches missed.">		if (retString == null)</span>
+		{
+<span class="nc" id="L342">			retString = config.getValueOptional(CHAPTER, getSection(message), key);</span>
+		}
+		
+<span class="nc" id="L345">		return retString;</span>
+	}
+	
+	private String getSection(Message message)
+	{
+		
+<span class="nc" id="L351">		return new StringBuffer().append(message.getSource().getName()).append(</span>
+<span class="nc" id="L352">				&quot;.&quot;).append(message.getFunction()).toString();</span>
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

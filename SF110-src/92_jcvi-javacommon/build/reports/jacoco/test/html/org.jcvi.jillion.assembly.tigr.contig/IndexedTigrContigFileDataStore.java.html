@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IndexedTigrContigFileDataStore.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.assembly.tigr.contig</a> &gt; <span class="el_source">IndexedTigrContigFileDataStore.java</span></div><h1>IndexedTigrContigFileDataStore.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+package org.jcvi.jillion.assembly.tigr.contig;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import org.jcvi.jillion.assembly.tigr.contig.TigrContigFileVisitor.TigrContigVisitorCallback.TigrContigVisitorMemento;
+import org.jcvi.jillion.core.datastore.DataStore;
+import org.jcvi.jillion.core.datastore.DataStoreClosedException;
+import org.jcvi.jillion.core.datastore.DataStoreException;
+import org.jcvi.jillion.core.datastore.DataStoreFilter;
+import org.jcvi.jillion.core.util.iter.StreamingIterator;
+import org.jcvi.jillion.internal.core.datastore.DataStoreStreamingIterator;
+/**
+ * {@code IndexedTigrContigFileDataStore} is an implementation of 
+ * {@link TigrContigDataStore} that only stores an index containing
+ * {@link TigrContigVisitorMemento}s to the various contigs contained
+ * inside a contig file.  This allows large files to provide random 
+ * access without taking up much memory.  The downside is each contig
+ * must be re-parsed each time.
+ * @author dkatzel
+ *
+ *
+ */
+final class IndexedTigrContigFileDataStore implements TigrContigDataStore {
+
+	
+
+	private final Map&lt;String, TigrContigVisitorMemento&gt; mementos;
+	private final DataStore&lt;Long&gt; fullLengthSequences;
+	private final DataStoreFilter filter;
+	private final File contigFile;
+<span class="nc" id="L54">	private volatile boolean closed=false;</span>
+	private final TigrContigFileParser parser;
+	
+	public static TigrContigDataStore create(File contigFile, DataStore&lt;Long&gt; fullLengthSequences, DataStoreFilter filter) throws IOException{
+<span class="nc" id="L58">		TigrContigFileParser parser =TigrContigFileParser.create(contigFile);</span>
+<span class="nc" id="L59">		IndexedDataStorBuilder visitor = new IndexedDataStorBuilder(filter);</span>
+<span class="nc" id="L60">		parser.accept(visitor);</span>
+<span class="nc" id="L61">		return visitor.build(contigFile, fullLengthSequences, parser);</span>
+	}
+	
+	
+	private IndexedTigrContigFileDataStore(File contigFile,
+			DataStoreFilter filter,
+			DataStore&lt;Long&gt; fullLengthSequences,
+			TigrContigFileParser parser,
+<span class="nc" id="L69">			Map&lt;String, TigrContigVisitorMemento&gt; mementos) {</span>
+<span class="nc" id="L70">		this.contigFile = contigFile;</span>
+<span class="nc" id="L71">		this.filter = filter;</span>
+<span class="nc" id="L72">		this.fullLengthSequences=fullLengthSequences;</span>
+<span class="nc" id="L73">		this.mementos = mementos;</span>
+<span class="nc" id="L74">		this.parser= parser;</span>
+<span class="nc" id="L75">	}</span>
+
+	private void checkNotClosed(){
+<span class="nc bnc" id="L78" title="All 2 branches missed.">		if(closed){</span>
+<span class="nc" id="L79">			throw new DataStoreClosedException(&quot;datastore is closed&quot;);</span>
+		}
+<span class="nc" id="L81">	}</span>
+
+	@Override
+	public StreamingIterator&lt;String&gt; idIterator() throws DataStoreException {
+<span class="nc" id="L85">		checkNotClosed();		</span>
+<span class="nc" id="L86">		return DataStoreStreamingIterator.create(this, mementos.keySet().iterator());</span>
+	}
+
+
+	@Override
+	public TigrContig get(String id) throws DataStoreException {
+<span class="nc" id="L92">		checkNotClosed();</span>
+<span class="nc" id="L93">		TigrContigVisitorMemento memento = mementos.get(id);</span>
+<span class="nc bnc" id="L94" title="All 2 branches missed.">		if(memento ==null){</span>
+			//not in datastore
+<span class="nc" id="L96">			return null;</span>
+		}
+<span class="nc" id="L98">		SingleContigVisitor visitor = new SingleContigVisitor();</span>
+		try {
+<span class="nc" id="L100">			parser.accept(visitor, memento);</span>
+<span class="nc" id="L101">		} catch (IOException e) {</span>
+<span class="nc" id="L102">			throw new DataStoreException(&quot;error parsing contig file to get &quot; + id, e);</span>
+<span class="nc" id="L103">		}</span>
+<span class="nc" id="L104">		return visitor.contig;</span>
+	}
+
+
+	@Override
+	public boolean contains(String id) throws DataStoreException {
+<span class="nc" id="L110">		checkNotClosed();</span>
+<span class="nc" id="L111">		return mementos.containsKey(id);</span>
+	}
+
+
+	@Override
+	public long getNumberOfRecords() throws DataStoreException {
+<span class="nc" id="L117">		checkNotClosed();</span>
+<span class="nc" id="L118">		return mementos.size();</span>
+	}
+
+
+	@Override
+	public boolean isClosed() {
+<span class="nc" id="L124">		return closed;</span>
+	}
+
+
+	@Override
+	public StreamingIterator&lt;TigrContig&gt; iterator() throws DataStoreException {
+<span class="nc" id="L130">		checkNotClosed();</span>
+<span class="nc" id="L131">		return DataStoreStreamingIterator.create(this, </span>
+<span class="nc" id="L132">				TigrContigFileContigIterator.create(contigFile, fullLengthSequences, filter));</span>
+	}
+
+
+	@Override
+	public void close() throws IOException {
+<span class="nc" id="L138">		closed=true;</span>
+<span class="nc" id="L139">		mementos.clear();</span>
+		
+<span class="nc" id="L141">	}</span>
+	
+<span class="nc" id="L143">	private final class SingleContigVisitor implements TigrContigFileVisitor{</span>
+<span class="nc" id="L144">		TigrContig contig = null;</span>
+		@Override
+		public TigrContigVisitor visitContig(
+				final TigrContigVisitorCallback callback, String contigId) {
+			//assume the first contig we see is the one we want
+<span class="nc" id="L149">			return new AbstractTigrContigBuilderVisitor(contigId, fullLengthSequences) {</span>
+				
+				@Override
+				protected void visitContig(TigrContigBuilder builder) {
+<span class="nc" id="L153">					SingleContigVisitor.this.contig = builder.build();</span>
+<span class="nc" id="L154">					callback.haltParsing();</span>
+<span class="nc" id="L155">				}</span>
+			};
+		}
+
+		@Override
+		public void halted() {
+			//no-op			
+<span class="nc" id="L162">		}</span>
+
+		@Override
+		public void visitEnd() {
+			//no-op			
+<span class="nc" id="L167">		}</span>
+		
+	}
+	
+	
+	
+	
+	
+	private static final class IndexedDataStorBuilder implements TigrContigFileVisitor{
+		private final DataStoreFilter filter;
+<span class="nc" id="L177">		private final Map&lt;String, TigrContigVisitorMemento&gt; mementos = new LinkedHashMap&lt;String, TigrContigVisitorMemento&gt;();</span>
+		
+		
+<span class="nc" id="L180">		private IndexedDataStorBuilder(DataStoreFilter filter) {</span>
+<span class="nc" id="L181">			this.filter = filter;</span>
+<span class="nc" id="L182">		}</span>
+
+		@Override
+		public TigrContigVisitor visitContig(
+				TigrContigVisitorCallback callback, String contigId) {
+<span class="nc bnc" id="L187" title="All 2 branches missed.">			if(filter.accept(contigId)){</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">				if(!callback.canCreateMemento()){</span>
+<span class="nc" id="L189">					throw new IllegalStateException(&quot;indexed datastore needs to create mementos&quot;);</span>
+				}
+<span class="nc" id="L191">				mementos.put(contigId, callback.createMemento());</span>
+			}
+			//always skip actual contig data
+<span class="nc" id="L194">			return null;</span>
+		}
+
+		@Override
+		public void halted() {
+			//no-op			
+<span class="nc" id="L200">		}</span>
+
+		@Override
+		public void visitEnd() {
+			//no-op			
+<span class="nc" id="L205">		}</span>
+		
+		public TigrContigDataStore build(File contigFile,
+				DataStore&lt;Long&gt; fullLengthSequences,
+				TigrContigFileParser parser){
+<span class="nc" id="L210">			return new IndexedTigrContigFileDataStore(contigFile,</span>
+					filter,
+					fullLengthSequences,
+					parser, mementos);
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

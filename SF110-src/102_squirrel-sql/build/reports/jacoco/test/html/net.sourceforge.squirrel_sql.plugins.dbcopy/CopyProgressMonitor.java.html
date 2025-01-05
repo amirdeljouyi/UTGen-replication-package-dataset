@@ -1,0 +1,484 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CopyProgressMonitor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.plugins.dbcopy</a> &gt; <span class="el_source">CopyProgressMonitor.java</span></div><h1>CopyProgressMonitor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (C) 2005 Rob Manning
+ * manningr@users.sourceforge.net
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ */
+package net.sourceforge.squirrel_sql.plugins.dbcopy;
+
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.sql.SQLException;
+
+import javax.swing.Icon;
+import javax.swing.JFrame;
+import javax.swing.JOptionPane;
+import javax.swing.ProgressMonitor;
+import javax.swing.SwingUtilities;
+
+import net.sourceforge.squirrel_sql.client.util.codereformat.CodeReformator;
+import net.sourceforge.squirrel_sql.client.util.codereformat.CodeReformatorConfigFactory;
+import net.sourceforge.squirrel_sql.client.util.codereformat.CommentSpec;
+import net.sourceforge.squirrel_sql.fw.dialects.UserCancelledOperationException;
+import net.sourceforge.squirrel_sql.fw.sql.JDBCTypeMapper;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.event.AnalysisEvent;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.event.CopyEvent;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.event.CopyTableListener;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.event.ErrorEvent;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.event.RecordEvent;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.event.StatementEvent;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.event.TableEvent;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.gui.DualProgressBarDialog;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.prefs.PreferencesManager;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.util.DBUtil;
+
+/**
+ * A description of this class goes here...
+ */
+
+public class CopyProgressMonitor extends I18NBaseObject
+                                 implements CopyTableListener,
+                                            UICallbacks {
+
+<span class="nc" id="L57">    private SessionInfoProvider prov = null;</span>
+    
+    /** the window we use to display dialogs to the user */
+<span class="nc" id="L60">    private JFrame parent = null;</span>
+    
+    /** whether or not to delete all table data */
+<span class="nc" id="L63">    private boolean deleteAllTableData = false;</span>
+
+    /** the class that does the actual copying */
+<span class="nc" id="L66">    private CopyExecutor executor = null;</span>
+    
+    /** Logger for this class. */
+<span class="nc" id="L69">    private final static ILogger log = </span>
+<span class="nc" id="L70">                         LoggerController.createLogger(CopyProgressMonitor.class);</span>
+    
+<span class="nc" id="L72">    private ProgressMonitor pm = null;</span>
+    
+<span class="nc" id="L74">    private static CommentSpec[] commentSpecs =</span>
+        new CommentSpec[]
+        {
+            new CommentSpec(&quot;/*&quot;, &quot;*/&quot;),
+            new CommentSpec(&quot;--&quot;, &quot;\n&quot;)
+        };
+  
+<span class="nc" id="L81">  private static CodeReformator formatter = </span>
+<span class="nc" id="L82">      new CodeReformator(CodeReformatorConfigFactory.createConfig(&quot;;&quot;, commentSpecs));</span>
+  
+    
+<span class="nc" id="L85">    public CopyProgressMonitor(SessionInfoProvider provider) {</span>
+<span class="nc" id="L86">        prov = provider;</span>
+<span class="nc" id="L87">        parent = prov.getDestSession().getApplication().getMainFrame();</span>
+<span class="nc" id="L88">    }</span>
+    
+    // CopyTableListener interface methods
+    
+    /* (non-Javadoc)
+     * @see net.sourceforge.squirrel_sql.plugins.dbcopy.event.CopyTableListener#copyStarted()
+     */
+    public void copyStarted(CopyEvent e) {
+<span class="nc bnc" id="L96" title="All 2 branches missed.">        if (pm != null) {</span>
+<span class="nc" id="L97">            pm.setProgress(pm.getMaximum());</span>
+        }
+<span class="nc" id="L99">        prov = e.getSessionInfoProvider();</span>
+<span class="nc" id="L100">        int numTables = prov.getSourceDatabaseObjects().size();</span>
+<span class="nc" id="L101">        int[] tableCounts = e.getTableCounts();</span>
+        
+<span class="nc" id="L103">        createProgressDialog();</span>
+<span class="nc" id="L104">        DualProgressBarDialog.setBottomBarMinMax(0, numTables);</span>
+<span class="nc" id="L105">        DualProgressBarDialog.setBottomBarValue(0);</span>
+<span class="nc" id="L106">        DualProgressBarDialog.setTopBarValue(0);</span>
+<span class="nc" id="L107">        DualProgressBarDialog.setTableCounts(tableCounts);</span>
+<span class="nc" id="L108">    }</span>
+    
+    /* (non-Javadoc)
+     * @see net.sourceforge.squirrel_sql.plugins.dbcopy.event.CopyTableListener#tableCopyStarted(net.sourceforge.squirrel_sql.plugins.dbcopy.event.TableEvent)
+     */
+    public void tableCopyStarted(TableEvent e) {
+<span class="nc" id="L114">        String bottomMessage = getMessage(&quot;CopyProgressMonitor.copyingTable&quot;, </span>
+<span class="nc" id="L115">                                           new String[] {e.getTableName(),</span>
+<span class="nc" id="L116">                                                      &quot;&quot;+e.getTableNumber(),</span>
+<span class="nc" id="L117">                                                      &quot;&quot;+e.getTableCount()});</span>
+<span class="nc" id="L118">        DualProgressBarDialog.setBottomMessage(bottomMessage);</span>
+<span class="nc" id="L119">    }</span>
+
+    /* (non-Javadoc)
+     * @see net.sourceforge.squirrel_sql.plugins.dbcopy.event.CopyTableListener#recordCopied(net.sourceforge.squirrel_sql.plugins.dbcopy.event.RecordEvent)
+     */
+    public void recordCopied(RecordEvent e) {
+<span class="nc" id="L125">        DualProgressBarDialog.setTopBarMinMax(0, e.getRecordCount());</span>
+<span class="nc" id="L126">        String topMessage = getMessage(&quot;CopyProgressMonitor.copyingRecords&quot;,</span>
+<span class="nc" id="L127">                                       new String[]{&quot;&quot;+e.getRecordNumber(), </span>
+<span class="nc" id="L128">                                                    &quot;&quot;+e.getRecordCount()});</span>
+<span class="nc" id="L129">        DualProgressBarDialog.setTopMessage(topMessage);</span>
+<span class="nc" id="L130">        DualProgressBarDialog.incrementTopBar(1);</span>
+<span class="nc" id="L131">    }</span>
+
+    /* (non-Javadoc)
+     * @see net.sourceforge.squirrel_sql.plugins.dbcopy.event.CopyTableListener#statementExecuted(net.sourceforge.squirrel_sql.plugins.dbcopy.event.StatementEvent)
+     */
+    public void statementExecuted(StatementEvent e) {
+        /* Do Nothing */
+<span class="nc" id="L138">    }</span>
+
+    /* (non-Javadoc)
+     * @see net.sourceforge.squirrel_sql.plugins.dbcopy.event.CopyTableListener#tableCopyFinished(net.sourceforge.squirrel_sql.plugins.dbcopy.event.TableEvent)
+     */
+    public void tableCopyFinished(TableEvent e) {
+<span class="nc" id="L144">        DualProgressBarDialog.setTopBarValue(0);</span>
+<span class="nc" id="L145">        DualProgressBarDialog.incrementBottomBar(1);</span>
+<span class="nc" id="L146">    }</span>
+    
+    /* (non-Javadoc)
+     * @see net.sourceforge.squirrel_sql.plugins.dbcopy.event.CopyTableListener#copyFinished(int)
+     */
+    public void copyFinished(int seconds) {
+<span class="nc" id="L152">        closeProgress();</span>
+<span class="nc" id="L153">        String title = getMessage(&quot;CopyProgressMonitor.successTitle&quot;);</span>
+<span class="nc" id="L154">        String message = getMessage(&quot;CopyProgressMonitor.successMessage&quot;,</span>
+<span class="nc" id="L155">                                    seconds);</span>
+<span class="nc" id="L156">        showMessageDialog(message, title, JOptionPane.INFORMATION_MESSAGE);</span>
+<span class="nc" id="L157">    }</span>
+
+   private void closeProgress()
+   {
+<span class="nc" id="L161">      DualProgressBarDialog.stopTimer();</span>
+<span class="nc" id="L162">      DualProgressBarDialog.setVisible(false);</span>
+<span class="nc" id="L163">      DualProgressBarDialog.dispose();</span>
+<span class="nc" id="L164">   }</span>
+
+   private String wordWrap(String data, int length) {
+<span class="nc" id="L167">        String result = &quot;&quot;;</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">        if (data.length() &gt; length) {</span>
+<span class="nc" id="L169">            String[] parts = data.split(&quot;\\s&quot;);</span>
+<span class="nc" id="L170">            StringBuffer tmp = new StringBuffer();</span>
+<span class="nc" id="L171">            int count = 0;</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">            for (int i = 0; i &lt; parts.length; i++) {</span>
+<span class="nc" id="L173">                count += parts[i].length();</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">                if (count &gt; length) {</span>
+<span class="nc" id="L175">                    count = 0;</span>
+<span class="nc" id="L176">                    tmp.append(&quot;\n&quot;);</span>
+                } else {
+<span class="nc" id="L178">                    tmp.append(&quot; &quot;);</span>
+                }
+<span class="nc" id="L180">                tmp.append(parts[i]);</span>
+            }
+<span class="nc" id="L182">            result = tmp.toString();</span>
+<span class="nc" id="L183">        } else {</span>
+<span class="nc" id="L184">            result = data;</span>
+        }
+<span class="nc" id="L186">        return result;</span>
+    }
+    
+    /* (non-Javadoc)
+     * @see net.sourceforge.squirrel_sql.plugins.dbcopy.event.CopyTableListener#handleError(net.sourceforge.squirrel_sql.plugins.dbcopy.event.ErrorEvent)
+     */
+    public void handleError(ErrorEvent e) {
+<span class="nc" id="L193">        DualProgressBarDialog.stopTimer();</span>
+<span class="nc" id="L194">        DualProgressBarDialog.setVisible(false);</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">        if (e.getType() == ErrorEvent.SETUP_AUTO_COMMIT_TYPE) {</span>
+<span class="nc" id="L196">            String exMsg = &quot;&quot;;</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">            if (e.getException() != null) {</span>
+<span class="nc" id="L198">                exMsg = e.getException().getMessage();</span>
+            }            
+<span class="nc" id="L200">            String message = </span>
+<span class="nc" id="L201">                getMessage(&quot;CopyProgressMonitor.setupAutoCommitException&quot;,</span>
+                           exMsg);
+<span class="nc" id="L203">            String title = </span>
+<span class="nc" id="L204">                getMessage(&quot;CopyProgressMonitor.setupAutoCommitExceptionTitle&quot;);</span>
+<span class="nc" id="L205">            int messageType = JOptionPane.ERROR_MESSAGE;</span>
+<span class="nc" id="L206">            showMessageDialog(message, title, messageType);</span>
+        }
+<span class="nc bnc" id="L208" title="All 2 branches missed.">        if (e.getType() == ErrorEvent.RESTORE_AUTO_COMMIT_TYPE) {</span>
+<span class="nc" id="L209">            String exMsg = &quot;&quot;;</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">            if (e.getException() != null) {</span>
+<span class="nc" id="L211">                exMsg = e.getException().getMessage();</span>
+            }
+<span class="nc" id="L213">            String message = </span>
+<span class="nc" id="L214">                getMessage(&quot;CopyProgressMonitor.restoreAutoCommitException&quot;, </span>
+                           exMsg);
+<span class="nc" id="L216">            String title =</span>
+<span class="nc" id="L217">                getMessage(&quot;CopyProgressMonitor.restoreAutoCommitExceptionTitle&quot;);</span>
+<span class="nc" id="L218">            int messageType = JOptionPane.ERROR_MESSAGE;</span>
+<span class="nc" id="L219">            showMessageDialog(message, title, messageType);                                  </span>
+        }
+<span class="nc bnc" id="L221" title="All 2 branches missed.">        if (e.getType() == ErrorEvent.SQL_EXCEPTION_TYPE) {</span>
+<span class="nc" id="L222">            String exMessage = wordWrap(e.getException().getMessage(), 80);</span>
+<span class="nc" id="L223">            String sql = formatter.reformat(DBUtil.getLastStatement());</span>
+<span class="nc" id="L224">            String values = DBUtil.getLastStatementValues();</span>
+<span class="nc" id="L225">            String sqlAndValues = sql;</span>
+<span class="nc bnc" id="L226" title="All 2 branches missed.">            if (values != null) {</span>
+<span class="nc" id="L227">                sqlAndValues += values;</span>
+            } else {
+<span class="nc" id="L229">                sqlAndValues += &quot;\n(No bind variables)&quot;;</span>
+            }
+<span class="nc" id="L231">            int errorCode = ((SQLException)e.getException()).getErrorCode();</span>
+<span class="nc" id="L232">            log.error(&quot;SQL Error code = &quot;+errorCode+&quot; sql = &quot;+sqlAndValues,</span>
+<span class="nc" id="L233">                      e.getException());</span>
+<span class="nc" id="L234">            String message = getMessage(&quot;CopyProgressMonitor.sqlErrorMessage&quot;,</span>
+                                        new String[]{exMessage, 
+                                                     &quot;&quot;+errorCode,
+                                                     sqlAndValues});
+<span class="nc" id="L238">            String title = getMessage(&quot;CopyProgressMonitor.sqlErrorTitle&quot;);</span>
+<span class="nc" id="L239">            showMessageDialog(message, title, JOptionPane.ERROR_MESSAGE);</span>
+        }
+<span class="nc bnc" id="L241" title="All 2 branches missed.">        if (e.getType() == ErrorEvent.MAPPING_EXCEPTION_TYPE) {</span>
+<span class="nc" id="L242">            String title = getMessage(&quot;CopyProgressMonitor.mappingErrorTitle&quot;);</span>
+<span class="nc" id="L243">            String message = getMappingExceptionMessage(e.getException());</span>
+<span class="nc" id="L244">            log.error(message, e.getException());</span>
+<span class="nc" id="L245">            showMessageDialog(message, title, JOptionPane.ERROR_MESSAGE);</span>
+<span class="nc bnc" id="L246" title="All 2 branches missed.">            if (pm != null) {</span>
+<span class="nc" id="L247">                pm.setProgress(pm.getMaximum());</span>
+            }
+        }
+<span class="nc bnc" id="L250" title="All 2 branches missed.">        if (e.getType() == ErrorEvent.USER_CANCELLED_EXCEPTION_TYPE) {</span>
+<span class="nc" id="L251">            String title = getMessage(&quot;CopyProgressMonitor.cancelledTitle&quot;);</span>
+<span class="nc" id="L252">            String message = getMessage(&quot;CopyProgressMonitor.cancelledMessage&quot;);</span>
+<span class="nc" id="L253">            showMessageDialog(message, title, JOptionPane.INFORMATION_MESSAGE);            </span>
+        }
+<span class="nc bnc" id="L255" title="All 2 branches missed.">        if (e.getType() == ErrorEvent.GENERIC_EXCEPTION) {</span>
+<span class="nc" id="L256">            String exmessage = e.getException().getMessage();</span>
+<span class="nc" id="L257">            String message = getMessage(&quot;CopyProgressMonitor.errorMessage&quot;,</span>
+                                        new String[]{exmessage});
+<span class="nc" id="L259">            String title = getMessage(&quot;CopyProgressMonitor.errorTitle&quot;);</span>
+<span class="nc" id="L260">            showMessageDialog(message, title, JOptionPane.INFORMATION_MESSAGE);</span>
+            
+        }
+<span class="nc bnc" id="L263" title="All 2 branches missed.">        if (e.getException() != null) {</span>
+<span class="nc" id="L264">            log.error(&quot;handleError: exception=&quot;+e.getException().getMessage(), </span>
+<span class="nc" id="L265">                      e.getException());</span>
+        }
+        // TODO: ask the user if they want to &quot;undo&quot; the changes that the 
+        // paste made.  Alternatively show them the specific problem and 
+        // let them fix it.  Then allow them to retry the operation, starting
+        // from the point at which the previous operation failed.
+
+<span class="nc" id="L272">        closeProgress();</span>
+<span class="nc" id="L273">    }</span>
+
+    private String getMappingExceptionMessage(Exception e) {
+<span class="nc" id="L276">        String message = &quot;&quot;;</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">        if (e.getMessage().indexOf(&quot;:&quot;) != -1) {</span>
+<span class="nc" id="L278">            String[] parts = e.getMessage().split(&quot;:&quot;);</span>
+            try {
+<span class="nc" id="L280">                int typeCode = Integer.parseInt(parts[1].trim());</span>
+<span class="nc" id="L281">                String typeName = JDBCTypeMapper.getJdbcTypeName(typeCode);</span>
+<span class="nc" id="L282">                message = getMessage(&quot;CopyProgressMonitor.mappingErrorMessage&quot;,</span>
+<span class="nc" id="L283">                                     new String[]{e.getMessage(), typeName});</span>
+<span class="nc" id="L284">            } catch (NumberFormatException nfe) {</span>
+<span class="nc" id="L285">                message = e.getMessage();</span>
+<span class="nc" id="L286">            }</span>
+<span class="nc" id="L287">        } else {</span>
+<span class="nc" id="L288">            message = e.getMessage();</span>
+        }                
+<span class="nc" id="L290">        return message;</span>
+    }    
+    
+    private void showMessageDialog(final String message, 
+                                   final String title, 
+                                   final int messageType) 
+    {
+<span class="nc" id="L297">        final JFrame f = parent;</span>
+<span class="nc" id="L298">        SwingUtilities.invokeLater(new Runnable() {</span>
+            public void run() {
+<span class="nc" id="L300">                JOptionPane.showMessageDialog(f, </span>
+                        message, 
+                        title, 
+                        messageType);
+<span class="nc" id="L304">            }</span>
+        });
+<span class="nc" id="L306">    }</span>
+    
+    private void createProgressDialog() {
+<span class="nc" id="L309">        ActionListener listener = new ActionListener() {</span>
+            public void actionPerformed(ActionEvent e) {
+<span class="nc" id="L311">                executor.cancel();</span>
+<span class="nc" id="L312">            }</span>
+        };
+<span class="nc" id="L314">        DualProgressBarDialog.getDialog(parent,</span>
+<span class="nc" id="L315">                                        getMessage(&quot;CopyProgressMonitor.copyProgressDialogTitle&quot;), </span>
+                                        false, 
+                                        listener);
+<span class="nc" id="L318">        DualProgressBarDialog.startTimer();</span>
+<span class="nc" id="L319">    }</span>
+
+    /**
+     * @param executor The executor to set.
+     */
+    public void setExecutor(CopyExecutor executor) {
+<span class="nc" id="L325">        this.executor = executor;</span>
+<span class="nc" id="L326">    }</span>
+
+    /**
+     * @return Returns the executor.
+     */
+    public CopyExecutor getExecutor() {
+<span class="nc" id="L332">        return executor;</span>
+    }
+
+    /**
+     * 
+     * @param tableName
+     * @return
+     */
+    private int showConfirmDeleteDialog(String tableName) {
+<span class="nc" id="L341">        final String message = getMessage(&quot;CopyProgressMonitor.deleteRecordsMessage&quot;,</span>
+                                          tableName);
+        
+<span class="nc" id="L344">        final ConfirmMessageResult result = new ConfirmMessageResult();</span>
+        
+<span class="nc" id="L346">        final String[] buttons = {&quot;Yes&quot;, &quot;Yes to all&quot;, &quot;No&quot;, &quot;Cancel&quot; };</span>
+        
+<span class="nc bnc" id="L348" title="All 2 branches missed.">        if (SwingUtilities.isEventDispatchThread()) {</span>
+<span class="nc" id="L349">            result.option = </span>
+<span class="nc" id="L350">                JOptionPane.showOptionDialog(parent, </span>
+                                             message, 
+                                             &quot;Confirmation&quot;,
+                                             JOptionPane.DEFAULT_OPTION,
+                                             JOptionPane.QUESTION_MESSAGE,
+                                             null,
+                                             buttons,
+                                             buttons[2]);
+        } else {
+            try {
+<span class="nc" id="L360">                SwingUtilities.invokeAndWait(new Runnable() {</span>
+                    public void run() {
+<span class="nc" id="L362">                        result.option = </span>
+<span class="nc" id="L363">                            JOptionPane.showOptionDialog(parent, </span>
+                                                         message, 
+                                                         &quot;Confirmation&quot;,
+                                                         JOptionPane.DEFAULT_OPTION,
+                                                         JOptionPane.QUESTION_MESSAGE,
+                                                         null,
+                                                         buttons,
+                                                         buttons[2]);
+<span class="nc" id="L371">                    }</span>
+                });
+<span class="nc" id="L373">            } catch (Exception e) {</span>
+<span class="nc" id="L374">                log.error(</span>
+                        &quot;showConfirmDeleteDialog: encountered unexpected exception &quot;,
+                        e);
+<span class="nc" id="L377">            }</span>
+        }
+<span class="nc" id="L379">        return result.option;</span>
+    }    
+    
+    private String showTextInputDialog(final Object message,
+                                       final String title,
+                                       final int messageType,
+                                       final Icon icon,
+                                       final Object initialValue) {
+        
+<span class="nc" id="L388">        final StringBuffer result = new StringBuffer();</span>
+<span class="nc bnc" id="L389" title="All 2 branches missed.">        if (SwingUtilities.isEventDispatchThread()) {</span>
+<span class="nc" id="L390">            String tmp = (String)JOptionPane.showInputDialog(parent, </span>
+                                                             message, 
+                                                             title, 
+                                                             messageType, 
+                                                             icon, 
+                                                             null, 
+                                                             initialValue);
+<span class="nc" id="L397">            result.append(tmp);</span>
+<span class="nc" id="L398">        } else {</span>
+            try {
+<span class="nc" id="L400">                SwingUtilities.invokeAndWait(new Runnable() {</span>
+                    public void run() {
+<span class="nc" id="L402">                        String tmp = </span>
+<span class="nc" id="L403">                            (String)JOptionPane.showInputDialog(parent, </span>
+                                                                message, 
+                                                                title, 
+                                                                messageType, 
+                                                                icon, 
+                                                                null, 
+                                                                initialValue);
+<span class="nc" id="L410">                        result.append(tmp);</span>
+<span class="nc" id="L411">                    }</span>
+                });
+<span class="nc" id="L413">            } catch (Exception e) {</span>
+<span class="nc" id="L414">                log.error(</span>
+                    &quot;showTextInputDialog: encountered unexpected exception &quot;,
+                    e);
+<span class="nc" id="L417">            }</span>
+        }
+<span class="nc" id="L419">        return result.toString();</span>
+    }
+    
+    /* (non-Javadoc)
+     * @see net.sourceforge.squirrel_sql.plugins.dbcopy.CopyPreference#deleteTableData(java.lang.String)
+     */
+    public boolean deleteTableData(String tableName) 
+        throws UserCancelledOperationException 
+    {
+<span class="nc bnc" id="L428" title="All 2 branches missed.">        if (deleteAllTableData) {</span>
+<span class="nc" id="L429">            return true;</span>
+        }
+<span class="nc" id="L431">        int option = showConfirmDeleteDialog(tableName);</span>
+<span class="nc bnc" id="L432" title="All 2 branches missed.">        if (option == 0) { // Yes </span>
+<span class="nc" id="L433">            return true;</span>
+        }
+<span class="nc bnc" id="L435" title="All 2 branches missed.">        if (option == 1) { // Yes to all</span>
+<span class="nc" id="L436">            deleteAllTableData = true;</span>
+<span class="nc" id="L437">            return true;</span>
+        }
+<span class="nc bnc" id="L439" title="All 2 branches missed.">        if (option == 2) { // No</span>
+<span class="nc" id="L440">            return false;</span>
+        }                  
+<span class="nc bnc" id="L442" title="All 2 branches missed.">        if (option == 3) { // Cancel</span>
+<span class="nc" id="L443">            throw new UserCancelledOperationException();</span>
+        }
+<span class="nc" id="L445">        return false;</span>
+    }
+    
+    public boolean appendRecordsToExisting() {
+
+<span class="nc" id="L450">        return PreferencesManager.getPreferences().isAppendRecordsToExisting();</span>
+    }
+
+<span class="nc" id="L453">    class ConfirmMessageResult {</span>
+        int option;
+    }
+
+    /* (non-Javadoc)
+     * @see net.sourceforge.squirrel_sql.plugins.dbcopy.event.CopyTableListener#analyzingTable(net.sourceforge.squirrel_sql.plugins.dbcopy.event.TableEvent)
+     */
+    public void analyzingTable(TableEvent e) {
+<span class="nc bnc" id="L461" title="All 2 branches missed.">        if (pm.isCanceled()) {</span>
+            
+        }
+        // i18n[CopyProgressMonitor.analyzingTableMessage=Analyzing table ]
+<span class="nc" id="L465">        pm.setNote(getMessage(&quot;CopyProgressMonitor.analyzingTableMessage&quot;)+e.getTableName());</span>
+<span class="nc" id="L466">        pm.setProgress(e.getTableNumber());</span>
+<span class="nc" id="L467">    }</span>
+
+    /**
+     * @see net.sourceforge.squirrel_sql.plugins.dbcopy.event.CopyTableListener#tableAnalysisStarted(net.sourceforge.squirrel_sql.plugins.dbcopy.event.AnalysisEvent)
+     */
+    public void tableAnalysisStarted(AnalysisEvent e) {
+<span class="nc" id="L473">        SessionInfoProvider prov = e.getSessionInfoProvider(); </span>
+        // TODO: set the total for the progress bar.
+<span class="nc" id="L475">        pm = new ProgressMonitor(parent,  </span>
+                                 &quot;Analyzing column names in tables to be copied&quot;,
+                                 &quot;&quot;,
+                                 0,
+<span class="nc" id="L479">                                 prov.getSourceDatabaseObjects().size()); </span>
+        
+<span class="nc" id="L481">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

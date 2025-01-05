@@ -1,0 +1,586 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TabbedPaneViewContainer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">43_lilith</a> &gt; <a href="index.source.html" class="el_package">de.huxhorn.lilith.swing</a> &gt; <span class="el_source">TabbedPaneViewContainer.java</span></div><h1>TabbedPaneViewContainer.java</h1><pre class="source lang-java linenums">/*
+ * Lilith - a log event viewer.
+ * Copyright (C) 2007-2009 Joern Huxhorn
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see &lt;http://www.gnu.org/licenses/&gt;.
+ */
+package de.huxhorn.lilith.swing;
+
+import de.huxhorn.lilith.data.eventsource.EventWrapper;
+import de.huxhorn.lilith.engine.EventSource;
+import de.huxhorn.lilith.swing.preferences.SavedCondition;
+import de.huxhorn.sulky.buffers.Buffer;
+import de.huxhorn.sulky.buffers.Dispose;
+import de.huxhorn.sulky.conditions.Condition;
+import de.huxhorn.sulky.swing.KeyStrokes;
+import de.huxhorn.sulky.tasks.Task;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.MouseEvent;
+import java.awt.event.MouseListener;
+import java.beans.PropertyChangeEvent;
+import java.beans.PropertyChangeListener;
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.List;
+
+import javax.swing.*;
+import javax.swing.event.ChangeEvent;
+import javax.swing.event.ChangeListener;
+
+public abstract class TabbedPaneViewContainer&lt;T extends Serializable&gt;
+	extends ViewContainer&lt;T&gt;
+{
+<span class="nc" id="L49">	private final Logger logger = LoggerFactory.getLogger(TabbedPaneViewContainer.class);</span>
+
+	private JTabbedPane pane;
+	private JPopupMenu popup;
+	private CloseFilterAction closeFilterAction;
+	private CloseAllFiltersAction closeAllFiltersAction;
+	private CloseOtherFiltersAction closeOtherFiltersAction;
+	private SourceChangeListener sourceChangeListener;
+	private boolean disposed;
+	private ProgressGlassPane progressPanel;
+	private Component prevGlassPane;
+	private boolean searching;
+	private EventWrapper&lt;T&gt; selectedEvent;
+
+	public TabbedPaneViewContainer(MainFrame mainFrame, EventSource&lt;T&gt; eventSource)
+	{
+<span class="nc" id="L65">		super(mainFrame, eventSource);</span>
+<span class="nc" id="L66">		progressPanel = new ProgressGlassPane();</span>
+<span class="nc" id="L67">		disposed = false;</span>
+<span class="nc" id="L68">		pane = new JTabbedPane(JTabbedPane.TOP);</span>
+<span class="nc" id="L69">		pane.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);</span>
+<span class="nc" id="L70">		pane.addMouseListener(new PopupMouseListener());</span>
+<span class="nc" id="L71">		setLayout(new BorderLayout());</span>
+<span class="nc" id="L72">		add(pane, BorderLayout.CENTER);</span>
+<span class="nc" id="L73">		closeFilterAction = new CloseFilterAction();</span>
+<span class="nc" id="L74">		closeOtherFiltersAction = new CloseOtherFiltersAction();</span>
+<span class="nc" id="L75">		closeAllFiltersAction = new CloseAllFiltersAction();</span>
+<span class="nc" id="L76">		popup = new JPopupMenu();</span>
+<span class="nc" id="L77">		popup.add(closeFilterAction);</span>
+<span class="nc" id="L78">		popup.add(closeOtherFiltersAction);</span>
+<span class="nc" id="L79">		popup.add(closeAllFiltersAction);</span>
+<span class="nc" id="L80">		pane.addChangeListener(new TabChangeListener());</span>
+<span class="nc" id="L81">		sourceChangeListener = new SourceChangeListener();</span>
+<span class="nc" id="L82">		addView(getDefaultView());</span>
+<span class="nc" id="L83">	}</span>
+
+	public void addView(EventWrapperViewPanel&lt;T&gt; view)
+	{
+<span class="nc" id="L87">		EventSource source = view.getEventSource();</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">		if(logger.isInfoEnabled()) logger.info(&quot;Adding view for {}&quot;, source);</span>
+<span class="nc" id="L89">		Condition filter = source.getFilter();</span>
+<span class="nc bnc" id="L90" title="All 2 branches missed.">		if(filter == null)</span>
+		{
+<span class="nc" id="L92">			pane.insertTab(&quot;Unfiltered&quot;, null, view, null, 0);</span>
+		}
+		else
+		{
+			String title;
+			String toolTip;
+<span class="nc" id="L98">			SavedCondition savedCondition = getMainFrame().getApplicationPreferences().resolveSavedCondition(filter);</span>
+<span class="nc bnc" id="L99" title="All 2 branches missed.">			if(savedCondition != null)</span>
+			{
+<span class="nc" id="L101">				title = savedCondition.getName();</span>
+<span class="nc" id="L102">				toolTip = filter.toString();</span>
+			}
+			else
+			{
+<span class="nc" id="L106">				String text = filter.toString();</span>
+<span class="nc" id="L107">				title = text;</span>
+<span class="nc" id="L108">				toolTip = text;</span>
+			}
+<span class="nc" id="L110">			pane.insertTab(title, null, view, toolTip, pane.getTabCount());</span>
+		}
+<span class="nc" id="L112">		pane.setSelectedComponent(view);</span>
+<span class="nc" id="L113">		view.addPropertyChangeListener(sourceChangeListener);</span>
+<span class="nc" id="L114">		view.requestFocusInWindow();</span>
+<span class="nc" id="L115">		fireChange();</span>
+<span class="nc" id="L116">	}</span>
+
+	public void updateViews()
+	{
+<span class="nc bnc" id="L120" title="All 2 branches missed.">		for(int i = 0; i &lt; pane.getTabCount(); i++)</span>
+		{
+<span class="nc" id="L122">			EventWrapperViewPanel&lt;T&gt; current = (EventWrapperViewPanel&lt;T&gt;) pane.getComponentAt(i);</span>
+<span class="nc" id="L123">			EventSource source = current.getEventSource();</span>
+<span class="nc" id="L124">			current.updateView();</span>
+<span class="nc" id="L125">			Condition condition = source.getFilter();</span>
+<span class="nc bnc" id="L126" title="All 2 branches missed.">			if(logger.isDebugEnabled()) logger.debug(&quot;Condition: {}&quot;, condition);</span>
+<span class="nc bnc" id="L127" title="All 2 branches missed.">			if(condition != null)</span>
+			{
+				String title;
+				String toolTip;
+<span class="nc" id="L131">				SavedCondition savedCondition = getMainFrame().getApplicationPreferences()</span>
+<span class="nc" id="L132">					.resolveSavedCondition(condition);</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">				if(savedCondition != null)</span>
+				{
+<span class="nc" id="L135">					title = savedCondition.getName();</span>
+<span class="nc" id="L136">					toolTip = condition.toString();</span>
+				}
+				else
+				{
+<span class="nc" id="L140">					String text = condition.toString();</span>
+<span class="nc" id="L141">					title = text;</span>
+<span class="nc" id="L142">					toolTip = text;</span>
+				}
+<span class="nc" id="L144">				pane.setTitleAt(i, title);</span>
+<span class="nc" id="L145">				pane.setToolTipTextAt(i, toolTip);</span>
+			}
+			// trigger repaint of table
+<span class="nc" id="L148">			pane.repaint();</span>
+		}
+<span class="nc" id="L150">	}</span>
+
+	/**
+	 * @param view
+	 */
+	public void removeView(EventWrapperViewPanel&lt;T&gt; view, boolean dispose)
+	{
+<span class="nc" id="L157">		pane.remove(view);</span>
+<span class="nc" id="L158">		view.removePropertyChangeListener(sourceChangeListener);</span>
+<span class="nc bnc" id="L159" title="All 2 branches missed.">		if(logger.isDebugEnabled()) logger.debug(&quot;Removed view {}.&quot;, view);</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">		if(dispose)</span>
+		{
+<span class="nc" id="L162">			view.dispose();</span>
+<span class="nc" id="L163">			Buffer&lt;EventWrapper&lt;T&gt;&gt; buffer = view.getEventSource().getBuffer();</span>
+<span class="nc" id="L164">			Dispose.dispose(buffer);</span>
+<span class="nc bnc" id="L165" title="All 2 branches missed.">			if(logger.isDebugEnabled()) logger.debug(&quot;Disposed view {}.&quot;, view);</span>
+		}
+<span class="nc" id="L167">		fireChange();</span>
+<span class="nc" id="L168">	}</span>
+
+	public void showDefaultView()
+	{
+<span class="nc" id="L172">		pane.setSelectedIndex(0);</span>
+<span class="nc" id="L173">		fireChange();</span>
+<span class="nc" id="L174">	}</span>
+
+	public void addNotify()
+	{
+<span class="nc" id="L178">		super.addNotify();</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">		if(logger.isDebugEnabled()) logger.debug(&quot;addNotify - parent: {}&quot;, getParent());</span>
+<span class="nc" id="L180">	}</span>
+
+	public void scrollToEvent()
+	{
+<span class="nc" id="L184">		EventWrapperViewPanel&lt;T&gt; selectedView = getSelectedView();</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">		if(selectedView != null)</span>
+		{
+<span class="nc" id="L187">			selectedView.scrollToEvent();</span>
+<span class="nc" id="L188">			setSelectedEvent(selectedView.getSelectedEvent());</span>
+		}
+<span class="nc" id="L190">	}</span>
+
+	public void removeNotify()
+	{
+<span class="nc" id="L194">		super.removeNotify();</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">		if(logger.isDebugEnabled()) logger.debug(&quot;removeNotify&quot;);</span>
+<span class="nc" id="L196">	}</span>
+
+	private void showPopup(MouseEvent evt)
+	{
+<span class="nc" id="L200">		Point p = evt.getPoint();</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">		if(logger.isInfoEnabled()) logger.info(&quot;Show popup at {}.&quot;, p);</span>
+<span class="nc" id="L202">		selectedViewChanged();</span>
+<span class="nc" id="L203">		popup.show(pane, p.x, p.y);</span>
+<span class="nc" id="L204">	}</span>
+
+	private void selectedViewChanged()
+	{
+<span class="nc" id="L208">		closeFilterAction.updateAction();</span>
+<span class="nc" id="L209">		closeOtherFiltersAction.updateAction();</span>
+<span class="nc" id="L210">		closeAllFiltersAction.updateAction();</span>
+<span class="nc" id="L211">		EventWrapperViewPanel&lt;T&gt; selectedView = getSelectedView();</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">		if(selectedView != null)</span>
+		{
+<span class="nc" id="L214">			selectedView.scrollToEvent();</span>
+<span class="nc" id="L215">			setSelectedEvent(selectedView.getSelectedEvent());</span>
+
+		}
+		else
+		{
+<span class="nc" id="L220">			setSelectedEvent(null);</span>
+		}
+<span class="nc" id="L222">		fireChange();</span>
+<span class="nc" id="L223">	}</span>
+
+	public void dispose()
+	{
+<span class="nc" id="L227">		super.dispose();</span>
+<span class="nc" id="L228">		disposed = true;</span>
+<span class="nc" id="L229">		int tabCount = pane.getTabCount();</span>
+<span class="nc" id="L230">		List&lt;Component&gt; removedPanes = new ArrayList&lt;Component&gt;(tabCount - 1);</span>
+<span class="nc bnc" id="L231" title="All 2 branches missed.">		for(int i = 0; i &lt; tabCount; i++)</span>
+		{
+<span class="nc" id="L233">			removedPanes.add(pane.getComponentAt(i));</span>
+		}
+
+<span class="nc bnc" id="L236" title="All 2 branches missed.">		for(Component comp : removedPanes)</span>
+		{
+<span class="nc bnc" id="L238" title="All 2 branches missed.">			if(comp instanceof EventWrapperViewPanel)</span>
+			{
+<span class="nc" id="L240">				EventWrapperViewPanel&lt;T&gt; lvp = (EventWrapperViewPanel&lt;T&gt;) comp;</span>
+<span class="nc" id="L241">				removeView(lvp, true);</span>
+			}
+<span class="nc" id="L243">		}</span>
+<span class="nc" id="L244">		fireChange();</span>
+<span class="nc" id="L245">	}</span>
+
+	public boolean isDisposed()
+	{
+<span class="nc" id="L249">		return disposed;</span>
+	}
+
+	public void setSelectedEvent(EventWrapper&lt;T&gt; selectedEvent)
+	{
+<span class="nc" id="L254">		Object oldValue = this.selectedEvent;</span>
+<span class="nc" id="L255">		this.selectedEvent = selectedEvent;</span>
+<span class="nc" id="L256">		Object newValue = this.selectedEvent;</span>
+<span class="nc" id="L257">		firePropertyChange(SELECTED_EVENT_PROPERTY_NAME, oldValue, newValue);</span>
+<span class="nc" id="L258">	}</span>
+
+	public EventWrapper&lt;T&gt; getSelectedEvent()
+	{
+<span class="nc" id="L262">		return selectedEvent;</span>
+	}
+
+<span class="nc" id="L265">	private class PopupMouseListener</span>
+		implements MouseListener
+	{
+		public void mouseClicked(MouseEvent evt)
+		{
+<span class="nc bnc" id="L270" title="All 2 branches missed.">			if(evt.isPopupTrigger())</span>
+			{
+<span class="nc" id="L272">				showPopup(evt);</span>
+			}
+<span class="nc" id="L274">		}</span>
+
+		public void mousePressed(MouseEvent evt)
+		{
+<span class="nc bnc" id="L278" title="All 2 branches missed.">			if(evt.isPopupTrigger())</span>
+			{
+<span class="nc" id="L280">				showPopup(evt);</span>
+			}
+<span class="nc" id="L282">		}</span>
+
+		public void mouseReleased(MouseEvent evt)
+		{
+<span class="nc bnc" id="L286" title="All 2 branches missed.">			if(evt.isPopupTrigger())</span>
+			{
+<span class="nc" id="L288">				showPopup(evt);</span>
+			}
+<span class="nc" id="L290">		}</span>
+
+		public void mouseEntered(MouseEvent e)
+		{
+<span class="nc" id="L294">		}</span>
+
+		public void mouseExited(MouseEvent e)
+		{
+<span class="nc" id="L298">		}</span>
+	}
+
+	// TODO: Move to ViewActions
+	private class CloseFilterAction
+		extends AbstractAction
+	{
+		private static final long serialVersionUID = -4479133859495740687L;
+
+		public CloseFilterAction()
+<span class="nc" id="L308">		{</span>
+<span class="nc" id="L309">			super(&quot;Close this filter&quot;);</span>
+<span class="nc" id="L310">			putValue(Action.MNEMONIC_KEY, Integer.valueOf('c'));</span>
+<span class="nc" id="L311">			KeyStroke accelerator = KeyStrokes.resolveAcceleratorKeyStroke(KeyStrokes.COMMAND_ALIAS + &quot; W&quot;);</span>
+<span class="nc bnc" id="L312" title="All 2 branches missed.">			if(logger.isDebugEnabled()) logger.debug(&quot;accelerator: {}&quot;, accelerator);</span>
+<span class="nc" id="L313">			putValue(Action.ACCELERATOR_KEY, accelerator);</span>
+<span class="nc" id="L314">		}</span>
+
+		public void updateAction()
+		{
+<span class="nc" id="L318">			int viewIndex = getViewIndex();</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">			if(viewIndex &gt; 0)</span>
+			{
+<span class="nc" id="L321">				setEnabled(true);</span>
+			}
+			else
+			{
+<span class="nc" id="L325">				setEnabled(false);</span>
+			}
+<span class="nc" id="L327">		}</span>
+
+		public void actionPerformed(ActionEvent e)
+		{
+<span class="nc" id="L331">			closeCurrentFilter();</span>
+<span class="nc" id="L332">		}</span>
+
+	}
+
+	// TODO: Move to ViewActions
+	private class CloseOtherFiltersAction
+		extends AbstractAction
+	{
+		private static final long serialVersionUID = 3059023089248619076L;
+
+		public CloseOtherFiltersAction()
+<span class="nc" id="L343">		{</span>
+<span class="nc" id="L344">			super(&quot;Close all other filters&quot;);</span>
+<span class="nc" id="L345">			putValue(Action.MNEMONIC_KEY, Integer.valueOf('o'));</span>
+<span class="nc" id="L346">			KeyStroke accelerator = KeyStrokes.resolveAcceleratorKeyStroke(KeyStrokes.COMMAND_ALIAS + &quot; shift W&quot;);</span>
+<span class="nc bnc" id="L347" title="All 2 branches missed.">			if(logger.isDebugEnabled()) logger.debug(&quot;accelerator: {}&quot;, accelerator);</span>
+<span class="nc" id="L348">			putValue(Action.ACCELERATOR_KEY, accelerator);</span>
+<span class="nc" id="L349">		}</span>
+
+		public void updateAction()
+		{
+<span class="nc" id="L353">			int viewIndex = getViewIndex();</span>
+<span class="nc" id="L354">			int viewCount = getViewCount();</span>
+<span class="nc bnc" id="L355" title="All 8 branches missed.">			if(viewIndex &gt; -1 &amp;&amp; ((viewIndex == 0 &amp;&amp; viewCount &gt; 1) || viewCount &gt; 2))</span>
+			{
+<span class="nc" id="L357">				setEnabled(true);</span>
+			}
+			else
+			{
+<span class="nc" id="L361">				setEnabled(false);</span>
+			}
+<span class="nc" id="L363">		}</span>
+
+		public void actionPerformed(ActionEvent e)
+		{
+<span class="nc" id="L367">			closeOtherFilters();</span>
+<span class="nc" id="L368">		}</span>
+	}
+
+	// TODO: Move to ViewActions
+	private class CloseAllFiltersAction
+		extends AbstractAction
+	{
+		private static final long serialVersionUID = 3947832933965311324L;
+
+		public CloseAllFiltersAction()
+<span class="nc" id="L378">		{</span>
+<span class="nc" id="L379">			super(&quot;Close all filters&quot;);</span>
+<span class="nc" id="L380">			putValue(Action.MNEMONIC_KEY, Integer.valueOf('a'));</span>
+<span class="nc" id="L381">		}</span>
+
+		public void updateAction()
+		{
+<span class="nc" id="L385">			int viewCount = getViewCount();</span>
+<span class="nc bnc" id="L386" title="All 2 branches missed.">			if(viewCount &gt; 1)</span>
+			{
+<span class="nc" id="L388">				setEnabled(true);</span>
+			}
+			else
+			{
+<span class="nc" id="L392">				setEnabled(false);</span>
+			}
+<span class="nc" id="L394">		}</span>
+
+		public void actionPerformed(ActionEvent e)
+		{
+<span class="nc" id="L398">			closeAllFilters();</span>
+<span class="nc" id="L399">		}</span>
+	}
+
+	public EventWrapperViewPanel&lt;T&gt; getViewAt(int index)
+	{
+<span class="nc bnc" id="L404" title="All 4 branches missed.">		if(index &gt;= 0 &amp;&amp; index &lt; pane.getTabCount())</span>
+		{
+<span class="nc" id="L406">			return (EventWrapperViewPanel&lt;T&gt;) pane.getComponentAt(index);</span>
+		}
+<span class="nc" id="L408">		return null;</span>
+	}
+
+	public EventWrapperViewPanel&lt;T&gt; getSelectedView()
+	{
+<span class="nc" id="L413">		return (EventWrapperViewPanel&lt;T&gt;) pane.getSelectedComponent();</span>
+	}
+
+	public void setViewIndex(int index)
+	{
+<span class="nc" id="L418">		pane.setSelectedIndex(index);</span>
+<span class="nc" id="L419">		fireChange();</span>
+<span class="nc" id="L420">	}</span>
+
+	public int getViewIndex()
+	{
+<span class="nc" id="L424">		return pane.getSelectedIndex();</span>
+	}
+
+	public int getViewCount()
+	{
+<span class="nc" id="L429">		return pane.getTabCount();</span>
+	}
+
+	public void closeCurrentFilter()
+	{
+<span class="nc" id="L434">		int tabIndex = pane.getSelectedIndex();</span>
+<span class="nc" id="L435">		Component comp = pane.getComponentAt(tabIndex);</span>
+<span class="nc bnc" id="L436" title="All 2 branches missed.">		if(comp != null)</span>
+		{
+<span class="nc bnc" id="L438" title="All 2 branches missed.">			if(comp instanceof EventWrapperViewPanel)</span>
+			{
+<span class="nc" id="L440">				EventWrapperViewPanel&lt;T&gt; lvp = (EventWrapperViewPanel&lt;T&gt;) comp;</span>
+<span class="nc" id="L441">				removeView(lvp, true);</span>
+			}
+		}
+<span class="nc" id="L444">		fireChange();</span>
+<span class="nc" id="L445">	}</span>
+
+	public void closeOtherFilters()
+	{
+<span class="nc" id="L449">		int tabIndex = pane.getSelectedIndex();</span>
+
+<span class="nc" id="L451">		int tabCount = pane.getTabCount();</span>
+<span class="nc" id="L452">		List&lt;Component&gt; removedPanes = new ArrayList&lt;Component&gt;(tabCount - 1);</span>
+<span class="nc bnc" id="L453" title="All 2 branches missed.">		for(int i = 1; i &lt; tabCount; i++)</span>
+		{
+<span class="nc bnc" id="L455" title="All 2 branches missed.">			if(i != tabIndex)</span>
+			{
+<span class="nc" id="L457">				removedPanes.add(pane.getComponentAt(i));</span>
+			}
+		}
+
+<span class="nc bnc" id="L461" title="All 2 branches missed.">		for(Component comp : removedPanes)</span>
+		{
+<span class="nc bnc" id="L463" title="All 2 branches missed.">			if(comp instanceof EventWrapperViewPanel)</span>
+			{
+<span class="nc" id="L465">				EventWrapperViewPanel&lt;T&gt; lvp = (EventWrapperViewPanel&lt;T&gt;) comp;</span>
+<span class="nc" id="L466">				removeView(lvp, true);</span>
+			}
+<span class="nc" id="L468">		}</span>
+<span class="nc" id="L469">		fireChange();</span>
+<span class="nc" id="L470">	}</span>
+
+	public void closeAllFilters()
+	{
+<span class="nc" id="L474">		int tabCount = pane.getTabCount();</span>
+<span class="nc" id="L475">		List&lt;Component&gt; removedPanes = new ArrayList&lt;Component&gt;(tabCount - 1);</span>
+<span class="nc bnc" id="L476" title="All 2 branches missed.">		for(int i = 1; i &lt; tabCount; i++)</span>
+		{
+<span class="nc" id="L478">			removedPanes.add(pane.getComponentAt(i));</span>
+		}
+
+<span class="nc bnc" id="L481" title="All 2 branches missed.">		for(Component comp : removedPanes)</span>
+		{
+<span class="nc bnc" id="L483" title="All 2 branches missed.">			if(comp instanceof EventWrapperViewPanel)</span>
+			{
+<span class="nc" id="L485">				EventWrapperViewPanel&lt;T&gt; lvp = (EventWrapperViewPanel&lt;T&gt;) comp;</span>
+<span class="nc" id="L486">				removeView(lvp, true);</span>
+			}
+<span class="nc" id="L488">		}</span>
+<span class="nc" id="L489">		fireChange();</span>
+<span class="nc" id="L490">	}</span>
+
+	public boolean isSearching()
+	{
+<span class="nc" id="L494">		return searching;</span>
+	}
+
+	public void cancelSearching()
+	{
+<span class="nc" id="L499">		progressPanel.getFindCancelAction().actionPerformed(null);</span>
+
+<span class="nc" id="L501">	}</span>
+
+	public void hideSearchPanel()
+	{
+<span class="nc bnc" id="L505" title="All 2 branches missed.">		if(searching)</span>
+		{
+<span class="nc" id="L507">			searching = false;</span>
+<span class="nc" id="L508">			ViewWindow window = resolveViewWindow();</span>
+<span class="nc bnc" id="L509" title="All 4 branches missed.">			if(window != null &amp;&amp; prevGlassPane != null)</span>
+			{
+<span class="nc" id="L511">				window.setGlassPane(prevGlassPane);</span>
+<span class="nc" id="L512">				prevGlassPane = null;</span>
+<span class="nc" id="L513">				fireChange();</span>
+			}
+		}
+<span class="nc" id="L516">	}</span>
+
+	public void showSearchPanel(Task&lt;Long&gt; task)
+	{
+<span class="nc bnc" id="L520" title="All 2 branches missed.">		if(task != null)</span>
+		{
+<span class="nc" id="L522">			searching = true;</span>
+<span class="nc" id="L523">			progressPanel.setProgress(0);</span>
+<span class="nc" id="L524">			progressPanel.getFindCancelAction().setTask(task);</span>
+
+<span class="nc" id="L526">			ViewWindow window = resolveViewWindow();</span>
+<span class="nc bnc" id="L527" title="All 2 branches missed.">			if(window != null)</span>
+			{
+<span class="nc" id="L529">				prevGlassPane = window.getGlassPane();</span>
+<span class="nc" id="L530">				window.setGlassPane(progressPanel);</span>
+<span class="nc" id="L531">				progressPanel.setVisible(true);</span>
+			}
+
+<span class="nc" id="L534">			fireChange();</span>
+		}
+<span class="nc" id="L536">	}</span>
+
+	public ProgressGlassPane getProgressPanel()
+	{
+<span class="nc" id="L540">		return progressPanel;</span>
+	}
+
+<span class="nc" id="L543">	private class TabChangeListener</span>
+		implements ChangeListener
+	{
+
+		public void stateChanged(ChangeEvent e)
+		{
+<span class="nc" id="L549">			int selected = pane.getSelectedIndex();</span>
+<span class="nc bnc" id="L550" title="All 2 branches missed.">			if(logger.isDebugEnabled()) logger.debug(&quot;Selected tab: {}&quot;, selected);</span>
+<span class="nc" id="L551">			selectedViewChanged();</span>
+<span class="nc" id="L552">			fireChange();</span>
+<span class="nc" id="L553">		}</span>
+	}
+
+<span class="nc" id="L556">	private class SourceChangeListener</span>
+		implements PropertyChangeListener
+	{
+
+		public void propertyChange(PropertyChangeEvent evt)
+		{
+<span class="nc" id="L562">			String propName = evt.getPropertyName();</span>
+<span class="nc bnc" id="L563" title="All 2 branches missed.">			if(EventWrapperViewPanel.EVENT_SOURCE_PROPERTY.equals(propName))</span>
+			{
+<span class="nc bnc" id="L565" title="All 2 branches missed.">				if(logger.isDebugEnabled()) logger.debug(&quot;EventSource changed: {}&quot;, evt.getNewValue());</span>
+<span class="nc" id="L566">				EventWrapperViewPanel&lt;T&gt; lvp = (EventWrapperViewPanel&lt;T&gt;) evt.getSource();</span>
+<span class="nc" id="L567">				removeView(lvp, false);</span>
+<span class="nc" id="L568">				addView(lvp);</span>
+<span class="nc" id="L569">			}</span>
+<span class="nc bnc" id="L570" title="All 2 branches missed.">			else if(EventWrapperViewPanel.SELECTED_EVENT_PROPERTY.equals(propName))</span>
+			{
+<span class="nc bnc" id="L572" title="All 2 branches missed.">				if(getSelectedView() == evt.getSource())</span>
+				{
+<span class="nc bnc" id="L574" title="All 2 branches missed.">					if(logger.isDebugEnabled()) logger.debug(&quot;EventSource changed: {}&quot;, evt.getNewValue());</span>
+<span class="nc" id="L575">					setSelectedEvent((EventWrapper&lt;T&gt;) evt.getNewValue());</span>
+				}
+			}
+			else
+			{
+<span class="nc bnc" id="L580" title="All 2 branches missed.">				if(logger.isDebugEnabled()) logger.debug(&quot;Other change: {}&quot;, propName);</span>
+<span class="nc" id="L581">				fireChange();</span>
+			}
+<span class="nc" id="L583">		}</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,641 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DefaultORB.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.net.orb</a> &gt; <span class="el_source">DefaultORB.java</span></div><h1>DefaultORB.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2003-2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: DefaultORB.java,v 1.14 2008/01/07 13:00:16 tanderson Exp $
+ */
+package org.exolab.jms.net.orb;
+
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.rmi.ConnectException;
+import java.rmi.NoSuchObjectException;
+import java.rmi.RemoteException;
+import java.rmi.StubNotFoundException;
+import java.rmi.server.ExportException;
+import java.security.Principal;
+import java.util.Map;
+
+import EDU.oswego.cs.dl.util.concurrent.PooledExecutor;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.exolab.jms.common.security.BasicPrincipal;
+import org.exolab.jms.common.threads.DefaultThreadPoolFactory;
+import org.exolab.jms.net.connector.AbstractConnectionManager;
+import org.exolab.jms.net.connector.Authenticator;
+import org.exolab.jms.net.connector.Caller;
+import org.exolab.jms.net.connector.CallerListener;
+import org.exolab.jms.net.connector.Connection;
+import org.exolab.jms.net.connector.Invocation;
+import org.exolab.jms.net.connector.InvocationHandler;
+import org.exolab.jms.net.connector.MulticastCallerListener;
+import org.exolab.jms.net.connector.Request;
+import org.exolab.jms.net.connector.ResourceException;
+import org.exolab.jms.net.connector.Response;
+import org.exolab.jms.net.proxy.Proxy;
+import org.exolab.jms.net.registry.LocalRegistry;
+import org.exolab.jms.net.registry.Registry;
+import org.exolab.jms.net.uri.InvalidURIException;
+import org.exolab.jms.net.uri.URI;
+import org.exolab.jms.common.threads.ThreadPoolFactory;
+import org.exolab.jms.net.util.MethodHelper;
+import org.exolab.jms.net.util.Properties;
+
+
+/**
+ * The &lt;code&gt;DefaultORB&lt;/code&gt; class manages exported objects.
+ *
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.14 $ $Date: 2008/01/07 13:00:16 $
+ */
+class DefaultORB extends AbstractORB {
+
+    /**
+     * The registry.
+     */
+    private LocalRegistry _registry;
+
+    /**
+     * The connection manager.
+     */
+    private AbstractConnectionManager _manager;
+
+    /**
+     * The caller event listeners.
+     */
+    private MulticastCallerListener _listeners;
+
+    /**
+     * The thread pool factory.
+     */
+    private ThreadPoolFactory _factory;
+
+    /**
+     * The thread pool for scheduling invocation requests.
+     */
+    private PooledExecutor _pool;
+
+    /**
+     * The maximum no. of threads to use in the thread pool.
+     */
+    private int _maxThreads;
+
+    /**
+     * Synchronization helper for accessing _pool.
+     */
+<span class="nc" id="L124">    private final Object _poolLock = new Object();</span>
+
+    /**
+     * Current caller.
+     */
+<span class="nc" id="L129">    private final ThreadLocal _caller = new ThreadLocal();</span>
+
+    /**
+     * Constant that holds the name of the connection property for specifying
+     * the maximum no. of threads to use for servicing invocations.
+     */
+    private static final String MAX_THREADS_NAME
+            = &quot;org.exolab.jms.net.orb.threads.max&quot;;
+
+    /**
+     * Constant that holds the name of the connection property for specifying
+     * the thread pool factory.
+     */
+    private static final String THREAD_POOL_FACTORY
+            = &quot;org.exolab.jms.net.orb.threads.factory&quot;;
+
+    /**
+     * Default max no. of threads to service invocations, if none is specified.
+     */
+    private static final int MAX_THREADS = Integer.MAX_VALUE;
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L153">    private static final Log _log = LogFactory.getLog(DefaultORB.class);</span>
+
+
+    /**
+     * Construct a new &lt;code&gt;DefaultORB&lt;/code&gt; with the connection
+     * authenticator. All proxies will be loaded using this instance's class
+     * loader.
+     *
+     * @param authenticator the connection authenticator
+     * @throws RemoteException for any error
+     */
+    public DefaultORB(Authenticator authenticator)
+            throws RemoteException {
+<span class="nc" id="L166">        this(authenticator, DefaultORB.class.getClassLoader(), null);</span>
+<span class="nc" id="L167">    }</span>
+
+    /**
+     * Construct a new &lt;code&gt;DefaultORB&lt;/code&gt; with the connection
+     * authenticator, and properties to configure the ORB. All proxies will be
+     * loaded using this instance's class loader.
+     *
+     * @param authenticator the connection authenticator
+     * @param properties    properties to configure the ORB. May be
+     *                      &lt;code&gt;null&lt;/code&gt;
+     * @throws RemoteException for any error
+     */
+    public DefaultORB(Authenticator authenticator, Map properties)
+            throws RemoteException {
+<span class="nc" id="L181">        this(authenticator, DefaultORB.class.getClassLoader(), properties);</span>
+<span class="nc" id="L182">    }</span>
+
+    /**
+     * Construct a new &lt;code&gt;DefaultORB&lt;/code&gt; with properties to configure the
+     * ORB. Connections will be unauthenticated. All proxies will be loaded
+     * using this instance's class loader.
+     *
+     * @throws RemoteException for any error
+     */
+    public DefaultORB(Map properties) throws RemoteException {
+<span class="nc" id="L192">        this(new DummyAuthenticator(), DefaultORB.class.getClassLoader(),</span>
+                properties);
+<span class="nc" id="L194">    }</span>
+
+    /**
+     * Construct a new &lt;code&gt;DefaultORB&lt;/code&gt;. Connections will be
+     * unauthenticated. All proxies will be loaded using this instance's class
+     * loader.
+     *
+     * @throws RemoteException for any error
+     */
+    public DefaultORB() throws RemoteException {
+<span class="nc" id="L204">        this(new DummyAuthenticator(), DefaultORB.class.getClassLoader(),</span>
+                null);
+<span class="nc" id="L206">    }</span>
+
+    /**
+     * Construct a new &lt;code&gt;DefaultORB&lt;/code&gt; with the connection
+     * authenticator, the class loader used to load proxies, and properties to
+     * configure the ORB.
+     *
+     * @param authenticator the connection authenticator
+     * @param loader        the class loader to load proxies
+     * @param properties    properties to configure the ORB. May be
+     *                      &lt;code&gt;null&lt;/code&gt;
+     * @throws RemoteException for any error
+     */
+    public DefaultORB(Authenticator authenticator, ClassLoader loader,
+                      Map properties)
+            throws RemoteException {
+<span class="nc" id="L222">        super(loader, properties);</span>
+<span class="nc bnc" id="L223" title="All 2 branches missed.">        if (authenticator == null) {</span>
+<span class="nc" id="L224">            throw new IllegalArgumentException(</span>
+                    &quot;Argument 'authenticator' is null&quot;);
+        }
+
+<span class="nc" id="L228">        Properties helper = new Properties(properties, null);</span>
+        try {
+<span class="nc" id="L230">            _maxThreads = helper.getInt(MAX_THREADS_NAME, MAX_THREADS);</span>
+<span class="nc" id="L231">        } catch (ResourceException exception) {</span>
+<span class="nc" id="L232">            throw new RemoteException(&quot;Failed to construct thread pool&quot;,</span>
+                    exception);
+<span class="nc" id="L234">        }</span>
+
+<span class="nc" id="L236">        _factory = (ThreadPoolFactory) helper.getProperties().get(</span>
+                THREAD_POOL_FACTORY);
+<span class="nc bnc" id="L238" title="All 2 branches missed.">        if (_factory == null) {</span>
+<span class="nc" id="L239">            _factory = new DefaultThreadPoolFactory(null);</span>
+        }
+
+        try {
+<span class="nc" id="L243">            _manager = createConnectionManager(new Handler(), authenticator);</span>
+<span class="nc" id="L244">        } catch (ResourceException exception) {</span>
+<span class="nc" id="L245">            throw new RemoteException(&quot;Failed to construct connection manager&quot;,</span>
+                    exception);
+<span class="nc" id="L247">        }</span>
+<span class="nc" id="L248">    }</span>
+
+    /**
+     * Returns a reference to the registry service.
+     *
+     * @return the registry service
+     * @throws RemoteException if the service cannot be exported
+     */
+    public synchronized LocalRegistry getRegistry() throws RemoteException {
+<span class="nc bnc" id="L257" title="All 2 branches missed.">        if (_registry == null) {</span>
+<span class="nc" id="L258">            _registry = new RegistryService(this);</span>
+        }
+<span class="nc" id="L260">        return _registry;</span>
+    }
+
+    /**
+     * Returns a reference to a remote registry service.
+     *
+     * @param properties the connection properties.
+     * @return the registry service
+     * @throws RemoteException for any error
+     */
+    public Registry getRegistry(Map properties) throws RemoteException {
+<span class="nc bnc" id="L271" title="All 4 branches missed.">        if (properties == null || properties.get(PROVIDER_URI) == null) {</span>
+<span class="nc" id="L272">            throw new ConnectException(PROVIDER_URI + &quot; not specified&quot;);</span>
+        }
+        Registry registry;
+<span class="nc" id="L275">        String uri = (String) properties.get(PROVIDER_URI);</span>
+<span class="nc" id="L276">        String principal = (String) properties.get(SECURITY_PRINCIPAL);</span>
+<span class="nc" id="L277">        String credentials = (String) properties.get(SECURITY_CREDENTIALS);</span>
+<span class="nc" id="L278">        Principal subject = null;</span>
+
+<span class="nc bnc" id="L280" title="All 2 branches missed.">        if (principal != null) {</span>
+<span class="nc" id="L281">            subject = new BasicPrincipal(principal, credentials);</span>
+        }
+
+        try {
+<span class="nc" id="L285">            registry = Locator.getRegistry(subject, uri, _manager,</span>
+<span class="nc" id="L286">                    getProxyClassLoader(),</span>
+                    properties);
+<span class="nc" id="L288">        } catch (InvalidURIException exception) {</span>
+<span class="nc" id="L289">            throw new RemoteException(&quot;Invalid URI: &quot; + uri, exception);</span>
+<span class="nc" id="L290">        }</span>
+<span class="nc" id="L291">        return registry;</span>
+    }
+
+    /**
+     * Export an object to the current remote caller. Only the remote caller may
+     * perform invocations.
+     *
+     * @param object the object to export
+     * @return a proxy which may be used to invoke methods on the object
+     * @throws ExportException       if the object cannot be exported
+     * @throws StubNotFoundException if the proxy class cannot be found
+     */
+    public Proxy exportObjectTo(Object object) throws ExportException,
+            StubNotFoundException {
+<span class="nc" id="L305">        Caller caller = (Caller) _caller.get();</span>
+<span class="nc bnc" id="L306" title="All 2 branches missed.">        if (caller == null) {</span>
+<span class="nc" id="L307">            throw new ExportException(&quot;Cannot export - no current caller&quot;);</span>
+        }
+<span class="nc" id="L309">        return doExportTo(object, caller.getLocalURI());</span>
+    }
+
+    /**
+     * Unexport an object.
+     *
+     * @param object the object to export
+     * @throws java.rmi.NoSuchObjectException if the object isn't exported
+     */
+    public synchronized void unexportObject(Object object)
+            throws NoSuchObjectException {
+<span class="nc" id="L320">        super.unexportObject(object);</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">        if (getExported() == 0) {</span>
+            // no more exported objects, so shutdown the thread pool.
+            // The other alternative is to reduce the keep alive time for
+            // unused threads however this is more likely to require
+            // more resources over time.
+<span class="nc" id="L326">            synchronized (_poolLock) {</span>
+<span class="nc bnc" id="L327" title="All 2 branches missed.">                if (_pool != null) {</span>
+<span class="nc" id="L328">                    _log.debug(&quot;Shutting down thread pool&quot;);</span>
+<span class="nc" id="L329">                    _pool.shutdownNow();</span>
+<span class="nc" id="L330">                    _pool = null;</span>
+                }
+<span class="nc" id="L332">            }</span>
+        }
+<span class="nc" id="L334">    }</span>
+
+    /**
+     * Returns the current caller.
+     *
+     * @return the current caller, or &lt;code&gt;null&lt;/code&gt; if no call is in
+     *         progress
+     * @throws RemoteException for any error
+     */
+    public Caller getCaller() throws RemoteException {
+<span class="nc" id="L344">        return (Caller) _caller.get();</span>
+    }
+
+    /**
+     * Registers a caller event listener.
+     *
+     * @param listener the listener to notify
+     */
+    public void addCallerListener(CallerListener listener) {
+<span class="nc" id="L353">        synchronized (this) {</span>
+<span class="nc bnc" id="L354" title="All 2 branches missed.">            if (_listeners == null) {</span>
+<span class="nc" id="L355">                _listeners = new MulticastCallerListener();</span>
+<span class="nc" id="L356">                _manager.setCallerListener(_listeners);</span>
+            }
+<span class="nc" id="L358">        }</span>
+<span class="nc" id="L359">        _listeners.addCallerListener(listener);</span>
+<span class="nc" id="L360">    }</span>
+
+    /**
+     * Deregisters a caller event listener.
+     *
+     * @param listener the listener to remove
+     */
+    public void removeCallerListener(CallerListener listener) {
+        MulticastCallerListener listeners;
+<span class="nc" id="L369">        synchronized (this) {</span>
+<span class="nc" id="L370">            listeners = _listeners;</span>
+<span class="nc" id="L371">        }</span>
+<span class="nc bnc" id="L372" title="All 2 branches missed.">        if (listeners != null) {</span>
+<span class="nc" id="L373">            listeners.removeCallerListener(listener);</span>
+        }
+<span class="nc" id="L375">    }</span>
+
+    /**
+     * Register a caller event listener.
+     *
+     * @param uri      the remote URI to listen on
+     * @param listener the listener to notify
+     * @throws InvalidURIException if &lt;code&gt;uri&lt;/code&gt; is invalid
+     */
+    public void addCallerListener(String uri, CallerListener listener)
+            throws InvalidURIException {
+<span class="nc" id="L386">        synchronized (this) {</span>
+<span class="nc bnc" id="L387" title="All 2 branches missed.">            if (_listeners == null) {</span>
+<span class="nc" id="L388">                _listeners = new MulticastCallerListener();</span>
+<span class="nc" id="L389">                _manager.setCallerListener(_listeners);</span>
+            }
+<span class="nc" id="L391">        }</span>
+<span class="nc" id="L392">        _listeners.addCallerListener(uri, listener);</span>
+<span class="nc" id="L393">    }</span>
+
+    /**
+     * Deregister a caller event listener.
+     *
+     * @param uri      the remote URI the listener is listening for events on
+     * @param listener the listener to remove
+     * @throws InvalidURIException if &lt;code&gt;uri&lt;/code&gt; is invalid
+     */
+    public void removeCallerListener(String uri, CallerListener listener)
+            throws InvalidURIException {
+        MulticastCallerListener listeners;
+<span class="nc" id="L405">        synchronized (this) {</span>
+<span class="nc" id="L406">            listeners = _listeners;</span>
+<span class="nc" id="L407">        }</span>
+<span class="nc bnc" id="L408" title="All 2 branches missed.">        if (listeners != null) {</span>
+<span class="nc" id="L409">            listeners.removeCallerListener(uri, listener);</span>
+        }
+<span class="nc" id="L411">    }</span>
+
+    /**
+     * Shuts down the ORB.
+     *
+     * @throws RemoteException for any error
+     */
+    public void shutdown() throws RemoteException {
+        try {
+<span class="nc" id="L420">            _manager.close();</span>
+<span class="nc" id="L421">        } catch (ResourceException exception) {</span>
+<span class="nc" id="L422">            throw new RemoteException(&quot;Failed to close connection manager&quot;,</span>
+                    exception);
+<span class="nc" id="L424">        }</span>
+        // super.close(); @todo
+<span class="nc" id="L426">    }</span>
+
+    /**
+     * Creates a new connection manager.
+     *
+     * @param handler       the invocation handler
+     * @param authenticator the connection authenticator
+     * @return a new connection manager
+     * @throws ResourceException for any error
+     */
+    protected AbstractConnectionManager createConnectionManager(
+            InvocationHandler handler, Authenticator authenticator)
+            throws ResourceException {
+<span class="nc" id="L439">        return new DefaultConnectionManager(handler, authenticator,</span>
+<span class="nc" id="L440">                getProperties());</span>
+    }
+
+    /**
+     * Connect to the specified URI.
+     *
+     * @param uri         the URI to establish a connection with
+     * @param principal   specifies the identity of the principal. If
+     *                    &lt;code&gt;null&lt;/code&gt;, indicates to connect anonymously.
+     * @param credentials the credentials of the principal
+     * @return the local address that the connection is bound to
+     * @throws ExportException for any error
+     */
+    protected URI connect(URI uri, String principal, String credentials)
+            throws ExportException {
+        URI result;
+        try {
+<span class="nc" id="L457">            Principal subject = null;</span>
+<span class="nc bnc" id="L458" title="All 2 branches missed.">            if (principal != null) {</span>
+<span class="nc" id="L459">                subject = new BasicPrincipal(principal, credentials);</span>
+            }
+<span class="nc" id="L461">            Connection connection = _manager.getConnection(subject, uri);</span>
+<span class="nc" id="L462">            result = connection.getLocalURI();</span>
+
+            // @todo - closing the connection will work for now in that
+            // connection reference counts for OpenJMS will be correct. Won't
+            // support the case where a client exports an object to the server
+            // and then disposes its server proxies - the connection
+            // will be prematurely closed. The connection needs to be kept
+            // until the object is unexported.
+<span class="nc" id="L470">            connection.close();</span>
+<span class="nc" id="L471">        } catch (ResourceException exception) {</span>
+<span class="nc" id="L472">            throw new ExportException(&quot;Failed to connect to URI: &quot; + uri,</span>
+                    exception);
+<span class="nc" id="L474">        }</span>
+<span class="nc" id="L475">        return result;</span>
+    }
+
+    /**
+     * Accept connections on the specified URI.
+     *
+     * @param uri the URI to accept connections on
+     * @throws ExportException for any error
+     */
+    protected void accept(URI uri) throws ExportException {
+        try {
+<span class="nc" id="L486">            _manager.accept(uri, getProperties());</span>
+<span class="nc" id="L487">        } catch (ResourceException exception) {</span>
+<span class="nc" id="L488">            throw new ExportException(&quot;Failed to accept connections on URI: &quot;</span>
+                    + uri, exception);
+<span class="nc" id="L490">        }</span>
+<span class="nc" id="L491">    }</span>
+
+    /**
+     * Returns the thread pool, creating one if it doesn't exist.
+     *
+     * @return the thread pool
+     */
+    private PooledExecutor getThreadPool() {
+<span class="nc" id="L499">        synchronized (_poolLock) {</span>
+<span class="nc bnc" id="L500" title="All 2 branches missed.">            if (_pool == null) {</span>
+
+<span class="nc" id="L502">                _pool = _factory.create(&quot;ORB&quot;, _maxThreads);</span>
+<span class="nc" id="L503">                _pool.abortWhenBlocked();</span>
+            }
+<span class="nc" id="L505">            return _pool;</span>
+        }
+    }
+
+    /**
+     * Closes the thread pool.
+     */
+
+    /**
+     * Returns the method corresponding to the supplied object and method
+     * identifier.
+     *
+     * @param object   the object to locate the method for
+     * @param methodID the method identifier
+     * @return the method
+     * @throws NoSuchMethodException if a corresponding method cannot be found
+     */
+    private Method getMethod(Object object, long methodID)
+            throws NoSuchMethodException {
+
+<span class="nc" id="L525">        Method result = null;</span>
+<span class="nc" id="L526">        Method[] methods = MethodHelper.getAllInterfaceMethods(</span>
+<span class="nc" id="L527">                object.getClass());</span>
+<span class="nc bnc" id="L528" title="All 2 branches missed.">        for (int i = 0; i &lt; methods.length; ++i) {</span>
+<span class="nc" id="L529">            Method method = methods[i];</span>
+<span class="nc bnc" id="L530" title="All 2 branches missed.">            if (MethodHelper.getMethodID(method) == methodID) {</span>
+<span class="nc" id="L531">                result = method;</span>
+<span class="nc" id="L532">                break;</span>
+            }
+        }
+<span class="nc bnc" id="L535" title="All 2 branches missed.">        if (result == null) {</span>
+<span class="nc" id="L536">            throw new NoSuchMethodException(</span>
+                    &quot;Failed to resolve method for methodID=&quot; + methodID);
+        }
+<span class="nc" id="L539">        return result;</span>
+    }
+
+    /**
+     * Invocation handler, that delegates invocations to objects managed by the
+     * DefaultORB.
+     */
+<span class="nc" id="L546">    private class Handler implements InvocationHandler {</span>
+
+        /**
+         * Perform an invocation.
+         *
+         * @param invocation the invocation
+         */
+        public void invoke(final Invocation invocation) {
+<span class="nc" id="L554">            Runnable invoker = new Runnable() {</span>
+                public void run() {
+                    Response response;
+                    try {
+<span class="nc" id="L558">                        Request request = invocation.getRequest();</span>
+<span class="nc" id="L559">                        Caller caller = invocation.getCaller();</span>
+<span class="nc" id="L560">                        response = invoke(request, caller);</span>
+<span class="nc" id="L561">                    } catch (Throwable exception) {</span>
+<span class="nc" id="L562">                        response = new Response(exception);</span>
+<span class="nc" id="L563">                    }</span>
+<span class="nc" id="L564">                    invocation.setResponse(response);</span>
+<span class="nc" id="L565">                }</span>
+            };
+
+            try {
+<span class="nc" id="L569">                getThreadPool().execute(invoker);</span>
+<span class="nc" id="L570">            } catch (Throwable exception) {</span>
+<span class="nc" id="L571">                _log.debug(&quot;Pool failed to execute invocation&quot;, exception);</span>
+<span class="nc" id="L572">                invocation.setResponse(new Response(exception));</span>
+<span class="nc" id="L573">            }</span>
+<span class="nc" id="L574">        }</span>
+
+        /**
+         * Handle a method invocation and return the result.
+         *
+         * @param request the request
+         * @param caller  the caller performing the invocation
+         * @return the result of the invocation
+         */
+        protected Response invoke(Request request, Caller caller) {
+            Response response;
+            try {
+<span class="nc" id="L586">                Object object = getObject(request.getObjID(),</span>
+<span class="nc" id="L587">                        request.getURI());</span>
+<span class="nc" id="L588">                Method method = request.getMethod();</span>
+<span class="nc bnc" id="L589" title="All 2 branches missed.">                if (method == null) {</span>
+                    // resolve the method using its id
+<span class="nc" id="L591">                    method = getMethod(object, request.getMethodID());</span>
+                }
+<span class="nc" id="L593">                Object[] args = request.getArgs();</span>
+<span class="nc bnc" id="L594" title="All 2 branches missed.">                if (args == null) {</span>
+                    // deserialize the arguments
+<span class="nc" id="L596">                    args = request.readArgs(method);</span>
+                }
+<span class="nc bnc" id="L598" title="All 2 branches missed.">                if (_log.isDebugEnabled()) {</span>
+<span class="nc" id="L599">                    _log.debug(&quot;Invoking &quot; + method + &quot; on &quot; + object);</span>
+                }
+<span class="nc" id="L601">                _caller.set(caller);</span>
+<span class="nc" id="L602">                Object result = method.invoke(object, args);</span>
+<span class="nc" id="L603">                response = new Response(result, method);</span>
+<span class="nc" id="L604">            } catch (InvocationTargetException exception) {</span>
+<span class="nc" id="L605">                Throwable target = exception.getTargetException();</span>
+<span class="nc bnc" id="L606" title="All 2 branches missed.">                if (target == null) {</span>
+<span class="nc" id="L607">                    target = exception;</span>
+                }
+<span class="nc" id="L609">                response = new Response(target);</span>
+<span class="nc" id="L610">            } catch (Throwable exception) {</span>
+<span class="nc" id="L611">                response = new Response(exception);</span>
+            } finally {
+<span class="nc" id="L613">                _caller.set(null);</span>
+            }
+<span class="nc" id="L615">            return response;</span>
+        }
+
+    }
+
+    /**
+     * Dummy connection authenticator, which simply flags all principals as
+     * authenticated.
+     */
+    private static class DummyAuthenticator implements Authenticator {
+
+        /**
+         * Determines if a principal has permissions to connect
+         *
+         * @param principal the principal to check
+         * @return &lt;code&gt;true&lt;/code&gt; if the principal has permissions to
+         *         connect
+         * @throws ResourceException if an error occurs
+         */
+        public boolean authenticate(Principal principal)
+                throws ResourceException {
+<span class="nc" id="L636">            return true;</span>
+        }
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,641 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>POP3XMLReceiver.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.technical.mail</a> &gt; <span class="el_source">POP3XMLReceiver.java</span></div><h1>POP3XMLReceiver.java</h1><pre class="source lang-java linenums">package net.sf.xbus.technical.mail;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.List;
+import java.util.Properties;
+import java.util.Vector;
+
+import javax.mail.Address;
+import javax.mail.BodyPart;
+import javax.mail.Flags;
+import javax.mail.Folder;
+import javax.mail.Message;
+import javax.mail.MessagingException;
+import javax.mail.Multipart;
+import javax.mail.NoSuchProviderException;
+import javax.mail.Session;
+import javax.mail.Store;
+import javax.mail.internet.InternetAddress;
+
+import net.sf.xbus.application.Adapter;
+import net.sf.xbus.application.PostProcessor;
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.TAManager;
+import net.sf.xbus.base.core.TAResource;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.core.config.Configuration;
+import net.sf.xbus.base.core.trace.Trace;
+import net.sf.xbus.base.deletedMessageStore.DeletedMessageStore;
+import net.sf.xbus.base.notifyerror.NotifyError;
+import net.sf.xbus.base.xbussystem.XBUSSystem;
+import net.sf.xbus.technical.Receiver;
+import net.sf.xbus.technical.ReceiverSingleInterface;
+
+/**
+ * TODO Kommentierung
+ * &lt;p&gt;
+ * When the &lt;code&gt;POP3XMLReceiver&lt;/code&gt; receives a request it reads the
+ * emails into a String and calls the application layer.
+ * &lt;/p&gt;
+ * 
+ * @author Dominique Boivin
+ * @version 1.3
+ */
+
+<span class="nc" id="L46">public class POP3XMLReceiver</span>
+		implements
+			Receiver,
+			TAResource,
+			ReceiverSingleInterface
+{
+
+<span class="nc" id="L53">	private String mHost = null;</span>
+<span class="nc" id="L54">	private String mUser = null;</span>
+<span class="nc" id="L55">	private String mPassword = null;</span>
+
+<span class="nc" id="L57">	private Store mStore = null;</span>
+<span class="nc" id="L58">	protected Folder mFolder = null;</span>
+<span class="nc" id="L59">	private Session mSession = null;</span>
+<span class="nc" id="L60">	protected Message mMessage = null;</span>
+<span class="nc" id="L61">	private Email mEmailMessage = null;</span>
+
+<span class="nc" id="L63">	private boolean mDeleted = false;</span>
+<span class="nc" id="L64">	private String mReturncode = null;</span>
+
+	/**
+	 * Resolved action with the file after that it was read &lt;br&gt;
+	 * &lt;i&gt;preserve, rename &lt;/i&gt; or &lt;i&gt;delete &lt;/i&gt;
+	 */
+<span class="nc" id="L70">	private String mResolution = null;</span>
+
+<span class="nc" id="L72">	private String mOnError = null;</span>
+
+	/**
+	 * This method will open the Transaction manager for this ressource adb use
+	 * the {@link #doReceive(XBUSSystem)}method to process the reading
+	 * 
+	 * @see net.sf.xbus.base.xbussystem.XBUSSystem#getSystems(String, String)
+	 * @param systemName name of the interface definition
+	 * @exception XException if something goes wrong
+	 */
+	public void receive(String systemName)
+	{
+<span class="nc" id="L84">		mDeleted = false;</span>
+
+<span class="nc" id="L86">		XBUSSystem xbusSystem = null;</span>
+
+<span class="nc" id="L88">		TAManager taManager = TAManager.getInstance();</span>
+<span class="nc" id="L89">		taManager.clearManager();</span>
+<span class="nc" id="L90">		taManager.registerResource(this);</span>
+
+		try
+		{
+
+<span class="nc" id="L95">			readConfiguration(systemName);</span>
+
+<span class="nc" id="L97">			xbusSystem = new XBUSSystem(systemName);</span>
+
+<span class="nc" id="L99">			Trace.info(&quot;Start processing &quot; + xbusSystem.getCompleteName());</span>
+
+			// POP3XMLReceiver will be registered by TAManager
+<span class="nc" id="L102">			doReceive(xbusSystem);</span>
+		}
+<span class="nc" id="L104">		catch (Exception t)</span>
+		{
+<span class="nc" id="L106">			NotifyError.notifyError(this, xbusSystem, t.getMessage(), null,</span>
+					null);
+		}
+		finally
+		{
+			// close resources and remove from the resources
+<span class="nc" id="L112">			taManager.close();</span>
+<span class="nc" id="L113">			taManager.removeResource(this);</span>
+		}
+<span class="nc" id="L115">	}</span>
+
+	protected boolean doReceive(XBUSSystem xbusSystem)
+	{
+<span class="nc" id="L119">		boolean mailReceived = false;</span>
+<span class="nc" id="L120">		TAManager taManager = TAManager.getInstance();</span>
+
+		try
+		{
+<span class="nc" id="L124">			taManager.begin();</span>
+
+			// Subclasses may define their own request content
+<span class="nc" id="L127">			Object requestContent = getRequestContent(xbusSystem</span>
+<span class="nc" id="L128">					.getCompleteName());</span>
+
+<span class="nc bnc" id="L130" title="All 2 branches missed.">			if (requestContent != null)</span>
+			{
+<span class="nc" id="L132">				Trace.info(&quot;Receiving data from &quot; + getAddress());</span>
+
+				// call application layer
+<span class="nc" id="L135">				Adapter adapter = new Adapter();</span>
+<span class="nc" id="L136">				adapter.callApplication(xbusSystem, requestContent, getType());</span>
+<span class="nc" id="L137">				mReturncode = adapter.getReturncode();</span>
+
+				// check the Adapter return code
+				// in case of &quot;not success&quot; throw new XException
+<span class="nc bnc" id="L141" title="All 2 branches missed.">				if (Constants.RC_OK.equals(adapter.getReturncode()))</span>
+				{
+<span class="nc" id="L143">					mailReceived = true;</span>
+<span class="nc" id="L144">					taManager.commit();</span>
+<span class="nc" id="L145">					PostProcessor.start(xbusSystem, adapter.getResponse(),</span>
+							Constants.POSTPROCESSING_PERSYSTEM);
+<span class="nc" id="L147">					Trace</span>
+<span class="nc" id="L148">							.info(&quot;End processing &quot;</span>
+<span class="nc" id="L149">									+ xbusSystem.getCompleteName());</span>
+<span class="nc" id="L150">					Trace.info(&quot;----------------------------------------&quot;);</span>
+				}
+				else
+				{
+<span class="nc" id="L154">					taManager.rollback();</span>
+<span class="nc" id="L155">					handleError(null, xbusSystem, requestContent);</span>
+<span class="nc" id="L156">					Trace.info(&quot;Error while processing &quot;</span>
+<span class="nc" id="L157">							+ xbusSystem.getCompleteName());</span>
+<span class="nc" id="L158">					Trace.info(&quot;----------------------------------------&quot;);</span>
+				}
+<span class="nc" id="L160">			}</span>
+			else
+			{
+				/*
+				 * Folder must be closed, otherwise the messageCount of the
+				 * folder will not be updated in further calls.
+				 */
+<span class="nc" id="L167">				closeFolder();</span>
+			}
+		}
+<span class="nc" id="L170">		catch (Exception e)</span>
+		{
+<span class="nc" id="L172">			taManager.rollback();</span>
+<span class="nc" id="L173">			NotifyError.notifyError(this, xbusSystem, e.getMessage(), null,</span>
+					null);
+<span class="nc" id="L175">		}</span>
+
+<span class="nc" id="L177">		return mailReceived;</span>
+	}
+
+	private void handleError(Throwable t, XBUSSystem source, Object request)
+			throws XException
+	{
+<span class="nc" id="L183">		throw new XException(Constants.LOCATION_INTERN,</span>
+				Constants.LAYER_TECHNICAL, Constants.PACKAGE_TECHNICAL_MAIL,
+				&quot;0&quot;);
+	}
+
+	/**
+	 * &lt;code&gt;getRequestContent&lt;/code&gt; delivers the content of the request.
+	 * Subclasses may define their own request content.
+	 * 
+	 * @return the interface file content as &lt;code&gt;String&lt;/code&gt; but casted to
+	 *         &lt;code&gt;Object&lt;/code&gt; for compliance reasons
+	 */
+	protected Object getRequestContent(String system) throws XException
+	{
+		// read Email
+<span class="nc" id="L198">		mEmailMessage = new Email(system);</span>
+
+		try
+		{
+<span class="nc bnc" id="L202" title="All 2 branches missed.">			if (1 &lt;= mFolder.getMessageCount())</span>
+			{
+<span class="nc" id="L204">				mMessage = mFolder.getMessage(1);</span>
+
+				// Get some headers
+<span class="nc" id="L207">				mEmailMessage.setSentDate(mMessage.getSentDate());</span>
+
+<span class="nc" id="L209">				Address[] address = mMessage.getFrom();</span>
+<span class="nc" id="L210">				mEmailMessage.setFromAddress((InternetAddress) address[0]);</span>
+
+<span class="nc" id="L212">				address = mMessage.getRecipients(Message.RecipientType.TO);</span>
+<span class="nc bnc" id="L213" title="All 4 branches missed.">				for (int i = 0; (address != null) &amp;&amp; (i &lt; address.length); i++)</span>
+				{
+<span class="nc" id="L215">					mEmailMessage.setToAddress((InternetAddress) address[i]);</span>
+				}
+<span class="nc" id="L217">				address = mMessage.getRecipients(Message.RecipientType.CC);</span>
+<span class="nc bnc" id="L218" title="All 4 branches missed.">				for (int i = 0; (address != null) &amp;&amp; (i &lt; address.length); i++)</span>
+				{
+<span class="nc" id="L220">					mEmailMessage.setCCAddress((InternetAddress) address[i]);</span>
+				}
+<span class="nc" id="L222">				address = mMessage.getRecipients(Message.RecipientType.BCC);</span>
+<span class="nc bnc" id="L223" title="All 4 branches missed.">				for (int i = 0; (address != null) &amp;&amp; (i &lt; address.length); i++)</span>
+				{
+<span class="nc" id="L225">					mEmailMessage.setToAddress((InternetAddress) address[i]);</span>
+				}
+
+<span class="nc" id="L228">				mEmailMessage.setSubject(mMessage.getSubject());</span>
+
+<span class="nc" id="L230">				String mimeType = mMessage.getContentType();</span>
+<span class="nc" id="L231">				mEmailMessage.setContentType(mimeType);</span>
+
+<span class="nc" id="L233">				Object o = mMessage.getContent();</span>
+
+<span class="nc bnc" id="L235" title="All 2 branches missed.">				if (o instanceof String)</span>
+				{
+<span class="nc" id="L237">					mEmailMessage.setContent(o.toString());</span>
+				}
+<span class="nc bnc" id="L239" title="All 2 branches missed.">				else if (o instanceof Multipart)</span>
+				{
+<span class="nc" id="L241">					Multipart mp = (Multipart) o;</span>
+
+<span class="nc" id="L243">					int count3 = mp.getCount();</span>
+
+					/*
+					 * This is for *.eml file j = 0 is for text, j = 1 is for
+					 * HTML.
+					 */
+<span class="nc bnc" id="L249" title="All 2 branches missed.">					for (int j = 0; j &lt; count3; j++)</span>
+					{
+						// Part are numbered starting at 0
+<span class="nc" id="L252">						BodyPart b = mp.getBodyPart(j);</span>
+
+<span class="nc" id="L254">						Object o2 = b.getContent();</span>
+<span class="nc bnc" id="L255" title="All 2 branches missed.">						if ((o2 instanceof String))</span>
+						{
+<span class="nc" id="L257">							mEmailMessage.setContent(o2.toString());</span>
+						}
+<span class="nc bnc" id="L259" title="All 2 branches missed.">						else if (o2 instanceof Multipart)</span>
+						{
+							// System.out.print(&quot;**This BodyPart is a nested
+							// Multipart. &quot;);
+<span class="nc" id="L263">							Multipart mp2 = (Multipart) o2;</span>
+
+<span class="nc" id="L265">							int count2 = mp2.getCount();</span>
+
+<span class="nc bnc" id="L267" title="All 2 branches missed.">							for (int k = 0; k &lt; count2; k++)</span>
+							{
+<span class="nc" id="L269">								b = mp2.getBodyPart(k);</span>
+<span class="nc" id="L270">								o2 = b.getContent();</span>
+
+<span class="nc bnc" id="L272" title="All 2 branches missed.">								if ((o2 instanceof String))</span>
+								{
+<span class="nc" id="L274">									mEmailMessage.setContent(o2.toString());</span>
+								}
+<span class="nc bnc" id="L276" title="All 2 branches missed.">								else if (o2 instanceof InputStream)</span>
+								{
+									// nothing
+								}
+							}
+
+<span class="nc" id="L282">						}</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">						else if (o2 instanceof InputStream)</span>
+						{
+							// nothing
+						}
+					}
+<span class="nc" id="L288">				}</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">				else if (o instanceof InputStream)</span>
+				{
+					// InputStream is = (InputStream)o;
+				}
+			}
+<span class="nc" id="L294">			return mEmailMessage.getXML();</span>
+		}
+<span class="nc" id="L296">		catch (MessagingException e)</span>
+		{
+<span class="nc" id="L298">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_MAIL, &quot;0&quot;, e);
+		}
+<span class="nc" id="L302">		catch (IOException e)</span>
+		{
+<span class="nc" id="L304">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_MAIL, &quot;0&quot;, e);
+		}
+	}
+
+	/**
+	 * Implemented method &lt;code&gt;commit&lt;/code&gt; from TAResource interface. The
+	 * purpose of commit actions is to remove any backup information that had
+	 * been created during process(tansaction).
+	 * &lt;p&gt;
+	 * Depending on the FinalResolution, the following acts commit all actions.
+	 * &lt;p&gt;
+	 * &lt;table border&gt;
+	 * &lt;tr&gt;
+	 * &lt;th&gt;Resolution&lt;/th&gt;
+	 * &lt;th&gt;Acts&lt;/th&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;Preserve&lt;/td&gt;
+	 * &lt;td&gt;delete copy file&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;Delete&lt;/td&gt;
+	 * &lt;td&gt;&amp;nbsp;1. delete the email&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;/table&gt;
+	 * 
+	 * @see net.sf.xbus.base.core.TAResource#commit()
+	 * @exception XException if any error occurs
+	 */
+	public void commit() throws XException
+	{
+<span class="nc bnc" id="L337" title="All 2 branches missed.">		if (mResolution.equals(Constants.READ_DELETE))</span>
+		{
+<span class="nc" id="L339">			deleteMail();</span>
+		}
+
+<span class="nc" id="L342">		closeFolder();</span>
+<span class="nc" id="L343">	}</span>
+
+	/**
+	 * Implemented method &lt;code&gt;rollback&lt;/code&gt; from TAResource ignores all
+	 * changes have made since the beginning of the process (transaction).
+	 * &lt;p&gt;
+	 * Depending on the FinalResolution, the following acts roll back all
+	 * modifications that have been made in the file system:
+	 * &lt;p&gt;
+	 * &lt;table border&gt;
+	 * &lt;tr&gt;
+	 * &lt;th&gt;Resolution&lt;/th&gt;
+	 * &lt;th&gt;Acts&lt;/th&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;Delete&lt;/td&gt;
+	 * &lt;td&gt;&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;/table&gt;
+	 * 
+	 * @see net.sf.xbus.base.core.TAResource#rollback()
+	 * @exception XException if any error occurs
+	 */
+	public void rollback() throws XException
+	{
+<span class="nc bnc" id="L368" title="All 2 branches missed.">		if (mOnError.equals(Constants.READ_DELETE)</span>
+<span class="nc bnc" id="L369" title="All 2 branches missed.">				&amp;&amp; DeletedMessageStore.getInstance().writeMessage())</span>
+		{
+<span class="nc" id="L371">			deleteMail();</span>
+		}
+		else
+		{
+			try
+			{
+<span class="nc" id="L377">				mMessage.setFlag(Flags.Flag.SEEN, false);</span>
+<span class="nc" id="L378">				mMessage.setFlag(Flags.Flag.DELETED, false);</span>
+			}
+<span class="nc" id="L380">			catch (MessagingException e)</span>
+			{
+				// do nothing
+<span class="nc" id="L383">			}</span>
+		}
+
+<span class="nc" id="L386">		closeFolder();</span>
+<span class="nc" id="L387">	}</span>
+
+	/**
+	 * This method will open the connection with the POP3 server
+	 */
+	public void open() throws XException
+	{
+		try
+		{
+<span class="nc bnc" id="L396" title="All 2 branches missed.">			if (mSession == null)</span>
+			{
+<span class="nc" id="L398">				mSession = Session.getInstance(new Properties());</span>
+			}
+
+<span class="nc bnc" id="L401" title="All 2 branches missed.">			if (mStore == null)</span>
+			{
+<span class="nc" id="L403">				mStore = mSession.getStore(&quot;pop3&quot;);</span>
+<span class="nc" id="L404">				mStore.connect(mHost, mUser, mPassword);</span>
+			}
+
+<span class="nc bnc" id="L407" title="All 2 branches missed.">			if (mFolder == null)</span>
+			{
+<span class="nc" id="L409">				mFolder = mStore.getFolder(&quot;INBOX&quot;);</span>
+<span class="nc" id="L410">				mFolder.open(Folder.READ_WRITE);</span>
+			}
+		}
+<span class="nc" id="L413">		catch (NoSuchProviderException e)</span>
+		{
+<span class="nc" id="L415">			mSession = null;</span>
+<span class="nc" id="L416">			mStore = null;</span>
+<span class="nc" id="L417">			mFolder = null;</span>
+<span class="nc" id="L418">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_MAIL, &quot;0&quot;, e);
+		}
+<span class="nc" id="L422">		catch (MessagingException e)</span>
+		{
+<span class="nc" id="L424">			mSession = null;</span>
+<span class="nc" id="L425">			mStore = null;</span>
+<span class="nc" id="L426">			mFolder = null;</span>
+<span class="nc" id="L427">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_MAIL, &quot;0&quot;, e);
+<span class="nc" id="L430">		}</span>
+<span class="nc" id="L431">	}</span>
+
+	/**
+	 * This method will close the connection with the POP3 server
+	 */
+	public void close() throws XException
+	{
+<span class="nc" id="L438">		closeFolder();</span>
+
+		try
+		{
+<span class="nc bnc" id="L442" title="All 2 branches missed.">			if (mStore != null)</span>
+			{
+<span class="nc" id="L444">				mStore.close();</span>
+<span class="nc" id="L445">				mStore = null;</span>
+<span class="nc" id="L446">				mSession = null;</span>
+			}
+		}
+<span class="nc" id="L449">		catch (MessagingException e)</span>
+		{
+<span class="nc" id="L451">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_MAIL, &quot;0&quot;, e);
+<span class="nc" id="L454">		}</span>
+<span class="nc" id="L455">	}</span>
+
+	/**
+	 * Returns the onError.
+	 * 
+	 * @return String
+	 */
+	public String getOnError()
+	{
+<span class="nc" id="L464">		return mOnError;</span>
+	}
+
+	/**
+	 * Do the action of deleting the message from the pop3 inbox account
+	 */
+	public void deleteMail() throws XException
+	{
+<span class="nc bnc" id="L472" title="All 2 branches missed.">		if (mMessage != null)</span>
+		{
+			try
+			{
+<span class="nc" id="L476">				mMessage.setFlag(Flags.Flag.DELETED, true);</span>
+<span class="nc" id="L477">				mEmailMessage = null;</span>
+<span class="nc" id="L478">				mDeleted = true;</span>
+			}
+<span class="nc" id="L480">			catch (MessagingException e)</span>
+			{
+<span class="nc" id="L482">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_MAIL, &quot;0&quot;, e);
+<span class="nc" id="L485">			}</span>
+		}
+<span class="nc" id="L487">	}</span>
+
+	public String getType()
+	{
+<span class="nc" id="L491">		return Constants.TYPE_OBJECT;</span>
+	}
+
+	/**
+	 * Reads standard configuration and stores follow data in the class
+	 * variables:
+	 * &lt;p&gt;
+	 * &lt;dl&gt;
+	 * &lt;dd&gt;&lt;table&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;&lt;code&gt;Host&lt;/code&gt;&lt;/td&gt;
+	 * &lt;td&gt;&lt;/td&gt;
+	 * &lt;td&gt;specified the host address of the POP3 account&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;&lt;code&gt;Username&lt;/code&gt;&lt;/td&gt;
+	 * &lt;td&gt;&lt;/td&gt;
+	 * &lt;td&gt;specified the useraname of the POP3 account&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;tr&gt;
+	 * &lt;td&gt;&lt;code&gt;Password&lt;/code&gt;&lt;/td&gt;
+	 * &lt;td&gt;&lt;/td&gt;
+	 * &lt;td&gt;specified the passowrd of the POP3 account&lt;/td&gt;
+	 * &lt;/tr&gt;
+	 * &lt;/table&gt;
+	 * &lt;/dl&gt;
+	 * 
+	 * @param system name of the interface definition
+	 * @throws XException if something goes wrong
+	 */
+	protected void readConfiguration(String system) throws XException
+	{
+<span class="nc" id="L523">		Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L524">		mResolution = getResolution(system);</span>
+<span class="nc" id="L525">		mOnError = getOnError(system);</span>
+
+<span class="nc" id="L527">		mHost = config.getValue(Constants.CHAPTER_SYSTEM, system, &quot;Host&quot;);</span>
+<span class="nc" id="L528">		mUser = config.getValue(Constants.CHAPTER_SYSTEM, system, &quot;User&quot;);</span>
+<span class="nc" id="L529">		mPassword = config.getValue(Constants.CHAPTER_SYSTEM, system,</span>
+				&quot;Password&quot;);
+<span class="nc" id="L531">	}</span>
+
+	/**
+	 * Reads final resolution (resolved action with the email after that it was
+	 * read) for the for the given system name from the standard configuration
+	 * and checks its conformity with the allowed ones:
+	 * &lt;p&gt;
+	 * &lt;dl&gt;
+	 * &lt;dd&gt;&lt;code&gt;Preserve&lt;/code&gt; &amp;nbsp;-email is remained without
+	 * modifications
+	 * &lt;dd&gt;&lt;code&gt;Delete&lt;/code&gt; &amp;nbsp;&amp;nbsp;&amp;nbsp;- email is deleted
+	 * &lt;/dl&gt;
+	 * 
+	 * @param system Sytem name which resoltion must be read.
+	 * @return exist resolution (Preserve, Rename or Delete) as String
+	 * @exception XException if resolution is falsh or any errors occurs
+	 */
+	private String getResolution(String system) throws XException
+	{
+<span class="nc" id="L550">		Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L551">		String resolution = config.getValue(Constants.CHAPTER_SYSTEM, system,</span>
+				Constants.KEY_RECEIVE_RESOL);
+<span class="nc bnc" id="L553" title="All 2 branches missed.">		if (!resolution.equals(Constants.READ_PRESERVE)</span>
+<span class="nc bnc" id="L554" title="All 2 branches missed.">				&amp;&amp; !resolution.equals(Constants.READ_DELETE))</span>
+		{
+<span class="nc" id="L556">			List params = new Vector();</span>
+<span class="nc" id="L557">			params.add(mResolution);</span>
+<span class="nc" id="L558">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_MAIL, &quot;1&quot;, params);
+		}
+<span class="nc" id="L562">		return resolution;</span>
+	}
+
+	/**
+	 * Reads the action which should happen with the email after an error for
+	 * the for the given system name from the standard configuration and checks
+	 * its conformity with the allowed ones:
+	 * &lt;p&gt;
+	 * &lt;dl&gt;
+	 * &lt;dd&gt;&lt;code&gt;Preserve&lt;/code&gt; &amp;nbsp;-email is remained without
+	 * modifications
+	 * &lt;dd&gt;&lt;code&gt;Delete&lt;/code&gt; &amp;nbsp;&amp;nbsp;&amp;nbsp;- email is deleted
+	 * &lt;/dl&gt;
+	 * 
+	 * @param system Sytem name which resoltion must be read.
+	 * @return exist resolution (Preserve, Rename or Delete) as String
+	 * @exception XException if resolution is falsh or any errors occurs
+	 */
+	private String getOnError(String system) throws XException
+	{
+<span class="nc" id="L582">		Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L583">		String onError = config.getValue(Constants.CHAPTER_SYSTEM, system,</span>
+				&quot;OnError&quot;);
+<span class="nc bnc" id="L585" title="All 2 branches missed.">		if (!onError.equals(Constants.READ_PRESERVE)</span>
+<span class="nc bnc" id="L586" title="All 2 branches missed.">				&amp;&amp; !onError.equals(Constants.READ_DELETE))</span>
+		{
+<span class="nc" id="L588">			List params = new Vector();</span>
+<span class="nc" id="L589">			params.add(onError);</span>
+<span class="nc" id="L590">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_MAIL, &quot;2&quot;, params);
+		}
+<span class="nc" id="L594">		return onError;</span>
+	}
+
+	/**
+	 * @throws XException
+	 */
+	protected void closeFolder() throws XException
+	{
+		try
+		{
+<span class="nc bnc" id="L604" title="All 2 branches missed.">			if (mFolder != null)</span>
+			{
+<span class="nc bnc" id="L606" title="All 2 branches missed.">				if (mFolder.isOpen())</span>
+				{
+<span class="nc bnc" id="L608" title="All 2 branches missed.">					if (mDeleted)</span>
+					{
+<span class="nc" id="L610">						mFolder.close(true);</span>
+					}
+					else
+					{
+<span class="nc" id="L614">						mFolder.close(false);</span>
+					}
+				}
+<span class="nc" id="L617">				mFolder = null;</span>
+			}
+		}
+<span class="nc" id="L620">		catch (MessagingException e)</span>
+		{
+<span class="nc" id="L622">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_MAIL, &quot;0&quot;, e);
+<span class="nc" id="L625">		}</span>
+<span class="nc" id="L626">	}</span>
+
+	protected String getAddress()
+	{
+<span class="nc" id="L630">		return new StringBuffer(mUser).append(&quot;@&quot;).append(mHost).toString();</span>
+	}
+
+	/**
+	 * @return Returns the mReturncode.
+	 */
+	protected String getReturncode()
+	{
+<span class="nc" id="L638">		return mReturncode;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,643 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JmsConnection.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.client</a> &gt; <span class="el_source">JmsConnection.java</span></div><h1>JmsConnection.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2000-2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: JmsConnection.java,v 1.4 2005/05/24 13:35:18 tanderson Exp $
+ */
+package org.exolab.jms.client;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import javax.jms.Connection;
+import javax.jms.ConnectionConsumer;
+import javax.jms.ConnectionMetaData;
+import javax.jms.Destination;
+import javax.jms.ExceptionListener;
+import javax.jms.IllegalStateException;
+import javax.jms.InvalidDestinationException;
+import javax.jms.InvalidSelectorException;
+import javax.jms.JMSException;
+import javax.jms.ServerSessionPool;
+import javax.jms.Session;
+import javax.jms.Topic;
+import javax.jms.InvalidClientIDException;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import org.exolab.jms.server.ServerConnection;
+
+
+/**
+ * Client side implementation of the &lt;code&gt;javax.jms.Connection&lt;/code&gt;
+ * interface.
+ *
+ * @author &lt;a href=&quot;mailto:jima@comware.com.au&quot;&gt;Jim Alateras&lt;/a&gt;
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.4 $ $Date: 2005/05/24 13:35:18 $
+ */
+class JmsConnection implements Connection {
+
+    /**
+     * The connection factory that constructed this.
+     */
+    private JmsConnectionFactory _factory;
+
+    /**
+     * The proxy for the remote connection implementation.
+     */
+    private ServerConnection _connection;
+
+    /**
+     * The connection identifier, assigned by the server.
+     */
+    private final long _connectionId;
+
+    /**
+     * This flag indicates whether or not the connection is closed.
+     */
+<span class="nc" id="L98">    private boolean _closed = false;</span>
+
+    /**
+     * This flag indicates whether the connection is in the start or stopped
+     * state.
+     */
+<span class="nc" id="L104">    private boolean _stopped = true;</span>
+
+    /**
+     * This flag indicates whether the connection has been modified. If so,
+     * subsequent attempts to invoke {@link #setClientID} will cause an
+     * &lt;code&gt;IllegalStateException&lt;/code&gt; being thrown
+     */
+<span class="nc" id="L111">    private boolean _modified = false;</span>
+
+    /**
+     * The identity associated with the client, set via the {@link
+     * JmsConnectionFactory} or {@link #setClientID}
+     */
+    private String _clientId;
+
+    /**
+     * Gates the setting of the clientId more than once.
+     */
+<span class="nc" id="L122">    private boolean _clientIdSet = false;</span>
+
+    /**
+     * The exception listener for this connection.
+     */
+    private ExceptionListener _exceptionListener;
+
+    /**
+     * The active sessions managed by this connection.
+     */
+<span class="nc" id="L132">    private List _sessions = new ArrayList();</span>
+
+    /**
+     * The connection data is immutable at this stage. This enables us to cache
+     * a single copy in memory.
+     */
+<span class="nc" id="L138">    private static final JmsConnectionMetaData _metaData =</span>
+            new JmsConnectionMetaData();
+
+    /**
+     * The logger
+     */
+<span class="nc" id="L144">    private static final Log _log = LogFactory.getLog(JmsConnection.class);</span>
+
+
+    /**
+     * Construct a new &lt;code&gt;JmsConnection&lt;/code&gt;.
+     * &lt;p/&gt;
+     * This attempts to establish a connection to the JMS server
+     *
+     * @param factory  the connection factory responsible for creating this
+     * @param clientID the pre-configured client identifier. May be
+     *                 &lt;code&gt;null&lt;/code&gt;
+     * @param username the client username
+     * @param password the client password
+     * @throws JMSException if a connection cannot be established
+     */
+    protected JmsConnection(JmsConnectionFactory factory, String clientID,
+                            String username, String password)
+<span class="nc" id="L161">            throws JMSException {</span>
+
+<span class="nc bnc" id="L163" title="All 2 branches missed.">        if (factory == null) {</span>
+<span class="nc" id="L164">            throw new IllegalArgumentException(&quot;Argument 'factory' is null&quot;);</span>
+        }
+<span class="nc" id="L166">        _factory = factory;</span>
+<span class="nc" id="L167">        _clientId = clientID;</span>
+
+<span class="nc" id="L169">        _stopped = true;</span>
+
+        // use the factory object to retrieve the proxy that
+        // will be used to get a JmsConnectionStubIfc instance
+        // and cache its identity locally
+<span class="nc" id="L174">        _connection = factory.getProxy().createConnection(_clientId, username,</span>
+                                                          password);
+<span class="nc" id="L176">        _connectionId = _connection.getConnectionId();</span>
+<span class="nc" id="L177">    }</span>
+
+    /**
+     * Returns the connection identifier.
+     *
+     * @return the connection identifier
+     */
+    public long getConnectionId() {
+<span class="nc" id="L185">        return _connectionId;</span>
+    }
+
+    /**
+     * Gets the client identifier for this connection.
+     *
+     * @return the unique client identifier
+     * @throws JMSException if the JMS provider fails to return the client ID
+     *                      for this connection due to some internal error.
+     */
+    public String getClientID() throws JMSException {
+<span class="nc" id="L196">        ensureOpen();</span>
+<span class="nc" id="L197">        setModified();</span>
+
+<span class="nc" id="L199">        return _clientId;</span>
+    }
+
+    /**
+     * Sets the client identifier for this connection.
+     *
+     * @param clientID the unique client identifier
+     * @throws JMSException             if the JMS provider fails to set the
+     *                                  client ID for this connection due to
+     *                                  some internal error.
+     * @throws InvalidClientIDException if the JMS client specifies an invalid
+     *                                  or duplicate client ID.
+     * @throws IllegalStateException    if the JMS client attempts to set a
+     *                                  connection's client ID at the wrong time
+     *                                  or when it has been administratively
+     *                                  configured.
+     */
+    public void setClientID(String clientID) throws JMSException {
+<span class="nc" id="L217">        ensureOpen();</span>
+
+        // check if the client id has already been set
+<span class="nc bnc" id="L220" title="All 2 branches missed.">        if (_clientIdSet) {</span>
+<span class="nc" id="L221">            throw new IllegalStateException(</span>
+                    &quot;The client id has already been set&quot;);
+        }
+
+<span class="nc bnc" id="L225" title="All 2 branches missed.">        if (_modified) {</span>
+<span class="nc" id="L226">            throw new IllegalStateException(</span>
+                    &quot;The client identifier must be set before any other &quot;
+                    + &quot;operation is performed&quot;);
+        }
+
+<span class="nc" id="L231">        _connection.setClientID(clientID);</span>
+<span class="nc" id="L232">        _clientId = clientID;</span>
+<span class="nc" id="L233">        _clientIdSet = true; // prevent client id from being set more than once.</span>
+
+<span class="nc" id="L235">    }</span>
+
+
+    /**
+     * Returns the metadata for this connection.
+     *
+     * @return the connection metadata
+     * @throws JMSException if the JMS provider fails to get the connection
+     *                      metadata for this connection.
+     */
+    public ConnectionMetaData getMetaData() throws JMSException {
+<span class="nc" id="L246">        ensureOpen();</span>
+<span class="nc" id="L247">        setModified();</span>
+<span class="nc" id="L248">        return _metaData;</span>
+    }
+
+    /**
+     * Returns the &lt;code&gt;ExceptionListener&lt;/code&gt; for this connection.
+     *
+     * @return the &lt;code&gt;ExceptionListener&lt;/code&gt; for this connection, or
+     * &lt;code&gt;null&lt;/code&gt; if none is associated with this connection.
+     * @throws JMSException if the JMS provider fails to get the
+     *                      &lt;code&gt;ExceptionListener&lt;/code&gt; for this connection.
+     */
+    public ExceptionListener getExceptionListener() throws JMSException {
+<span class="nc" id="L260">        ensureOpen();</span>
+<span class="nc" id="L261">        setModified();</span>
+<span class="nc" id="L262">        return _exceptionListener;</span>
+    }
+
+    /**
+     * Sets an exception listener for this connection.
+     *
+     * @param listener the exception listener
+     * @throws JMSException if the JMS provider fails to set the exception
+     *                      listener for this connection.
+     */
+    public void setExceptionListener(ExceptionListener listener)
+            throws JMSException {
+<span class="nc" id="L274">        ensureOpen();</span>
+<span class="nc" id="L275">        setModified();</span>
+<span class="nc" id="L276">        _exceptionListener = listener;</span>
+<span class="nc" id="L277">    }</span>
+
+    /**
+     * Notify the exception listener of a JMSException. If the exception
+     * listener is not set then ignore it.
+     *
+     * @param message message to deliver
+     */
+    public void notifyExceptionListener(JMSException message) {
+        // check the error code
+<span class="nc bnc" id="L287" title="All 2 branches missed.">        if (message.getErrorCode() != null &amp;&amp;</span>
+<span class="nc bnc" id="L288" title="All 2 branches missed.">                message.getErrorCode().equals(</span>
+                        JmsErrorCodes.CONNECTION_TO_SERVER_DROPPED)) {
+            // the connection to the server has been dropped so we need to
+            // release all local resources.
+            try {
+<span class="nc" id="L293">                close();</span>
+<span class="nc" id="L294">            } catch (JMSException exception) {</span>
+<span class="nc" id="L295">                _log.error(exception.getMessage(), exception);</span>
+<span class="nc" id="L296">            }</span>
+        }
+
+        // finally notify registered exception listener
+<span class="nc bnc" id="L300" title="All 2 branches missed.">        if (_exceptionListener != null) {</span>
+<span class="nc" id="L301">            _exceptionListener.onException(message);</span>
+        }
+<span class="nc" id="L303">    }</span>
+
+    /**
+     * Starts (or restarts) a connection's delivery of incoming messages. A call
+     * to &lt;code&gt;start&lt;/code&gt; on a connection that has already been started is
+     * ignored.
+     *
+     * @throws JMSException if the JMS provider fails to start message delivery
+     *                      due to some internal error.
+     */
+    public synchronized void start() throws JMSException {
+<span class="nc" id="L314">        ensureOpen();</span>
+<span class="nc" id="L315">        setModified();</span>
+
+        try {
+<span class="nc bnc" id="L318" title="All 2 branches missed.">            if (_stopped) {</span>
+                // start the associated sessions
+<span class="nc" id="L320">                Iterator iterator = _sessions.iterator();</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">                while (iterator.hasNext()) {</span>
+<span class="nc" id="L322">                    JmsSession session = (JmsSession) iterator.next();</span>
+<span class="nc" id="L323">                    session.start();</span>
+<span class="nc" id="L324">                }</span>
+                // set the state of the connection to start
+<span class="nc" id="L326">                _stopped = false;</span>
+            }
+<span class="nc" id="L328">        } catch (JMSException exception) {</span>
+            // do we need to change _stopped to true if the any of the
+            // sessions fail to start
+<span class="nc" id="L331">            throw exception;</span>
+<span class="nc" id="L332">        }</span>
+<span class="nc" id="L333">    }</span>
+
+    /**
+     * Temporarily stops a connection's delivery of incoming messages. Delivery
+     * can be restarted using the connection's &lt;code&gt;start&lt;/code&gt; method. When
+     * the connection is stopped, delivery to all the connection's message
+     * consumers is inhibited: synchronous receives block, and messages are not
+     * delivered to message listeners.
+     * &lt;p/&gt;
+     * &lt;P&gt;This call blocks until receives and/or message listeners in progress
+     * have completed.
+     * &lt;p/&gt;
+     * &lt;P&gt;Stopping a connection has no effect on its ability to send messages. A
+     * call to &lt;code&gt;stop&lt;/code&gt; on a connection that has already been stopped
+     * is ignored.
+     *
+     * @throws JMSException if the JMS provider fails to stop message delivery
+     *                      due to some internal error.
+     */
+    public synchronized void stop() throws JMSException {
+<span class="nc" id="L353">        ensureOpen();</span>
+<span class="nc" id="L354">        setModified();</span>
+
+<span class="nc bnc" id="L356" title="All 2 branches missed.">        if (!_stopped) {</span>
+            // stop the associated sessions
+<span class="nc" id="L358">            synchronized (_sessions) {</span>
+<span class="nc" id="L359">                Iterator iterator = _sessions.iterator();</span>
+<span class="nc bnc" id="L360" title="All 2 branches missed.">                while (iterator.hasNext()) {</span>
+<span class="nc" id="L361">                    JmsSession session = (JmsSession) iterator.next();</span>
+<span class="nc" id="L362">                    session.stop();</span>
+<span class="nc" id="L363">                }</span>
+<span class="nc" id="L364">            }</span>
+            // set the state of the connection to stopped
+<span class="nc" id="L366">            _stopped = true;</span>
+        }
+<span class="nc" id="L368">    }</span>
+
+    /**
+     * Closes the connection.
+     * &lt;P&gt;When this method is invoked, it should not return until message
+     * processing has been shut down in an orderly fashion. This means that all
+     * message listeners that may have been running have returned, and that all
+     * pending receives have returned. A close terminates all pending message
+     * receives on the connection's sessions' consumers. The receives may return
+     * with a message or with null, depending on whether there was a message
+     * available at the time of the close. If one or more of the connection's
+     * sessions' message listeners is processing a message at the time when
+     * connection &lt;code&gt;close&lt;/code&gt; is invoked, all the facilities of the
+     * connection and its sessions must remain available to those listeners
+     * until they return control to the JMS provider.
+     * &lt;p/&gt;
+     * &lt;P&gt;Closing a connection causes any of its sessions' transactions in
+     * progress to be rolled back. In the case where a session's work is
+     * coordinated by an external transaction manager, a session's
+     * &lt;code&gt;commit&lt;/code&gt; and &lt;code&gt;rollback&lt;/code&gt; methods are not used and
+     * the result of a closed session's work is determined later by the
+     * transaction manager.
+     * &lt;p/&gt;
+     * Closing a connection does NOT force an acknowledgment of
+     * client-acknowledged sessions.
+     * &lt;p/&gt;
+     * &lt;P&gt;Invoking the &lt;code&gt;acknowledge&lt;/code&gt; method of a received message
+     * from a closed connection's session must throw an
+     * &lt;code&gt;IllegalStateException&lt;/code&gt;.
+     * Closing a closed connection must NOT throw an exception.
+     *
+     * @throws JMSException if the JMS provider fails to close the connection
+     *                      due to some internal error.
+     */
+    public synchronized void close() throws JMSException {
+<span class="nc bnc" id="L403" title="All 2 branches missed.">        if (!_closed) {</span>
+            // before we close we should stop the connection and any
+            // associated sessions
+<span class="nc" id="L406">            stop();</span>
+
+            // close the sessions
+<span class="nc" id="L409">            JmsSession[] sessions = null;</span>
+<span class="nc" id="L410">            synchronized (_sessions) {</span>
+<span class="nc" id="L411">                sessions = (JmsSession[]) _sessions.toArray(new JmsSession[0]);</span>
+<span class="nc" id="L412">            }</span>
+<span class="nc bnc" id="L413" title="All 2 branches missed.">            for (int i = 0; i &lt; sessions.length; ++i) {</span>
+<span class="nc" id="L414">                sessions[i].close();</span>
+                // the session deregisters itself with the connection via
+                // removeSession()
+            }
+
+            // notify the server, and null the proxy
+<span class="nc" id="L420">            getServerConnection().close();</span>
+<span class="nc" id="L421">            _connection = null;</span>
+
+            // remove this from the list of connections managed by the
+            // connection factory and then null the factory.
+<span class="nc" id="L425">            _factory.removeConnection(this);</span>
+<span class="nc" id="L426">            _factory = null;</span>
+
+            // set the closed flag so calling it multiple times is
+            // cool
+<span class="nc" id="L430">            _closed = true;</span>
+        }
+<span class="nc" id="L432">    }</span>
+
+    /**
+     * Creates a &lt;code&gt;Session&lt;/code&gt; object.
+     *
+     * @param transacted      indicates whether the session is transacted
+     * @param acknowledgeMode indicates whether the consumer or the client will
+     *                        acknowledge any messages it receives; ignored if
+     *                        the session is transacted. Legal values are
+     *                        &lt;code&gt;Session.AUTO_ACKNOWLEDGE&lt;/code&gt;,
+     *                        &lt;code&gt;Session.CLIENT_ACKNOWLEDGE&lt;/code&gt;, and
+     *                        &lt;code&gt;Session.DUPS_OK_ACKNOWLEDGE&lt;/code&gt;.
+     * @return a newly created session
+     * @throws JMSException if the &lt;code&gt;Connection&lt;/code&gt; object fails to
+     *                      create a session due to some internal error or lack
+     *                      of support for the specific transaction and
+     *                      acknowledgement mode.
+     * @see Session#AUTO_ACKNOWLEDGE
+     * @see Session#CLIENT_ACKNOWLEDGE
+     * @see Session#DUPS_OK_ACKNOWLEDGE
+     */
+    public Session createSession(boolean transacted, int acknowledgeMode)
+            throws JMSException {
+<span class="nc" id="L455">        ensureOpen();</span>
+<span class="nc" id="L456">        setModified();</span>
+
+<span class="nc" id="L458">        JmsSession session = new JmsSession(this, transacted, acknowledgeMode);</span>
+
+        // if the connection is started then also start the session
+<span class="nc bnc" id="L461" title="All 2 branches missed.">        if (!isStopped()) {</span>
+<span class="nc" id="L462">            session.start();</span>
+        }
+
+        // add it to the list of managed sessions for this connection
+<span class="nc" id="L466">        addSession(session);</span>
+
+<span class="nc" id="L468">        return session;</span>
+    }
+
+    /**
+     * Creates a connection consumer for this connection (optional operation).
+     * This is an expert facility not used by regular JMS clients.
+     *
+     * @param destination     the destination to access
+     * @param messageSelector only messages with properties matching the message
+     *                        selector expression are delivered.  A value of
+     *                        null or an empty string indicates that there is no
+     *                        message selector for the message consumer.
+     * @param sessionPool     the server session pool to associate with this
+     *                        connection consumer
+     * @param maxMessages     the maximum number of messages that can be
+     *                        assigned to a server session at one time
+     * @return the connection consumer
+     * @throws JMSException    if the &lt;code&gt;Connection&lt;/code&gt; object fails to
+     *                         create a connection consumer due to some internal
+     *                         error or invalid arguments for
+     *                         &lt;code&gt;sessionPool&lt;/code&gt; and
+     *                         &lt;code&gt;messageSelector&lt;/code&gt;.
+     * @throws InvalidDestinationException if an invalid destination is
+     *                                     specified.
+     * @throws InvalidSelectorException    if the message selector is invalid.
+     */
+    public ConnectionConsumer createConnectionConsumer(
+            Destination destination, String messageSelector,
+            ServerSessionPool sessionPool, int maxMessages)
+            throws JMSException {
+<span class="nc" id="L498">        ensureOpen();</span>
+<span class="nc" id="L499">        setModified();</span>
+<span class="nc" id="L500">        return new JmsConnectionConsumer(this, destination, sessionPool,</span>
+                                         messageSelector, maxMessages);
+    }
+
+    /**
+     * Create a durable connection consumer for this connection.
+     *
+     * @param topic            topic to access
+     * @param subscriptionName durable subscription name
+     * @param messageSelector  only messages with properties matching the
+     *                         message selector expression are delivered.  A
+     *                         value of null or an empty string indicates that
+     *                         there is no message selector for the message
+     *                         consumer.
+     * @param sessionPool      the server session pool to associate with this
+     *                         durable connection consumer
+     * @param maxMessages      the maximum number of messages that can be
+     *                         assigned to a server session at one time
+     * @return the durable connection consumer
+     * @throws JMSException    if the &lt;code&gt;Connection&lt;/code&gt; object fails to
+     *                         create a connection consumer due to some internal
+     *                         error or invalid arguments for
+     *                         &lt;code&gt;sessionPool&lt;/code&gt; and
+     *                         &lt;code&gt;messageSelector&lt;/code&gt;.
+     * @throws InvalidDestinationException if an invalid destination is
+     *                                     specified.
+     * @throws InvalidSelectorException    if the message selector is invalid.
+     */
+    public ConnectionConsumer createDurableConnectionConsumer(
+            Topic topic, String subscriptionName, String messageSelector,
+            ServerSessionPool sessionPool, int maxMessages)
+            throws JMSException {
+<span class="nc" id="L532">        ensureOpen();</span>
+<span class="nc" id="L533">        setModified();</span>
+<span class="nc" id="L534">        return new JmsConnectionConsumer(this, topic, subscriptionName,</span>
+                                         sessionPool, messageSelector,
+                                         maxMessages);
+    }
+
+    /**
+     * Returns the server connection.
+     *
+     * @return the server connection
+     * @throws JMSException if the connection is &lt;code&gt;null&lt;/code&gt;
+     */
+    protected ServerConnection getServerConnection() throws JMSException {
+<span class="nc bnc" id="L546" title="All 2 branches missed.">        if (_connection == null) {</span>
+<span class="nc" id="L547">            throw new JMSException(&quot;Connection closed&quot;);</span>
+        }
+
+<span class="nc" id="L550">        return _connection;</span>
+    }
+
+    /**
+     * Add the specified session to the list of managed sessions.
+     *
+     * @param session session to register
+     */
+    protected void addSession(JmsSession session) {
+<span class="nc" id="L559">        synchronized (_sessions) {</span>
+<span class="nc" id="L560">            _sessions.add(session);</span>
+<span class="nc" id="L561">        }</span>
+<span class="nc" id="L562">    }</span>
+
+    /**
+     * Remove the specified session from the list of managed sessions. If it
+     * doesn't exist then fail silently.
+     *
+     * @param session session to remove
+     */
+    protected void removeSession(JmsSession session) {
+<span class="nc" id="L571">        synchronized (_sessions) {</span>
+<span class="nc" id="L572">            _sessions.remove(session);</span>
+<span class="nc" id="L573">        }</span>
+<span class="nc" id="L574">    }</span>
+
+    /**
+     * Returns the running state of the connection.
+     *
+     * @return &lt;code&gt;true&lt;/code&gt; if stopped
+     */
+    protected boolean isStopped() {
+<span class="nc" id="L582">        return _stopped;</span>
+    }
+
+    /**
+     * Flags this connection as being modified. Subsequent attempts to invoke
+     * {@link #setClientID} will result in an &lt;code&gt;IllegalStateException&lt;/code&gt;
+     * being thrown.
+     */
+    protected void setModified() {
+<span class="nc" id="L591">        _modified = true;</span>
+<span class="nc" id="L592">    }</span>
+
+    /**
+     * Delete the temporary destination and all the registered sessions
+     * consumers waiting to receive messages from this destination will be
+     * stopped.
+     * &lt;p/&gt;
+     * It will throw a JMSException if the specified destination is not
+     * temporary or if the destination is null or if the destination is not
+     * owned by this connection
+     *
+     * @param destination temporary destination to delete
+     * @throws JMSException
+     */
+    protected synchronized void deleteTemporaryDestination(
+            JmsDestination destination)
+            throws JMSException {
+<span class="nc bnc" id="L609" title="All 4 branches missed.">        if ((destination != null) &amp;&amp;</span>
+                (destination instanceof JmsTemporaryDestination)) {
+<span class="nc" id="L611">            JmsTemporaryDestination temp_dest =</span>
+                    (JmsTemporaryDestination) destination;
+
+            // check to see that this destination was actually created by
+            // this connection
+<span class="nc bnc" id="L616" title="All 2 branches missed.">            if (temp_dest.getOwningConnection() == this) {</span>
+                // this is currently a no-op but we probably need a way to
+                // clean up on the server side
+            } else {
+<span class="nc" id="L620">                throw new JMSException(</span>
+                        &quot;The temp destination cannot be used outside the scope &quot;
+                        + &quot;of the connection creating it&quot;);
+            }
+<span class="nc" id="L624">        } else {</span>
+<span class="nc" id="L625">            throw new JMSException(&quot;The destination is not temporary&quot;);</span>
+        }
+<span class="nc" id="L627">    }</span>
+
+    /**
+     * Verifies that the connection is open.
+     *
+     * @throws IllegalStateException if the connection is closed
+     */
+    protected void ensureOpen() throws IllegalStateException {
+<span class="nc bnc" id="L635" title="All 2 branches missed.">        if (_closed) {</span>
+<span class="nc" id="L636">            throw new IllegalStateException(</span>
+                    &quot;Cannot perform operation - session has been closed&quot;);
+        }
+<span class="nc" id="L639">    }</span>
+
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

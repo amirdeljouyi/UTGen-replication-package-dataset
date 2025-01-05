@@ -1,0 +1,364 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ReceiverThreadManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.technical</a> &gt; <span class="el_source">ReceiverThreadManager.java</span></div><h1>ReceiverThreadManager.java</h1><pre class="source lang-java linenums">package net.sf.xbus.technical;
+
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+import java.util.SortedMap;
+import java.util.SortedSet;
+import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.Vector;
+
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.core.config.Configuration;
+import net.sf.xbus.base.core.reflection.XBUSClassLoader;
+import net.sf.xbus.base.core.trace.Trace;
+
+/**
+ * Manages the state of all receivers running in the background. This class
+ * implements the Singleton design pattern.
+ */
+public class ReceiverThreadManager {
+	/**
+	 * Default for the amount of errors, after them a receiver will be stopped.
+	 */
+	static protected final int DEFAULT_STOP_AFTER_ERRORS = -1; // times
+
+<span class="nc" id="L29">	private static ReceiverThreadManager mReceiverThreadManager = null;</span>
+<span class="nc" id="L30">	private static final Object classLock = ReceiverThreadManager.class;</span>
+
+	/**
+	 * Contains all ReceiverThreads that has been started by the
+	 * ReceiverService. Key: name of the system Entry: the ReceiverServiceThread
+	 * object
+	 */
+<span class="nc" id="L37">	private SortedMap mAllThreads = Collections</span>
+<span class="nc" id="L38">			.synchronizedSortedMap(new TreeMap());</span>
+<span class="nc" id="L39">	private SortedSet mStoppedThreads = Collections</span>
+<span class="nc" id="L40">			.synchronizedSortedSet(new TreeSet());</span>
+<span class="nc" id="L41">	private SortedSet mStoppedHTTPReceivers = Collections</span>
+<span class="nc" id="L42">			.synchronizedSortedSet(new TreeSet());</span>
+<span class="nc" id="L43">	private boolean mIsServletEngine = false;</span>
+
+	/**
+	 * All threads for the systems will run in one ThreadGroup. This makes
+	 * administration easier.
+	 */
+<span class="nc" id="L49">	private ThreadGroup mThreadGroup = new ThreadGroup(&quot;ReceiverService&quot;);</span>
+
+	/**
+	 * The default constructor is private because this is a singleton
+	 */
+<span class="nc" id="L54">	private ReceiverThreadManager() {</span>
+<span class="nc" id="L55">	}</span>
+
+	/**
+	 * Returns the one and only object of class
+	 * &lt;code&gt;ReceiverThreadManager&lt;/code&gt;.
+	 * 
+	 * @return the one and only object of class
+	 *         &lt;code&gt;ReceiverThreadManager&lt;/code&gt;
+	 */
+	static public ReceiverThreadManager getInstance() {
+<span class="nc" id="L65">		synchronized (classLock) {</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">			if (mReceiverThreadManager == null) {</span>
+<span class="nc" id="L67">				mReceiverThreadManager = new ReceiverThreadManager();</span>
+			}
+<span class="nc" id="L69">			return mReceiverThreadManager;</span>
+		}
+	}
+
+	/**
+	 * Starts a ReceiverThread for the given system.
+	 * 
+	 * @param system
+	 *            the name of the system to start the receiver for
+	 * @throws XException
+	 *             if something goes wrong
+	 */
+	public void startReceiverThread(String system) throws XException {
+		/*
+		 * Check if System is configured with ReceiverThread
+		 */
+<span class="nc" id="L85">		String receiver = Configuration.getInstance().getValueOptional(</span>
+				Constants.CHAPTER_SYSTEM, system, &quot;Receiver&quot;);
+<span class="nc bnc" id="L87" title="All 4 branches missed.">		if ((receiver != null) &amp;&amp; (receiver.endsWith(&quot;Thread&quot;))) {</span>
+			/*
+			 * Check if ReceiverThread isn't already running
+			 */
+<span class="nc bnc" id="L91" title="All 2 branches missed.">			if (getRunningReceiverThreads().contains(system)) {</span>
+<span class="nc" id="L92">				Vector params = new Vector(1);</span>
+<span class="nc" id="L93">				params.add(system);</span>
+<span class="nc" id="L94">				throw new XException(Constants.LOCATION_INTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_TECHNICAL, &quot;7&quot;, params);
+			}
+
+			/*
+			 * Start receiver
+			 */
+<span class="nc" id="L102">			ReceiverThreadBase receiverThreadImpl = ReceiverFactory</span>
+<span class="nc" id="L103">					.createReceiverThread(receiver, system);</span>
+
+<span class="nc" id="L105">			Thread receiverThread = new Thread(mThreadGroup,</span>
+					receiverThreadImpl, system);
+<span class="nc" id="L107">			receiverThread.setDaemon(false);</span>
+<span class="nc" id="L108">			receiverThread</span>
+<span class="nc" id="L109">					.setContextClassLoader(XBUSClassLoader.getInstance(Thread</span>
+<span class="nc" id="L110">							.currentThread().getContextClassLoader()));</span>
+<span class="nc" id="L111">			receiverThread.start();</span>
+
+			/*
+			 * Put system and thread in list of all systems and remove it from
+			 * stoppedThreads
+			 */
+<span class="nc" id="L117">			mAllThreads.put(system, receiverThreadImpl);</span>
+<span class="nc" id="L118">			mStoppedThreads.remove(system);</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">		} else if (isHTTPReceiver(system)) {</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">			if (mStoppedHTTPReceivers.contains(system)) {</span>
+<span class="nc" id="L121">				mStoppedHTTPReceivers.remove(system);</span>
+<span class="nc" id="L122">				Trace.always(&quot;Starting HTTPReceiver for &quot; + system);</span>
+			}
+		} else {
+<span class="nc" id="L125">			Vector params = new Vector(1);</span>
+<span class="nc" id="L126">			params.add(system);</span>
+<span class="nc" id="L127">			throw new XException(Constants.LOCATION_INTERN,</span>
+					Constants.LAYER_TECHNICAL,
+					Constants.PACKAGE_TECHNICAL_TECHNICAL, &quot;6&quot;, params);
+		}
+
+<span class="nc" id="L132">	}</span>
+
+	/**
+	 * Demands the stop of the ReceiverThread for the given &lt;code&gt;system&lt;/code&gt;.
+	 * 
+	 * @param system
+	 *            the name of the system to stop the receiver for
+	 * @throws XException
+	 *             if something goes wrong
+	 */
+	public void demandStopReceiverThread(String system) throws XException {
+<span class="nc" id="L143">		Trace.always(&quot;Demanding stop for &quot; + system);</span>
+
+<span class="nc bnc" id="L145" title="All 2 branches missed.">		if (getRunningReceiverThreads().contains(system)) {</span>
+
+<span class="nc" id="L147">			ReceiverThreadBase startedThread = (ReceiverThreadBase) mAllThreads</span>
+<span class="nc" id="L148">					.get(system);</span>
+
+<span class="nc bnc" id="L150" title="All 2 branches missed.">			if (startedThread == null) {</span>
+<span class="nc" id="L151">				Trace.warn(system + &quot; is not a started receiver&quot;);</span>
+<span class="nc" id="L152">				return;</span>
+			}
+
+<span class="nc" id="L155">			startedThread.interruptThread();</span>
+<span class="nc" id="L156">			mStoppedThreads.add(system);</span>
+<span class="nc bnc" id="L157" title="All 2 branches missed.">		} else if (getRunningHTTPReceivers().contains(system)) {</span>
+<span class="nc" id="L158">			mStoppedHTTPReceivers.add(system);</span>
+<span class="nc" id="L159">			Trace.always(&quot;HTTPReceiver for &quot; + system + &quot; stopped&quot;);</span>
+		} else {
+<span class="nc" id="L161">			Trace.warn(system + &quot; is not a started receiver&quot;);</span>
+<span class="nc" id="L162">			return;</span>
+		}
+<span class="nc" id="L164">	}</span>
+
+	/**
+	 * Returns a set with the names of all ReceiverThreads found in the
+	 * &lt;code&gt;Configuration&lt;/code&gt;.
+	 * 
+	 * @return the names of all ReceiverThreads found in the
+	 *         &lt;code&gt;Configuration&lt;/code&gt;
+	 */
+	public Set getAllReceiverThreads() {
+<span class="nc" id="L174">		Set returnSet = new TreeSet();</span>
+<span class="nc" id="L175">		returnSet.addAll(mAllThreads.keySet());</span>
+<span class="nc" id="L176">		return returnSet;</span>
+	}
+
+	/**
+	 * Returns a set with the names of all background receivers (ReceiverThreads
+	 * and HTTPReceivers) found in the &lt;code&gt;Configuration&lt;/code&gt;.
+	 * 
+	 * @return the names of all background receivers found in the
+	 *         &lt;code&gt;Configuration&lt;/code&gt;
+	 * @throws XException
+	 *             if something goes wrong
+	 */
+	public Set getAllSystems() throws XException {
+<span class="nc" id="L189">		Set returnSet = getAllReceiverThreads();</span>
+<span class="nc" id="L190">		returnSet.addAll(getAllHTTPReceivers());</span>
+<span class="nc" id="L191">		return returnSet;</span>
+	}
+
+	/**
+	 * Returns a set with the names of all running background receivers
+	 * (ReceiverThreads and HTTPReceivers).
+	 * 
+	 * @return the names of all running background receivers
+	 * @throws XException
+	 *             if something goes wrong
+	 */
+	public Set getRunningSystems() throws XException {
+<span class="nc" id="L203">		Set retSet = getRunningReceiverThreads();</span>
+<span class="nc" id="L204">		retSet.addAll(getRunningHTTPReceivers());</span>
+<span class="nc" id="L205">		return retSet;</span>
+	}
+
+	/**
+	 * Returns a set with the names of all running ReceiverThreads.
+	 * 
+	 * @return the names of all running ReceiverThreads
+	 */
+	public Set getRunningReceiverThreads() {
+<span class="nc" id="L214">		int threadCount = mThreadGroup.activeCount();</span>
+<span class="nc" id="L215">		TreeSet retSet = new TreeSet();</span>
+
+<span class="nc" id="L217">		Thread[] startedThreads = new Thread[threadCount];</span>
+<span class="nc" id="L218">		mThreadGroup.enumerate(startedThreads);</span>
+
+<span class="nc bnc" id="L220" title="All 2 branches missed.">		for (int i = 0; i &lt; threadCount; i++) {</span>
+<span class="nc bnc" id="L221" title="All 2 branches missed.">			if ((startedThreads[i] != null)</span>
+<span class="nc bnc" id="L222" title="All 2 branches missed.">					&amp;&amp; (mAllThreads.containsKey(startedThreads[i].getName()))) {</span>
+<span class="nc" id="L223">				retSet.add(startedThreads[i].getName());</span>
+			}
+		}
+<span class="nc" id="L226">		return retSet;</span>
+	}
+
+	/**
+	 * Returns a set with the names of all running HTTPReceivers.
+	 * 
+	 * @return the names of all running HTTPReceivers
+	 * @throws XException
+	 *             if something goes wrong
+	 */
+	protected Set getRunningHTTPReceivers() throws XException {
+<span class="nc" id="L237">		TreeSet returnSet = new TreeSet();</span>
+
+<span class="nc bnc" id="L239" title="All 2 branches missed.">		for (Iterator it = getAllHTTPReceivers().iterator(); it.hasNext();) {</span>
+<span class="nc" id="L240">			Object stoppedHTTPReceiver = it.next();</span>
+<span class="nc bnc" id="L241" title="All 2 branches missed.">			if (!mStoppedHTTPReceivers.contains(stoppedHTTPReceiver)) {</span>
+<span class="nc" id="L242">				returnSet.add(stoppedHTTPReceiver);</span>
+			}
+<span class="nc" id="L244">		}</span>
+
+<span class="nc" id="L246">		return returnSet;</span>
+	}
+
+	/**
+	 * Returns a set with the names of all stopped background receivers
+	 * (ReceiverThreads and HTTPReceivers).
+	 * 
+	 * @return the names of all stopped background receivers
+	 */
+	public Set getStoppedSystems() {
+<span class="nc" id="L256">		TreeSet returnSet = new TreeSet();</span>
+
+<span class="nc" id="L258">		returnSet.addAll(mStoppedThreads);</span>
+<span class="nc" id="L259">		returnSet.addAll(mStoppedHTTPReceivers);</span>
+
+<span class="nc" id="L261">		return returnSet;</span>
+	}
+
+	/**
+	 * Indicates whether the ReceiverService is started inside a servlet engine.
+	 * 
+	 * @param isServletEngine
+	 *            true if the ReceiverService is running in a servlet engine
+	 */
+	protected void setIsServletEngine(boolean isServletEngine) {
+<span class="nc" id="L271">		mIsServletEngine = isServletEngine;</span>
+<span class="nc" id="L272">	}</span>
+
+	/**
+	 * Clears the list of all stopped HTTPReceivers.
+	 */
+	public void clearStoppedHTTPReceivers() {
+<span class="nc" id="L278">		mStoppedHTTPReceivers.clear();</span>
+<span class="nc" id="L279">	}</span>
+
+	/**
+	 * Returns a list of all HTTPReceivers found in the
+	 * &lt;code&gt;Configuration&lt;/code&gt;.
+	 * 
+	 * @return a list of all HTTPReceivers found in the
+	 *         &lt;code&gt;Configuration&lt;/code&gt;
+	 * @throws XException
+	 *             if something goes wrong
+	 */
+	private List getAllHTTPReceivers() throws XException {
+<span class="nc" id="L291">		List returnSet = new Vector();</span>
+<span class="nc bnc" id="L292" title="All 2 branches missed.">		if (mIsServletEngine) {</span>
+			List systems;
+			Configuration config;
+			try {
+<span class="nc" id="L296">				config = Configuration.getInstance();</span>
+<span class="nc" id="L297">				systems = config.getSections(Constants.CHAPTER_SYSTEM);</span>
+<span class="nc" id="L298">			} catch (XException e) {</span>
+<span class="nc" id="L299">				return null;</span>
+<span class="nc" id="L300">			}</span>
+
+<span class="nc" id="L302">			String system = null;</span>
+<span class="nc bnc" id="L303" title="All 2 branches missed.">			for (Iterator it = systems.iterator(); it.hasNext();) {</span>
+<span class="nc" id="L304">				system = (String) it.next();</span>
+<span class="nc bnc" id="L305" title="All 2 branches missed.">				if (isHTTPReceiver(system)) {</span>
+<span class="nc" id="L306">					returnSet.add(system);</span>
+				}
+			}
+		}
+<span class="nc" id="L310">		return returnSet;</span>
+	}
+
+	private boolean isHTTPReceiver(String system) throws XException {
+<span class="nc" id="L314">		String receiver = Configuration.getInstance().getValueOptional(</span>
+				Constants.CHAPTER_SYSTEM, system, &quot;Receiver&quot;);
+<span class="nc bnc" id="L316" title="All 4 branches missed.">		if ((receiver != null) &amp;&amp; (receiver.startsWith(&quot;HTTP&quot;))) {</span>
+<span class="nc" id="L317">			return true;</span>
+		} else {
+<span class="nc" id="L319">			return false;</span>
+		}
+	}
+
+	/**
+	 * Indicates whether a HTTPReceiver is stopped
+	 * 
+	 * @param system
+	 *            the name of the system
+	 * @return true if the HTTPReceiver is stopped, false otherwise
+	 */
+	public boolean isHTTPReceiverStopped(String system) {
+<span class="nc" id="L331">		return mStoppedHTTPReceivers.contains(system);</span>
+	}
+
+	/**
+	 * Returns the amount of errors, after them a receiver will be stopped The
+	 * value is read out of the configuration, either a default for the receiver
+	 * class or a value specific for the current source. If no value is
+	 * specified in the configuration, a hard coded default is used.
+	 * 
+	 * @return the amount of errors, after them a receiver will be stopped
+	 * @param system
+	 *            the name of the system
+	 * @param receiverClassName
+	 *            the name of the receiver class
+	 */
+	public static int getStopAfterErrors(String system, String receiverClassName) {
+<span class="nc" id="L347">		int stopAfterErrors = DEFAULT_STOP_AFTER_ERRORS;</span>
+		try {
+<span class="nc" id="L349">			Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L350">			stopAfterErrors = config.getValueAsIntOptional(&quot;System&quot;, system,</span>
+					&quot;StopAfterErrors&quot;);
+<span class="nc bnc" id="L352" title="All 2 branches missed.">			if (stopAfterErrors == 0) {</span>
+<span class="nc" id="L353">				stopAfterErrors = config.getValueAsInt(&quot;Base&quot;,</span>
+						receiverClassName, &quot;StopAfterErrors&quot;);
+			}
+<span class="nc" id="L356">		} catch (XException e) {</span>
+<span class="nc" id="L357">			Trace.warn(&quot;Using default for StopAfterErrors: &quot;</span>
+					+ DEFAULT_STOP_AFTER_ERRORS);
+<span class="nc" id="L359">		}</span>
+
+<span class="nc" id="L361">		return stopAfterErrors;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

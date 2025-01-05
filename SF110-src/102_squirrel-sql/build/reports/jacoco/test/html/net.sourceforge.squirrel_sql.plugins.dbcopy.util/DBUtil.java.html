@@ -1,0 +1,2088 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DBUtil.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.plugins.dbcopy.util</a> &gt; <span class="el_source">DBUtil.java</span></div><h1>DBUtil.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (C) 2005 Rob Manning
+ * manningr@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+
+package net.sourceforge.squirrel_sql.plugins.dbcopy.util;
+
+import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.math.BigDecimal;
+import java.sql.Array;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.Date;
+import java.sql.PreparedStatement;
+import java.sql.Ref;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.sql.Time;
+import java.sql.Timestamp;
+import java.sql.Types;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.client.session.schemainfo.SchemaInfo;
+import net.sourceforge.squirrel_sql.fw.dialects.DialectFactory;
+import net.sourceforge.squirrel_sql.fw.dialects.HibernateDialect;
+import net.sourceforge.squirrel_sql.fw.dialects.UserCancelledOperationException;
+import net.sourceforge.squirrel_sql.fw.sql.*;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.ColTypeMapper;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.I18NBaseObject;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.SessionInfoProvider;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.prefs.DBCopyPreferenceBean;
+import net.sourceforge.squirrel_sql.plugins.dbcopy.prefs.PreferencesManager;
+
+import org.hibernate.MappingException;
+
+/**
+ * A utility class for interacting with the database.
+ */
+<span class="nc" id="L68">public class DBUtil extends I18NBaseObject</span>
+{
+
+	/** Logger for this class. */
+<span class="nc" id="L72">	private final static ILogger log = LoggerController.createLogger(DBUtil.class);</span>
+
+	/** Plugin settings. The configuration panel uses this */
+<span class="nc" id="L75">	private static DBCopyPreferenceBean _prefs = PreferencesManager.getPreferences();</span>
+
+	/** Internationalized strings for this class */
+<span class="nc" id="L78">	private static final StringManager s_stringMgr = StringManagerFactory.getStringManager(DBUtil.class);</span>
+
+	/** The name of the table to create when testing column names in dest db */
+	private static final String TEST_TABLE_NAME = &quot;dbcopytest&quot;;
+
+	/** The last statement executed that we'll show to the user if error */
+<span class="nc" id="L84">	private static String lastStatement = null;</span>
+
+<span class="nc" id="L86">	private static String lastStatementValues = null;</span>
+
+	public static void setPreferences(DBCopyPreferenceBean bean)
+	{
+<span class="nc" id="L90">		_prefs = bean;</span>
+<span class="nc" id="L91">	}</span>
+
+	/**
+	 * Returns a string that looks like:
+	 * 
+	 * (PK_COL1, PK_COL2, PK_COL3, ...)
+	 * 
+	 * or null if there is no primary key for the specified table.
+	 * 
+	 * @param sourceConn
+	 * @param ti
+	 * @return
+	 * @throws SQLException
+	 */
+	public static String getPKColumnString(ISQLConnection sourceConn, ITableInfo ti) throws SQLException
+	{
+<span class="nc" id="L107">		List&lt;String&gt; pkColumns = getPKColumnList(sourceConn, ti);</span>
+<span class="nc bnc" id="L108" title="All 4 branches missed.">		if (pkColumns == null || pkColumns.size() == 0)</span>
+		{
+<span class="nc" id="L110">			return null;</span>
+		}
+<span class="nc" id="L112">		StringBuilder sb = new StringBuilder(&quot;(&quot;);</span>
+<span class="nc" id="L113">		Iterator&lt;String&gt; i = pkColumns.iterator();</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">		while (i.hasNext())</span>
+		{
+<span class="nc" id="L116">			String columnName = i.next();</span>
+<span class="nc" id="L117">			sb.append(columnName);</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">			if (i.hasNext())</span>
+			{
+<span class="nc" id="L120">				sb.append(&quot;, &quot;);</span>
+			}
+<span class="nc" id="L122">		}</span>
+<span class="nc" id="L123">		sb.append(&quot;)&quot;);</span>
+<span class="nc" id="L124">		return sb.toString();</span>
+	}
+
+	/**
+	 * Returns a list of primary keys or null if there are no primary keys for the specified table.
+	 * 
+	 * @param sourceConn
+	 * @param ti
+	 * @return
+	 * @throws SQLException
+	 */
+	private static List&lt;String&gt; getPKColumnList(ISQLConnection sourceConn, ITableInfo ti) throws SQLException
+	{
+<span class="nc" id="L137">		ArrayList&lt;String&gt; pkColumns = new ArrayList&lt;String&gt;();</span>
+<span class="nc" id="L138">		DatabaseMetaData md = sourceConn.getConnection().getMetaData();</span>
+<span class="nc" id="L139">		ResultSet rs = null;</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">		if (md.supportsCatalogsInTableDefinitions())</span>
+		{
+<span class="nc" id="L142">			rs = md.getPrimaryKeys(ti.getCatalogName(), null, ti.getSimpleName());</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">		} else if (md.supportsSchemasInTableDefinitions())</span>
+		{
+<span class="nc" id="L145">			rs = md.getPrimaryKeys(null, ti.getSchemaName(), ti.getSimpleName());</span>
+		} else
+		{
+<span class="nc" id="L148">			rs = md.getPrimaryKeys(null, null, ti.getSimpleName());</span>
+		}
+<span class="nc bnc" id="L150" title="All 2 branches missed.">		while (rs.next())</span>
+		{
+<span class="nc" id="L152">			String keyColumn = rs.getString(4);</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">			if (keyColumn != null)</span>
+			{
+<span class="nc" id="L155">				pkColumns.add(keyColumn);</span>
+			}
+<span class="nc" id="L157">		}</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">		if (pkColumns.size() == 0)</span>
+		{
+<span class="nc" id="L160">			return null;</span>
+		}
+<span class="nc" id="L162">		return pkColumns;</span>
+	}
+
+	/**
+	 * Returns a List of SQL statements that add foreign key(s) to the table described in the specified
+	 * ITableInfo.
+	 * 
+	 * @param prov
+	 *        used to see if the destination session connection FKs in the source session exist already
+	 * @param ti
+	 *        the table to get FK information on
+	 * @return Set a set of SQL statements that can be used to create foreign key constraints.
+	 * @throws SQLException
+	 */
+	public static Set&lt;String&gt; getForeignKeySQL(SessionInfoProvider prov, ITableInfo ti,
+	      ArrayList&lt;ITableInfo&gt; selectedTableInfos) throws SQLException, UserCancelledOperationException
+	{
+<span class="nc" id="L179">		HashSet&lt;String&gt; result = new HashSet&lt;String&gt;();</span>
+<span class="nc" id="L180">		ForeignKeyInfo[] keys = ti.getImportedKeys();</span>
+<span class="nc bnc" id="L181" title="All 2 branches missed.">		if (keys == null)</span>
+		{
+<span class="nc" id="L183">			return result;</span>
+		}
+<span class="nc bnc" id="L185" title="All 2 branches missed.">		for (ForeignKeyInfo fkInfo : keys)</span>
+		{
+<span class="nc" id="L187">			String pkTableName = fkInfo.getPrimaryKeyTableName();</span>
+<span class="nc" id="L188">			String pkTableCol = fkInfo.getPrimaryKeyColumnName();</span>
+<span class="nc" id="L189">			String fkTableName = fkInfo.getForeignKeyTableName();</span>
+<span class="nc" id="L190">			String fkTableCol = fkInfo.getForeignKeyColumnName();</span>
+			// TODO: Is giving a FK constraint a name universally supported
+			// and done the same way on every database?
+<span class="nc" id="L193">			String fkName = fkInfo.getForeignKeyName();</span>
+
+			// alter table ti.getSimpleName()
+			// add foreign key (fkTableCol)
+			// references pkTableName(pkTableCol);
+<span class="nc bnc" id="L198" title="All 2 branches missed.">			if (!containsTable(selectedTableInfos, pkTableName))</span>
+			{
+				// TODO: Maybe someday we could inform the user that the imported
+				// key can't be created because the list of tables they've
+				// selected, doesn't include the table that this foreign key
+				// depends upon. For now, just log a warning and skip it.
+<span class="nc bnc" id="L204" title="All 2 branches missed.">				if (log.isDebugEnabled())</span>
+				{
+					// i18n[DBUtil.error.missingtable=getForeignKeySQL: table
+					// '{0}' has a column '{1}' that references table '{2}'
+					// column '{3}'. However, that table is not being copied.
+					// Skipping this foreign key.]
+<span class="nc" id="L210">					String msg = s_stringMgr.getString(&quot;DBUtil.error.missingtable&quot;, new String[]</span>
+						{ fkTableName, fkTableCol, pkTableName, pkTableCol });
+
+<span class="nc" id="L213">					log.debug(msg);</span>
+<span class="nc" id="L214">				}</span>
+				continue;
+			}
+
+<span class="nc" id="L218">			ISession destSession = prov.getDestSession();</span>
+<span class="nc" id="L219">			String destSchema = prov.getDestDatabaseObject().getSimpleName();</span>
+<span class="nc" id="L220">			String destCatalog = prov.getDestDatabaseObject().getCatalogName();</span>
+<span class="nc bnc" id="L221" title="All 2 branches missed.">			if (tableHasForeignKey(destCatalog, destSchema, ti.getSimpleName(), fkInfo, prov))</span>
+			{
+<span class="nc bnc" id="L223" title="All 2 branches missed.">				if (log.isInfoEnabled())</span>
+				{
+<span class="nc" id="L225">					log.info(&quot;Skipping FK (&quot; + fkName + &quot;) - table &quot; + ti.getSimpleName()</span>
+					      + &quot; seems to already have it defined.&quot;);
+				}
+				continue;
+			}
+
+<span class="nc" id="L231">			String fkTable = getQualifiedObjectName(</span>
+<span class="nc" id="L232">			   destSession, destCatalog, destSchema, ti.getSimpleName(), DialectFactory.DEST_TYPE);</span>
+<span class="nc" id="L233">			String pkTable = getQualifiedObjectName(</span>
+			   destSession, destCatalog, destSchema, pkTableName, DialectFactory.DEST_TYPE);
+<span class="nc" id="L235">			StringBuilder tmp = new StringBuilder();</span>
+<span class="nc" id="L236">			tmp.append(&quot;ALTER TABLE &quot;);</span>
+<span class="nc" id="L237">			tmp.append(fkTable);</span>
+<span class="nc" id="L238">			tmp.append(&quot; ADD FOREIGN KEY (&quot;);</span>
+<span class="nc" id="L239">			tmp.append(fkTableCol);</span>
+<span class="nc" id="L240">			tmp.append(&quot;) REFERENCES &quot;);</span>
+<span class="nc" id="L241">			tmp.append(pkTable);</span>
+<span class="nc" id="L242">			tmp.append(&quot;(&quot;);</span>
+<span class="nc" id="L243">			tmp.append(pkTableCol);</span>
+<span class="nc" id="L244">			tmp.append(&quot;)&quot;);</span>
+<span class="nc" id="L245">			result.add(tmp.toString());</span>
+		}
+<span class="nc" id="L247">		return result;</span>
+	}
+
+	public static boolean tableHasForeignKey(String destCatalog, String destSchema, String destTableName,
+	      ForeignKeyInfo fkInfo, SessionInfoProvider prov)
+	{
+<span class="nc" id="L253">		boolean result = false;</span>
+		try
+		{
+<span class="nc" id="L256">			SQLDatabaseMetaData md = prov.getDestSession().getSQLConnection().getSQLMetaData();</span>
+
+<span class="nc" id="L258">			ITableInfo[] tables = md.getTables(destCatalog, destSchema, destTableName, new String[]</span>
+				{ &quot;TABLE&quot; }, null);
+<span class="nc bnc" id="L260" title="All 4 branches missed.">			if (tables != null &amp;&amp; tables.length == 1)</span>
+			{
+<span class="nc" id="L262">				ForeignKeyInfo[] fks = SQLUtilities.getImportedKeys(tables[0], md);</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">				for (ForeignKeyInfo existingKey : fks)</span>
+				{
+<span class="nc bnc" id="L265" title="All 2 branches missed.">					if (areEqual(existingKey, fkInfo))</span>
+					{
+<span class="nc" id="L267">						result = true;</span>
+<span class="nc" id="L268">						break;</span>
+					}
+				}
+<span class="nc" id="L271">			} else</span>
+			{
+<span class="nc" id="L273">				log.error(&quot;Couldn't find an exact match for destination table &quot; + destTableName + &quot; in schema &quot;</span>
+				      + destSchema + &quot; and catalog &quot; + destCatalog + &quot;. Skipping FK constraint&quot;);
+			}
+<span class="nc" id="L276">		} catch (SQLException e)</span>
+		{
+<span class="nc" id="L278">			log.error(&quot;Unexpected exception while attempting to determine if &quot; + &quot;a table (&quot; + destTableName</span>
+			      + &quot;) has a particular foreign &quot; + &quot;key&quot;);
+<span class="nc" id="L280">		}</span>
+<span class="nc" id="L281">		return result;</span>
+	}
+
+	private static boolean areEqual(ForeignKeyInfo fk1, ForeignKeyInfo fk2)
+	{
+<span class="nc" id="L286">		String fk1FKColumn = fk1.getForeignKeyColumnName();</span>
+<span class="nc" id="L287">		String fk2FKColumn = fk2.getForeignKeyColumnName();</span>
+<span class="nc" id="L288">		String fk1PKColumn = fk1.getPrimaryKeyColumnName();</span>
+<span class="nc" id="L289">		String fk2PKColumn = fk2.getPrimaryKeyColumnName();</span>
+<span class="nc" id="L290">		String fk1FKTable = fk1.getForeignKeyTableName();</span>
+<span class="nc" id="L291">		String fk2FKTable = fk2.getForeignKeyTableName();</span>
+<span class="nc" id="L292">		String fk1PKTable = fk1.getPrimaryKeyTableName();</span>
+<span class="nc" id="L293">		String fk2PKTable = fk2.getPrimaryKeyTableName();</span>
+
+<span class="nc bnc" id="L295" title="All 2 branches missed.">		if (!fk1PKColumn.equals(fk2PKColumn))</span>
+		{
+<span class="nc" id="L297">			return false;</span>
+		}
+<span class="nc bnc" id="L299" title="All 2 branches missed.">		if (!fk1FKColumn.equals(fk2FKColumn))</span>
+		{
+<span class="nc" id="L301">			return false;</span>
+		}
+<span class="nc bnc" id="L303" title="All 2 branches missed.">		if (!fk1PKTable.equals(fk2PKTable))</span>
+		{
+<span class="nc" id="L305">			return false;</span>
+		}
+<span class="nc bnc" id="L307" title="All 2 branches missed.">		if (!fk1FKTable.equals(fk2FKTable))</span>
+		{
+<span class="nc" id="L309">			return false;</span>
+		}
+<span class="nc" id="L311">		return true;</span>
+	}
+
+	private static boolean containsTable(List&lt;ITableInfo&gt; tableInfos, String table)
+	{
+<span class="nc" id="L316">		boolean result = false;</span>
+<span class="nc bnc" id="L317" title="All 2 branches missed.">		for (ITableInfo ti : tableInfos)</span>
+		{
+<span class="nc bnc" id="L319" title="All 2 branches missed.">			if (table.equalsIgnoreCase(ti.getSimpleName()))</span>
+			{
+<span class="nc" id="L321">				result = true;</span>
+<span class="nc" id="L322">				break;</span>
+			}
+<span class="nc" id="L324">		}</span>
+<span class="nc" id="L325">		return result;</span>
+	}
+
+	/**
+	 * Executes the given SQL using the specified SQLConnection.
+	 * 
+	 * @param con
+	 *        the SQLConnection to execute the update on.
+	 * @param SQL
+	 *        the statement to execute.
+	 * @return either the row count for INSERT, UPDATE or DELETE statements, or 0 for SQL statements that
+	 *         return nothing
+	 * @throws SQLException
+	 *         if a database access error occurs or the given SQL statement produces a ResultSet object
+	 */
+	public static int executeUpdate(ISQLConnection con, String SQL, boolean writeSQL) throws SQLException
+	{
+<span class="nc" id="L342">		Statement stmt = null;</span>
+<span class="nc" id="L343">		int result = 0;</span>
+		try
+		{
+<span class="nc" id="L346">			stmt = con.createStatement();</span>
+<span class="nc bnc" id="L347" title="All 2 branches missed.">			if (writeSQL)</span>
+			{
+<span class="nc" id="L349">				ScriptWriter.write(SQL);</span>
+			}
+<span class="nc bnc" id="L351" title="All 2 branches missed.">			if (log.isDebugEnabled())</span>
+			{
+				// i18n[DBUtil.info.executeupdate=executeupdate: Running SQL:\n '{0}']
+<span class="nc" id="L354">				String msg = s_stringMgr.getString(&quot;DBUtil.info.executeupdate&quot;, SQL);</span>
+<span class="nc" id="L355">				log.debug(msg);</span>
+			}
+<span class="nc" id="L357">			lastStatement = SQL;</span>
+<span class="nc" id="L358">			result = stmt.executeUpdate(SQL);</span>
+		} finally
+		{
+<span class="nc" id="L361">			SQLUtilities.closeStatement(stmt);</span>
+		}
+<span class="nc" id="L363">		return result;</span>
+	}
+
+	/**
+	 * Executes the specified sql statement on the specified connection and returns the ResultSet.
+	 * 
+	 * @param con
+	 * @param sql
+	 * @param mysqlBigResultFix
+	 *        if true, provides a work-around which is useful in the case that the connection is to a MySQL
+	 *        database. If the number of rows is large this will prevent the driver from reading them all into
+	 *        client memory. MySQL's normal practice is to do such a thing for performance reasons.
+	 * @return
+	 * @throws Exception
+	 */
+	public static ResultSet executeQuery(ISession session, String sql) throws SQLException
+	{
+<span class="nc" id="L380">		ISQLConnection sqlcon = session.getSQLConnection();</span>
+<span class="nc bnc" id="L381" title="All 4 branches missed.">		if (sqlcon == null || sql == null)</span>
+		{
+<span class="nc" id="L383">			return null;</span>
+		}
+<span class="nc" id="L385">		Statement stmt = null;</span>
+<span class="nc" id="L386">		ResultSet rs = null;</span>
+
+<span class="nc" id="L388">		Connection con = sqlcon.getConnection();</span>
+		try
+		{
+<span class="nc bnc" id="L391" title="All 2 branches missed.">			if (DialectFactory.isMySQL(session.getMetaData()))</span>
+			{
+<span class="nc" id="L393">				stmt = con.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);</span>
+
+<span class="nc" id="L395">				stmt.setFetchSize(Integer.MIN_VALUE);</span>
+<span class="nc bnc" id="L396" title="All 2 branches missed.">			} else if (DialectFactory.isTimesTen(session.getMetaData()))</span>
+			{
+<span class="nc" id="L398">				stmt = con.createStatement();</span>
+<span class="nc" id="L399">				int fetchSize = _prefs.getSelectFetchSize();</span>
+				// TimesTen allows a maximum fetch size of 128.
+<span class="nc bnc" id="L401" title="All 2 branches missed.">				if (fetchSize &gt; 128)</span>
+				{
+<span class="nc" id="L403">					log.info(&quot;executeQuery: TimesTen allows a maximum fetch size of &quot;</span>
+					      + &quot;128.  Altering preferred fetch size from &quot; + fetchSize + &quot; to 128.&quot;);
+<span class="nc" id="L405">					fetchSize = 128;</span>
+				}
+<span class="nc" id="L407">				stmt.setFetchSize(fetchSize);</span>
+<span class="nc" id="L408">			} else</span>
+			{
+<span class="nc" id="L410">				stmt = con.createStatement();</span>
+				// Allow the user to set &quot;0&quot; for the fetch size to indicate that
+				// this should not be called. JDBC-ODBC bridge driver fails to
+				// execute SQL once you have set the fetch size to *any* value.
+<span class="nc bnc" id="L414" title="All 2 branches missed.">				if (_prefs.getSelectFetchSize() &gt; 0)</span>
+				{
+<span class="nc" id="L416">					stmt.setFetchSize(_prefs.getSelectFetchSize());</span>
+				}
+			}
+<span class="nc" id="L419">		} catch (SQLException e)</span>
+		{
+			// Only close the statement if SQLException - otherwise it has to
+			// remain open until the ResultSet is read through by the caller.
+<span class="nc" id="L423">			SQLUtilities.closeResultSet(rs);</span>
+<span class="nc" id="L424">			SQLUtilities.closeStatement(stmt);</span>
+<span class="nc" id="L425">			throw e;</span>
+<span class="nc" id="L426">		}</span>
+<span class="nc bnc" id="L427" title="All 2 branches missed.">		if (log.isDebugEnabled())</span>
+		{
+			// i18n[DBUtil.info.executequery=executeQuery: Running SQL:\n '{0}']
+<span class="nc" id="L430">			String msg = s_stringMgr.getString(&quot;DBUtil.info.executequery&quot;, sql);</span>
+<span class="nc" id="L431">			log.debug(msg);</span>
+		}
+		try
+		{
+<span class="nc" id="L435">			lastStatement = sql;</span>
+<span class="nc" id="L436">			rs = stmt.executeQuery(sql);</span>
+<span class="nc" id="L437">		} catch (SQLException e)</span>
+		{
+			// Only close the statement if SQLException - otherwise it has to
+			// remain open until the ResultSet is read through by the caller.
+<span class="nc" id="L441">			SQLUtilities.closeStatement(stmt);</span>
+<span class="nc" id="L442">			throw e;</span>
+<span class="nc" id="L443">		}</span>
+
+<span class="nc" id="L445">		return rs;</span>
+	}
+
+	/**
+	 * Returns a count of the records in the specified table.
+	 * 
+	 * @param con
+	 *        the SQLConnection to use to execute the count query.
+	 * @param tableName
+	 *        the name of the table. This name should already be qualified by the schema.
+	 * 
+	 * @return -1 if the table does not exist, otherwise the record count is returned.
+	 */
+	private static int getTableCount(ISession session, String tableName)
+	{
+<span class="nc" id="L460">		int result = -1;</span>
+<span class="nc" id="L461">		ResultSet rs = null;</span>
+		try
+		{
+<span class="nc" id="L464">			String sql = &quot;select count(*) from &quot; + tableName;</span>
+<span class="nc" id="L465">			rs = executeQuery(session, sql);</span>
+<span class="nc bnc" id="L466" title="All 2 branches missed.">			if (rs.next())</span>
+			{
+<span class="nc" id="L468">				result = rs.getInt(1);</span>
+			}
+<span class="nc" id="L470">		} catch (Exception e)</span>
+		{
+			/* Do Nothing - this can happen when the table doesn't exist */
+		} finally
+		{
+<span class="nc" id="L475">			SQLUtilities.closeResultSet(rs, true);</span>
+		}
+<span class="nc" id="L477">		return result;</span>
+	}
+
+	/**
+	 * Returns a count of the records in the specified table.
+	 * 
+	 * @param con
+	 *        the SQLConnection to use to execute the count query.
+	 * @param tableName
+	 *        the name of the table
+	 * 
+	 * @return -1 if the table does not exist, otherwise the record count is returned.
+	 */
+	public static int getTableCount(ISession session, String catalog, String schema, String tableName,
+	      int sessionType) throws UserCancelledOperationException
+	{
+<span class="nc" id="L493">		String table = getQualifiedObjectName(session, catalog, schema, tableName, sessionType);</span>
+<span class="nc" id="L494">		return getTableCount(session, table);</span>
+	}
+
+	public static ITableInfo getTableInfo(ISession session, String schema, String tableName)
+	      throws SQLException, MappingException, UserCancelledOperationException
+	{
+<span class="nc" id="L500">		ISQLConnection con = session.getSQLConnection();</span>
+		// Currently, as of milestone 3, Axion doesn't support &quot;schemas&quot; like
+		// other databases. So, set the schema to emtpy string if we detect
+		// an Axion session.
+<span class="nc bnc" id="L504" title="All 2 branches missed.">		if (con.getSQLMetaData().getDriverName().toLowerCase().startsWith(&quot;axion&quot;))</span>
+		{
+<span class="nc" id="L506">			schema = &quot;&quot;;</span>
+		}
+<span class="nc" id="L508">		String catalog = null;</span>
+		// MySQL uses catalogs and not schemas
+<span class="nc bnc" id="L510" title="All 2 branches missed.">		if (DialectFactory.isMySQL(session.getMetaData()))</span>
+		{
+<span class="nc" id="L512">			catalog = schema;</span>
+<span class="nc" id="L513">			schema = null;</span>
+		}
+		// trim the table name in case of HADB
+<span class="nc" id="L516">		tableName = tableName.trim();</span>
+<span class="nc" id="L517">		ITableInfo[] tis = getTables(session, catalog, schema, tableName);</span>
+<span class="nc bnc" id="L518" title="All 4 branches missed.">		if (tis == null || tis.length == 0)</span>
+		{
+<span class="nc bnc" id="L520" title="All 2 branches missed.">			if (Character.isUpperCase(tableName.charAt(0)))</span>
+			{
+<span class="nc" id="L522">				tableName = tableName.toLowerCase();</span>
+			} else
+			{
+<span class="nc" id="L525">				tableName = tableName.toUpperCase();</span>
+			}
+<span class="nc" id="L527">			tis = getTables(session, null, schema, tableName);</span>
+<span class="nc bnc" id="L528" title="All 2 branches missed.">			if (tis.length == 0)</span>
+			{
+<span class="nc bnc" id="L530" title="All 2 branches missed.">				if (Character.isUpperCase(tableName.charAt(0)))</span>
+				{
+<span class="nc" id="L532">					tableName = tableName.toLowerCase();</span>
+				} else
+				{
+<span class="nc" id="L535">					tableName = tableName.toUpperCase();</span>
+				}
+<span class="nc" id="L537">				tis = getTables(session, null, schema, tableName);</span>
+			}
+		}
+<span class="nc bnc" id="L540" title="All 2 branches missed.">		if (tis.length == 0)</span>
+		{
+			// i18n[DBUtil.error.tablenotfound=Couldn't locate table '{0}' in
+			// schema '(1)']
+<span class="nc" id="L544">			String msg = s_stringMgr.getString(&quot;DBUtil.error.tablenotfound&quot;, new String[]</span>
+				{ tableName, schema });
+<span class="nc" id="L546">			throw new MappingException(msg);</span>
+		}
+<span class="nc bnc" id="L548" title="All 2 branches missed.">		if (tis.length &gt; 1)</span>
+		{
+<span class="nc bnc" id="L550" title="All 2 branches missed.">			if (log.isDebugEnabled())</span>
+			{
+<span class="nc" id="L552">				log.debug(&quot;DBUtil.getTableInfo: found &quot; + tis.length + &quot; that matched &quot; + &quot;catalog=&quot; + catalog</span>
+				      + &quot; schema=&quot; + schema + &quot; tableName=&quot; + tableName);
+			}
+		}
+<span class="nc" id="L556">		return tis[0];</span>
+	}
+
+	public static ITableInfo[] getTables(ISession session, String catalog, String schema, String tableName)
+	{
+<span class="nc" id="L561">		ITableInfo[] result = new ITableInfo[0];</span>
+
+		try
+		{
+<span class="nc" id="L565">			SchemaInfo schemaInfo = session.getSchemaInfo();</span>
+<span class="nc" id="L566">			result = schemaInfo.getITableInfos(catalog, schema, tableName);</span>
+<span class="nc" id="L567">		} catch (Exception e)</span>
+		{
+<span class="nc" id="L569">			log.error(&quot;Encountered unexpected exception when attempting to &quot;</span>
+			      + &quot;call schemaInfo.getTables with catalog = &quot; + catalog + &quot; schema = &quot; + schema
+			      + &quot; tableName = &quot; + tableName);
+
+<span class="nc" id="L573">		}</span>
+
+<span class="nc bnc" id="L575" title="All 4 branches missed.">		if (result == null || result.length == 0)</span>
+		{
+			// Fallback to the old method, going directly to the database
+			// instead
+			// of using SchemaInfo, since SchemaInfo didn't have it.
+<span class="nc" id="L580">			SQLDatabaseMetaData d = session.getSQLConnection().getSQLMetaData();</span>
+<span class="nc" id="L581">			result = getTables(d, catalog, schema, tableName);</span>
+		}
+
+<span class="nc" id="L584">		return result;</span>
+	}
+
+	private static ITableInfo[] getTables(SQLDatabaseMetaData data, String catalog, String schema,
+	      String tableName)
+	{
+
+<span class="nc" id="L591">		ITableInfo[] result = new ITableInfo[0];</span>
+
+		try
+		{
+<span class="nc" id="L595">			result = data.getTables(catalog, schema, tableName, null, null);</span>
+<span class="nc" id="L596">		} catch (Exception e)</span>
+		{
+<span class="nc" id="L598">			log.error(&quot;Encountered unexpected exception when attempting to &quot;</span>
+			      + &quot;call SQLDatabaseMetaData.getTables with catalog = &quot; + catalog + &quot; schema = &quot; + schema
+			      + &quot; tableName = &quot; + tableName);
+
+<span class="nc" id="L602">		}</span>
+<span class="nc" id="L603">		return result;</span>
+	}
+
+	/**
+	 * Decides whether or not the specified column types (java.sql.Type constants) use the same java type to
+	 * read from the source database as the one used to write to the destination database. For example,
+	 * Types.DECIMAL and Types.NUMERIC both use BigDecimal java type to store the value in between reading and
+	 * writing it. Therefore, even though these types are not equal, they are equivalent. This method has not
+	 * yet been fully implemented with equivalences from the bindVariable method.
+	 * 
+	 * @param sourceType
+	 *        the column type as identified by the source database jdbc driver.
+	 * @param destType
+	 *        the column type as identified by the destination database jdbc driver.
+	 * @return true if equivalent, false if not.
+	 */
+	public static boolean typesAreEquivalent(int sourceType, int destType)
+	{
+<span class="nc" id="L621">		boolean result = false;</span>
+<span class="nc bnc" id="L622" title="All 2 branches missed.">		if (sourceType == destType)</span>
+		{
+<span class="nc" id="L624">			result = true;</span>
+		}
+<span class="nc bnc" id="L626" title="All 4 branches missed.">		if (sourceType == Types.DECIMAL &amp;&amp; destType == Types.NUMERIC)</span>
+		{
+<span class="nc" id="L628">			result = true;</span>
+		}
+<span class="nc bnc" id="L630" title="All 4 branches missed.">		if (sourceType == Types.NUMERIC &amp;&amp; destType == Types.DECIMAL)</span>
+		{
+<span class="nc" id="L632">			result = true;</span>
+		}
+<span class="nc bnc" id="L634" title="All 4 branches missed.">		if (sourceType == Types.BOOLEAN &amp;&amp; destType == Types.BIT)</span>
+		{
+<span class="nc" id="L636">			result = true;</span>
+		}
+<span class="nc bnc" id="L638" title="All 4 branches missed.">		if (sourceType == Types.BIT &amp;&amp; destType == Types.BOOLEAN)</span>
+		{
+<span class="nc" id="L640">			result = true;</span>
+		}
+<span class="nc" id="L642">		return result;</span>
+	}
+
+	/**
+	 * Check to see if the last column retrieved at the specified index was null. If so, bind the specified
+	 * PreparedStatement column at the specified index to null and return true.
+	 * 
+	 * @param rs
+	 *        the ResultSet that was used to read the last row.
+	 * @param ps
+	 *        the PreparedStatement that will be used to insetrt a row into the destination database.
+	 * @param index
+	 *        the column in the row that was last read, whose value we mean to inspect.
+	 * @param type
+	 *        the type of the column.
+	 * @return true if last column was null; false otherwise.
+	 * @throws SQLException
+	 */
+	private static boolean handleNull(ResultSet rs, PreparedStatement ps, int index, int type)
+	      throws SQLException
+	{
+<span class="nc" id="L663">		boolean result = false;</span>
+<span class="nc bnc" id="L664" title="All 2 branches missed.">		if (rs.wasNull())</span>
+		{
+<span class="nc" id="L666">			ps.setNull(index, type);</span>
+<span class="nc" id="L667">			result = true;</span>
+		}
+<span class="nc" id="L669">		return result;</span>
+	}
+
+	/**
+	 * Takes the specified colInfo, gets the data type to see if it is 1111(OTHER). If so then get the type
+	 * name and try to match a jdbc type with the same name to get it's type code.
+	 * 
+	 * @param colInfo
+	 *        information about the column
+	 * @param session
+	 *        the session that the specified column info came from.
+	 * @return the data type code
+	 * @throws MappingException
+	 */
+	public static int replaceOtherDataType(TableColumnInfo colInfo, ISession session) throws MappingException
+	{
+<span class="nc" id="L685">		int colJdbcType = colInfo.getDataType();</span>
+<span class="nc bnc" id="L686" title="All 2 branches missed.">		if (colJdbcType == java.sql.Types.OTHER)</span>
+		{
+			try
+			{
+<span class="nc" id="L690">				HibernateDialect dialect = DialectFactory.getDialect(session.getMetaData());</span>
+<span class="nc" id="L691">				String typeName = colInfo.getTypeName().toUpperCase();</span>
+<span class="nc" id="L692">				int parenIndex = typeName.indexOf(&quot;(&quot;);</span>
+<span class="nc bnc" id="L693" title="All 2 branches missed.">				if (parenIndex != -1)</span>
+				{
+<span class="nc" id="L695">					typeName = typeName.substring(0, parenIndex);</span>
+				}
+<span class="nc" id="L697">				colJdbcType = dialect.getJavaTypeForNativeType(colInfo.getTypeName());</span>
+<span class="nc" id="L698">			} catch (Exception e)</span>
+			{
+<span class="nc" id="L700">				log.error(&quot;replaceOtherDataType: unexpected exception - &quot; + e.getMessage());</span>
+<span class="nc" id="L701">			}</span>
+		}
+<span class="nc" id="L703">		return colJdbcType;</span>
+	}
+
+	/**
+	 * This is postgresql specific. If the session is pg, and the colInfo has a DISTINCT type (Java SQl Type
+	 * 2001)then this will query the information_schema, looking for the native type name of the column which
+	 * backs the DISINCT type. A distinct type is like a type alias - it is defined in SQL-99 as a UDT.
+	 * 
+	 * @param colInfo
+	 *        the TableColumnInfo representing the column.
+	 * @param session
+	 *        the session to the database that the column is defined in.
+	 * @return the type code of the matching type, or if not found, the type code is taken from the specified
+	 *         colInfo
+	 */
+	public static int replaceDistinctDataType(int colJdbcType, TableColumnInfo colInfo, ISession session)
+	{
+		
+<span class="nc bnc" id="L721" title="All 4 branches missed.">		if (colJdbcType == java.sql.Types.DISTINCT &amp;&amp; DialectFactory.isPostgreSQL(session.getMetaData()))</span>
+		{
+<span class="nc" id="L723">			Connection con = session.getSQLConnection().getConnection();</span>
+<span class="nc" id="L724">			PreparedStatement pstmt = null;</span>
+<span class="nc" id="L725">			ResultSet rs = null;</span>
+			try
+			{
+<span class="nc" id="L728">				String sql = &quot;SELECT data_type &quot; + &quot;FROM information_schema.columns &quot; + &quot;where column_name = ? &quot;;</span>
+<span class="nc bnc" id="L729" title="All 2 branches missed.">				if (colInfo.getSchemaName() != null)</span>
+				{
+<span class="nc" id="L731">					sql += &quot; and table_schema = ? &quot;;</span>
+				}
+<span class="nc" id="L733">				pstmt = con.prepareStatement(sql);</span>
+<span class="nc" id="L734">				pstmt.setString(1, colInfo.getColumnName());</span>
+<span class="nc bnc" id="L735" title="All 2 branches missed.">				if (colInfo.getSchemaName() != null)</span>
+				{
+<span class="nc" id="L737">					pstmt.setString(2, colInfo.getSchemaName());</span>
+				}
+<span class="nc" id="L739">				rs = pstmt.executeQuery();</span>
+<span class="nc bnc" id="L740" title="All 2 branches missed.">				if (rs.next())</span>
+				{
+<span class="nc" id="L742">					String nativeTypeName = rs.getString(1);</span>
+<span class="nc" id="L743">					colJdbcType = JDBCTypeMapper.getJdbcType(nativeTypeName.toUpperCase(), colJdbcType);</span>
+				}
+<span class="nc" id="L745">			} catch (SQLException e)</span>
+			{
+<span class="nc" id="L747">				log.error(&quot;replaceDistinctDataType: Unexpected exception - &quot; + e, e);</span>
+			} finally
+			{
+<span class="nc" id="L750">				SQLUtilities.closeStatement(pstmt);</span>
+			}
+		}
+<span class="nc" id="L753">		return colJdbcType;</span>
+	}
+
+	/**
+	 * Reads the value from the specified ResultSet at column index index, and based on the type, calls the
+	 * appropriate setXXX method on ps with the value obtained.
+	 * 
+	 * @param ps
+	 * @param sourceColType
+	 * @param destColType
+	 * @param index
+	 * @param rs
+	 * @return a string representation of the value that was bound.
+	 * @throws SQLException
+	 */
+	public static String bindVariable(PreparedStatement ps, int sourceColType, int destColType, int index,
+	      ResultSet rs) throws SQLException
+	{
+<span class="nc" id="L771">		String result = &quot;null&quot;;</span>
+<span class="nc bnc" id="L772" title="All 31 branches missed.">		switch (sourceColType)</span>
+		{
+		case Types.ARRAY:
+<span class="nc" id="L775">			Array arrayVal = rs.getArray(index);</span>
+<span class="nc" id="L776">			result = getValue(arrayVal);</span>
+<span class="nc" id="L777">			ps.setArray(index, arrayVal);</span>
+<span class="nc" id="L778">			break;</span>
+		case Types.BIGINT:
+<span class="nc" id="L780">			long bigintVal = rs.getLong(index);</span>
+<span class="nc bnc" id="L781" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L783">				result = Long.toString(bigintVal);</span>
+<span class="nc" id="L784">				ps.setLong(index, bigintVal);</span>
+			}
+			break;
+		case Types.BINARY:
+<span class="nc" id="L788">			result = bindBlobVar(ps, index, rs, destColType);</span>
+<span class="nc" id="L789">			break;</span>
+		case Types.BIT:
+			// JDBC spec says that BIT refers to a boolean column - i.e. a
+			// single binary digit with value either &quot;0&quot; or &quot;1&quot;. Also
+			// the same spec encourages use of getBoolean/setBoolean.
+			// However, the SQL-92 standard clearly states that the BIT type
+			// is a bit string with length &gt;= 0. So for SQL-92 compliant
+			// databases (like PostgreSQL) the JDBC spec's support for BIT
+			// is at best broken and unusable. Still, we do what the JDBC
+			// spec suggests as that is all that we can do.
+
+			// TODO: just noticed that MySQL 5.0 supports a multi-bit BIT
+			// column by using the getObject/setObject methods with a byte[].
+			// So it would be valuable at some point to make this code a bit
+			// more dbms-specific
+<span class="nc" id="L804">			boolean bitValue = rs.getBoolean(index);</span>
+<span class="nc bnc" id="L805" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L807">				result = Boolean.toString(bitValue);</span>
+<span class="nc" id="L808">				ps.setBoolean(index, bitValue);</span>
+			}
+			break;
+		case Types.BLOB:
+<span class="nc" id="L812">			result = bindBlobVar(ps, index, rs, destColType);</span>
+<span class="nc" id="L813">			break;</span>
+		case Types.BOOLEAN:
+<span class="nc" id="L815">			boolean booleanValue = rs.getBoolean(index);</span>
+<span class="nc bnc" id="L816" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L818">				result = Boolean.toString(booleanValue);</span>
+				// HACK: some dbs (like Frontbase) don't support boolean
+				// types. I've tried tinyint, bit and boolean as the column
+				// type, and setBoolean fails for all three. It's a mystery
+				// at this point what column the getBoolean/setBoolean methods
+				// actually work on iin FrontBase.
+<span class="nc bnc" id="L824" title="All 5 branches missed.">				switch (destColType)</span>
+				{
+				case Types.TINYINT:
+				case Types.SMALLINT:
+				case Types.BIGINT:
+				case Types.INTEGER:
+<span class="nc bnc" id="L830" title="All 2 branches missed.">					ps.setInt(index, booleanValue ? 1 : 0);</span>
+<span class="nc" id="L831">					break;</span>
+				case Types.FLOAT:
+<span class="nc bnc" id="L833" title="All 2 branches missed.">					ps.setFloat(index, booleanValue ? 1 : 0);</span>
+<span class="nc" id="L834">					break;</span>
+				case Types.DOUBLE:
+<span class="nc bnc" id="L836" title="All 2 branches missed.">					ps.setDouble(index, booleanValue ? 1 : 0);</span>
+<span class="nc" id="L837">					break;</span>
+				case Types.VARCHAR:
+				case Types.CHAR:
+<span class="nc bnc" id="L840" title="All 2 branches missed.">					ps.setString(index, booleanValue ? &quot;1&quot; : &quot;0&quot;);</span>
+<span class="nc" id="L841">					break;</span>
+				default:
+<span class="nc" id="L843">					ps.setBoolean(index, booleanValue);</span>
+<span class="nc" id="L844">					break;</span>
+				}
+			}
+			break;
+		case Types.CHAR:
+<span class="nc" id="L849">			String charValue = rs.getString(index);</span>
+<span class="nc bnc" id="L850" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L852">				result = charValue;</span>
+<span class="nc" id="L853">				ps.setString(index, charValue);</span>
+			}
+			break;
+		case Types.CLOB:
+<span class="nc" id="L857">			bindClobVar(ps, index, rs, destColType);</span>
+<span class="nc" id="L858">			break;</span>
+		case Types.DATALINK:
+			// TODO: is this right???
+<span class="nc" id="L861">			Object datalinkValue = rs.getObject(index);</span>
+<span class="nc bnc" id="L862" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L864">				result = getValue(datalinkValue);</span>
+<span class="nc" id="L865">				ps.setObject(index, datalinkValue);</span>
+			}
+			break;
+		case Types.DATE:
+<span class="nc" id="L869">			Date dateValue = rs.getDate(index);</span>
+<span class="nc bnc" id="L870" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+				// TODO: use the destination database type to derive a
+				// format that is acceptable.
+<span class="nc" id="L874">				result = getValue(dateValue);</span>
+<span class="nc" id="L875">				ps.setDate(index, dateValue);</span>
+			}
+			break;
+		case Types.DECIMAL:
+<span class="nc" id="L879">			BigDecimal decimalValue = rs.getBigDecimal(index);</span>
+<span class="nc bnc" id="L880" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L882">				result = getValue(decimalValue);</span>
+<span class="nc" id="L883">				ps.setBigDecimal(index, decimalValue);</span>
+			}
+			break;
+		case Types.DISTINCT:
+			// TODO: is this right???
+<span class="nc" id="L888">			Object distinctValue = rs.getObject(index);</span>
+<span class="nc bnc" id="L889" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L891">				result = getValue(distinctValue);</span>
+<span class="nc" id="L892">				ps.setObject(index, distinctValue);</span>
+			}
+			break;
+		case Types.DOUBLE:
+<span class="nc" id="L896">			double doubleValue = rs.getDouble(index);</span>
+<span class="nc bnc" id="L897" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L899">				result = Double.toString(doubleValue);</span>
+<span class="nc" id="L900">				ps.setDouble(index, doubleValue);</span>
+			}
+			break;
+		case Types.FLOAT:
+			// SQL FLOAT requires support for 15 digits of mantissa.
+<span class="nc" id="L905">			double floatValue = rs.getDouble(index);</span>
+<span class="nc bnc" id="L906" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L908">				result = Double.toString(floatValue);</span>
+<span class="nc" id="L909">				ps.setDouble(index, floatValue);</span>
+			}
+			break;
+		case Types.INTEGER:
+<span class="nc" id="L913">			int integerValue = rs.getInt(index);</span>
+<span class="nc bnc" id="L914" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L916">				result = Integer.toString(integerValue);</span>
+<span class="nc" id="L917">				ps.setInt(index, integerValue);</span>
+			}
+			break;
+		case Types.JAVA_OBJECT:
+<span class="nc" id="L921">			Object objectValue = rs.getObject(index);</span>
+<span class="nc bnc" id="L922" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L924">				result = getValue(objectValue);</span>
+<span class="nc" id="L925">				ps.setObject(index, objectValue);</span>
+			}
+			break;
+		case Types.LONGVARBINARY:
+<span class="nc" id="L929">			result = bindBlobVar(ps, index, rs, destColType);</span>
+<span class="nc" id="L930">			break;</span>
+		case Types.LONGVARCHAR:
+<span class="nc" id="L932">			String longvarcharValue = rs.getString(index);</span>
+<span class="nc bnc" id="L933" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L935">				result = longvarcharValue;</span>
+<span class="nc" id="L936">				ps.setString(index, longvarcharValue);</span>
+			}
+			break;
+		case Types.NULL:
+			// TODO: is this right???
+<span class="nc" id="L941">			ps.setNull(index, Types.NULL);</span>
+<span class="nc" id="L942">			break;</span>
+		case Types.NUMERIC:
+<span class="nc" id="L944">			BigDecimal numericValue = rs.getBigDecimal(index);</span>
+<span class="nc bnc" id="L945" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L947">				result = getValue(numericValue);</span>
+<span class="nc" id="L948">				ps.setBigDecimal(index, numericValue);</span>
+			}
+			break;
+		case Types.OTHER:
+			// TODO: figure out a more reliable way to handle OTHER type
+			// which indicates a database-specific type.
+<span class="nc" id="L954">			String testValue = rs.getString(index);</span>
+<span class="nc bnc" id="L955" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+				try
+				{
+<span class="nc" id="L959">					Double.parseDouble(testValue);</span>
+<span class="nc" id="L960">					double numberValue = rs.getDouble(index);</span>
+<span class="nc" id="L961">					ps.setDouble(index, numberValue);</span>
+<span class="nc" id="L962">				} catch (SQLException e)</span>
+				{
+<span class="nc" id="L964">					byte[] otherValue = rs.getBytes(index);</span>
+<span class="nc" id="L965">					result = getValue(otherValue);</span>
+<span class="nc" id="L966">					ps.setBytes(index, otherValue);</span>
+<span class="nc" id="L967">				}</span>
+			}
+			break;
+		case Types.REAL:
+<span class="nc" id="L971">			float realValue = rs.getFloat(index);</span>
+<span class="nc bnc" id="L972" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L974">				result = Float.toString(realValue);</span>
+<span class="nc" id="L975">				ps.setFloat(index, realValue);</span>
+			}
+			break;
+		case Types.REF:
+<span class="nc" id="L979">			Ref refValue = rs.getRef(index);</span>
+<span class="nc bnc" id="L980" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L982">				result = getValue(refValue);</span>
+<span class="nc" id="L983">				ps.setRef(index, refValue);</span>
+			}
+			break;
+		case Types.SMALLINT:
+<span class="nc" id="L987">			short smallintValue = rs.getShort(index);</span>
+<span class="nc bnc" id="L988" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L990">				result = Short.toString(smallintValue);</span>
+<span class="nc" id="L991">				ps.setShort(index, smallintValue);</span>
+			}
+			break;
+		case Types.STRUCT:
+<span class="nc" id="L995">			Object structValue = rs.getObject(index);</span>
+<span class="nc bnc" id="L996" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L998">				result = getValue(structValue);</span>
+<span class="nc" id="L999">				ps.setObject(index, structValue);</span>
+			}
+			break;
+		case Types.TIME:
+<span class="nc" id="L1003">			Time timeValue = rs.getTime(index);</span>
+			// TODO: use the destination database type to derive a format
+			// that is acceptable.
+<span class="nc bnc" id="L1006" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L1008">				result = getValue(timeValue);</span>
+<span class="nc" id="L1009">				ps.setTime(index, timeValue);</span>
+			}
+			break;
+		case Types.TIMESTAMP:
+<span class="nc" id="L1013">			Timestamp timestampValue = rs.getTimestamp(index);</span>
+			// TODO: use the destination database type to derive a format
+			// that is acceptable.
+<span class="nc bnc" id="L1016" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L1018">				result = getValue(timestampValue);</span>
+<span class="nc" id="L1019">				ps.setTimestamp(index, timestampValue);</span>
+			}
+			break;
+		case Types.TINYINT:
+<span class="nc" id="L1023">			byte tinyintValue = rs.getByte(index);</span>
+<span class="nc bnc" id="L1024" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L1026">				result = Byte.toString(tinyintValue);</span>
+<span class="nc" id="L1027">				ps.setByte(index, tinyintValue);</span>
+			}
+			break;
+		case Types.VARBINARY:
+<span class="nc" id="L1031">			result = bindBlobVar(ps, index, rs, destColType);</span>
+<span class="nc" id="L1032">			break;</span>
+		case Types.VARCHAR:
+<span class="nc" id="L1034">			String varcharValue = rs.getString(index);</span>
+<span class="nc bnc" id="L1035" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L1037">				result = varcharValue;</span>
+<span class="nc" id="L1038">				ps.setString(index, varcharValue);</span>
+			}
+			break;
+		default:
+			// i18n[DBUtil.error.unknowntype=Unknown Java SQL column type: '{0}']
+<span class="nc" id="L1043">			String msg = s_stringMgr.getString(&quot;DBUtil.error.unknowntype&quot;, Integer.valueOf(sourceColType));</span>
+<span class="nc" id="L1044">			log.error(msg);</span>
+			// We still have to bind a value, or else the PS will throw
+			// an exception.
+<span class="nc" id="L1047">			String value = rs.getString(index);</span>
+<span class="nc bnc" id="L1048" title="All 2 branches missed.">			if (!handleNull(rs, ps, index, destColType))</span>
+			{
+<span class="nc" id="L1050">				result = value;</span>
+<span class="nc" id="L1051">				ps.setString(index, value);</span>
+			}
+			break;
+		}
+<span class="nc" id="L1055">		return result;</span>
+	}
+
+	private static String bindClobVar(PreparedStatement ps, int index, ResultSet rs, int type)
+	      throws SQLException
+	{
+<span class="nc" id="L1061">		String result = &quot;null&quot;;</span>
+<span class="nc bnc" id="L1062" title="All 2 branches missed.">		if (_prefs.isUseFileCaching())</span>
+		{
+			try
+			{
+<span class="nc" id="L1066">				bindClobVarInFile(ps, index, rs, type);</span>
+<span class="nc" id="L1067">			} catch (Exception e)</span>
+			{
+				// i18n[DBUtil.error.bindclobfailure=bindBlobVar: failed to
+				// bind blob using filesystem - attempting to bind blob using
+				// memory]
+<span class="nc" id="L1072">				String msg = s_stringMgr.getString(&quot;DBUtil.error.bindclobfailure&quot;);</span>
+<span class="nc" id="L1073">				log.error(msg, e);</span>
+				// if we failed to bind the blob in a file, try memory.
+<span class="nc" id="L1075">				result = bindClobVarInMemory(ps, index, rs, type);</span>
+<span class="nc" id="L1076">			}</span>
+		} else
+		{
+<span class="nc" id="L1079">			result = bindClobVarInMemory(ps, index, rs, type);</span>
+		}
+<span class="nc" id="L1081">		return result;</span>
+	}
+
+	private static String bindBlobVar(PreparedStatement ps, int index, ResultSet rs, int type)
+	      throws SQLException
+	{
+<span class="nc" id="L1087">		String result = &quot;null&quot;;</span>
+<span class="nc bnc" id="L1088" title="All 2 branches missed.">		if (_prefs.isUseFileCaching())</span>
+		{
+			try
+			{
+<span class="nc" id="L1092">				bindBlobVarInFile(ps, index, rs, type);</span>
+<span class="nc" id="L1093">			} catch (Exception e)</span>
+			{
+				// i18n[DBUtil.error.bindblobfailure=bindBlobVar: failed to
+				// bind blob using filesystem - attempting to bind blob using
+				// memory]
+<span class="nc" id="L1098">				String msg = s_stringMgr.getString(&quot;DBUtil.error.bindblobfailure&quot;);</span>
+<span class="nc" id="L1099">				log.error(msg, e);</span>
+				// if we failed to bind the blob in a file, try memory.
+<span class="nc" id="L1101">				result = bindBlobVarInMemory(ps, index, rs, type);</span>
+<span class="nc" id="L1102">			}</span>
+		} else
+		{
+<span class="nc" id="L1105">			result = bindBlobVarInMemory(ps, index, rs, type);</span>
+		}
+<span class="nc" id="L1107">		return result;</span>
+	}
+
+	private static String bindClobVarInMemory(PreparedStatement ps, int index, ResultSet rs, int type)
+	      throws SQLException
+	{
+<span class="nc" id="L1113">		String clobValue = rs.getString(index);</span>
+<span class="nc bnc" id="L1114" title="All 2 branches missed.">		if (rs.wasNull())</span>
+		{
+<span class="nc" id="L1116">			ps.setNull(index, type);</span>
+<span class="nc" id="L1117">			return &quot;null&quot;;</span>
+		}
+<span class="nc" id="L1119">		String result = getValue(clobValue);</span>
+<span class="nc bnc" id="L1120" title="All 4 branches missed.">		if (log.isDebugEnabled() &amp;&amp; clobValue != null)</span>
+		{
+			// i18n[DBUtil.info.bindclobmem=bindClobVarInMemory: binding '{0}' bytes]
+<span class="nc" id="L1123">			String msg = s_stringMgr.getString(&quot;DBUtil.info.bindclobmem&quot;, Integer.valueOf(clobValue.length()));</span>
+<span class="nc" id="L1124">			log.debug(msg);</span>
+		}
+<span class="nc" id="L1126">		ps.setString(index, clobValue);</span>
+<span class="nc" id="L1127">		return result;</span>
+	}
+
+	private static String bindBlobVarInMemory(PreparedStatement ps, int index, ResultSet rs, int type)
+	      throws SQLException
+	{
+<span class="nc" id="L1133">		byte[] blobValue = rs.getBytes(index);</span>
+<span class="nc bnc" id="L1134" title="All 2 branches missed.">		if (rs.wasNull())</span>
+		{
+<span class="nc" id="L1136">			ps.setNull(index, type);</span>
+<span class="nc" id="L1137">			return &quot;null&quot;;</span>
+		}
+<span class="nc" id="L1139">		String result = getValue(blobValue);</span>
+<span class="nc bnc" id="L1140" title="All 4 branches missed.">		if (log.isDebugEnabled() &amp;&amp; blobValue != null)</span>
+		{
+			// i18n[DBUtil.info.bindblobmem=bindBlobVarInMemory: binding '{0}' bytes]
+<span class="nc" id="L1143">			String msg = s_stringMgr.getString(&quot;DBUtil.info.bindblobmem&quot;, Integer.valueOf(blobValue.length));</span>
+<span class="nc" id="L1144">			log.debug(msg);</span>
+		}
+<span class="nc" id="L1146">		ps.setBytes(index, blobValue);</span>
+<span class="nc" id="L1147">		return result;</span>
+	}
+
+	private static void bindClobVarInFile(PreparedStatement ps, int index, ResultSet rs, int type)
+	      throws IOException, SQLException
+	{
+		// get ascii stream from rs
+<span class="nc" id="L1154">		InputStream is = rs.getAsciiStream(index);</span>
+<span class="nc bnc" id="L1155" title="All 2 branches missed.">		if (rs.wasNull())</span>
+		{
+<span class="nc" id="L1157">			ps.setNull(index, type);</span>
+<span class="nc" id="L1158">			return;</span>
+		}
+
+		// Open file output stream
+<span class="nc" id="L1162">		long millis = System.currentTimeMillis();</span>
+<span class="nc" id="L1163">		File f = File.createTempFile(&quot;clob&quot;, &quot;&quot; + millis);</span>
+<span class="nc" id="L1164">		f.deleteOnExit();</span>
+<span class="nc" id="L1165">		FileOutputStream fos = new FileOutputStream(f);</span>
+<span class="nc bnc" id="L1166" title="All 2 branches missed.">		if (log.isDebugEnabled())</span>
+		{
+			// i18n[DBUtil.info.bindclobfile=bindClobVarInFile: Opening temp file '{0}']
+<span class="nc" id="L1169">			String msg = s_stringMgr.getString(&quot;DBUtil.info.bindclobfile&quot;, f.getAbsolutePath());</span>
+<span class="nc" id="L1170">			log.debug(msg);</span>
+		}
+
+		// read rs input stream write to file output stream
+<span class="nc" id="L1174">		byte[] buf = new byte[_prefs.getFileCacheBufferSize()];</span>
+<span class="nc" id="L1175">		int length = 0;</span>
+<span class="nc" id="L1176">		int total = 0;</span>
+<span class="nc bnc" id="L1177" title="All 2 branches missed.">		while ((length = is.read(buf)) &gt;= 0)</span>
+		{
+<span class="nc bnc" id="L1179" title="All 2 branches missed.">			if (log.isDebugEnabled())</span>
+			{
+				// i18n[DBUtil.info.bindcloblength=bindClobVarInFile: writing '{0}' bytes.]
+<span class="nc" id="L1182">				String msg = s_stringMgr.getString(&quot;DBUtil.info.bindcloblength&quot;, Integer.valueOf(length));</span>
+<span class="nc" id="L1183">				log.debug(msg);</span>
+			}
+<span class="nc" id="L1185">			fos.write(buf, 0, length);</span>
+<span class="nc" id="L1186">			total += length;</span>
+		}
+<span class="nc" id="L1188">		fos.close();</span>
+
+		// set the ps to read from the file we just created.
+<span class="nc" id="L1191">		FileInputStream fis = new FileInputStream(f);</span>
+<span class="nc" id="L1192">		BufferedInputStream bis = new BufferedInputStream(fis);</span>
+<span class="nc" id="L1193">		ps.setAsciiStream(index, bis, total);</span>
+<span class="nc" id="L1194">	}</span>
+
+	private static void bindBlobVarInFile(PreparedStatement ps, int index, ResultSet rs, int type)
+	      throws IOException, SQLException
+	{
+		// get binary stream from rs
+<span class="nc" id="L1200">		InputStream is = rs.getBinaryStream(index);</span>
+<span class="nc bnc" id="L1201" title="All 2 branches missed.">		if (rs.wasNull())</span>
+		{
+<span class="nc" id="L1203">			ps.setNull(index, type);</span>
+<span class="nc" id="L1204">			return;</span>
+		}
+		// Open file output stream
+<span class="nc" id="L1207">		long millis = System.currentTimeMillis();</span>
+<span class="nc" id="L1208">		File f = File.createTempFile(&quot;blob&quot;, &quot;&quot; + millis);</span>
+<span class="nc" id="L1209">		f.deleteOnExit();</span>
+<span class="nc" id="L1210">		FileOutputStream fos = new FileOutputStream(f);</span>
+<span class="nc bnc" id="L1211" title="All 2 branches missed.">		if (log.isDebugEnabled())</span>
+		{
+			// i18n[DBUtil.info.bindblobfile=bindBlobVarInFile: Opening temp file '{0}']
+<span class="nc" id="L1214">			String msg = s_stringMgr.getString(&quot;DBUtil.info.bindblobfile&quot;, f.getAbsolutePath());</span>
+<span class="nc" id="L1215">			log.debug(msg);</span>
+		}
+
+		// read rs input stream write to file output stream
+<span class="nc" id="L1219">		byte[] buf = new byte[_prefs.getFileCacheBufferSize()];</span>
+<span class="nc" id="L1220">		int length = 0;</span>
+<span class="nc" id="L1221">		int total = 0;</span>
+<span class="nc bnc" id="L1222" title="All 2 branches missed.">		while ((length = is.read(buf)) &gt;= 0)</span>
+		{
+<span class="nc bnc" id="L1224" title="All 2 branches missed.">			if (log.isDebugEnabled())</span>
+			{
+				// i18n[DBUtil.info.bindbloblength=bindBlobVarInFile: writing '{0}' bytes.]
+<span class="nc" id="L1227">				String msg = s_stringMgr.getString(&quot;DBUtil.info.bindbloblength&quot;, Integer.valueOf(length));</span>
+<span class="nc" id="L1228">				log.debug(msg);</span>
+			}
+<span class="nc" id="L1230">			fos.write(buf, 0, length);</span>
+<span class="nc" id="L1231">			total += length;</span>
+		}
+<span class="nc" id="L1233">		fos.close();</span>
+
+		// set the ps to read from the file we just created.
+<span class="nc" id="L1236">		FileInputStream fis = new FileInputStream(f);</span>
+<span class="nc" id="L1237">		BufferedInputStream bis = new BufferedInputStream(fis);</span>
+<span class="nc" id="L1238">		ps.setBinaryStream(index, bis, total);</span>
+<span class="nc" id="L1239">	}</span>
+
+	/**
+	 * Returns the string representation of the specified object, or &quot;null&quot; if the specified object is null.
+	 * 
+	 * @param o
+	 * @return
+	 */
+	private static String getValue(Object o)
+	{
+<span class="nc bnc" id="L1249" title="All 2 branches missed.">		if (o != null)</span>
+		{
+<span class="nc" id="L1251">			return o.toString();</span>
+		}
+<span class="nc" id="L1253">		return &quot;null&quot;;</span>
+	}
+
+	/**
+	 * 
+	 * @param con
+	 * @param synonym
+	 * @param columnName
+	 * @return
+	 * @throws SQLException
+	 */
+	public static int getColumnType(ISQLConnection con, ITableInfo ti, String columnName) throws SQLException
+	{
+<span class="nc" id="L1266">		int result = -1;</span>
+<span class="nc bnc" id="L1267" title="All 2 branches missed.">		if (ti != null)</span>
+		{
+<span class="nc" id="L1269">			TableColumnInfo[] tciArr = con.getSQLMetaData().getColumnInfo(ti);</span>
+<span class="nc bnc" id="L1270" title="All 2 branches missed.">			for (int i = 0; i &lt; tciArr.length; i++)</span>
+			{
+<span class="nc bnc" id="L1272" title="All 2 branches missed.">				if (tciArr[i].getColumnName().equalsIgnoreCase(columnName))</span>
+				{
+<span class="nc" id="L1274">					result = tciArr[i].getDataType();</span>
+<span class="nc" id="L1275">					break;</span>
+				}
+			}
+		}
+<span class="nc" id="L1279">		return result;</span>
+	}
+
+	public static int[] getColumnTypes(ISQLConnection con, ITableInfo ti, String[] colNames)
+	      throws SQLException
+	{
+<span class="nc" id="L1285">		TableColumnInfo[] tciArr = con.getSQLMetaData().getColumnInfo(ti);</span>
+<span class="nc" id="L1286">		int[] result = new int[tciArr.length];</span>
+<span class="nc bnc" id="L1287" title="All 2 branches missed.">		for (int i = 0; i &lt; tciArr.length; i++)</span>
+		{
+<span class="nc" id="L1289">			boolean found = false;</span>
+<span class="nc bnc" id="L1290" title="All 4 branches missed.">			for (int j = 0; j &lt; colNames.length &amp;&amp; !found; j++)</span>
+			{
+<span class="nc" id="L1292">				String columnName = colNames[j];</span>
+<span class="nc bnc" id="L1293" title="All 2 branches missed.">				if (tciArr[i].getColumnName().equalsIgnoreCase(columnName))</span>
+				{
+<span class="nc" id="L1295">					result[i] = tciArr[i].getDataType();</span>
+<span class="nc" id="L1296">					found = true;</span>
+				}
+			}
+		}
+<span class="nc" id="L1300">		return result;</span>
+	}
+
+	public static boolean tableHasPrimaryKey(ISQLConnection con, ITableInfo ti) throws SQLException
+	{
+<span class="nc" id="L1305">		boolean result = false;</span>
+<span class="nc" id="L1306">		ResultSet rs = null;</span>
+		try
+		{
+<span class="nc" id="L1309">			DatabaseMetaData md = con.getConnection().getMetaData();</span>
+<span class="nc" id="L1310">			String cat = ti.getCatalogName();</span>
+<span class="nc" id="L1311">			String schema = ti.getSchemaName();</span>
+<span class="nc" id="L1312">			String tableName = ti.getSimpleName();</span>
+<span class="nc" id="L1313">			rs = md.getPrimaryKeys(cat, schema, tableName);</span>
+<span class="nc bnc" id="L1314" title="All 2 branches missed.">			if (rs.next())</span>
+			{
+<span class="nc" id="L1316">				result = true;</span>
+			}
+		} finally
+		{
+<span class="nc" id="L1320">			SQLUtilities.closeResultSet(rs);</span>
+		}
+<span class="nc" id="L1322">		return result;</span>
+	}
+
+	/**
+	 * Check the specified session to determine if the specified data is a keyword.
+	 * 
+	 * @param session
+	 * @param data
+	 * @return
+	 */
+	public static boolean isKeyword(ISession session, String data)
+	{
+<span class="nc" id="L1334">		return session.getSchemaInfo().isKeyword(data);</span>
+	}
+
+	/**
+	 * Deletes existing data from the destination connection specified in the specified table. This will use
+	 * preferences to determine if truncate command is preferred. If truncate is preferred and fails, then
+	 * delete will be attempted.
+	 * 
+	 * @param con
+	 * @param tablename
+	 * @throws SQLException
+	 */
+	public static void deleteDataInExistingTable(ISession session, String catalogName, String schemaName,
+	      String tableName) throws SQLException, UserCancelledOperationException
+	{
+<span class="nc" id="L1349">		ISQLConnection con = session.getSQLConnection();</span>
+<span class="nc" id="L1350">		boolean useTrunc = PreferencesManager.getPreferences().isUseTruncate();</span>
+<span class="nc" id="L1351">		String fullTableName = getQualifiedObjectName(</span>
+		   session, catalogName, schemaName, tableName, DialectFactory.DEST_TYPE);
+<span class="nc" id="L1353">		String truncSQL = &quot;TRUNCATE TABLE &quot; + fullTableName;</span>
+<span class="nc" id="L1354">		String deleteSQL = &quot;DELETE FROM &quot; + fullTableName;</span>
+		try
+		{
+<span class="nc bnc" id="L1357" title="All 2 branches missed.">			if (useTrunc)</span>
+			{
+<span class="nc" id="L1359">				DBUtil.executeUpdate(con, truncSQL, true);</span>
+			} else
+			{
+<span class="nc" id="L1362">				DBUtil.executeUpdate(con, deleteSQL, true);</span>
+			}
+<span class="nc" id="L1364">		} catch (SQLException e)</span>
+		{
+			// If truncate was attempted and not supported, then try delete.
+			// If on the other hand delete was attempted, just throw the
+			// SQLException that resulted from the delete.
+<span class="nc bnc" id="L1369" title="All 2 branches missed.">			if (useTrunc)</span>
+			{
+<span class="nc" id="L1371">				DBUtil.executeUpdate(con, deleteSQL, true);</span>
+			} else
+			{
+<span class="nc" id="L1374">				throw e;</span>
+			}
+<span class="nc" id="L1376">		}</span>
+<span class="nc" id="L1377">	}</span>
+
+	/**
+	 * This will take into account any special needs that the destination session has with regard to user
+	 * preferences, and throw a MappingException if any user preference isn't valid for the specified
+	 * destination session.
+	 * 
+	 * @param destSession
+	 */
+	public static void sanityCheckPreferences(ISession destSession) throws MappingException
+	{
+
+<span class="nc bnc" id="L1389" title="All 2 branches missed.">		if (DialectFactory.isFirebird(destSession.getMetaData()))</span>
+		{
+<span class="nc bnc" id="L1391" title="All 2 branches missed.">			if (!PreferencesManager.getPreferences().isCommitAfterTableDefs())</span>
+			{
+				// TODO: maybe instead of throwing an exception, we could ask
+				// the user if they would like us to adjust their preference for
+				// them.
+
+				// i18n[DBUtil.error.firebirdcommit=Firebird requires commit
+				// table create before inserting records. Please adjust your
+				// preferences.]
+<span class="nc" id="L1400">				String msg = s_stringMgr.getString(&quot;DBUtil.error.firebirdcommit&quot;);</span>
+<span class="nc" id="L1401">				throw new MappingException(msg);</span>
+			}
+		}
+<span class="nc" id="L1404">	}</span>
+
+	public static String getCreateTableSql(SessionInfoProvider prov, ITableInfo ti, String destTableName, String destSchema, String destCatalog) throws SQLException,
+	      MappingException, UserCancelledOperationException
+	{
+
+<span class="nc" id="L1410">		ISession sourceSession = prov.getSourceSession();</span>
+<span class="nc" id="L1411">		String sourceSchema = prov.getSourceDatabaseObjects().get(0).getSchemaName();</span>
+<span class="nc" id="L1412">		String sourceCatalog = prov.getSourceDatabaseObjects().get(0).getCatalogName();</span>
+<span class="nc" id="L1413">		String sourceTableName = getQualifiedObjectName(</span>
+<span class="nc" id="L1414">		   sourceSession, sourceCatalog, sourceSchema, ti.getSimpleName(), DialectFactory.SOURCE_TYPE);</span>
+<span class="nc" id="L1415">		ISession destSession = prov.getDestSession();</span>
+//		String destSchema = getSchemaNameFromDbObject(prov.getDestDatabaseObject());
+//		String destCatalog = prov.getDestDatabaseObject().getCatalogName();
+<span class="nc" id="L1418">		String destinationTableName = getQualifiedObjectName(</span>
+		   destSession, destCatalog, destSchema, destTableName, DialectFactory.DEST_TYPE);
+<span class="nc" id="L1420">		StringBuilder result = new StringBuilder(&quot;CREATE TABLE &quot;);</span>
+<span class="nc" id="L1421">		result.append(destinationTableName);</span>
+<span class="nc" id="L1422">		result.append(&quot; ( &quot;);</span>
+<span class="nc" id="L1423">		result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L1424">		TableColumnInfo colInfo = null;</span>
+		try
+		{
+<span class="nc" id="L1427">			ISQLConnection sourceCon = prov.getSourceSession().getSQLConnection();</span>
+<span class="nc" id="L1428">			TableColumnInfo[] colInfoArr = sourceCon.getSQLMetaData().getColumnInfo(ti);</span>
+<span class="nc bnc" id="L1429" title="All 2 branches missed.">			if (colInfoArr.length == 0)</span>
+			{
+				// i18n[DBUtil.error.nocolumns=Table '{0}' in schema '{1}' has
+				// no columns to copy]
+<span class="nc" id="L1433">				String msg = s_stringMgr.getString(&quot;DBUtil.error.nocolumns&quot;, new String[]</span>
+<span class="nc" id="L1434">					{ ti.getSimpleName(), ti.getSchemaName() });</span>
+<span class="nc" id="L1435">				throw new MappingException(msg);</span>
+			}
+<span class="nc bnc" id="L1437" title="All 2 branches missed.">			for (int i = 0; i &lt; colInfoArr.length; i++)</span>
+			{
+<span class="nc" id="L1439">				colInfo = colInfoArr[i];</span>
+<span class="nc" id="L1440">				result.append(&quot;\t&quot;);</span>
+<span class="nc" id="L1441">				String columnSql = DBUtil.getColumnSql(prov, colInfo, sourceTableName, destinationTableName);</span>
+<span class="nc" id="L1442">				result.append(columnSql);</span>
+<span class="nc bnc" id="L1443" title="All 2 branches missed.">				if (i &lt; colInfoArr.length - 1)</span>
+				{
+<span class="nc" id="L1445">					result.append(&quot;,\n&quot;);</span>
+				}
+			}
+
+			// If the user wants the primary key copied and the source session
+			// isn't Axion (Axion throws SQLException for getPrimaryKeys())
+
+			// TODO: Perhaps we can tell the user when they click &quot;Copy Table&quot;
+			// if the source session is Axion and they want primary keys that
+			// it's not possible.
+<span class="nc bnc" id="L1455" title="All 4 branches missed.">			if (_prefs.isCopyPrimaryKeys() &amp;&amp; !DialectFactory.isAxion(sourceSession.getMetaData()))</span>
+			{
+<span class="nc" id="L1457">				String pkString = DBUtil.getPKColumnString(sourceCon, ti);</span>
+<span class="nc bnc" id="L1458" title="All 2 branches missed.">				if (pkString != null)</span>
+				{
+<span class="nc" id="L1460">					result.append(&quot;,\n\tPRIMARY KEY &quot;);</span>
+<span class="nc" id="L1461">					result.append(pkString);</span>
+				}
+			}
+<span class="nc" id="L1464">			result.append(&quot;)&quot;);</span>
+<span class="nc" id="L1465">		} catch (MappingException e)</span>
+		{
+<span class="nc bnc" id="L1467" title="All 2 branches missed.">			if (colInfo != null)</span>
+			{
+				// i18n[DBUtil.error.maptype=Couldn't map type for table='{0}'
+				// column='{1}']
+<span class="nc" id="L1471">				String msg = s_stringMgr.getString(&quot;DBUtil.error.maptype&quot;, new String[]</span>
+<span class="nc" id="L1472">					{ destinationTableName, colInfo.getColumnName() });</span>
+<span class="nc" id="L1473">				log.error(msg, e);</span>
+			}
+<span class="nc" id="L1475">			throw e;</span>
+<span class="nc" id="L1476">		}</span>
+
+<span class="nc" id="L1478">		return result.toString();</span>
+	}
+
+	/**
+	 * 
+	 * @param con
+	 * @param ti
+	 * @return
+	 * @throws SQLException
+	 */
+	public static String getColumnList(TableColumnInfo[] colInfoArr) throws SQLException
+	{
+<span class="nc" id="L1490">		StringBuilder result = new StringBuilder();</span>
+
+<span class="nc bnc" id="L1492" title="All 2 branches missed.">		for (int i = 0; i &lt; colInfoArr.length; i++)</span>
+		{
+<span class="nc" id="L1494">			TableColumnInfo colInfo = colInfoArr[i];</span>
+<span class="nc" id="L1495">			String columnName = colInfo.getColumnName();</span>
+<span class="nc" id="L1496">			result.append(columnName);</span>
+<span class="nc bnc" id="L1497" title="All 2 branches missed.">			if (i &lt; colInfoArr.length - 1)</span>
+			{
+<span class="nc" id="L1499">				result.append(&quot;, &quot;);</span>
+			}
+		}
+<span class="nc" id="L1502">		return result.toString();</span>
+	}
+
+	/**
+	 * Uses the column type mapper to get the column type and appends that to the name with an optional not
+	 * null modifier.
+	 * 
+	 *
+    * @param colInfo
+    * @throws UserCancelledOperationException
+	 * @throws MappingException
+	 */
+	public static String getColumnSql(SessionInfoProvider prov, TableColumnInfo colInfo,
+                                     String sourceTableName, String destTableName) throws UserCancelledOperationException,
+	      MappingException
+	{
+<span class="nc" id="L1518">		String columnName = colInfo.getColumnName();</span>
+<span class="nc bnc" id="L1519" title="All 2 branches missed.">		if (_prefs.isCheckKeywords())</span>
+		{
+<span class="nc" id="L1521">			checkKeyword(prov.getDestSession(), destTableName, columnName);</span>
+		}
+<span class="nc" id="L1523">		StringBuilder result = new StringBuilder(columnName);</span>
+<span class="nc" id="L1524">		boolean notNullable = colInfo.isNullable().equalsIgnoreCase(&quot;NO&quot;);</span>
+<span class="nc" id="L1525">		String typeName = ColTypeMapper.mapColType(</span>
+<span class="nc" id="L1526">		   prov.getSourceSession(), prov.getDestSession(), colInfo, sourceTableName, destTableName);</span>
+<span class="nc" id="L1527">		result.append(&quot; &quot;);</span>
+<span class="nc" id="L1528">		result.append(typeName);</span>
+<span class="nc bnc" id="L1529" title="All 2 branches missed.">		if (notNullable)</span>
+		{
+<span class="nc" id="L1531">			result.append(&quot; NOT NULL&quot;);</span>
+		} else
+		{
+<span class="nc" id="L1534">			ISession destSession = prov.getDestSession();</span>
+<span class="nc" id="L1535">			HibernateDialect d = DialectFactory.getDialect(</span>
+<span class="nc" id="L1536">			   DialectFactory.DEST_TYPE, destSession.getApplication().getMainFrame(), destSession.getMetaData());</span>
+<span class="nc" id="L1537">			String nullString = d.getNullColumnString().toUpperCase();</span>
+<span class="nc" id="L1538">			result.append(nullString);</span>
+		}
+<span class="nc" id="L1540">		return result.toString();</span>
+	}
+
+	/**
+	 * Checks the specified column is not a keyword in the specified session.
+	 * 
+	 * @param session
+	 *        the session whose keywords to check against
+	 * @param table
+	 *        the name of the table to use in the error message
+	 * @param column
+	 *        the name of the column to check
+	 * 
+	 * @throws MappingException
+	 *         if the specified column is a keyword in the specified session
+	 */
+	public static void checkKeyword(ISession session, String table, String column) throws MappingException
+	{
+<span class="nc bnc" id="L1558" title="All 2 branches missed.">		if (isKeyword(session, column))</span>
+		{
+<span class="nc" id="L1560">			String message = getMessage(&quot;DBUtil.mappingErrorKeyword&quot;, new String[]</span>
+				{ table, column });
+<span class="nc" id="L1562">			throw new MappingException(message);</span>
+		}
+<span class="nc" id="L1564">	}</span>
+
+	/**
+	 * 
+	 * @param sourceConn
+	 * @param ti
+	 * @param column
+	 * @return
+	 * @throws SQLException
+	 */
+	public static String getColumnName(ISQLConnection sourceConn, ITableInfo ti, int column)
+	      throws SQLException
+	{
+<span class="nc" id="L1577">		TableColumnInfo[] infoArr = sourceConn.getSQLMetaData().getColumnInfo(ti);</span>
+<span class="nc" id="L1578">		TableColumnInfo colInfo = infoArr[column];</span>
+<span class="nc" id="L1579">		return colInfo.getColumnName();</span>
+	}
+
+	/**
+	 * 
+	 * @param sourceConn
+	 * @param ti
+	 * @return
+	 * @throws SQLException
+	 */
+	public static String[] getColumnNames(ISQLConnection sourceConn, ITableInfo ti) throws SQLException
+	{
+<span class="nc" id="L1591">		TableColumnInfo[] infoArr = sourceConn.getSQLMetaData().getColumnInfo(ti);</span>
+<span class="nc" id="L1592">		String[] result = new String[infoArr.length];</span>
+<span class="nc bnc" id="L1593" title="All 2 branches missed.">		for (int i = 0; i &lt; result.length; i++)</span>
+		{
+<span class="nc" id="L1595">			TableColumnInfo colInfo = infoArr[i];</span>
+<span class="nc" id="L1596">			result[i] = colInfo.getColumnName();</span>
+		}
+<span class="nc" id="L1598">		return result;</span>
+	}
+
+	/**
+	 * 
+	 * @param columnList
+	 * @param ti
+	 * @return
+	 * @throws SQLException
+	 */
+	public static String getSelectQuery(SessionInfoProvider prov, String columnList, ITableInfo ti)
+	      throws SQLException, UserCancelledOperationException
+	{
+<span class="nc" id="L1611">		StringBuilder result = new StringBuilder(&quot;select &quot;);</span>
+<span class="nc" id="L1612">		result.append(columnList);</span>
+<span class="nc" id="L1613">		result.append(&quot; from &quot;);</span>
+<span class="nc" id="L1614">		ISession sourceSession = prov.getSourceSession();</span>
+
+<span class="nc" id="L1616">		String tableName = getQualifiedObjectName(</span>
+<span class="nc" id="L1617">		   sourceSession, ti.getCatalogName(), ti.getSchemaName(), ti.getSimpleName(),</span>
+		   DialectFactory.SOURCE_TYPE);
+<span class="nc" id="L1619">		result.append(tableName);</span>
+<span class="nc" id="L1620">		return result.toString();</span>
+	}
+
+	/**
+	 * 
+	 * @param sourceConn
+	 * @param columnList
+	 * @param ti
+	 * @return
+	 * @throws SQLException
+	 */
+	public static String getInsertSQL(SessionInfoProvider prov, String columnList, ITableInfo ti,
+	      int columnCount) throws SQLException, UserCancelledOperationException
+	{
+<span class="nc" id="L1634">		StringBuilder result = new StringBuilder();</span>
+<span class="nc" id="L1635">		result.append(&quot;insert into &quot;);</span>
+<span class="nc" id="L1636">		String destSchema = DBUtil.getSchemaNameFromDbObject(prov.getDestDatabaseObject());</span>
+<span class="nc" id="L1637">		String destCatalog = prov.getDestDatabaseObject().getCatalogName();</span>
+<span class="nc" id="L1638">		ISession destSession = prov.getDestSession();</span>
+<span class="nc" id="L1639">		result.append(getQualifiedObjectName(</span>
+<span class="nc" id="L1640">		   destSession, destCatalog, destSchema, ti.getSimpleName(), DialectFactory.DEST_TYPE));</span>
+<span class="nc" id="L1641">		result.append(&quot; ( &quot;);</span>
+<span class="nc" id="L1642">		result.append(columnList);</span>
+<span class="nc" id="L1643">		result.append(&quot; ) values ( &quot;);</span>
+<span class="nc" id="L1644">		result.append(getQuestionMarks(columnCount));</span>
+<span class="nc" id="L1645">		result.append(&quot; )&quot;);</span>
+<span class="nc" id="L1646">		return result.toString();</span>
+	}
+
+	/**
+	 * Returns a boolean value indicating whether or not the specified TableColumnInfo represents a database
+	 * column that holds binary type data.
+	 * 
+	 * @param columnInfo
+	 *        the TableColumnInfo to examine
+	 * @return true if binary; false otherwise.
+	 */
+	public static boolean isBinaryType(TableColumnInfo columnInfo)
+	{
+<span class="nc" id="L1659">		boolean result = false;</span>
+<span class="nc" id="L1660">		int type = columnInfo.getDataType();</span>
+<span class="nc bnc" id="L1661" title="All 8 branches missed.">		if (type == Types.BINARY || type == Types.BLOB || type == Types.LONGVARBINARY</span>
+		      || type == Types.VARBINARY)
+		{
+<span class="nc" id="L1664">			result = true;</span>
+		}
+<span class="nc" id="L1666">		return result;</span>
+	}
+
+	/**
+	 * Decide whether or not the session specified needs fully qualified table names (schema.table). In most
+	 * databases this is optional (Oracle). In others it is required (Progress). In still others it must not
+	 * occur. (Axion, Hypersonic)
+	 * 
+	 * @param session
+	 * @param catalogName
+	 * @param schemaName
+	 * @param objectName
+	 * @return
+	 * @throws UserCancelledOperationException
+	 */
+	public static String getQualifiedObjectName(ISession session, String catalogName, String schemaName,
+	      String objectName, int sessionType)
+	{
+<span class="nc" id="L1684">		String catalog = catalogName;</span>
+<span class="nc" id="L1685">		String schema = schemaName;</span>
+<span class="nc" id="L1686">		String object = objectName;</span>
+
+		// Bug #1714476 (DB copy uses wrong case for table names): When the
+		// catalog/schema/object names come from the source session, don't mess
+		// with the case, as the case is provided by the driver for the existing
+		// table, and doesn't need to be fixed.
+<span class="nc bnc" id="L1692" title="All 2 branches missed.">		if (sessionType == DialectFactory.DEST_TYPE)</span>
+		{
+<span class="nc" id="L1694">			catalog = fixCase(session, catalogName);</span>
+<span class="nc" id="L1695">			schema = fixCase(session, schemaName);</span>
+<span class="nc" id="L1696">			object = fixCase(session, objectName);</span>
+		}
+<span class="nc" id="L1698">		ISQLDatabaseMetaData md = session.getMetaData();</span>
+<span class="nc" id="L1699">		boolean useSchema = true;</span>
+<span class="nc" id="L1700">		boolean useCatalog = true;</span>
+		try
+		{
+<span class="nc" id="L1703">			useCatalog = md.supportsCatalogsInTableDefinitions();</span>
+<span class="nc" id="L1704">		} catch (SQLException e)</span>
+		{
+<span class="nc" id="L1706">			log.info(&quot;Encountered unexpected exception while attempting to &quot;</span>
+			      + &quot;determine if catalogs are used in table definitions&quot;);
+<span class="nc" id="L1708">		}</span>
+		try
+		{
+<span class="nc" id="L1711">			useSchema = md.supportsSchemasInTableDefinitions();</span>
+<span class="nc" id="L1712">		} catch (SQLException e)</span>
+		{
+<span class="nc" id="L1714">			log.info(&quot;Encountered unexpected exception while attempting to &quot;</span>
+			      + &quot;determine if schemas are used in table definitions&quot;);
+<span class="nc" id="L1716">		}</span>
+<span class="nc bnc" id="L1717" title="All 4 branches missed.">		if (!useCatalog &amp;&amp; !useSchema)</span>
+		{
+<span class="nc" id="L1719">			return object;</span>
+		}
+<span class="nc bnc" id="L1721" title="All 8 branches missed.">		if ((catalog == null || catalog.equals(&quot;&quot;)) &amp;&amp; (schema == null || schema.equals(&quot;&quot;)))</span>
+		{
+<span class="nc" id="L1723">			return object;</span>
+		}
+<span class="nc" id="L1725">		StringBuilder result = new StringBuilder();</span>
+<span class="nc bnc" id="L1726" title="All 6 branches missed.">		if (useCatalog &amp;&amp; catalog != null &amp;&amp; !catalog.equals(&quot;&quot;))</span>
+		{
+<span class="nc" id="L1728">			result.append(catalog);</span>
+<span class="nc" id="L1729">			result.append(getCatSep(session));</span>
+		}
+<span class="nc bnc" id="L1731" title="All 6 branches missed.">		if (useSchema &amp;&amp; schema != null &amp;&amp; !schema.equals(&quot;&quot;))</span>
+		{
+<span class="nc" id="L1733">			result.append(schema);</span>
+<span class="nc" id="L1734">			result.append(&quot;.&quot;);</span>
+		}
+<span class="nc" id="L1736">		result.append(object);</span>
+<span class="nc" id="L1737">		return result.toString();</span>
+	}
+
+	public static String getCatSep(ISession session)
+	{
+<span class="nc" id="L1742">		String catsep = &quot;.&quot;;</span>
+		try
+		{
+<span class="nc" id="L1745">			ISQLDatabaseMetaData md = session.getMetaData();</span>
+<span class="nc" id="L1746">			catsep = md.getCatalogSeparator();</span>
+<span class="nc" id="L1747">		} catch (SQLException e)</span>
+		{
+<span class="nc" id="L1749">			log.error(&quot;getCatSep: Unexpected Exception - &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L1750">		}</span>
+<span class="nc" id="L1751">		return catsep;</span>
+	}
+
+	/**
+	 * Uppercase / Lowercase / Mixedcase identifiers are a big problem. Some databases support mixing case
+	 * (like McKoi) others force identifier case to all uppercase or all lowercase. Some (like MySQL) can be
+	 * configured to care or not care about case as well as depending on the platform the database is on. This
+	 * method attempt to use the metadata from the driver to &quot;fix&quot; the case of the identifier to be acceptable
+	 * for the specified session.
+	 * 
+	 * @param session
+	 *        the session whose disposition on case we care about.
+	 * @param identifier
+	 * @return
+	 */
+	public static String fixCase(ISession session, String identifier)
+	{
+<span class="nc bnc" id="L1768" title="All 4 branches missed.">		if (identifier == null || identifier.equals(&quot;&quot;))</span>
+		{
+<span class="nc" id="L1770">			return identifier;</span>
+		}
+		try
+		{
+<span class="nc" id="L1774">			DatabaseMetaData md = session.getSQLConnection().getConnection().getMetaData();</span>
+
+			// Don't change the case of the identifier if database allows mixed
+			// case.
+<span class="nc bnc" id="L1778" title="All 2 branches missed.">			if (md.storesMixedCaseIdentifiers())</span>
+			{
+<span class="nc" id="L1780">				return identifier;</span>
+			}
+			// Fix the case according to what the database tells us.
+<span class="nc bnc" id="L1783" title="All 2 branches missed.">			if (md.storesUpperCaseIdentifiers())</span>
+			{
+<span class="nc" id="L1785">				return identifier.toUpperCase();</span>
+			} else
+			{
+<span class="nc" id="L1788">				return identifier.toLowerCase();</span>
+			}
+<span class="nc" id="L1790">		} catch (SQLException e)</span>
+		{
+<span class="nc bnc" id="L1792" title="All 2 branches missed.">			if (log.isDebugEnabled())</span>
+			{
+<span class="nc" id="L1794">				log.debug(&quot;fixCase: unexpected exception: &quot; + e.getMessage());</span>
+			}
+<span class="nc" id="L1796">			return identifier;</span>
+		}
+	}
+
+	/**
+	 * Generates a string of question marks which are used for creating PreparedStatements. The question marks
+	 * are delimited by commas.
+	 * 
+	 * @param count
+	 *        the number of question marks (representing PS bind variables).
+	 * @return
+	 */
+	private static String getQuestionMarks(int count)
+	{
+<span class="nc" id="L1810">		StringBuilder result = new StringBuilder();</span>
+<span class="nc bnc" id="L1811" title="All 2 branches missed.">		for (int i = 0; i &lt; count; i++)</span>
+		{
+<span class="nc" id="L1813">			result.append(&quot;?&quot;);</span>
+<span class="nc bnc" id="L1814" title="All 2 branches missed.">			if (i &lt; count - 1)</span>
+			{
+<span class="nc" id="L1816">				result.append(&quot;, &quot;);</span>
+			}
+		}
+<span class="nc" id="L1819">		return result.toString();</span>
+	}
+
+	/**
+	 * 
+	 * @param sourceConn
+	 * @param ti
+	 * @return
+	 * @throws SQLException
+	 */
+	public static int getColumnCount(ISQLConnection sourceConn, ITableInfo ti) throws SQLException
+	{
+<span class="nc" id="L1831">		return sourceConn.getSQLMetaData().getColumnInfo(ti).length;</span>
+	}
+
+	/**
+	 * 
+	 * @param con
+	 * @param ti
+	 * @param column
+	 * @return
+	 * @throws SQLException
+	 */
+	public static int getColumnType(ISQLConnection con, ITableInfo ti, int column) throws SQLException
+	{
+<span class="nc" id="L1844">		TableColumnInfo[] infoArr = con.getSQLMetaData().getColumnInfo(ti);</span>
+<span class="nc" id="L1845">		TableColumnInfo colInfo = infoArr[column];</span>
+<span class="nc" id="L1846">		return colInfo.getDataType();</span>
+	}
+
+	public static int[] getColumnTypes(ISQLConnection con, ITableInfo ti) throws SQLException
+	{
+<span class="nc" id="L1851">		TableColumnInfo[] infoArr = con.getSQLMetaData().getColumnInfo(ti);</span>
+<span class="nc" id="L1852">		int[] result = new int[infoArr.length];</span>
+<span class="nc bnc" id="L1853" title="All 2 branches missed.">		for (int i = 0; i &lt; result.length; i++)</span>
+		{
+<span class="nc" id="L1855">			TableColumnInfo colInfo = infoArr[i];</span>
+<span class="nc" id="L1856">			result[i] = colInfo.getDataType();</span>
+		}
+<span class="nc" id="L1858">		return result;</span>
+	}
+
+	public static void validateColumnNames(ITableInfo ti, SessionInfoProvider prov) throws MappingException,
+	      UserCancelledOperationException
+	{
+<span class="nc bnc" id="L1864" title="All 2 branches missed.">		if (prov == null)</span>
+		{
+<span class="nc" id="L1866">			return;</span>
+		}
+<span class="nc" id="L1868">		ISession sourceSession = prov.getSourceSession();</span>
+<span class="nc" id="L1869">		ISession destSession = prov.getDestSession();</span>
+<span class="nc bnc" id="L1870" title="All 4 branches missed.">		if (sourceSession == null || destSession == null)</span>
+		{
+<span class="nc" id="L1872">			return;</span>
+		}
+<span class="nc" id="L1874">		ISQLConnection sourceCon = sourceSession.getSQLConnection();</span>
+<span class="nc" id="L1875">		ISQLConnection con = destSession.getSQLConnection();</span>
+<span class="nc" id="L1876">		TableColumnInfo[] colInfoArr = null;</span>
+		try
+		{
+<span class="nc" id="L1879">			colInfoArr = sourceCon.getSQLMetaData().getColumnInfo(ti);</span>
+<span class="nc" id="L1880">		} catch (SQLException e)</span>
+		{
+			// ignore any SQLExceptions. This would only if we could not get
+			// column info from the SQL database meta data.
+<span class="nc" id="L1884">			return;</span>
+<span class="nc" id="L1885">		}</span>
+<span class="nc bnc" id="L1886" title="All 2 branches missed.">		for (int colIdx = 0; colIdx &lt; colInfoArr.length; colIdx++)</span>
+		{
+<span class="nc" id="L1888">			TableColumnInfo colInfo = colInfoArr[colIdx];</span>
+<span class="nc" id="L1889">			IDatabaseObjectInfo selectedDestObj = prov.getDestDatabaseObject();</span>
+<span class="nc" id="L1890">			String schema = selectedDestObj.getSimpleName();</span>
+<span class="nc" id="L1891">			String catalog = selectedDestObj.getCatalogName();</span>
+<span class="nc" id="L1892">			String tableName = getQualifiedObjectName(</span>
+			   destSession, catalog, schema, TEST_TABLE_NAME, DialectFactory.DEST_TYPE);
+
+<span class="nc" id="L1895">			StringBuilder sql = new StringBuilder(&quot;CREATE TABLE &quot;);</span>
+<span class="nc" id="L1896">			sql.append(tableName);</span>
+<span class="nc" id="L1897">			sql.append(&quot; ( &quot;);</span>
+<span class="nc" id="L1898">			sql.append(colInfo.getColumnName());</span>
+<span class="nc" id="L1899">			sql.append(&quot; CHAR(10) )&quot;);</span>
+<span class="nc" id="L1900">			boolean cascade = DialectFactory.isFrontBase(destSession.getMetaData());</span>
+			try
+			{
+<span class="nc" id="L1903">				dropTable(TEST_TABLE_NAME, schema, catalog, destSession, cascade, DialectFactory.DEST_TYPE);</span>
+<span class="nc" id="L1904">				DBUtil.executeUpdate(con, sql.toString(), false);</span>
+<span class="nc" id="L1905">			} catch (SQLException e)</span>
+			{
+<span class="nc" id="L1907">				String message = getMessage(&quot;DBUtil.mappingErrorKeyword&quot;, new String[]</span>
+<span class="nc" id="L1908">					{ ti.getSimpleName(), colInfo.getColumnName() });</span>
+<span class="nc" id="L1909">				log.error(message, e);</span>
+<span class="nc" id="L1910">				throw new MappingException(message);</span>
+			} finally
+			{
+<span class="nc" id="L1913">				dropTable(tableName, schema, catalog, destSession, cascade, DialectFactory.DEST_TYPE);</span>
+			}
+
+		}
+<span class="nc" id="L1917">	}</span>
+
+	public static boolean dropTable(String tableName, String schemaName, String catalogName, ISession session,
+	      boolean cascade, int sessionType) throws UserCancelledOperationException
+	{
+<span class="nc" id="L1922">		boolean result = false;</span>
+<span class="nc" id="L1923">		ISQLConnection con = session.getSQLConnection();</span>
+<span class="nc" id="L1924">		String table = getQualifiedObjectName(session, catalogName, schemaName, tableName, sessionType);</span>
+<span class="nc" id="L1925">		String dropsql = &quot;DROP TABLE &quot; + table;</span>
+<span class="nc bnc" id="L1926" title="All 2 branches missed.">		if (cascade)</span>
+		{
+<span class="nc" id="L1928">			dropsql += &quot; CASCADE&quot;;</span>
+		}
+		try
+		{
+<span class="nc" id="L1932">			DBUtil.executeUpdate(con, dropsql, false);</span>
+<span class="nc" id="L1933">			result = true;</span>
+<span class="nc" id="L1934">		} catch (SQLException e)</span>
+		{
+			/* Do nothing */
+<span class="nc" id="L1937">		}</span>
+<span class="nc" id="L1938">		return result;</span>
+	}
+
+	public static boolean sameDatabaseType(ISession session1, ISession session2)
+	{
+<span class="nc" id="L1943">		boolean result = false;</span>
+<span class="nc" id="L1944">		String driver1ClassName = session1.getDriver().getDriverClassName();</span>
+<span class="nc" id="L1945">		String driver2ClassName = session2.getDriver().getDriverClassName();</span>
+<span class="nc bnc" id="L1946" title="All 2 branches missed.">		if (driver1ClassName.equals(driver2ClassName))</span>
+		{
+<span class="nc" id="L1948">			result = true;</span>
+		}
+<span class="nc" id="L1950">		return result;</span>
+	}
+
+	/**
+	 * Gets the SQL statement which can be used to select the maximum length of the current data found in
+	 * tableName within the specified column.
+	 * 
+	 * @param sourceSession
+	 * @param colInfo
+	 * @param tableName
+	 * @param tableNameIsQualified
+	 *        TODO
+	 * @return
+	 */
+	public static String getMaxColumnLengthSQL(ISession sourceSession, TableColumnInfo colInfo,
+	      String tableName, boolean tableNameIsQualified) throws UserCancelledOperationException
+	{
+<span class="nc" id="L1967">		StringBuilder result = new StringBuilder();</span>
+<span class="nc" id="L1968">		HibernateDialect dialect = DialectFactory.getDialect(</span>
+<span class="nc" id="L1969">		   DialectFactory.SOURCE_TYPE, sourceSession.getApplication().getMainFrame(),</span>
+<span class="nc" id="L1970">		   sourceSession.getMetaData());</span>
+<span class="nc" id="L1971">		String lengthFunction = dialect.getLengthFunction(colInfo.getDataType());</span>
+<span class="nc bnc" id="L1972" title="All 2 branches missed.">		if (lengthFunction == null)</span>
+		{
+<span class="nc" id="L1974">			log.error(&quot;Length function is null for dialect=&quot; + dialect.getClass().getName() + &quot;. Using 'length'&quot;);</span>
+<span class="nc" id="L1975">			lengthFunction = &quot;length&quot;;</span>
+		}
+<span class="nc" id="L1977">		String maxFunction = dialect.getMaxFunction();</span>
+<span class="nc bnc" id="L1978" title="All 2 branches missed.">		if (maxFunction == null)</span>
+		{
+<span class="nc" id="L1980">			log.error(&quot;Max function is null for dialect=&quot; + dialect.getClass().getName() + &quot;. Using 'max'&quot;);</span>
+<span class="nc" id="L1981">			maxFunction = &quot;max&quot;;</span>
+		}
+<span class="nc" id="L1983">		result.append(&quot;select &quot;);</span>
+<span class="nc" id="L1984">		result.append(maxFunction);</span>
+<span class="nc" id="L1985">		result.append(&quot;(&quot;);</span>
+<span class="nc" id="L1986">		result.append(lengthFunction);</span>
+<span class="nc" id="L1987">		result.append(&quot;(&quot;);</span>
+<span class="nc" id="L1988">		result.append(colInfo.getColumnName());</span>
+<span class="nc" id="L1989">		result.append(&quot;)) from &quot;);</span>
+<span class="nc" id="L1990">		String table = tableName;</span>
+<span class="nc bnc" id="L1991" title="All 2 branches missed.">		if (!tableNameIsQualified)</span>
+		{
+<span class="nc" id="L1993">			table = getQualifiedObjectName(</span>
+<span class="nc" id="L1994">			   sourceSession, colInfo.getCatalogName(), colInfo.getSchemaName(), tableName,</span>
+			   DialectFactory.SOURCE_TYPE);
+		}
+<span class="nc" id="L1997">		result.append(table);</span>
+<span class="nc" id="L1998">		return result.toString();</span>
+	}
+
+	/**
+	 * @param lastStatement
+	 *        the lastStatement to set
+	 */
+	public static void setLastStatement(String lastStatement)
+	{
+<span class="nc" id="L2007">		DBUtil.lastStatement = lastStatement;</span>
+<span class="nc" id="L2008">	}</span>
+
+	/**
+	 * @return the lastStatement
+	 */
+	public static String getLastStatement()
+	{
+<span class="nc" id="L2015">		return lastStatement;</span>
+	}
+
+	public static void setLastStatementValues(String values)
+	{
+<span class="nc" id="L2020">		lastStatementValues = values;</span>
+<span class="nc" id="L2021">	}</span>
+
+	public static String getLastStatementValues()
+	{
+<span class="nc" id="L2025">		return lastStatementValues;</span>
+	}
+	
+	public static List&lt;ITableInfo&gt; convertObjectToTableList(List&lt;IDatabaseObjectInfo&gt; objectInfoList) 
+	{
+<span class="nc" id="L2030">		List&lt;ITableInfo&gt; result = new ArrayList&lt;ITableInfo&gt;();</span>
+<span class="nc bnc" id="L2031" title="All 2 branches missed.">		for (IDatabaseObjectInfo info : objectInfoList) {</span>
+<span class="nc" id="L2032">			result.add((ITableInfo)info);</span>
+<span class="nc" id="L2033">		}</span>
+<span class="nc" id="L2034">		return result;</span>
+	}
+
+	public static List&lt;ITableInfo&gt; convertObjectArrayToTableList(IDatabaseObjectInfo[] objectInfoArr) 
+	{
+<span class="nc" id="L2039">		List&lt;ITableInfo&gt; selectedTables = new ArrayList&lt;ITableInfo&gt;();</span>
+<span class="nc bnc" id="L2040" title="All 2 branches missed.">		for (int i = 0; i &lt; objectInfoArr.length; i++)</span>
+		{
+<span class="nc" id="L2042">			selectedTables.add((ITableInfo) objectInfoArr[i]);</span>
+		}
+<span class="nc" id="L2044">		return selectedTables;		</span>
+	}
+
+	public static List&lt;IDatabaseObjectInfo&gt; convertTableToObjectList(List&lt;ITableInfo&gt; tableInfoList) 
+	{
+<span class="nc" id="L2049">		List&lt;IDatabaseObjectInfo&gt; result = new ArrayList&lt;IDatabaseObjectInfo&gt;();</span>
+<span class="nc bnc" id="L2050" title="All 2 branches missed.">		for (IDatabaseObjectInfo info : tableInfoList) {</span>
+<span class="nc" id="L2051">			result.add(info);</span>
+<span class="nc" id="L2052">		}</span>
+<span class="nc" id="L2053">		return result;</span>
+	}
+
+   public static String getSchemaNameFromDbObject(IDatabaseObjectInfo dbObject)
+   {
+      String destSchema;
+
+<span class="nc bnc" id="L2060" title="All 2 branches missed.">      if (dbObject.getDatabaseObjectType().equals(DatabaseObjectType.SCHEMA))</span>
+      {
+<span class="nc" id="L2062">         destSchema = dbObject.getSimpleName();</span>
+      }
+      else
+      {
+<span class="nc" id="L2066">         destSchema = dbObject.getSchemaName();</span>
+      }
+<span class="nc" id="L2068">      return destSchema;</span>
+   }
+
+   public static IDatabaseObjectInfo getSchemaFromDbObject(IDatabaseObjectInfo dbObject, SchemaInfo schemaInfo)
+   {
+<span class="nc bnc" id="L2073" title="All 2 branches missed.">      if (dbObject.getDatabaseObjectType().equals(DatabaseObjectType.SCHEMA))</span>
+      {
+<span class="nc" id="L2075">         return dbObject;</span>
+      }
+      else
+      {
+<span class="nc" id="L2079">         return new DatabaseObjectInfo(dbObject.getCatalogName(),</span>
+<span class="nc" id="L2080">               dbObject.getSchemaName(),</span>
+<span class="nc" id="L2081">               dbObject.getSimpleName(),</span>
+               DatabaseObjectType.SCHEMA,
+<span class="nc" id="L2083">               schemaInfo.getSQLDatabaseMetaData());</span>
+
+      }
+   }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

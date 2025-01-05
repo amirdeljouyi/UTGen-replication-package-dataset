@@ -1,0 +1,405 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ReceiverThreadBase.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.technical</a> &gt; <span class="el_source">ReceiverThreadBase.java</span></div><h1>ReceiverThreadBase.java</h1><pre class="source lang-java linenums">package net.sf.xbus.technical;
+
+import net.sf.xbus.application.Adapter;
+import net.sf.xbus.application.PostProcessor;
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.TAManager;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.core.config.Configuration;
+import net.sf.xbus.base.core.trace.Trace;
+import net.sf.xbus.base.notifyerror.NotifyError;
+import net.sf.xbus.base.xbussystem.XBUSSystem;
+
+/**
+ * Classes implementing the &lt;code&gt;ReceiverThreadBase&lt;/code&gt; are running as
+ * background threads to process messages when they arrive. These classes are
+ * executed by the {@link ReceiverService}.
+ */
+abstract public class ReceiverThreadBase implements Runnable, Receiver
+{
+	/**
+	 * Default for the time to wait after an error has occured.
+	 */
+	static protected final int DEFAULT_ERROR_TIMEOUT = 10; // seconds
+
+	/**
+	 * Default for the time to wait after the successful processing of a
+	 * message.
+	 */
+	static protected final int DEFAULT_TIMEOUT = 5; // seconds
+
+<span class="nc" id="L31">	private XBUSSystem mSource = null;</span>
+<span class="nc" id="L32">	private int mErrorCounter = 0;</span>
+<span class="nc" id="L33">	private long mErrorTimeout = 0;</span>
+<span class="nc" id="L34">	private int mStopAfterErrors = 0;</span>
+<span class="nc" id="L35">	private long mTimeout = 0;</span>
+<span class="nc" id="L36">	private boolean mProceed = true;</span>
+
+	/**
+	 * Stores the interface name
+	 * 
+	 * @param source name of the interface definition
+	 */
+	public ReceiverThreadBase(XBUSSystem source)
+<span class="nc" id="L44">	{</span>
+<span class="nc" id="L45">		mSource = source;</span>
+<span class="nc" id="L46">	}</span>
+
+	/**
+	 * Receives and processes messages for one system. It is running until
+	 * either the thread shall be stopped on demand or until a configurable
+	 * amount of errors has occured, without a successful processed message
+	 * between it.
+	 */
+	public void run()
+	{
+<span class="nc" id="L56">		Trace</span>
+<span class="nc" id="L57">				.always(&quot;Starting ReceiverThread for &quot;</span>
+<span class="nc" id="L58">						+ mSource.getCompleteName());</span>
+
+		/*
+		 * Initialize the ReceiverThread, e.g. opening a connection
+		 */
+<span class="nc" id="L63">		TAManager taManager = TAManager.getInstance();</span>
+<span class="nc" id="L64">		boolean initializeSuccessful = false;</span>
+<span class="nc bnc" id="L65" title="All 4 branches missed.">		while (!initializeSuccessful &amp;&amp; checkProceed())</span>
+		{
+			try
+			{
+<span class="nc" id="L69">				initializeThread();</span>
+<span class="nc" id="L70">				initializeSuccessful = true;</span>
+<span class="nc" id="L71">				initializeErrorCounter();</span>
+			}
+<span class="nc" id="L73">			catch (XException e)</span>
+			{
+<span class="nc" id="L75">				incrementErrorCounter();</span>
+<span class="nc" id="L76">				Trace.error(&quot;Problem while starting &quot;</span>
+<span class="nc" id="L77">						+ mSource.getCompleteName());</span>
+<span class="nc" id="L78">				Trace.error(&quot;Retry after &quot; + getErrorTimeout() / 1000</span>
+						+ &quot; seconds&quot;);
+<span class="nc" id="L80">				Trace.error(&quot;------------------------------&quot;);</span>
+				try
+				{
+<span class="nc" id="L83">					Thread.sleep(getErrorTimeout());</span>
+				}
+<span class="nc" id="L85">				catch (InterruptedException ie)</span>
+				{
+					// do nothing
+<span class="nc" id="L88">				}</span>
+<span class="nc" id="L89">			}</span>
+		}
+
+		/*
+		 * Process messages
+		 */
+<span class="nc" id="L95">		Object message = null;</span>
+<span class="nc bnc" id="L96" title="All 2 branches missed.">		while (checkProceed())</span>
+		{
+			try
+			{
+<span class="nc" id="L100">				taManager.clearManager();</span>
+<span class="nc" id="L101">				registerResources(taManager);</span>
+<span class="nc" id="L102">				taManager.begin();</span>
+			}
+<span class="nc" id="L104">			catch (XException e)</span>
+			{
+<span class="nc" id="L106">				taManager.close();</span>
+<span class="nc" id="L107">				incrementErrorCounter();</span>
+<span class="nc" id="L108">				Trace.error(&quot;Problem while starting &quot;</span>
+<span class="nc" id="L109">						+ mSource.getCompleteName());</span>
+<span class="nc" id="L110">				Trace.error(&quot;Retry after &quot; + getErrorTimeout() / 1000</span>
+						+ &quot; seconds&quot;);
+<span class="nc" id="L112">				Trace.error(&quot;------------------------------&quot;);</span>
+				try
+				{
+<span class="nc" id="L115">					Thread.sleep(getErrorTimeout());</span>
+				}
+<span class="nc" id="L117">				catch (InterruptedException e1)</span>
+				{
+					// do nothing
+<span class="nc" id="L120">				}</span>
+<span class="nc" id="L121">			}</span>
+
+			try
+			{
+<span class="nc" id="L125">				message = receive();</span>
+
+<span class="nc bnc" id="L127" title="All 2 branches missed.">				if (message != null)</span>
+				{
+<span class="nc" id="L129">					Trace.info(&quot;Receiving data from &quot; + getAddress());</span>
+
+<span class="nc" id="L131">					Adapter adapter = new Adapter();</span>
+<span class="nc" id="L132">					adapter.callApplication(getSource(), message, getType());</span>
+
+<span class="nc bnc" id="L134" title="All 2 branches missed.">					if (Constants.RC_OK.equals(adapter.getReturncode()))</span>
+					{
+<span class="nc" id="L136">						initializeErrorCounter();</span>
+<span class="nc" id="L137">						taManager.commit();</span>
+<span class="nc" id="L138">						PostProcessor.start(getSource(), adapter.getResponse(),</span>
+								Constants.POSTPROCESSING_PERSYSTEM);
+<span class="nc" id="L140">						Trace.info(&quot;End processing &quot;</span>
+<span class="nc" id="L141">								+ getSource().getCompleteName());</span>
+<span class="nc" id="L142">						Trace.info(&quot;------------------------------&quot;);</span>
+					}
+					else
+					{
+<span class="nc" id="L146">						handleError(taManager, message, adapter</span>
+<span class="nc" id="L147">								.getErrormessage());</span>
+					}
+<span class="nc" id="L149">				}</span>
+				else
+				{
+					/*
+					 * All receiver threads except the MQReceiver shall wait
+					 * some seconds if there is currently no message available.
+					 */
+
+<span class="nc bnc" id="L157" title="All 2 branches missed.">					if (!&quot;MQReceiverThread&quot;.equals(getReceiverClassName()))</span>
+					{
+						try
+						{
+<span class="nc" id="L161">							Thread.sleep(getTimeout());</span>
+						}
+<span class="nc" id="L163">						catch (InterruptedException e1)</span>
+						{
+							// do nothing
+<span class="nc" id="L166">						}</span>
+					}
+				}
+			}
+<span class="nc" id="L170">			catch (XException e)</span>
+			{
+<span class="nc" id="L172">				handleError(taManager, message, e.getMessage());</span>
+<span class="nc" id="L173">			}</span>
+		}
+
+<span class="nc" id="L176">		taManager.close();</span>
+
+<span class="nc" id="L178">		Trace</span>
+<span class="nc" id="L179">				.always(&quot;ReceiverThread for &quot; + getSource().getName()</span>
+						+ &quot; stopped&quot;);
+<span class="nc" id="L181">	}</span>
+
+	/**
+	 * Initialization of the the thread, called in the beginning, before the
+	 * loop for processing messages starts. Used e.g. for opening a connection.
+	 * 
+	 * @throws XException if something goes wrong
+	 */
+	abstract protected void initializeThread() throws XException;
+
+	/**
+	 * Because the thread clears the list of transactional resources each time
+	 * after processing a message, this method is called before reading the next
+	 * message to register a receiver resource in the transaction manager.
+	 * 
+	 * @param taManager the transaction manager in which the resources shall be
+	 *            registered
+	 * @throws XException if something goes wrong
+	 */
+	abstract protected void registerResources(TAManager taManager)
+			throws XException;
+
+	/**
+	 * Receives one message.
+	 * 
+	 * @return the received message or &lt;code&gt;null&lt;/code&gt; when no message has
+	 *         been available
+	 * @throws XException if something goes wrong
+	 */
+	abstract protected Object receive() throws XException;
+
+	/**
+	 * Returns the name of the receiver class, used for example to determine
+	 * values in the configuration.
+	 * 
+	 * @return the name of the receiver class
+	 */
+	abstract protected String getReceiverClassName();
+
+	/**
+	 * Returns the address of a received message, used for example in the
+	 * tracing. The content of the address depends on the type of receiver.
+	 * FileReceivers will return filenames, the POP3Receiver will return an
+	 * email address.
+	 * 
+	 * @return the address of a received message
+	 */
+	abstract protected String getAddress();
+
+	/**
+	 * Handles all actions to be taken, when a message cannot be processed, e.g.
+	 * rollback of transactional resources and notifying an administrator.
+	 * 
+	 * @param taManager the transactional manager
+	 * @param message the content of the message that cannot be processed.
+	 */
+	private void handleError(TAManager taManager, Object message,
+			String errorMessage)
+	{
+<span class="nc" id="L240">		taManager.rollback();</span>
+<span class="nc" id="L241">		taManager.close();</span>
+<span class="nc" id="L242">		incrementErrorCounter();</span>
+<span class="nc" id="L243">		NotifyError.notifyError(this, getSource(), errorMessage, message, null);</span>
+<span class="nc" id="L244">		Trace.error(&quot;Error while processing &quot; + getSource().getCompleteName());</span>
+<span class="nc" id="L245">		Trace.error(&quot;Retry after &quot; + getErrorTimeout() / 1000 + &quot; seconds&quot;);</span>
+<span class="nc" id="L246">		Trace.error(&quot;------------------------------&quot;);</span>
+		try
+		{
+<span class="nc" id="L249">			Thread.sleep(getErrorTimeout());</span>
+		}
+<span class="nc" id="L251">		catch (InterruptedException e1)</span>
+		{
+			// do nothing
+<span class="nc" id="L254">		}</span>
+<span class="nc" id="L255">	}</span>
+
+	/**
+	 * &lt;code&gt;interruptThread&lt;/code&gt; shall interrupt the loop of receiving and
+	 * processing messages and cause the thread to stop. It is invoked by the
+	 * {@link ReceiverService}on shutdown or restart.
+	 */
+	public void interruptThread()
+	{
+<span class="nc" id="L264">		mProceed = false;</span>
+<span class="nc" id="L265">	}</span>
+
+	/**
+	 * Checks wether the amount of errors have been reached, to stop the
+	 * receiver thread.
+	 */
+	private void checkErrorCounter()
+	{
+<span class="nc bnc" id="L273" title="All 2 branches missed.">		if (mStopAfterErrors == 0)</span>
+		{
+<span class="nc" id="L275">			mStopAfterErrors = ReceiverThreadManager.getStopAfterErrors(mSource</span>
+<span class="nc" id="L276">					.getName(), getReceiverClassName());</span>
+		}
+
+<span class="nc bnc" id="L279" title="All 6 branches missed.">		if (mProceed &amp;&amp; (mStopAfterErrors &gt; 0)</span>
+				&amp;&amp; (mErrorCounter &gt;= mStopAfterErrors))
+		{
+<span class="nc" id="L282">			String message = &quot;Stopping ReceiverThread &quot;</span>
+<span class="nc" id="L283">					+ mSource.getCompleteName()</span>
+					+ &quot; because of maximum amount of errors!&quot;;
+<span class="nc" id="L285">			Trace.always(message);</span>
+<span class="nc" id="L286">			NotifyError.notifyError(this, mSource, message, null, null);</span>
+			try
+			{
+<span class="nc" id="L289">				ReceiverThreadManager.getInstance().demandStopReceiverThread(</span>
+<span class="nc" id="L290">						mSource.getName());</span>
+			}
+<span class="nc" id="L292">			catch (XException e)</span>
+			{
+				// do nothing, error has been traced
+<span class="nc" id="L295">				Trace.error(&quot;Cannot stop ReceiverThread &quot; + mSource.getName());</span>
+<span class="nc" id="L296">			}</span>
+		}
+<span class="nc" id="L298">	}</span>
+
+	/**
+	 * Returns a boolean value that indicates whether the thread shall continue
+	 * to process messages.
+	 * 
+	 * @return a boolean value that indicates whether the thread shall continue
+	 *         to process messages
+	 */
+	protected boolean checkProceed()
+	{
+<span class="nc" id="L309">		checkErrorCounter();</span>
+<span class="nc" id="L310">		return mProceed;</span>
+	}
+
+	/**
+	 * Increments the error counter.
+	 */
+	protected void incrementErrorCounter()
+	{
+<span class="nc" id="L318">		mErrorCounter++;</span>
+<span class="nc" id="L319">	}</span>
+
+	/**
+	 * Initializes the error counter to 0.
+	 */
+	protected void initializeErrorCounter()
+	{
+<span class="nc" id="L326">		mErrorCounter = 0;</span>
+<span class="nc" id="L327">	}</span>
+
+	/**
+	 * Returns the source of the messages.
+	 * 
+	 * @return the source of the messages
+	 */
+	protected XBUSSystem getSource()
+	{
+<span class="nc" id="L336">		return mSource;</span>
+	}
+
+	/**
+	 * Returns the time to wait after an error has occured. The value is read
+	 * out of the configuration, either a default for all receivers or a value
+	 * specific for the current source. If no value is specified in the
+	 * configuration, a hard coded default is used.
+	 * 
+	 * @return the time to wait after an error has occured
+	 */
+	protected long getErrorTimeout()
+	{
+<span class="nc bnc" id="L349" title="All 2 branches missed.">		if (mErrorTimeout == 0)</span>
+		{
+			try
+			{
+<span class="nc" id="L353">				Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L354">				mErrorTimeout = config.getValueAsIntOptional(&quot;System&quot;, mSource</span>
+<span class="nc" id="L355">						.getName(), &quot;WaitAfterError&quot;) * 1000;</span>
+<span class="nc bnc" id="L356" title="All 2 branches missed.">				if (mErrorTimeout == 0)</span>
+				{
+<span class="nc" id="L358">					mErrorTimeout = config.getValueAsInt(&quot;Base&quot;, &quot;Receiver&quot;,</span>
+							&quot;WaitAfterError&quot;) * 1000;
+				}
+			}
+<span class="nc" id="L362">			catch (XException e)</span>
+			{
+<span class="nc" id="L364">				mErrorTimeout = DEFAULT_ERROR_TIMEOUT * 1000;</span>
+<span class="nc" id="L365">				Trace.warn(&quot;Using default for WaitAfterError: &quot;</span>
+						+ DEFAULT_ERROR_TIMEOUT + &quot; seconds&quot;);
+<span class="nc" id="L367">			}</span>
+		}
+<span class="nc" id="L369">		return mErrorTimeout;</span>
+	}
+
+	/**
+	 * Returns the time to wait after the successful processing of a message.
+	 * The value is read out of the configuration, either a default for the
+	 * receiver class or a value specific for the current source. If no value is
+	 * specified in the configuration, a hard coded default is used.
+	 * 
+	 * @return the time to wait after the successful processing of a message
+	 */
+	protected long getTimeout()
+	{
+<span class="nc bnc" id="L382" title="All 2 branches missed.">		if (mTimeout == 0)</span>
+		{
+			try
+			{
+<span class="nc" id="L386">				Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L387">				mTimeout = config.getValueAsIntOptional(&quot;System&quot;, mSource</span>
+<span class="nc" id="L388">						.getName(), &quot;Timeout&quot;) * 1000;</span>
+<span class="nc bnc" id="L389" title="All 2 branches missed.">				if (mTimeout == 0)</span>
+				{
+<span class="nc" id="L391">					mTimeout = config.getValueAsInt(&quot;Base&quot;,</span>
+<span class="nc" id="L392">							getReceiverClassName(), &quot;Timeout&quot;) * 1000;</span>
+				}
+			}
+<span class="nc" id="L395">			catch (XException e)</span>
+			{
+<span class="nc" id="L397">				mTimeout = DEFAULT_TIMEOUT * 1000;</span>
+<span class="nc" id="L398">				Trace.warn(&quot;Using default for Timeout: &quot; + DEFAULT_TIMEOUT</span>
+						+ &quot; seconds&quot;);
+<span class="nc" id="L400">			}</span>
+		}
+<span class="nc" id="L402">		return mTimeout;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

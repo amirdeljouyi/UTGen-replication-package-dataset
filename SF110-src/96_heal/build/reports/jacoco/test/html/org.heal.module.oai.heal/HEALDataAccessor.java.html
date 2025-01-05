@@ -1,0 +1,566 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HEALDataAccessor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">96_heal</a> &gt; <a href="index.source.html" class="el_package">org.heal.module.oai.heal</a> &gt; <span class="el_source">HEALDataAccessor.java</span></div><h1>HEALDataAccessor.java</h1><pre class="source lang-java linenums">/*
+ * Created on Dec 1, 2004
+ *
+ */
+package org.heal.module.oai.heal;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.TimeZone;
+
+import javax.sql.DataSource;
+
+import org.heal.module.metadata.CompleteMetadataBean;
+import org.heal.module.metadata.MetadataDAO;
+import org.heal.module.oai.provider.DataAccessor;
+import org.heal.module.oai.provider.OAIMetadataFormat;
+import org.heal.module.oai.provider.OAIRecord;
+import org.heal.module.oai.provider.OAIResumptionToken;
+import org.heal.module.oai.provider.OAISet;
+import org.heal.module.oai.provider.basic.BasicResumptionToken;
+
+/**
+ * @author Seth Wright
+ *
+ */
+public class HEALDataAccessor implements DataAccessor {
+	private static final boolean debug = false;
+
+<span class="nc" id="L34">	private SimpleDateFormat catalogFormatter = new SimpleDateFormat(&quot;yyyy-MM-dd HH:mm:ss.S&quot;);</span>
+
+	private static final int QUERY_RECORD = 0;
+	private static final int QUERY_IDENTIFIER = 1;
+	private static final int QUERY_SET = 2;
+	
+	private final HEALProviderConfig config;
+
+	private final DataSource dataSource;
+<span class="nc" id="L43">	private Connection conn = null;</span>
+<span class="nc" id="L44">	private ResultSet resultSet = null;</span>
+<span class="nc" id="L45">	private PreparedStatement stmt = null;</span>
+	private long recordsReturned;
+<span class="nc" id="L47">	private MetadataDAO metadataDAO = null;</span>
+	
+<span class="nc" id="L49">	private int queryType = -1;</span>
+<span class="nc" id="L50">	private String metadataPrefix = null;</span>
+<span class="nc" id="L51">	private Date from = null;</span>
+<span class="nc" id="L52">	private Date until = null;</span>
+<span class="nc" id="L53">	private String set = null;</span>
+<span class="nc" id="L54">	private String nextID = null;</span>
+<span class="nc" id="L55">	private boolean hasRows = false;</span>
+<span class="nc" id="L56">	private boolean moveForwardOnNext = true;</span>
+	//set to true if this query was resumed via a resumptionToken
+	//in this case an empty resumptionToken MUST be returned at
+	//the end of the query
+<span class="nc" id="L60">	private boolean resumedQuery = false;</span>
+	private static final String BASE_RECORD_QUERY = &quot;SELECT MetadataID from Metadata WHERE Private=0 AND GlobalID is not null AND CatalogDate is not null&quot;;
+	private static final String RESUMPTION_QUERY = &quot; AND MetadataID &gt; ?&quot;;
+	private static final String FROM_QUERY = &quot; AND CatalogDate &gt;= ?&quot;;
+	private static final String UNTIL_QUERY = &quot; AND CatalogDate &lt;= ?&quot;;
+	private static final String FROM_UNTIL_QUERY = &quot; AND CatalogDate &gt;= ? AND CatalogDate &lt;= ?&quot;;
+	private static final String SOURCE_COLLECTION_FILTER_START = &quot; AND (SourceCollection = ?&quot;;
+	private static final String SOURCE_COLLECTION_FILTER_MIDDLE = &quot; OR SourceCollection = ?&quot;;
+	private static final String SOURCE_COLLECTION_FILTER_END = &quot;)&quot;;
+	private static final String BASE_IDENTIFIER_QUERY = &quot;SELECT MetadataID,GlobalID,CatalogDate from Metadata WHERE Private=0 AND GlobalID is not null AND CatalogDate is not null&quot;;
+	private static final String ORDER_QUERY =&quot; ORDER BY MetadataID&quot;;
+
+<span class="nc" id="L72">	public HEALDataAccessor(final HEALProviderConfig config,final DataSource dataSource) {</span>
+<span class="nc" id="L73">		this.config = config;		</span>
+<span class="nc" id="L74">		this.dataSource = dataSource;</span>
+<span class="nc" id="L75">		catalogFormatter.setTimeZone(TimeZone.getTimeZone(&quot;UTC&quot;));</span>
+<span class="nc" id="L76">		metadataDAO = new MetadataDAO();</span>
+<span class="nc" id="L77">		metadataDAO.setDataSource(this.dataSource);</span>
+<span class="nc" id="L78">	}</span>
+	
+	public OAIResumptionToken parseResumptionToken(final String resumptionToken) {
+		//returns null if the token is poorly formatted
+<span class="nc" id="L82">		return BasicResumptionToken.parseResumptionToken(resumptionToken,config.getGranularity());</span>
+	}
+	
+	/* (non-Javadoc)
+	 * @see org.heal.module.oai.provider.DataAccessor#openRecordsQuery(java.util.Date, java.util.Date, java.lang.String)
+	 */
+	public void openRecordsQuery(final String metadataPrefix, final Date from,final Date until,final String set) {
+		//right now we don't differentiate on metadataPrefix. the prefixes we do support, we support for
+		//all records
+<span class="nc" id="L91">		this.metadataPrefix = metadataPrefix;</span>
+<span class="nc" id="L92">		this.from = from;</span>
+<span class="nc" id="L93">		this.until = until;</span>
+<span class="nc" id="L94">		this.set = set;</span>
+<span class="nc" id="L95">		nextID = null;</span>
+<span class="nc" id="L96">		queryType = HEALDataAccessor.QUERY_RECORD;</span>
+		// -1 means that we are doing a new query, not a resumption
+<span class="nc" id="L98">		openQuery(BASE_RECORD_QUERY);</span>
+<span class="nc" id="L99">	}</span>
+
+	/* (non-Javadoc)
+	 * @see org.heal.module.oai.provider.DataAccessor#openRecordsQuery(java.lang.String)
+	 */
+	public void openRecordsQuery(final String identifier) {
+<span class="nc" id="L105">		queryType = HEALDataAccessor.QUERY_RECORD;</span>
+		//XXX this is an ugly hack, need to get better aquainted with
+		//working with HEAL infrastructure to avoid having to do two queries
+<span class="nc" id="L108">		String idPrefix = config.getIDPrefix();</span>
+<span class="nc" id="L109">		int prefixIndex = identifier.indexOf(idPrefix);</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">		if (prefixIndex &gt;= 0) {</span>
+<span class="nc" id="L111">			String globalId = identifier.substring(prefixIndex+idPrefix.length());</span>
+			try {
+<span class="nc" id="L113">				conn = dataSource.getConnection();</span>
+<span class="nc" id="L114">				stmt = conn.prepareStatement(&quot;SELECT MetadataID from Metadata WHERE Private=0 AND GlobalID=?&quot;,ResultSet.TYPE_SCROLL_INSENSITIVE,ResultSet.CONCUR_READ_ONLY);</span>
+<span class="nc" id="L115">				stmt.setString(1,globalId);</span>
+<span class="nc" id="L116">				resultSet = stmt.executeQuery();			</span>
+<span class="nc" id="L117">				hasRows = resultSet.next();</span>
+<span class="nc" id="L118">				moveForwardOnNext = false;</span>
+				if (HEALDataAccessor.debug) {
+					System.out.println(&quot;*******************************************&quot;);
+					System.out.println(&quot;OpenRecordsQuery (id) ResultSet returned=&quot;+hasRows);
+					System.out.println(&quot;*******************************************&quot;);
+				}
+<span class="nc" id="L124">				recordsReturned = 0;</span>
+<span class="nc" id="L125">			} catch (SQLException ex) {</span>
+				if (HEALDataAccessor.debug) {
+					System.out.println(&quot;*******************************************&quot;);
+					System.out.println(&quot;Error occured getting single record query:&quot;);
+					ex.printStackTrace();
+					System.out.println(&quot;*******************************************&quot;);
+				}
+<span class="nc" id="L132">				cleanupAfterQuery();</span>
+<span class="nc" id="L133">			}</span>
+		}
+<span class="nc" id="L135">	}</span>
+
+	/* (non-Javadoc)
+	 * @see org.heal.module.oai.provider.DataAccessor#getIdentifiersQuery(java.util.Date, java.util.Date, java.lang.String)
+	 */
+	public void openIdentifiersQuery(final String metadataPrefix,final Date from, final Date until, final String set) {
+<span class="nc" id="L141">		this.metadataPrefix = metadataPrefix;</span>
+<span class="nc" id="L142">		this.from = from;</span>
+<span class="nc" id="L143">		this.until = until;</span>
+<span class="nc" id="L144">		this.set = set;</span>
+<span class="nc" id="L145">		nextID = null;</span>
+<span class="nc" id="L146">		queryType = HEALDataAccessor.QUERY_IDENTIFIER;</span>
+		// -1 means that we are doing a new query, not a resumption
+<span class="nc" id="L148">		openQuery(BASE_IDENTIFIER_QUERY);</span>
+<span class="nc" id="L149">	}</span>
+
+	public void openSetQuery() {
+		//does nothing since we don't support sets
+<span class="nc" id="L153">		queryType = HEALDataAccessor.QUERY_SET;</span>
+<span class="nc" id="L154">	}</span>
+  
+	/* (non-Javadoc)
+	 * @see org.heal.module.oai.provider.DataAccessor#resumeQuery(org.heal.module.oai.provider.OAIResumptionToken)
+	 */
+	public boolean resumeRecordQuery(final OAIResumptionToken resumptionToken) {
+<span class="nc" id="L160">		resumeQuery(resumptionToken);</span>
+<span class="nc" id="L161">		queryType = QUERY_RECORD;</span>
+<span class="nc" id="L162">		openQuery(BASE_RECORD_QUERY);</span>
+<span class="nc" id="L163">		return true;</span>
+	}
+	/* (non-Javadoc)
+	 * @see org.heal.module.oai.provider.DataAccessor#resumeQuery(org.heal.module.oai.provider.OAIResumptionToken)
+	 */
+	public boolean resumeSetQuery(final OAIResumptionToken resumptionToken) {
+		//HEALDataAccessor does not support sets.
+<span class="nc" id="L170">		return false;</span>
+	}
+	/* (non-Javadoc)
+	 * @see org.heal.module.oai.provider.DataAccessor#resumeQuery(org.heal.module.oai.provider.OAIResumptionToken)
+	 */
+	public boolean resumeIdentifierQuery(final OAIResumptionToken resumptionToken) {
+<span class="nc" id="L176">		resumeQuery(resumptionToken);</span>
+<span class="nc" id="L177">		queryType = QUERY_IDENTIFIER;</span>
+<span class="nc" id="L178">		openQuery(BASE_IDENTIFIER_QUERY);</span>
+<span class="nc" id="L179">		return true;</span>
+	}
+
+	/* (non-Javadoc)
+	 * @see org.heal.module.oai.provider.DataAccessor#resumeQuery(org.heal.module.oai.provider.OAIResumptionToken)
+	 */
+	private void resumeQuery(final OAIResumptionToken resumptionToken) {
+<span class="nc" id="L186">		resumedQuery = true;</span>
+<span class="nc" id="L187">		BasicResumptionToken brt = (BasicResumptionToken) resumptionToken;</span>
+<span class="nc" id="L188">		int resumptionID = Integer.parseInt(brt.getNextID());</span>
+<span class="nc" id="L189">		metadataPrefix = brt.getMetadataPrefix();</span>
+<span class="nc" id="L190">		from = brt.getFrom();</span>
+<span class="nc" id="L191">		until = brt.getUntil();</span>
+<span class="nc" id="L192">		set = brt.getSet();</span>
+<span class="nc" id="L193">		nextID = brt.getNextID();</span>
+<span class="nc" id="L194">	}</span>
+
+	/* (non-Javadoc)
+	 * @see org.heal.module.oai.provider.DataAccessor#getCurrentIdentifier()
+	 */
+	public OAIRecord getNextIdentifier() {
+<span class="nc" id="L200">		OAIRecord result = null;</span>
+<span class="nc bnc" id="L201" title="All 6 branches missed.">		if (resultSet != null &amp;&amp; hasRows &amp;&amp;</span>
+			(queryType == HEALDataAccessor.QUERY_IDENTIFIER)) {
+				try {
+<span class="nc bnc" id="L204" title="All 2 branches missed.">					if (!moveForwardOnNext) {</span>
+						//we just do this for the first row to see if we have any rows
+						//in order to be able to return the appropriate value for
+						//hasMoreElements
+<span class="nc" id="L208">						moveForwardOnNext = true;</span>
+					} else {
+<span class="nc" id="L210">						hasRows=resultSet.next();</span>
+					}
+<span class="nc bnc" id="L212" title="All 2 branches missed.">					if (hasRows) {</span>
+<span class="nc" id="L213">						String oaiid = null;</span>
+<span class="nc bnc" id="L214" title="All 2 branches missed.">						if (isIdentifierValid(resultSet.getString(&quot;GlobalD&quot;))) {</span>
+<span class="nc" id="L215">							oaiid = config.getIDPrefix()+resultSet.getString(&quot;GlobalID&quot;);						</span>
+						}
+<span class="nc" id="L217">						Date dateDate = catalogFormatter.parse(resultSet.getString(&quot;CatalogDate&quot;));</span>
+<span class="nc" id="L218">						result = new HEALRecord(oaiid,dateDate,config);			</span>
+<span class="nc bnc" id="L219" title="All 2 branches missed.">						if (result.checkIsValid()) {</span>
+<span class="nc" id="L220">							recordsReturned++;</span>
+						}
+					}
+<span class="nc" id="L223">				} catch (ParseException ex2) {</span>
+					if (HEALDataAccessor.debug) {
+						System.out.println(&quot;*******************************************&quot;);
+						System.out.println(&quot;Error occured parsing date for next identifier:&quot;);
+						ex2.printStackTrace();
+						System.out.println(&quot;*******************************************&quot;);
+					}
+<span class="nc" id="L230">					cleanupAfterQuery();</span>
+<span class="nc" id="L231">				} catch (SQLException ex) {</span>
+					if (HEALDataAccessor.debug) {
+						System.out.println(&quot;*******************************************&quot;);
+						System.out.println(&quot;Error occured getting next identifier:&quot;);
+						ex.printStackTrace();
+						System.out.println(&quot;*******************************************&quot;);
+					}
+<span class="nc" id="L238">					cleanupAfterQuery();</span>
+<span class="nc" id="L239">				}</span>
+		}
+<span class="nc" id="L241">		return result;</span>
+	}
+
+	/* (non-Javadoc)
+	 * @see org.heal.module.oai.provider.DataAccessor#getCurrentRecord()
+	 */
+	public OAIRecord getNextRecord() {
+<span class="nc" id="L248">		OAIRecord retval = null;</span>
+<span class="nc bnc" id="L249" title="All 6 branches missed.">		if (resultSet != null &amp;&amp; hasRows &amp;&amp;</span>
+			(queryType == HEALDataAccessor.QUERY_RECORD)) {
+			try {
+<span class="nc bnc" id="L252" title="All 2 branches missed.">				if (!moveForwardOnNext) {</span>
+					//we just do this for the first row to see if we have any rows
+					//in order to be able to return the appropriate value for
+					//hasMoreElements
+<span class="nc" id="L256">					moveForwardOnNext = true;</span>
+				} else {
+<span class="nc" id="L258">					hasRows=resultSet.next();</span>
+				}
+<span class="nc bnc" id="L260" title="All 2 branches missed.">				if (hasRows) {</span>
+<span class="nc" id="L261">					String metadataId = resultSet.getString(&quot;MetadataID&quot;);</span>
+<span class="nc" id="L262">					CompleteMetadataBean metadata = metadataDAO.getCompleteMetadata(metadataId);</span>
+<span class="nc" id="L263">					Date dateStamp = metadata.getCatalogDate();</span>
+<span class="nc" id="L264">					String identifier = null;</span>
+<span class="nc bnc" id="L265" title="All 2 branches missed.">					if (isIdentifierValid(metadata.getGlobalId())) {</span>
+<span class="nc" id="L266">						identifier = config.getIDPrefix()+metadata.getGlobalId();</span>
+					}
+<span class="nc" id="L268">					retval = new HEALRecord(metadata,config,identifier,dateStamp);</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">					if (retval.checkIsValid()) {</span>
+<span class="nc" id="L270">						recordsReturned++;</span>
+					}
+				}
+<span class="nc" id="L273">			} catch (ParseException ex2) {</span>
+				if (HEALDataAccessor.debug) {
+					System.out.println(&quot;*******************************************&quot;);
+					System.out.println(&quot;Error occured parsing date for next record:&quot;);
+					ex2.printStackTrace();
+					System.out.println(&quot;*******************************************&quot;);
+				}
+<span class="nc" id="L280">				cleanupAfterQuery();</span>
+<span class="nc" id="L281">			} catch (SQLException ex) {</span>
+<span class="nc" id="L282">				System.out.println(&quot;*******************************************&quot;);</span>
+<span class="nc" id="L283">				System.out.println(&quot;Error occured getting next record:&quot;);</span>
+<span class="nc" id="L284">				ex.printStackTrace();</span>
+<span class="nc" id="L285">				System.out.println(&quot;*******************************************&quot;);</span>
+<span class="nc" id="L286">				cleanupAfterQuery();</span>
+<span class="nc" id="L287">			}</span>
+		}
+<span class="nc" id="L289">		return retval;</span>
+	}
+
+	/* (non-Javadoc)
+	 * @see org.heal.module.oai.provider.DataAccessor#hasMoreElements()
+	 */
+
+	public boolean hasMoreElements() {
+<span class="nc" id="L297">		boolean result = false;</span>
+<span class="nc bnc" id="L298" title="All 8 branches missed.">		if (resultSet != null &amp;&amp; hasRows &amp;&amp; </span>
+			(queryType == HEALDataAccessor.QUERY_RECORD ||
+			queryType == HEALDataAccessor.QUERY_IDENTIFIER)) {
+				try {
+<span class="nc bnc" id="L302" title="All 2 branches missed.">					if (moveForwardOnNext) {</span>
+<span class="nc bnc" id="L303" title="All 2 branches missed.">						result = !resultSet.isAfterLast();</span>
+						if (HEALDataAccessor.debug) {
+							System.out.println(&quot;*******************************************&quot;);
+							System.out.println(&quot;hasMoreElements !ResultSet.isAfterLast returned=&quot;+result);
+							System.out.println(&quot;*******************************************&quot;);
+						}
+					} else {
+						//we know this is true because we just performed
+						//the query (moveForwardOnNext == false), 
+						// and we have results (hasRows == true)
+<span class="nc" id="L313">						result = true;</span>
+						if (HEALDataAccessor.debug) {
+							System.out.println(&quot;*******************************************&quot;);
+							System.out.println(&quot;hasMoreElements moveForwardOnNext was false&quot;);
+							System.out.println(&quot;*******************************************&quot;);
+						}
+					}
+<span class="nc" id="L320">				} catch (SQLException ex) {</span>
+					if (HEALDataAccessor.debug) {
+						System.out.println(&quot;*******************************************&quot;);
+						System.out.println(&quot;Error occured checking afterLast:&quot;);
+						ex.printStackTrace();
+						System.out.println(&quot;*******************************************&quot;);
+					}
+<span class="nc" id="L327">					cleanupAfterQuery();</span>
+<span class="nc" id="L328">				}</span>
+		}
+<span class="nc" id="L330">		return result;</span>
+	}
+
+	/* (non-Javadoc)
+	 * @see org.heal.module.oai.provider.DataAccessor#getResumptionToken()
+	 */
+	public OAIResumptionToken getResumptionToken() {
+		try {
+<span class="nc bnc" id="L338" title="All 2 branches missed.">			if (queryType != HEALDataAccessor.QUERY_SET) {</span>
+<span class="nc" id="L339">				int threshold = config.getResumptionThreshold();</span>
+<span class="nc bnc" id="L340" title="All 4 branches missed.">				if ((threshold &gt; 0) &amp;&amp; </span>
+					(recordsReturned &gt;= threshold) &amp;&amp; 
+<span class="nc bnc" id="L342" title="All 2 branches missed.">					!resultSet.isAfterLast()) {</span>
+<span class="nc" id="L343">					nextID = Integer.toString(resultSet.getInt(&quot;MetadataID&quot;));</span>
+<span class="nc" id="L344">					BasicResumptionToken resumptionToken = BasicResumptionToken.generateResumptionToken(metadataPrefix,from,until,set,nextID,config.getGranularity());</span>
+<span class="nc" id="L345">					resumptionToken.setCursor(recordsReturned);</span>
+<span class="nc" id="L346">					return resumptionToken;			</span>
+				}
+			}
+<span class="nc" id="L349">		} catch (SQLException ex) {</span>
+			if (HEALDataAccessor.debug) {
+				System.out.println(&quot;*******************************************&quot;);
+				System.out.println(&quot;Error occured while creating resumption token:&quot;);
+				ex.printStackTrace();
+				System.out.println(&quot;*******************************************&quot;);
+			}
+<span class="nc" id="L356">			cleanupAfterQuery();</span>
+<span class="nc" id="L357">		}</span>
+<span class="nc" id="L358">		return null;</span>
+	}
+
+	/* (non-Javadoc)
+	 * @see org.heal.module.oai.provider.DataAccessor#closeQuery()
+	 */
+	public void closeQuery() {
+		//no work to do yet
+<span class="nc" id="L366">		cleanupAfterQuery();</span>
+<span class="nc" id="L367">	}</span>
+
+	public Date getNow() {
+		// TODO HEALDataAccessor.getNow
+<span class="nc" id="L371">		return new Date();</span>
+	}
+
+	/* (non-Javadoc)
+	 * @see org.heal.module.oai.provider.DataAccessor#getMetadataFormats(java.lang.String)
+	 */
+	public OAIMetadataFormat[] getMetadataFormats(final String identifier) {
+		//first check to see if the id exists...
+<span class="nc bnc" id="L379" title="All 2 branches missed.">		if (identifier != null) {</span>
+<span class="nc" id="L380">			openRecordsQuery(identifier);</span>
+<span class="nc bnc" id="L381" title="All 2 branches missed.">			if (!hasMoreElements()) {			</span>
+				//can't find the record
+<span class="nc" id="L383">				closeQuery();</span>
+<span class="nc" id="L384">				return null;			</span>
+			}
+<span class="nc" id="L386">			closeQuery();</span>
+		}
+		//if it doesn't exist, return null
+		//otherwise, return all formats (we're not selective yet)
+<span class="nc" id="L390">		return config.getAllMetadataFormats();</span>
+	}
+
+	/* (non-Javadoc)
+	 * @see org.heal.module.oai.provider.DataAccessor#validateIdentifier(java.lang.String)
+	 * we check to see if it starts correctly and whether or not there is a space or a paren
+	 * either of which would be necessary to insert a malicious SQL query
+	 */
+	public boolean validateIdentifier(final String identifier) {
+<span class="nc bnc" id="L399" title="All 2 branches missed.">		return (identifier.startsWith(config.getIDPrefix()) &amp;&amp; </span>
+<span class="nc bnc" id="L400" title="All 4 branches missed.">				(identifier.indexOf(' ') == -1) &amp;&amp; (identifier.indexOf('(') == -1));</span>
+	}
+
+	/* (non-Javadoc)
+	 * @see org.heal.module.oai.provider.DataAccessor#validateSet(java.lang.String)
+	 */
+	public boolean validateSet(final String set) {
+		//HEAL does not currently support sets, so there should never be a set parameter to validate
+<span class="nc" id="L408">		return false;</span>
+	}
+
+	/* (non-Javadoc)
+	 * @see org.heal.module.oai.provider.DataAccessor#isExpired(org.heal.module.oai.provider.OAIResumptionToken)
+	 */
+	public boolean isExpired(final OAIResumptionToken resumptionToken) {
+<span class="nc" id="L415">		Date resumptionDate = resumptionToken.getExpirationDate();</span>
+<span class="nc bnc" id="L416" title="All 2 branches missed.">		if (resumptionDate != null) {</span>
+<span class="nc bnc" id="L417" title="All 2 branches missed.">			if (getNow().getTime() &lt; resumptionDate.getTime()) {</span>
+<span class="nc" id="L418">				return true;</span>
+			}
+		}
+<span class="nc" id="L421">		return false;</span>
+	}
+
+	/* (non-Javadoc)
+	 * @see org.heal.module.oai.provider.DataAccessor#getNextSet()
+	 */
+	public OAISet getNextSet() {
+<span class="nc" id="L428">		return null;</span>
+	}
+
+	/* (non-Javadoc)
+	 * @see org.heal.module.oai.provider.DataAccessor#setExists(java.lang.String)
+	 */
+	public boolean setExists(final String set) {
+		//we don't support sets
+<span class="nc" id="L436">		return false;</span>
+	}
+
+	/*
+	 * uses the base select statement and a potential resumptionID (should be
+	 * -1 if we aren't resuming) to generate and dispatch the sql query
+	 */
+	private void openQuery(final String baseQuery) {
+		try {
+<span class="nc" id="L445">			conn = dataSource.getConnection();</span>
+<span class="nc" id="L446">			String resumptionString = &quot;&quot;;</span>
+<span class="nc" id="L447">			int numArguments = 0;</span>
+<span class="nc" id="L448">			int resumptionID = -1;</span>
+<span class="nc bnc" id="L449" title="All 2 branches missed.">			if (nextID != null) {</span>
+<span class="nc" id="L450">				resumptionString = RESUMPTION_QUERY;</span>
+<span class="nc" id="L451">				resumptionID = Integer.parseInt(nextID);	</span>
+			}
+			String finalQuery;
+<span class="nc" id="L454">			String[] sourceCollections = config.getAllowedCollections();</span>
+<span class="nc" id="L455">			String sourceCollectionFilter = &quot;&quot;;</span>
+<span class="nc bnc" id="L456" title="All 2 branches missed.">			if (sourceCollections != null) {</span>
+<span class="nc" id="L457">				StringBuffer colls = new StringBuffer();</span>
+<span class="nc" id="L458">				colls.append(SOURCE_COLLECTION_FILTER_START);</span>
+				//we already had one for the first element, so
+				//we start with the second
+<span class="nc bnc" id="L461" title="All 2 branches missed.">				for (int i=1;i&lt;sourceCollections.length;i++) {</span>
+<span class="nc" id="L462">					colls.append(SOURCE_COLLECTION_FILTER_MIDDLE);</span>
+				}
+<span class="nc" id="L464">				colls.append(SOURCE_COLLECTION_FILTER_END);</span>
+<span class="nc" id="L465">				sourceCollectionFilter = colls.toString();</span>
+			}
+<span class="nc bnc" id="L467" title="All 4 branches missed.">			if (from!=null &amp;&amp; until!= null) {</span>
+<span class="nc" id="L468">				finalQuery = baseQuery+FROM_UNTIL_QUERY+resumptionString+sourceCollectionFilter+ORDER_QUERY;</span>
+<span class="nc" id="L469">				stmt = conn.prepareStatement(finalQuery,ResultSet.TYPE_SCROLL_INSENSITIVE,ResultSet.CONCUR_READ_ONLY);</span>
+<span class="nc" id="L470">				stmt.setDate(1,new java.sql.Date(from.getTime()));</span>
+<span class="nc" id="L471">				stmt.setDate(2,new java.sql.Date(until.getTime()));</span>
+<span class="nc" id="L472">				numArguments = 2;</span>
+<span class="nc bnc" id="L473" title="All 2 branches missed.">			} else if (from != null) {</span>
+<span class="nc" id="L474">				finalQuery = baseQuery+FROM_QUERY+resumptionString+sourceCollectionFilter+ORDER_QUERY;</span>
+<span class="nc" id="L475">				stmt = conn.prepareStatement(finalQuery,ResultSet.TYPE_SCROLL_INSENSITIVE,ResultSet.CONCUR_READ_ONLY);</span>
+<span class="nc" id="L476">				stmt.setDate(1,new java.sql.Date(from.getTime()));</span>
+<span class="nc" id="L477">				numArguments = 1;</span>
+<span class="nc bnc" id="L478" title="All 2 branches missed.">			} else if (until != null) {</span>
+<span class="nc" id="L479">				finalQuery = baseQuery+UNTIL_QUERY+resumptionString+sourceCollectionFilter+ORDER_QUERY;</span>
+<span class="nc" id="L480">				stmt = conn.prepareStatement(finalQuery,ResultSet.TYPE_SCROLL_INSENSITIVE,ResultSet.CONCUR_READ_ONLY);</span>
+<span class="nc" id="L481">				stmt.setDate(1,new java.sql.Date(until.getTime()));</span>
+<span class="nc" id="L482">				numArguments = 1;</span>
+			} else {
+<span class="nc" id="L484">				finalQuery = baseQuery+resumptionString+sourceCollectionFilter+ORDER_QUERY;</span>
+<span class="nc" id="L485">				stmt = conn.prepareStatement(finalQuery,ResultSet.TYPE_SCROLL_INSENSITIVE,ResultSet.CONCUR_READ_ONLY);</span>
+<span class="nc" id="L486">				numArguments = 0;</span>
+			}
+<span class="nc bnc" id="L488" title="All 2 branches missed.">			if (resumptionID &gt;= 0) {</span>
+<span class="nc" id="L489">				numArguments++;</span>
+<span class="nc" id="L490">				stmt.setInt(numArguments,resumptionID);</span>
+			}
+<span class="nc bnc" id="L492" title="All 2 branches missed.">			if (sourceCollections != null) {</span>
+<span class="nc bnc" id="L493" title="All 2 branches missed.">				for (int i=0;i&lt;sourceCollections.length;i++) {</span>
+					//okay, so we've already added one past the num of args, so
+					//we need to add two plus the index here
+<span class="nc" id="L496">					numArguments++;</span>
+<span class="nc" id="L497">					stmt.setString(numArguments,sourceCollections[i]);</span>
+				}
+			}
+			if (HEALDataAccessor.debug) {
+				System.out.println(&quot;Executing SQL query [&quot;+finalQuery+&quot;], metadata id=&quot;+resumptionID);		
+			}
+<span class="nc" id="L503">			resultSet = stmt.executeQuery();			</span>
+			if (HEALDataAccessor.debug) {
+				System.out.println(&quot;Query returned&quot;);		
+			}
+<span class="nc" id="L507">			hasRows = resultSet.next();</span>
+			if (HEALDataAccessor.debug) {
+				System.out.println(&quot;hasRows=&quot;+hasRows);		
+			}
+<span class="nc" id="L511">			moveForwardOnNext = false;</span>
+			if (HEALDataAccessor.debug) {
+				System.out.println(&quot;*******************************************&quot;);
+				System.out.println(&quot;openQuery(base) ResultSet returned=&quot;+hasRows);
+				System.out.println(&quot;*******************************************&quot;);
+			}
+<span class="nc" id="L517">			recordsReturned = 0;</span>
+<span class="nc" id="L518">		} catch (SQLException ex) {</span>
+			if (HEALDataAccessor.debug) {
+				System.out.println(&quot;*******************************************&quot;);
+				System.out.println(&quot;Error occured opening query:&quot;);
+				ex.printStackTrace();
+				System.out.println(&quot;*******************************************&quot;);
+			}
+<span class="nc" id="L525">			cleanupAfterQuery();</span>
+<span class="nc" id="L526">		}				</span>
+<span class="nc" id="L527">	}</span>
+
+	private boolean isIdentifierValid(String identifier) {
+<span class="nc bnc" id="L530" title="All 6 branches missed.">		return !(identifier == null || &quot;null&quot;.equalsIgnoreCase(identifier) || &quot;&lt;null&gt;&quot;.equalsIgnoreCase(identifier));</span>
+	}
+	
+	private void cleanupAfterQuery() {
+<span class="nc" id="L534">		hasRows = false;</span>
+<span class="nc" id="L535">		recordsReturned = 0;</span>
+<span class="nc" id="L536">		moveForwardOnNext = true;</span>
+<span class="nc" id="L537">		nextID = null;</span>
+<span class="nc" id="L538">		from = null;</span>
+<span class="nc" id="L539">		until = null;</span>
+<span class="nc" id="L540">		metadataPrefix = null;</span>
+<span class="nc" id="L541">		set = null;</span>
+<span class="nc" id="L542">		queryType = -1;</span>
+<span class="nc bnc" id="L543" title="All 2 branches missed.">		if (resultSet !=  null) {</span>
+			try {
+<span class="nc" id="L545">				resultSet.close();</span>
+<span class="nc" id="L546">				resultSet = null;				</span>
+<span class="nc" id="L547">			} catch (SQLException ex3) {</span>
+<span class="nc" id="L548">			}</span>
+		}
+<span class="nc bnc" id="L550" title="All 2 branches missed.">		if (stmt != null) {</span>
+			try {
+<span class="nc" id="L552">				stmt.close();</span>
+<span class="nc" id="L553">				stmt = null;</span>
+<span class="nc" id="L554">			} catch (SQLException ex2) {</span>
+<span class="nc" id="L555">			}</span>
+		}
+<span class="nc bnc" id="L557" title="All 2 branches missed.">		if (conn != null) {</span>
+			try {
+<span class="nc" id="L559">				conn.close();</span>
+<span class="nc" id="L560">				conn = null;</span>
+<span class="nc" id="L561">			} catch (SQLException ex2) {</span>
+<span class="nc" id="L562">			}</span>
+		}
+<span class="nc" id="L564">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

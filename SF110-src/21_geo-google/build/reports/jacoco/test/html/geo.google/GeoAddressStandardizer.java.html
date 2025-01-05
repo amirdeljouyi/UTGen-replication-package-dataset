@@ -1,0 +1,306 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GeoAddressStandardizer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">21_geo-google</a> &gt; <a href="index.source.html" class="el_package">geo.google</a> &gt; <span class="el_source">GeoAddressStandardizer.java</span></div><h1>GeoAddressStandardizer.java</h1><pre class="source lang-java linenums">package geo.google;
+
+import geo.google.datamodel.GeoAddress;
+import geo.google.datamodel.GeoCoordinate;
+import geo.google.datamodel.GeoStatusCode;
+import geo.google.datamodel.GeoUsAddress;
+import geo.google.mapping.MappingUtils;
+import geo.google.mapping.XmlMappingFunctor;
+import geo.google.mapping.XmlToAddressFunctor;
+import geo.google.mapping.XmlToUsAddressFunctor;
+
+import java.io.IOException;
+import java.text.MessageFormat;
+import java.util.List;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.httpclient.HttpClient;
+import org.apache.commons.httpclient.HttpConnectionManager;
+import org.apache.commons.httpclient.HttpException;
+import org.apache.commons.httpclient.HttpURL;
+import org.apache.commons.httpclient.MultiThreadedHttpConnectionManager;
+import org.apache.commons.httpclient.methods.GetMethod;
+import org.apache.commons.httpclient.params.HttpClientParams;
+import org.apache.commons.io.IOUtils;
+
+/**
+ * Address Standardizer class. 
+ * 
+ * Note: The http connection is synchronized in this class! 
+ * you need to create multiple standardizer if you need concurrency.
+ * &lt;br/&gt;
+ * This class provides a set of methods for standardizing an address.  
+ * &lt;br/&gt;
+ * &lt;p&gt;
+ * Note that this class standardizes the input address by sending a http request to 
+ * google's geocoder service (http://www.google.com/apis/maps/documentation/). 
+ * This service requires an ApiKey which you need to sign up for before you can use this class.
+ * &lt;/p&gt;
+ * &lt;p&gt;
+ * There is a geocoding speed limit (from http://googlemapsapi.blogspot.com/2007/09/coming-soon-ip-based-geocode-limiting.html):
+ * &lt;p&gt;
+ * &quot;In the coming week, the Maps API geocode limit will change from a key-based system to an IP-based system, with a new limit of 15,000 queries per day. If you're a developer with a website that's using client-side geocoding via the GClientGeocoder object, this change means that each of your website visitors will now be subject to their own 15K quota. However, if you're a developer using the HTTP geocoder, this change means that all the geocodes from your script will be subject to the same 15K quota (your web server will send the same IP to us with each geocode). We've made this change in our geocoder due to the number of developers who've had issues with the GClientGeocoder and going over quota in times of high mashup user volume.&quot; 
+ * &lt;/p&gt;
+ * That means if you run at a rate faster than the equivalent of 
+ * 15000 requests per day (5.769 seconds per request) &lt;b&gt;per IP address&lt;/b&gt; for several minutes, then Google 
+ * will block you for a day. &lt;b&gt;This class automatically enforces this limit by only sending out
+ * request in 5.769 second interval&lt;/b&gt;. You can change the value of this time interval via the constructor. 
+ * &lt;/p&gt;
+ * &lt;pre&gt;
+ *  long timeTilNextStart = _rateLimitInterval - ( System.currentTimeMillis() - _lastRequestTime);
+ *  if(timeTilNextStart &gt; 0){
+ *      Thread.sleep(timeTilNextStart); //sleep for some time
+ *  }
+ *  _lastRequestTime = System.currentTimeMillis();
+ * &lt;/pre&gt;
+ * For more information about this service, see http://www.google.com/apis/maps/index.html
+ * @author jliang
+ *
+ */
+public class GeoAddressStandardizer{
+  private static final String BASE_URL = &quot;http://maps.google.com/maps/geo?q={0}&amp;output={1}&amp;key={2}&quot;;
+  private static final String XML = &quot;xml&quot;, CSV = &quot;csv&quot;;
+  private String _apiKey;
+<span class="nc" id="L64">  private long _rateLimitInterval = 5769L;</span>
+<span class="nc" id="L65">  private long _lastRequestTime = System.currentTimeMillis() - _rateLimitInterval;</span>
+<span class="nc" id="L66">  private HttpClientParams _httpClientParams = null;</span>
+  
+<span class="nc" id="L68">  private static HttpConnectionManager _connectionManager = new MultiThreadedHttpConnectionManager();</span>
+  
+<span class="nc" id="L70">  private UserAgent _userAgent = new UserAgent(){</span>
+
+    public String getUrlAsString(String url) throws HttpException, IOException{
+<span class="nc" id="L73">        GetMethod get = null; </span>
+        try {
+<span class="nc" id="L75">           get = new GetMethod(url);</span>
+<span class="nc" id="L76">           get.setFollowRedirects(true);</span>
+<span class="nc" id="L77">           _httpClient.executeMethod(get);</span>
+<span class="nc" id="L78">           return IOUtils.toString(get.getResponseBodyAsStream(), get.getRequestCharSet());</span>
+        } finally {
+<span class="nc bnc" id="L80" title="All 2 branches missed.">           if (get != null){</span>
+<span class="nc" id="L81">               get.abort();</span>
+<span class="nc" id="L82">               get.releaseConnection();</span>
+           }
+        }
+    }
+      
+  };
+
+  
+  public void setUserAgent(UserAgent userAgent){
+<span class="nc" id="L91">      _userAgent = userAgent;</span>
+<span class="nc" id="L92">  }</span>
+  
+  /**
+   * The httpClient in combination with the {@link MultiThreadedHttpConnectionManager} is
+   * thread-safe. See: &lt;a href=&quot;http://hc.apache.org/httpclient-3.x/threading.html&quot;&gt;HttpClient - Threading&lt;/a&gt;
+   */
+<span class="nc" id="L98">  private static HttpClient _httpClient = new HttpClient(_connectionManager);</span>
+
+
+  /**
+   * Sets the {@link HttpConnectionManager} to be used for connecting to the geocoding service
+   */
+  public static synchronized void setConnectionManager(HttpConnectionManager manager) {
+<span class="nc" id="L105">	_connectionManager = manager;</span>
+<span class="nc" id="L106">	_httpClient = new HttpClient(_connectionManager);</span>
+<span class="nc" id="L107">  }</span>
+   /**
+   * Sets the {@link HttpClient} to be used for connecting to the geocoding service
+   * @param client
+   */
+  public static synchronized void setHttpClient(HttpClient client) {
+<span class="nc" id="L113">    _httpClient = client;</span>
+<span class="nc" id="L114">  }</span>
+/**
+   * Parameters for controlling the http connection.
+   * http://jakarta.apache.org/commons/httpclient/preference-api.html#HTTP_parameters
+   * @return
+   */
+  public HttpClientParams getHttpClientParams() {
+<span class="nc" id="L121">    return _httpClientParams;</span>
+  }
+  public void setHttpClientParams(HttpClientParams httpClientParams) {
+<span class="nc" id="L124">    _httpClientParams = httpClientParams;</span>
+<span class="nc bnc" id="L125" title="All 4 branches missed.">    if(_httpClientParams != null &amp;&amp; _httpClient != null){</span>
+<span class="nc" id="L126">    	_httpClient.setParams(_httpClientParams);</span>
+      }
+<span class="nc" id="L128">  }</span>
+  /**
+   * Register a google geocoding API key at 
+   * http://www.google.com/apis/maps/signup.html
+   */
+<span class="nc" id="L133">  public GeoAddressStandardizer(String apiKey){</span>
+<span class="nc" id="L134">    _apiKey = apiKey;</span>
+<span class="nc" id="L135">  }</span>
+  /**
+   * Register a google geocoding API key at 
+   * http://www.google.com/apis/maps/signup.html
+   */
+  public GeoAddressStandardizer(String apiKey, long rateIntervalInMillis){
+<span class="nc" id="L141">    this(apiKey);</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">    if(rateIntervalInMillis &lt; 0){</span>
+<span class="nc" id="L143">      throw new IllegalArgumentException(&quot;rateInterval cannot be negative&quot;);</span>
+    }
+<span class="nc" id="L145">    _rateLimitInterval = rateIntervalInMillis;</span>
+<span class="nc" id="L146">  }</span>
+  
+  
+  /**
+   * Standardize an address using google's geocoding service;
+   * @throws GeoException Indicates something unexpected occurs.
+   * It also includes a {@link GeoStatusCode} to signal problems about the status of the geocoding request.
+   * @deprecated Use {@link #standardizeToGeoAddresses(String)} instead. This method only returns the first
+   * return geocoded address, which is not always the best standardization. 
+   */
+  public GeoAddress standardizeToGeoAddress(GeoUsAddress usAddress) throws GeoException{
+<span class="nc" id="L157">    return standardizeToGeoAddress(usAddress.toAddressLine());</span>
+  }
+  /**
+   * Standardize an address using google's geocoding service;
+   * @throws GeoException Indicates something unexpected occurs.
+   * It also includes a {@link GeoStatusCode} to signal problems about the status of the geocoding request.
+   * @deprecated Use {@link #standardizeToUsGeoAddresses(String)} instead. This method only returns the first
+   * return geocoded address, which is not always the best standardization. 
+   */
+  public GeoUsAddress standardizeToGeoUsAddress(GeoUsAddress usAddress) throws GeoException{
+<span class="nc" id="L167">    return standardizeToGeoUsAddress(usAddress.toAddressLine());</span>
+  }
+  /**
+   * Standardize an address using google's geocoding service; 
+   * @throws GeoException Indicates something unexpected occurs.
+   * It also includes a {@link GeoStatusCode} to signal problems about the status of the geocoding request.
+   * @deprecated Use {@link #standardizeToGeoAddresses(String)} instead. This method only returns the first
+   * return geocoded address, which is not always the best standardization. 
+   */
+  public GeoAddress standardizeToGeoAddress(String addressLine) throws GeoException{
+<span class="nc" id="L177">    List&lt;GeoAddress&gt; ret = standardize(addressLine, XmlToAddressFunctor.getInstance()); </span>
+<span class="nc bnc" id="L178" title="All 2 branches missed.">    return CollectionUtils.isEmpty(ret)?null:ret.get(0);</span>
+  }
+  /**
+   * Standardize an address using google's geocoding service; 
+   * &lt;br/&gt;
+   * This method returns the &lt;b&gt;FIRST&lt;/b&gt; returned geocoded address. 
+   * @throws GeoException Indicates something unexpected occurs.
+   * It also includes a {@link GeoStatusCode} to signal problems about the status of the geocoding request.
+   * @deprecated Use {@link #standardizeToGeoUsAddresses(String)} instead. This method only returns the first
+   * return geocoded address, which is not always the best standardization.
+   */
+  public GeoUsAddress standardizeToGeoUsAddress(String addressLine) throws GeoException{
+<span class="nc" id="L190">    List&lt;GeoUsAddress&gt; ret = standardize(addressLine, XmlToUsAddressFunctor.getInstance()); </span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">    return CollectionUtils.isEmpty(ret)?null:ret.get(0);</span>
+  }
+  /**
+   * Standardize an address using google's geocoding service;
+   * @param addressLine
+   * @return zero or more {@link GeoAddress} objects in a {@link List}. 
+   * @throws GeoException Indicates something unexpected occurs.
+   * It also includes a {@link GeoStatusCode} to signal problems about the status of the geocoding request.
+   */
+  public List&lt;GeoUsAddress&gt; standardizeToGeoUsAddresses(String addressLine) throws GeoException{
+<span class="nc" id="L201">    return standardize(addressLine, XmlToUsAddressFunctor.getInstance());</span>
+  }
+  /**
+   * Standardize an address using google's geocoding service;
+   * @param addressLine
+   * @return zero or more {@link GeoAddress} objects in a {@link List}. 
+   * @throws GeoException Indicates something unexpected occurs.
+   * It also includes a {@link GeoStatusCode} to signal problems about the status of the geocoding request.
+   */
+  public List&lt;GeoAddress&gt; standardizeToGeoAddresses(String addressLine) throws GeoException{
+<span class="nc" id="L211">    return standardize(addressLine, XmlToAddressFunctor.getInstance());</span>
+  }
+  /**
+   * Standardize an address using google's geocoding service;
+   * @param addressLine
+   * @return zero or more {@link GeoAddress} objects in a {@link List}. 
+   * @throws GeoException Indicates something unexpected occurs.
+   * It also includes a {@link GeoStatusCode} to signal problems about the status of the geocoding request.
+   */
+  public List&lt;GeoUsAddress&gt; standardizeToGeoUsAddresses(GeoUsAddress usAddress) throws GeoException{
+<span class="nc" id="L221">    return standardize(usAddress.toAddressLine(), XmlToUsAddressFunctor.getInstance());</span>
+  }
+  /**
+   * Standardize an address using google's geocoding service;
+   * @param addressLine
+   * @return zero or more {@link GeoAddress} objects in a {@link List}. 
+   * @throws GeoException Indicates something unexpected occurs.
+   * It also includes a {@link GeoStatusCode} to signal problems about the status of the geocoding request.
+   */
+  public List&lt;GeoAddress&gt; standardizeToGeoAddresses(GeoUsAddress usAddress) throws GeoException{
+<span class="nc" id="L231">    return standardize(usAddress.toAddressLine(), XmlToAddressFunctor.getInstance());</span>
+  }  
+  /**
+   * Standardize an address using google's geocoding service;
+   * @throws GeoException Indicates something unexpected occurs.
+   * It also includes a {@link GeoStatusCode} to signal problems about the status of the geocoding request. 
+   */
+  public GeoCoordinate standardizeToGeoCoordinate(String addressLine) throws GeoException{
+    try {
+<span class="nc" id="L240">      HttpURL url = new HttpURL(MessageFormat.format(BASE_URL, addressLine, CSV, _apiKey));</span>
+<span class="nc" id="L241">      String res = getServerResponse(url.toString());</span>
+<span class="nc" id="L242">      return MappingUtils.stringToCoordinate(res);</span>
+    }
+<span class="nc" id="L244">    catch (RuntimeException re){</span>
+<span class="nc" id="L245">      throw re;</span>
+<span class="nc" id="L246">    }catch (GeoException e) {</span>
+<span class="nc" id="L247">      throw e;</span>
+<span class="nc" id="L248">    }catch (Exception e) {</span>
+<span class="nc" id="L249">      throw new GeoException(e.getMessage());</span>
+    }
+  }
+  /**
+   * Standardize an address using google's geocoding service;
+   * @param mappingFunction - a mapping function that converts the kml string returned by google's 
+   * geocoding service to any other object type.
+   * @throws GeoException Indicates something unexpected occurs.
+   * It also includes a {@link GeoStatusCode} to signal problems about the status of the geocoding request. 
+   */
+  public &lt;ReturnType&gt; ReturnType standardize(String addressLine, 
+          XmlMappingFunctor&lt;ReturnType&gt; mappingFunction) throws GeoException{
+    try {
+<span class="nc" id="L262">      HttpURL url = new HttpURL(MessageFormat.format(BASE_URL, addressLine, XML, _apiKey));</span>
+<span class="nc" id="L263">      String res = getServerResponse(url.toString());</span>
+<span class="nc" id="L264">      return mappingFunction.execute(res);</span>
+    }
+<span class="nc" id="L266">    catch (RuntimeException re){</span>
+<span class="nc" id="L267">      throw re;</span>
+<span class="nc" id="L268">    }catch (GeoException e) {</span>
+<span class="nc" id="L269">      throw e;</span>
+<span class="nc" id="L270">    }catch (Exception e) {</span>
+<span class="nc" id="L271">      throw new GeoException(e.getMessage());</span>
+    }
+  }
+  private synchronized String getServerResponse(String url) throws Exception{	  
+<span class="nc" id="L275">    GetMethod get = null; </span>
+    try {
+<span class="nc" id="L277">       long timeTilNextStart = _rateLimitInterval - ( System.currentTimeMillis() - _lastRequestTime);</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">       if(timeTilNextStart &gt; 0){</span>
+<span class="nc" id="L279">          Thread.sleep(timeTilNextStart); //sleep for some time</span>
+       }
+<span class="nc" id="L281">       _lastRequestTime = System.currentTimeMillis();</span>
+<span class="nc" id="L282">       return _userAgent.getUrlAsString(url);</span>
+    } finally {
+<span class="nc bnc" id="L284" title="All 2 branches missed.">       if (get != null) get.releaseConnection();</span>
+    }
+  }
+  
+  public String getApiKey() {
+<span class="nc" id="L289">    return _apiKey;</span>
+  }
+
+  public void setApiKey(String apiKey) {
+<span class="nc" id="L293">    _apiKey = apiKey;</span>
+<span class="nc" id="L294">  }</span>
+
+  public long getRateLimitInterval() {
+<span class="nc" id="L297">    return _rateLimitInterval;</span>
+  }
+
+  public void setRateLimitInterval(long rateLimitInterval) {
+<span class="nc" id="L301">    _rateLimitInterval = rateLimitInterval;</span>
+<span class="nc" id="L302">  }</span>
+  
+  
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

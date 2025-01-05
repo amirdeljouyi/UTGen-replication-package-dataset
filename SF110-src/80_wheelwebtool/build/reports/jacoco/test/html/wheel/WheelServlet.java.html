@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>WheelServlet.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">80_wheelwebtool</a> &gt; <a href="index.source.html" class="el_package">wheel</a> &gt; <span class="el_source">WheelServlet.java</span></div><h1>WheelServlet.java</h1><pre class="source lang-java linenums">/*
+Copyright (c) 2007-2008, Henri Frilund
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+    * Neither the name of the &lt;ORGANIZATION&gt; nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+&quot;AS IS&quot; AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+package wheel;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.servlet.ServletConfig;
+import javax.servlet.ServletContext;
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.HashSet;
+import java.util.Set;
+
+/**
+ * The servlet that handles all requests to Wheel. Has three functions:&lt;br/&gt;
+ * &lt;ol&gt;
+ *  &lt;li&gt;Reads configuration from web.xml.&lt;/li&gt;
+ *  &lt;li&gt;Dispatches requests to EngineImpl&lt;/li&gt;
+ *  &lt;li&gt;Isolates the wheel.enhance.WheelClassLoader from other classloaders to enable non-delegating class loading.&lt;/li&gt;
+ * &lt;/ol&gt;
+ *
+ * &lt;b&gt;Configuration settings:&lt;/b&gt;&lt;br/&gt;
+ *
+ * &lt;dl&gt;
+ *  &lt;dt&gt;&lt;b&gt;basePackageForPages&lt;/b&gt;&lt;/dt&gt;
+ *  &lt;dd&gt;Mandatory. Tells Wheel where to load pages. The value must be a java package name that is given up to the point where Wheel sould start loading pages.
+ *  Example: Your page-classes are in com.foo.bar.pages -package which is what you'd set as the value for this parameter. When the application starts, all pages that
+ *  are in that package can be viewed by simply appending the page class name at the end of the url. Also sub-packages for the given package are available by appending also the sub-packagename
+ *  to the url and replacing '.' with '/'. So for example &quot;admin/Main&quot; would load the class com.foo.bar.pages.admin.Main.
+ *  &lt;/dd&gt;
+ *  &lt;dt&gt;&lt;b&gt;applicationPackages&lt;/b&gt;&lt;/dt&gt;
+ *  &lt;dd&gt;Mandatory. All packages that will contain pages or components used by your application should be here, inlcuding the package given in basePackageForPages.
+ *  For example if you use components from an external jar, you need to add the package here. Package names are separated by comma.&lt;/dd&gt;
+ *  &lt;dt&gt;&lt;b&gt;cssPath&lt;/b&gt;&lt;/dt&gt;
+ *  &lt;dd&gt;Optional. Sets the path relative to the application root where css-files are. The default is: &quot;css&quot;&lt;/dd&gt;
+ *  &lt;dt&gt;&lt;b&gt;jsPath&lt;/b&gt;&lt;/dt&gt;
+ *  &lt;dd&gt;Optional. Sets the path relative to the application root where js-files are. The default is: &quot;js&quot;&lt;/dd&gt;
+ *  &lt;dt&gt;&lt;b&gt;startPage&lt;/b&gt;&lt;/dt&gt;
+ *  &lt;dd&gt;Optional. Sets the page to load when no page is given. The default is: &quot;Home&quot;&lt;/dd&gt;
+ *  &lt;dt&gt;&lt;b&gt;developmentMode&lt;/b&gt;&lt;/dt&gt;
+ *  &lt;dd&gt;Optional. Enables automatic class reloading. Will slow the application down considrebaly, use with caution.. The default is: &quot;false&quot;&lt;/dd&gt;
+ *  &lt;dt&gt;&lt;b&gt;watchForUpdate&lt;/b&gt;&lt;/dt&gt;
+ *  &lt;dd&gt;Optional. When developmentMode is set on, this setting can be used to add additional locations to check for modified files. The comma-separated entries can be
+ *  either context-related files (starting with '/') or relative file paths relative to the startup directory.&lt;/dd&gt;
+ * &lt;/dl&gt;
+ *
+ * @author Henri Frilund
+ */
+<span class="nc" id="L77">public class WheelServlet extends HttpServlet {</span>
+<span class="nc" id="L78">    private final Logger log = LoggerFactory.getLogger(WheelServlet.class);</span>
+    private ServletContext context;
+    private boolean developmentMode;
+    private Set&lt;String&gt; applicationPackages;
+    private String cssRoot;
+    private Set&lt;String&gt; watchForUpdate;
+
+    @Override
+    public void doGet(HttpServletRequest httpServletRequest, HttpServletResponse httpServletResponse) throws ServletException, IOException {
+<span class="nc" id="L87">        handleRequest(httpServletRequest, httpServletResponse);</span>
+<span class="nc" id="L88">    }</span>
+
+    @Override
+    public void doPost(HttpServletRequest httpServletRequest, HttpServletResponse httpServletResponse) throws ServletException, IOException {
+<span class="nc" id="L92">        handleRequest(httpServletRequest, httpServletResponse);</span>
+<span class="nc" id="L93">    }</span>
+
+    @Override
+    public void init(ServletConfig servletConfig) throws ServletException {
+<span class="nc" id="L97">        context = servletConfig.getServletContext();</span>
+<span class="nc" id="L98">        String basePackage = servletConfig.getInitParameter(&quot;basePackageForPages&quot;);</span>
+<span class="nc" id="L99">        String applicationPackagesS = servletConfig.getInitParameter(&quot;applicationPackages&quot;);</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">        cssRoot = servletConfig.getInitParameter(&quot;cssPath&quot;) == null ? &quot;css&quot; : servletConfig.getInitParameter(&quot;cssPath&quot;);</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">        String jsRoot = servletConfig.getInitParameter(&quot;jsPath&quot;) == null ? &quot;js&quot; : servletConfig.getInitParameter(&quot;jsPath&quot;);</span>
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        String startPage = servletConfig.getInitParameter(&quot;startPage&quot;) == null ? &quot;Home&quot; : servletConfig.getInitParameter(&quot;startPage&quot;);</span>
+<span class="nc" id="L103">        String developmentModeS = servletConfig.getInitParameter(&quot;developmentMode&quot;);</span>
+<span class="nc bnc" id="L104" title="All 4 branches missed.">        developmentMode = developmentModeS != null &amp;&amp; developmentModeS.equalsIgnoreCase(&quot;true&quot;);</span>
+<span class="nc" id="L105">        String watchForUpdateS = servletConfig.getInitParameter(&quot;watchForUpdate&quot;);</span>
+
+<span class="nc bnc" id="L107" title="All 2 branches missed.">        if (developmentMode) {</span>
+<span class="nc" id="L108">            log.warn(&quot;Development mode is on. Make sure you do not leave it on in production!&quot;);</span>
+<span class="nc" id="L109">            context.setAttribute(&quot;wheelDevelopmentMode&quot;, &quot;&quot;);</span>
+        }
+
+<span class="nc" id="L112">        context.setAttribute(&quot;wheelCssPath&quot;, cssRoot);</span>
+<span class="nc" id="L113">        context.setAttribute(&quot;wheelJsPath&quot;, jsRoot);</span>
+<span class="nc" id="L114">        context.setAttribute(&quot;wheelStartPage&quot;, startPage);</span>
+
+
+<span class="nc bnc" id="L117" title="All 4 branches missed.">        assert (basePackage != null &amp;&amp; basePackage.length() &gt; 0);</span>
+<span class="nc bnc" id="L118" title="All 4 branches missed.">        assert (applicationPackagesS != null &amp;&amp; applicationPackagesS.length() &gt; 0);</span>
+
+<span class="nc" id="L120">        context.setAttribute(&quot;basePackageForPages&quot;, basePackage);</span>
+
+<span class="nc" id="L122">        applicationPackages = new HashSet&lt;String&gt;();</span>
+<span class="nc" id="L123">        String[] packagesSplit = applicationPackagesS.split(&quot;,&quot;);</span>
+
+<span class="nc bnc" id="L125" title="All 2 branches missed.">        for (int i = 0; i &lt; packagesSplit.length; i++) {</span>
+<span class="nc" id="L126">            String packageS = packagesSplit[i];</span>
+<span class="nc" id="L127">            applicationPackages.add(packageS.trim());</span>
+        }
+
+<span class="nc" id="L130">        applicationPackages.add(&quot;wheel&quot;);</span>
+<span class="nc" id="L131">        context.setAttribute(&quot;wheelApplicationPackages&quot;, applicationPackages);</span>
+        
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        if (watchForUpdateS != null) {</span>
+<span class="nc" id="L134">            watchForUpdate = new HashSet&lt;String&gt;();</span>
+
+<span class="nc" id="L136">            String[] watchForUpdateSplit = watchForUpdateS.split(&quot;,&quot;);</span>
+
+<span class="nc bnc" id="L138" title="All 2 branches missed.">            for (int i = 0; i &lt; watchForUpdateSplit.length; i++) {</span>
+<span class="nc" id="L139">                String location = watchForUpdateSplit[i];</span>
+<span class="nc" id="L140">                watchForUpdate.add(location);</span>
+            }
+        }
+<span class="nc" id="L143">    }</span>
+
+    private void handleRequest(HttpServletRequest request, HttpServletResponse response) {
+<span class="nc" id="L146">        String serverClassName = &quot;wheel.EngineImpl&quot;;</span>
+
+<span class="nc bnc" id="L148" title="All 2 branches missed.">        if (isMultipartRequest(request))</span>
+<span class="nc" id="L149">            serverClassName = &quot;wheel.MultipartEngineImpl&quot;;</span>
+
+<span class="nc" id="L151">        IResourceManager resourceManager = null;</span>
+
+<span class="nc bnc" id="L153" title="All 2 branches missed.">        if (developmentMode)</span>
+<span class="nc" id="L154">            resourceManager = new DevelopmentResourceManager(context);</span>
+        else
+<span class="nc" id="L156">            resourceManager = new DefaultResourceManager(context);</span>
+
+        try {
+<span class="nc" id="L159">            Class serverClass = resourceManager.loadClass(serverClassName);</span>
+<span class="nc" id="L160">            Constructor cons = serverClass.getConstructor(HttpServletRequest.class, HttpServletResponse.class, ServletContext.class);</span>
+<span class="nc" id="L161">            Object serverObject = cons.newInstance(request, response, context);</span>
+<span class="nc" id="L162">            Method processRequestMethod = serverClass.getMethod(&quot;processRequest&quot;);</span>
+<span class="nc" id="L163">            processRequestMethod.invoke(serverObject);</span>
+<span class="nc" id="L164">        } catch (ClassNotFoundException e) {</span>
+<span class="nc" id="L165">            log.error(&quot;Could not load wheel.EngineImpl.&quot;, e);</span>
+<span class="nc" id="L166">        } catch (NoSuchMethodException e) {</span>
+<span class="nc" id="L167">            log.error(&quot;Could not execute processRequest.&quot;, e);</span>
+<span class="nc" id="L168">        } catch (IllegalAccessException e) {</span>
+<span class="nc" id="L169">            log.error(&quot;Could not access wheel.Engine1Impl&quot;, e);</span>
+<span class="nc" id="L170">        } catch (InvocationTargetException e) {</span>
+<span class="nc" id="L171">            log.error(&quot;Error while processing request.&quot;, e);</span>
+<span class="nc" id="L172">        } catch (InstantiationException e) {</span>
+<span class="nc" id="L173">            log.error(&quot;Could not instantiate wheel.EngineImpl.&quot;, e);</span>
+<span class="nc" id="L174">        }</span>
+<span class="nc" id="L175">    }</span>
+
+
+    private boolean isMultipartRequest(HttpServletRequest request) {
+<span class="nc bnc" id="L179" title="All 2 branches missed.">        if (!&quot;post&quot;.equals(request.getMethod().toLowerCase())) {</span>
+<span class="nc" id="L180">            return false;</span>
+        }
+
+<span class="nc" id="L183">        String contentType = request.getContentType();</span>
+
+<span class="nc bnc" id="L185" title="All 2 branches missed.">        if (contentType == null) {</span>
+<span class="nc" id="L186">            return false;</span>
+        }
+<span class="nc bnc" id="L188" title="All 2 branches missed.">        if (contentType.toLowerCase().startsWith(&quot;multipart/&quot;)) {</span>
+<span class="nc" id="L189">            return true;</span>
+        }
+<span class="nc" id="L191">        return false;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

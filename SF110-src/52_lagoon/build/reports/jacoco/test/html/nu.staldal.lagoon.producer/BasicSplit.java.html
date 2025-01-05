@@ -1,0 +1,299 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BasicSplit.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">52_lagoon</a> &gt; <a href="index.source.html" class="el_package">nu.staldal.lagoon.producer</a> &gt; <span class="el_source">BasicSplit.java</span></div><h1>BasicSplit.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2001, Mikael St�ldal
+ * All rights reserved.
+ * 
+ * Redistribution and use in source and binary forms, with or without 
+ * modification, are permitted provided that the following conditions 
+ * are met:
+ * 
+ * 1. Redistributions of source code must retain the above copyright 
+ * notice, this list of conditions and the following disclaimer.
+ * 
+ * 2. Redistributions in binary form must reproduce the above copyright 
+ * notice, this list of conditions and the following disclaimer in the 
+ * documentation and/or other materials provided with the distribution.
+ * 
+ * 3. Neither the name of the author nor the names of its contributors 
+ * may be used to endorse or promote products derived from this software 
+ * without specific prior written permission. 
+ * 
+ * 
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS 
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT 
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR 
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR 
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, 
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, 
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR 
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY 
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT 
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * 
+ * 
+ * Note: This is known as &quot;the modified BSD license&quot;. It's an approved 
+ * Open Source and Free Software license, see 
+ * http://www.opensource.org/licenses/ 
+ * and
+ * http://www.gnu.org/philosophy/license-list.html
+ */
+
+package nu.staldal.lagoon.producer;
+
+import nu.staldal.lagoon.core.*;
+import nu.staldal.lagoon.util.*;
+
+import java.util.*;
+import java.io.*;
+
+import org.xml.sax.*;
+
+<span class="nc" id="L51">public class BasicSplit extends Transform implements ContentHandler, Runnable</span>
+{
+    private static final boolean DEBUG = false;
+
+    private ContentHandler sax;
+    private Target target;
+    private Thread myThread;
+    private Thread mainThread;
+    private boolean inPart;
+    private String myNS;
+    private String myElement;
+    private String outputname;
+    private Exception myException;
+    private Hashtable prefixDict;
+
+    private static void sleepUntilInterrupted()
+    {
+        try {
+            while (true)
+<span class="nc" id="L70">                Thread.sleep(1000*60); // Sleep one minute</span>
+        }
+<span class="nc" id="L72">        catch (InterruptedException e) {}</span>
+<span class="nc" id="L73">    }</span>
+
+    public void init() throws LagoonException
+    {
+<span class="nc" id="L77">        this.myThread = null;</span>
+
+<span class="nc" id="L79">        this.myNS = getParam(&quot;namespace&quot;);</span>
+<span class="nc bnc" id="L80" title="All 2 branches missed.">        if (this.myNS == null)</span>
+<span class="nc" id="L81">        	throw new LagoonException(&quot;parameter \'namespace\' must be set&quot;);</span>
+<span class="nc" id="L82">        this.myElement = getParam(&quot;element&quot;);</span>
+<span class="nc bnc" id="L83" title="All 2 branches missed.">        if (this.myElement == null)</span>
+<span class="nc" id="L84">        	throw new LagoonException(&quot;parameter \'element\' must be set&quot;);</span>
+<span class="nc" id="L85">        this.outputname = getParam(&quot;outputname&quot;);</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">        if (this.outputname == null)</span>
+<span class="nc" id="L87">        	throw new LagoonException(&quot;parameter \'outputname\' must be set&quot;);</span>
+
+<span class="nc" id="L89">        this.myException = null;</span>
+<span class="nc" id="L90">        this.sax = null;</span>
+<span class="nc" id="L91">		this.target = null;</span>
+
+        if (DEBUG) System.out.println(&quot;BasicSplit: namespace=\'&quot; + myNS
+            + &quot;\'  element=\'&quot;+myElement+ &quot;\'  outputname=\'&quot;+outputname+&quot;\'&quot;);
+<span class="nc" id="L95">    }</span>
+
+    public void start(ContentHandler sax, Target target)
+        throws IOException, SAXException
+    {
+<span class="nc" id="L100">        this.sax = sax;</span>
+<span class="nc" id="L101">		this.target = target;</span>
+<span class="nc" id="L102">        mainThread = Thread.currentThread();</span>
+
+<span class="nc bnc" id="L104" title="All 2 branches missed.">        if (myThread == null)</span>
+        {
+<span class="nc" id="L106">            inPart = false;</span>
+<span class="nc" id="L107">            prefixDict = new Hashtable();</span>
+
+<span class="nc" id="L109">            sax.startDocument();</span>
+            // Dummy document
+<span class="nc" id="L111">            sax.endDocument();</span>
+
+<span class="nc" id="L113">            myThread = new Thread(this);</span>
+<span class="nc" id="L114">            myThread.start();</span>
+        }
+        else
+        {
+<span class="nc" id="L118">            myThread.interrupt();</span>
+        }
+
+<span class="nc" id="L121">        sleepUntilInterrupted();</span>
+
+<span class="nc" id="L123">		this.target = null;</span>
+<span class="nc" id="L124">        this.sax = null;</span>
+
+<span class="nc bnc" id="L126" title="All 2 branches missed.">        if (myException != null)</span>
+        {
+<span class="nc bnc" id="L128" title="All 2 branches missed.">			if (myException instanceof SAXException)</span>
+<span class="nc" id="L129">				throw (SAXException)myException;</span>
+			else
+<span class="nc" id="L131">				throw new SAXException(myException);</span>
+		}
+<span class="nc" id="L133">	}</span>
+
+    public boolean hasBeenUpdated(long when)
+        throws LagoonException, IOException
+    {
+<span class="nc" id="L138">        return getNext().hasBeenUpdated(when);</span>
+    }
+
+    /**
+     * Thread run method.
+     */
+    public void run()
+    {
+        try {
+<span class="nc" id="L147">            getNext().start(this, target);</span>
+        }
+<span class="nc" id="L149">        catch (Exception e)</span>
+        {
+<span class="nc" id="L151">            myException = e;</span>
+<span class="nc" id="L152">            mainThread.interrupt();</span>
+        }
+        finally
+        {
+<span class="nc" id="L156">            myThread = null;</span>
+        }
+<span class="nc" id="L158">    }</span>
+
+    // SAX ContentHandler implementation
+
+    public void setDocumentLocator(Locator locator)
+    {
+        // nothing to do
+<span class="nc" id="L165">    }</span>
+
+    public void startDocument()
+    {
+<span class="nc" id="L169">    }</span>
+
+    public void endDocument()
+    {
+<span class="nc" id="L173">        mainThread.interrupt();</span>
+<span class="nc" id="L174">    }</span>
+
+    public void startElement(String namespaceURI, String localName,
+        String qName, Attributes atts)
+        throws SAXException
+    {
+<span class="nc bnc" id="L180" title="All 2 branches missed.">        if (inPart)</span>
+<span class="nc" id="L181">            sax.startElement(namespaceURI, localName, qName, atts);</span>
+<span class="nc bnc" id="L182" title="All 4 branches missed.">        else if (namespaceURI.equals(myNS) &amp;&amp; localName.equals(myElement))</span>
+        {
+<span class="nc" id="L184">            ((FileTarget)target).newTarget(</span>
+<span class="nc" id="L185">				instantiateAtts(outputname, atts), false);</span>
+<span class="nc" id="L186">            mainThread.interrupt();</span>
+<span class="nc" id="L187">            sleepUntilInterrupted();</span>
+<span class="nc" id="L188">            sax.startDocument();</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">            for (Enumeration e = prefixDict.keys(); e.hasMoreElements(); )</span>
+            {
+<span class="nc" id="L191">				String prefix = (String)e.nextElement();</span>
+<span class="nc" id="L192">				String uri = (String)prefixDict.get(prefix);</span>
+<span class="nc" id="L193">				sax.startPrefixMapping(prefix, uri);</span>
+<span class="nc" id="L194">			}</span>
+<span class="nc" id="L195">            sax.startElement(namespaceURI, localName, qName, atts);</span>
+<span class="nc" id="L196">            inPart = true;</span>
+        }
+<span class="nc" id="L198">    }</span>
+
+    public void endElement(String namespaceURI, String localName, String qName)
+        throws SAXException
+    {
+<span class="nc bnc" id="L203" title="All 2 branches missed.">        if (inPart) sax.endElement(namespaceURI, localName, qName);</span>
+<span class="nc bnc" id="L204" title="All 4 branches missed.">        if (namespaceURI.equals(myNS) &amp;&amp; localName.equals(myElement))</span>
+        {
+<span class="nc" id="L206">            inPart = false;</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">            for (Enumeration e = prefixDict.keys(); e.hasMoreElements(); )</span>
+            {
+<span class="nc" id="L209">				String prefix = (String)e.nextElement();</span>
+<span class="nc" id="L210">				sax.endPrefixMapping(prefix);</span>
+<span class="nc" id="L211">			}</span>
+<span class="nc" id="L212">            sax.endDocument();</span>
+        }
+<span class="nc" id="L214">    }</span>
+
+	public void startPrefixMapping(String prefix, String uri)
+    	throws SAXException
+    {
+<span class="nc bnc" id="L219" title="All 2 branches missed.">		if (inPart)</span>
+<span class="nc" id="L220">			sax.startPrefixMapping(prefix, uri);</span>
+		else
+		{
+<span class="nc" id="L223">			prefixDict.put(prefix, uri);</span>
+		}
+<span class="nc" id="L225">	}</span>
+
+	public void endPrefixMapping(String prefix)
+    	throws SAXException
+    {
+<span class="nc bnc" id="L230" title="All 2 branches missed.">		if (inPart)</span>
+<span class="nc" id="L231">			sax.endPrefixMapping(prefix);</span>
+		{
+<span class="nc" id="L233">			prefixDict.remove(prefix);</span>
+		}
+<span class="nc" id="L235">	}</span>
+
+    public void characters(char ch[], int start, int length)
+        throws SAXException
+    {
+<span class="nc bnc" id="L240" title="All 2 branches missed.">        if (inPart) sax.characters(ch, start, length);</span>
+<span class="nc" id="L241">    }</span>
+
+    public void ignorableWhitespace(char ch[], int start, int length)
+        throws SAXException
+    {
+<span class="nc bnc" id="L246" title="All 2 branches missed.">        if (inPart) sax.ignorableWhitespace(ch, start, length);</span>
+<span class="nc" id="L247">    }</span>
+
+    public void processingInstruction(String target, String data)
+        throws SAXException
+    {
+<span class="nc bnc" id="L252" title="All 2 branches missed.">        if (inPart) sax.processingInstruction(target, data);</span>
+<span class="nc" id="L253">    }</span>
+
+	public void skippedEntity(String name)
+        throws SAXException
+	{
+<span class="nc bnc" id="L258" title="All 2 branches missed.">		if (inPart) sax.skippedEntity(name);</span>
+<span class="nc" id="L259">	}</span>
+
+
+   /**
+     * Instantiate a filename template to a filename.
+     *
+     * @param template   the filename template
+     * @param atts      the Attributes
+     *
+     * @return  the filename
+     */
+    private static String instantiateAtts(String template,
+        final Attributes atts)
+        throws SAXException
+    {
+        try {
+<span class="nc" id="L275">            return TemplateProcessor.processTemplate('[', ']', '\'', '\&quot;',</span>
+                template,
+<span class="nc" id="L277">                new ExpressionEvaluator() {</span>
+                    public String eval(String expr) throws SAXException
+                    {
+<span class="nc" id="L280">                        String value = atts.getValue(&quot;&quot;, expr);</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">                        if (value == null) throw new SAXException(</span>
+                            &quot;Attribute not found: &quot; + expr);
+                        else
+<span class="nc" id="L284">                            return value;</span>
+                    }
+                });
+        }
+<span class="nc" id="L288">        catch (TemplateException e)</span>
+        {
+<span class="nc" id="L290">            Exception ee = e.getException();</span>
+<span class="nc bnc" id="L291" title="All 2 branches missed.">            if (ee != null)</span>
+<span class="nc" id="L292">                throw (SAXException)ee;</span>
+            else
+<span class="nc" id="L294">                throw new SAXException(</span>
+<span class="nc" id="L295">                    &quot;Illegal attribute template: &quot; + e.getMessage());</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

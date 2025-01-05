@@ -1,0 +1,851 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PluginManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.plugin</a> &gt; <span class="el_source">PluginManager.java</span></div><h1>PluginManager.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.plugin;
+
+/*
+ * Copyright (C) 2001-2004 Colin Bell
+ * colbell@users.sourceforge.net
+ *
+ * Modifications Copyright (c) 2004 Jason Height.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+
+import java.io.File;
+import java.io.IOException;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import net.sourceforge.squirrel_sql.client.ApplicationArguments;
+import net.sourceforge.squirrel_sql.client.IApplication;
+import net.sourceforge.squirrel_sql.client.gui.db.SQLAlias;
+import net.sourceforge.squirrel_sql.client.gui.db.aliasproperties.IAliasPropertiesPanelController;
+import net.sourceforge.squirrel_sql.client.gui.desktopcontainer.ISessionWidget;
+import net.sourceforge.squirrel_sql.client.gui.desktopcontainer.IWidget;
+import net.sourceforge.squirrel_sql.client.gui.desktopcontainer.WidgetAdapter;
+import net.sourceforge.squirrel_sql.client.gui.desktopcontainer.WidgetEvent;
+import net.sourceforge.squirrel_sql.client.gui.session.ObjectTreeInternalFrame;
+import net.sourceforge.squirrel_sql.client.gui.session.SQLInternalFrame;
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.client.util.ApplicationFiles;
+import net.sourceforge.squirrel_sql.fw.gui.GUIUtils;
+import net.sourceforge.squirrel_sql.fw.id.IIdentifier;
+import net.sourceforge.squirrel_sql.fw.util.ClassLoaderListener;
+import net.sourceforge.squirrel_sql.fw.util.MyURLClassLoader;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.Utilities;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+/**
+ * Manages plugins for the application.
+ * 
+ * @author &lt;A HREF=&quot;mailto:colbell@users.sourceforge.net&quot;&gt;Colin Bell&lt;/A&gt;
+ */
+public class PluginManager implements IPluginManager
+{
+	/** Internationalized strings for this class. */
+<span class="nc" id="L69">	private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L70">		StringManagerFactory.getStringManager(PluginManager.class);</span>
+
+	/** Logger for this class. */
+<span class="nc" id="L73">	private static final ILogger s_log = LoggerController.createLogger(PluginManager.class);</span>
+
+	/** Application API object. */
+	private IApplication _app;
+
+	/** Classloader used for plugins. */
+	private MyURLClassLoader _pluginsClassLoader;
+
+	/**
+	 * Contains a &lt;TT&gt;PluginInfo&lt;/TT&gt; object for every plugin that we attempted to load.
+	 */
+<span class="nc" id="L84">	private final List&lt;PluginInfo&gt; _plugins = new ArrayList&lt;PluginInfo&gt;();</span>
+
+	/**
+	 * Contains all plugins (&lt;TT&gt;IPlugin&lt;/TT&gt;) successfully loaded. Keyed by
+	 * &lt;TT&gt;IPlugin.getInternalName()&lt;/TT&gt;.
+	 */
+<span class="nc" id="L90">	private final Map&lt;String, IPlugin&gt; _loadedPlugins = new HashMap&lt;String, IPlugin&gt;();</span>
+
+	/**
+	 * Contains a &lt;TT&gt;SessionPluginInfo&lt;/TT&gt; object for evey object in
+	 * &lt;TT&gt;_loadedPlugins&lt;TT&gt; that is an instance of &lt;TT&gt;ISessionPlugin&lt;/TT&gt;.
+	 */
+<span class="nc" id="L96">	private final List&lt;SessionPluginInfo&gt; _sessionPlugins = new ArrayList&lt;SessionPluginInfo&gt;();</span>
+
+	/**
+	 * Collection of active sessions. Keyed by &lt;TT&gt;ISession.getIdentifier()&lt;/TT&gt; and contains a &lt;TT&gt;List&lt;/TT&gt;
+	 * of active &lt;TT&gt;ISessionPlugin&lt;/TT&gt; objects for the session.
+	 */
+<span class="nc" id="L102">	private final Map&lt;IIdentifier, List&lt;SessionPluginInfo&gt;&gt; _activeSessions =</span>
+		new HashMap&lt;IIdentifier, List&lt;SessionPluginInfo&gt;&gt;();
+
+	/**
+	 * Collection of &lt;TT&gt;PluginLoadInfo&lt;/TT&gt; objects for the plugins. Stores info about how long it took to
+	 * load each plugin.
+	 */
+<span class="nc" id="L109">	private final Map&lt;String, PluginLoadInfo&gt; _pluginLoadInfoColl = new HashMap&lt;String, PluginLoadInfo&gt;();</span>
+
+<span class="nc" id="L111">	private HashMap&lt;IIdentifier, List&lt;PluginSessionCallback&gt;&gt; _pluginSessionCallbacksBySessionID =</span>
+		new HashMap&lt;IIdentifier, List&lt;PluginSessionCallback&gt;&gt;();
+
+	/** The class that listens for notifications as archives are being loaded */
+<span class="nc" id="L115">	private ClassLoaderListener classLoaderListener = null;</span>
+
+	/**
+	 * Ctor.
+	 * 
+	 * @param app
+	 *           Application API.
+	 * @throws IllegalArgumentException.
+	 *            Thrown if &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;IApplication&lt;/TT&gt; passed.
+	 */
+	public PluginManager(IApplication app)
+	{
+<span class="nc" id="L127">		super();</span>
+<span class="nc bnc" id="L128" title="All 2 branches missed.">		if (app == null)</span>
+		{
+<span class="nc" id="L130">			throw new IllegalArgumentException(&quot;IApplication == null&quot;);</span>
+		}
+
+<span class="nc" id="L133">		_app = app;</span>
+<span class="nc" id="L134">	}</span>
+
+	/**
+	 * A new session has been created. At this point the &lt;TT&gt;SessionPanel&lt;/TT&gt; does not exist for the new
+	 * session.
+	 * 
+	 * @param session
+	 *           The new session.
+	 * @throws IllegalArgumentException
+	 *            Thrown if a &lt;TT&gt;null&lt;/TT&gt; ISession&lt;/TT&gt; passed.
+	 */
+	public synchronized void sessionCreated(ISession session)
+	{
+<span class="nc bnc" id="L147" title="All 2 branches missed.">		if (session == null)</span>
+		{
+<span class="nc" id="L149">			throw new IllegalArgumentException(&quot;ISession == null&quot;);</span>
+		}
+
+<span class="nc bnc" id="L152" title="All 2 branches missed.">		for (Iterator&lt;SessionPluginInfo&gt; it = _sessionPlugins.iterator(); it.hasNext();)</span>
+		{
+<span class="nc" id="L154">			SessionPluginInfo spi = it.next();</span>
+			try
+			{
+<span class="nc" id="L157">				spi.getSessionPlugin().sessionCreated(session);</span>
+<span class="nc" id="L158">			} catch (Throwable th)</span>
+			{
+<span class="nc" id="L160">				String msg =</span>
+<span class="nc" id="L161">					s_stringMgr.getString(&quot;PluginManager.error.sessioncreated&quot;, spi.getPlugin()</span>
+<span class="nc" id="L162">																										.getDescriptiveName());</span>
+<span class="nc" id="L163">				s_log.error(msg, th);</span>
+<span class="nc" id="L164">				_app.showErrorDialog(msg, th);</span>
+<span class="nc" id="L165">			}</span>
+<span class="nc" id="L166">		}</span>
+<span class="nc" id="L167">	}</span>
+
+	/**
+	 * A new session is starting.
+	 * 
+	 * @param session
+	 *           The new session.
+	 * @throws IllegalArgumentException
+	 *            Thrown if a &lt;TT&gt;null&lt;/TT&gt; ISession&lt;/TT&gt; passed.
+	 */
+	public synchronized void sessionStarted(final ISession session)
+	{
+<span class="nc bnc" id="L179" title="All 2 branches missed.">		if (session == null)</span>
+		{
+<span class="nc" id="L181">			throw new IllegalArgumentException(&quot;ISession == null&quot;);</span>
+		}
+<span class="nc" id="L183">		final List&lt;SessionPluginInfo&gt; plugins = new ArrayList&lt;SessionPluginInfo&gt;();</span>
+<span class="nc" id="L184">		_activeSessions.put(session.getIdentifier(), plugins);</span>
+
+<span class="nc" id="L186">		ArrayList&lt;SessionPluginInfo&gt; startInFG = new ArrayList&lt;SessionPluginInfo&gt;();</span>
+<span class="nc" id="L187">		final ArrayList&lt;SessionPluginInfo&gt; startInBG = new ArrayList&lt;SessionPluginInfo&gt;();</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">		for (Iterator&lt;SessionPluginInfo&gt; it = _sessionPlugins.iterator(); it.hasNext();)</span>
+		{
+<span class="nc" id="L190">			SessionPluginInfo spi = it.next();</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">			if (spi.getSessionPlugin().allowsSessionStartedInBackground())</span>
+			{
+<span class="nc" id="L193">				startInBG.add(spi);</span>
+			} else
+			{
+<span class="nc" id="L196">				startInFG.add(spi);</span>
+			}
+
+<span class="nc" id="L199">		}</span>
+<span class="nc" id="L200">		session.setPluginsfinishedLoading(true);</span>
+
+<span class="nc bnc" id="L202" title="All 2 branches missed.">		for (Iterator&lt;SessionPluginInfo&gt; it = startInFG.iterator(); it.hasNext();)</span>
+		{
+<span class="nc" id="L204">			SessionPluginInfo spi = it.next();</span>
+<span class="nc" id="L205">			sendSessionStarted(session, spi, plugins);</span>
+<span class="nc" id="L206">		}</span>
+
+<span class="nc" id="L208">		session.getApplication().getThreadPool().addTask(new Runnable()</span>
+<span class="nc" id="L209">		{</span>
+			public void run()
+			{
+<span class="nc bnc" id="L212" title="All 2 branches missed.">				for (Iterator&lt;SessionPluginInfo&gt; it = startInBG.iterator(); it.hasNext();)</span>
+				{
+<span class="nc" id="L214">					SessionPluginInfo spi = it.next();</span>
+<span class="nc" id="L215">					sendSessionStarted(session, spi, plugins);</span>
+<span class="nc" id="L216">				}</span>
+<span class="nc" id="L217">				session.setPluginsfinishedLoading(true);</span>
+<span class="nc" id="L218">			}</span>
+		});
+<span class="nc" id="L220">	}</span>
+
+	private void sendSessionStarted(ISession session, SessionPluginInfo spi, List&lt;SessionPluginInfo&gt; plugins)
+	{
+		try
+		{
+<span class="nc" id="L226">			PluginSessionCallback pluginSessionCallback = spi.getSessionPlugin().sessionStarted(session);</span>
+
+<span class="nc bnc" id="L228" title="All 2 branches missed.">			if (null != pluginSessionCallback)</span>
+			{
+<span class="nc" id="L230">				List&lt;PluginSessionCallback&gt; list =</span>
+<span class="nc" id="L231">					_pluginSessionCallbacksBySessionID.get(session.getIdentifier());</span>
+<span class="nc bnc" id="L232" title="All 2 branches missed.">				if (null == list)</span>
+				{
+<span class="nc" id="L234">					list = new ArrayList&lt;PluginSessionCallback&gt;();</span>
+<span class="nc" id="L235">					_pluginSessionCallbacksBySessionID.put(session.getIdentifier(), list);</span>
+				}
+<span class="nc" id="L237">				list.add(pluginSessionCallback);</span>
+
+<span class="nc" id="L239">				plugins.add(spi);</span>
+			}
+<span class="nc" id="L241">		} catch (final Throwable th)</span>
+		{
+<span class="nc" id="L243">			final String msg =</span>
+<span class="nc" id="L244">				s_stringMgr.getString(&quot;PluginManager.error.sessionstarted&quot;, spi.getPlugin().getDescriptiveName());</span>
+<span class="nc" id="L245">			s_log.error(msg, th);</span>
+<span class="nc" id="L246">			GUIUtils.processOnSwingEventThread(new Runnable()</span>
+<span class="nc" id="L247">			{</span>
+				public void run()
+				{
+<span class="nc" id="L250">					_app.showErrorDialog(msg, th);</span>
+<span class="nc" id="L251">				}</span>
+			});
+
+<span class="nc" id="L254">		}</span>
+<span class="nc" id="L255">	}</span>
+
+	/**
+	 * A session is ending.
+	 * 
+	 * @param session
+	 *           The session ending.
+	 * @throws IllegalArgumentException
+	 *            Thrown if a &lt;TT&gt;null&lt;/TT&gt; ISession&lt;/TT&gt; passed.
+	 */
+	public synchronized void sessionEnding(ISession session)
+	{
+<span class="nc bnc" id="L267" title="All 2 branches missed.">		if (session == null)</span>
+		{
+<span class="nc" id="L269">			throw new IllegalArgumentException(&quot;ISession == null&quot;);</span>
+		}
+
+<span class="nc" id="L272">		List&lt;SessionPluginInfo&gt; plugins = _activeSessions.remove(session.getIdentifier());</span>
+<span class="nc bnc" id="L273" title="All 2 branches missed.">		if (plugins != null)</span>
+		{
+<span class="nc bnc" id="L275" title="All 2 branches missed.">			for (Iterator&lt;SessionPluginInfo&gt; it = plugins.iterator(); it.hasNext();)</span>
+			{
+<span class="nc" id="L277">				SessionPluginInfo spi = it.next();</span>
+				try
+				{
+<span class="nc" id="L280">					spi.getSessionPlugin().sessionEnding(session);</span>
+<span class="nc" id="L281">				} catch (Throwable th)</span>
+				{
+<span class="nc" id="L283">					String msg =</span>
+<span class="nc" id="L284">						s_stringMgr.getString(&quot;PluginManager.error.sessionended&quot;, spi	.getPlugin()</span>
+<span class="nc" id="L285">																											.getDescriptiveName());</span>
+<span class="nc" id="L286">					s_log.error(msg, th);</span>
+<span class="nc" id="L287">					_app.showErrorDialog(msg, th);</span>
+<span class="nc" id="L288">				}</span>
+<span class="nc" id="L289">			}</span>
+
+<span class="nc" id="L291">			_pluginSessionCallbacksBySessionID.remove(session.getIdentifier());</span>
+		}
+<span class="nc" id="L293">	}</span>
+
+	public synchronized void unloadPlugin(String pluginInternalName)
+	{
+<span class="nc bnc" id="L297" title="All 2 branches missed.">		for (Iterator&lt;IPlugin&gt; it = _loadedPlugins.values().iterator(); it.hasNext();)</span>
+		{
+<span class="nc" id="L299">			IPlugin plugin = it.next();</span>
+<span class="nc bnc" id="L300" title="All 2 branches missed.">			if (plugin.getInternalName().equals(pluginInternalName))</span>
+			{
+<span class="nc" id="L302">				plugin.unload();</span>
+<span class="nc" id="L303">				it.remove();</span>
+			}
+<span class="nc" id="L305">		}</span>
+<span class="nc bnc" id="L306" title="All 2 branches missed.">		for (Iterator&lt;SessionPluginInfo&gt; it = _sessionPlugins.iterator(); it.hasNext();)</span>
+		{
+<span class="nc" id="L308">			SessionPluginInfo plugin = it.next();</span>
+<span class="nc bnc" id="L309" title="All 2 branches missed.">			if (plugin.getInternalName().equals(pluginInternalName))</span>
+			{
+<span class="nc" id="L311">				it.remove();</span>
+			}
+<span class="nc" id="L313">		}</span>
+<span class="nc" id="L314">	}</span>
+
+	/**
+	 * Unload all plugins.
+	 */
+	public synchronized void unloadPlugins()
+	{
+<span class="nc bnc" id="L321" title="All 2 branches missed.">		for (Iterator&lt;IPlugin&gt; it = _loadedPlugins.values().iterator(); it.hasNext();)</span>
+		{
+<span class="nc" id="L323">			IPlugin plugin = it.next();</span>
+			try
+			{
+<span class="nc" id="L326">				plugin.unload();</span>
+<span class="nc" id="L327">			} catch (Throwable th)</span>
+			{
+<span class="nc" id="L329">				String msg = s_stringMgr.getString(&quot;PluginManager.error.unloading&quot;, plugin.getInternalName());</span>
+<span class="nc" id="L330">				s_log.error(msg, th);</span>
+<span class="nc" id="L331">				_app.showErrorDialog(msg, th);</span>
+<span class="nc" id="L332">			}</span>
+<span class="nc" id="L333">		}</span>
+<span class="nc" id="L334">	}</span>
+
+	public synchronized PluginInfo[] getPluginInformation()
+	{
+<span class="nc" id="L338">		return _plugins.toArray(new PluginInfo[_plugins.size()]);</span>
+	}
+
+	public synchronized SessionPluginInfo[] getPluginInformation(ISession session)
+	{
+<span class="nc bnc" id="L343" title="All 2 branches missed.">		if (session == null)</span>
+		{
+<span class="nc" id="L345">			throw new IllegalArgumentException(&quot;Null ISession passed&quot;);</span>
+		}
+<span class="nc" id="L347">		List&lt;SessionPluginInfo&gt; list = _activeSessions.get(session.getIdentifier());</span>
+<span class="nc bnc" id="L348" title="All 2 branches missed.">		if (list != null)</span>
+		{
+<span class="nc" id="L350">			return list.toArray(new SessionPluginInfo[list.size()]);</span>
+		}
+<span class="nc" id="L352">		return new SessionPluginInfo[0];</span>
+	}
+
+	public synchronized IPluginDatabaseObjectType[] getDatabaseObjectTypes(ISession session)
+	{
+<span class="nc" id="L357">		List&lt;IPluginDatabaseObjectType&gt; objTypesList = new ArrayList&lt;IPluginDatabaseObjectType&gt;();</span>
+<span class="nc" id="L358">		List&lt;SessionPluginInfo&gt; plugins = _activeSessions.get(session.getIdentifier());</span>
+<span class="nc bnc" id="L359" title="All 2 branches missed.">		if (plugins != null)</span>
+		{
+<span class="nc bnc" id="L361" title="All 2 branches missed.">			for (Iterator&lt;SessionPluginInfo&gt; it = plugins.iterator(); it.hasNext();)</span>
+			{
+<span class="nc" id="L363">				SessionPluginInfo spi = it.next();</span>
+<span class="nc" id="L364">				IPluginDatabaseObjectType[] objTypes = spi.getSessionPlugin().getObjectTypes(session);</span>
+<span class="nc bnc" id="L365" title="All 2 branches missed.">				if (objTypes != null)</span>
+				{
+<span class="nc bnc" id="L367" title="All 2 branches missed.">					for (int i = 0; i &lt; objTypes.length; ++i)</span>
+					{
+<span class="nc" id="L369">						objTypesList.add(objTypes[i]);</span>
+					}
+				}
+<span class="nc" id="L372">			}</span>
+		}
+
+<span class="nc" id="L375">		return objTypesList.toArray(new IPluginDatabaseObjectType[objTypesList.size()]);</span>
+	}
+
+	/**
+	 * Retrieve an array of all the &lt;TT&gt;URL&lt;/TT&gt; objects that are used to find plugin classes.
+	 * 
+	 * @return &lt;TT&gt;URL[]&lt;/TT&gt;.
+	 */
+	public URL[] getPluginURLs()
+	{
+<span class="nc" id="L385">		return _pluginsClassLoader.getURLs();</span>
+	}
+
+	public PluginStatus[] getPluginStatuses()
+	{
+<span class="nc" id="L390">		return _app.getSquirrelPreferences().getPluginStatuses();</span>
+	}
+
+	public synchronized void setPluginStatuses(PluginStatus[] values)
+	{
+<span class="nc" id="L395">		_app.getSquirrelPreferences().setPluginStatuses(values);</span>
+<span class="nc" id="L396">	}</span>
+
+	/**
+	 * Retrieve loaded session plugins
+	 * 
+	 * @return &lt;TT&gt;Iterator&lt;/TT&gt; over a collection of &lt;TT&gt;ISessionPlugin&lt;/TT&gt; objects.
+	 */
+	public Iterator&lt;SessionPluginInfo&gt; getSessionPluginIterator()
+	{
+<span class="nc" id="L405">		return _sessionPlugins.iterator();</span>
+	}
+
+	/**
+	 * TODO: Clean this mess up!!!! Load plugins. Load all plugin jars into class loader.
+	 */
+	public void loadPlugins()
+	{
+<span class="nc" id="L413">		List&lt;URL&gt; pluginUrls = new ArrayList&lt;URL&gt;();</span>
+<span class="nc" id="L414">		File dir = new ApplicationFiles().getPluginsDirectory();</span>
+<span class="nc" id="L415">		boolean isMac = System.getProperty(&quot;os.name&quot;).toLowerCase().startsWith(&quot;mac&quot;);</span>
+<span class="nc bnc" id="L416" title="All 2 branches missed.">		if (dir.isDirectory())</span>
+		{
+<span class="nc" id="L418">			final Map&lt;String, PluginStatus&gt; pluginStatuses = new HashMap&lt;String, PluginStatus&gt;();</span>
+			{
+<span class="nc" id="L420">				final PluginStatus[] ar = getPluginStatuses();</span>
+<span class="nc bnc" id="L421" title="All 2 branches missed.">				for (int i = 0; i &lt; ar.length; ++i)</span>
+				{
+<span class="nc" id="L423">					pluginStatuses.put(ar[i].getInternalName(), ar[i]);</span>
+				}
+			}
+<span class="nc" id="L426">			File[] files = dir.listFiles();</span>
+<span class="nc bnc" id="L427" title="All 2 branches missed.">			for (int i = 0; i &lt; files.length; ++i)</span>
+			{
+<span class="nc bnc" id="L429" title="All 2 branches missed.">				if (files[i].isFile())</span>
+				{
+<span class="nc" id="L431">					checkPlugin(files[i], pluginStatuses, pluginUrls, isMac);</span>
+				}
+			}
+		}
+<span class="nc" id="L435">		Collections.sort(pluginUrls, new PluginLoadOrderComparator());</span>
+
+<span class="nc" id="L437">		URL[] urls = pluginUrls.toArray(new URL[pluginUrls.size()]);</span>
+<span class="nc bnc" id="L438" title="All 2 branches missed.">		if (s_log.isDebugEnabled())</span>
+		{
+<span class="nc bnc" id="L440" title="All 2 branches missed.">			for (int i = 0; i &lt; urls.length; ++i)</span>
+			{
+<span class="nc" id="L442">				s_log.debug(&quot;Plugin class loader URL[&quot; + i + &quot;] = &quot; + urls[i]);</span>
+			}
+		}
+
+<span class="nc" id="L446">		_pluginsClassLoader = new MyURLClassLoader(urls);</span>
+<span class="nc" id="L447">		_pluginsClassLoader.addClassLoaderListener(classLoaderListener);</span>
+<span class="nc" id="L448">		Class&lt;?&gt;[] classes = _pluginsClassLoader.getAssignableClasses(IPlugin.class, s_log);</span>
+<span class="nc bnc" id="L449" title="All 2 branches missed.">		for (int i = 0; i &lt; classes.length; ++i)</span>
+		{
+			try
+			{
+<span class="nc" id="L453">				loadPlugin(classes[i]);</span>
+<span class="nc" id="L454">			} catch (Throwable th)</span>
+			{
+<span class="nc" id="L456">				String msg = s_stringMgr.getString(&quot;PluginManager.error.loadpluginclass&quot;, classes[i].getName());</span>
+<span class="nc" id="L457">				th.printStackTrace();</span>
+<span class="nc" id="L458">				s_log.error(msg, th);</span>
+<span class="nc" id="L459">				_app.showErrorDialog(msg, th);</span>
+<span class="nc" id="L460">			}</span>
+		}
+<span class="nc" id="L462">		Collections.sort(_plugins, new Comparator&lt;PluginInfo&gt;()</span>
+<span class="nc" id="L463">		{</span>
+			public int compare(PluginInfo arg0, PluginInfo arg1)
+			{
+<span class="nc bnc" id="L466" title="All 4 branches missed.">				if (arg0 == null || arg1 == null)</span>
+				{
+<span class="nc" id="L468">					throw new NullPointerException(&quot;arg1 and arg2 must not be null&quot;);</span>
+				}
+<span class="nc" id="L470">				return arg0.getInternalName().compareTo(arg1.getInternalName());</span>
+			}
+
+		});
+<span class="nc" id="L474">	}</span>
+
+	private void checkPlugin(File pluginFile, Map&lt;String, PluginStatus&gt; pluginStatuses, List&lt;URL&gt; pluginUrls,
+		boolean isMac)
+	{
+<span class="nc" id="L479">		final String fileName = pluginFile.getAbsolutePath();</span>
+<span class="nc bnc" id="L480" title="All 2 branches missed.">		if (!fileName.toLowerCase().endsWith(&quot;src.jar&quot;)</span>
+<span class="nc bnc" id="L481" title="All 4 branches missed.">			&amp;&amp; (fileName.toLowerCase().endsWith(&quot;.zip&quot;) || fileName.toLowerCase().endsWith(&quot;.jar&quot;)))</span>
+		{
+			try
+			{
+<span class="nc bnc" id="L485" title="All 2 branches missed.">				if (fileName.toLowerCase().endsWith(&quot;jedit.jar&quot;))</span>
+				{
+<span class="nc" id="L487">					String msg = s_stringMgr.getString(&quot;PluginManager.error.jedit&quot;);</span>
+<span class="nc" id="L488">					_app.showErrorDialog(msg);</span>
+<span class="nc" id="L489">					return;</span>
+				}
+
+<span class="nc" id="L492">				final String fullFilePath = pluginFile.getAbsolutePath();</span>
+<span class="nc" id="L493">				final String internalName = Utilities.removeFileNameSuffix(pluginFile.getName());</span>
+<span class="nc" id="L494">				final PluginStatus ps = pluginStatuses.get(internalName);</span>
+<span class="nc bnc" id="L495" title="All 4 branches missed.">				if (!isMac &amp;&amp; internalName.startsWith(&quot;macosx&quot;))</span>
+				{
+<span class="nc" id="L497">					s_log.info(&quot;Detected MacOS X plugin on non-Mac platform - skipping&quot;);</span>
+<span class="nc" id="L498">					return;</span>
+				}
+<span class="nc bnc" id="L500" title="All 4 branches missed.">				if (ps != null &amp;&amp; !ps.isLoadAtStartup())</span>
+				{
+					// We need this in order to allow the user to see this
+					// plugin - which isn't loaded - in the plugin summary
+					// dialog, so that they can enable it.
+<span class="nc" id="L505">					PluginInfo pi = new PluginInfo();</span>
+<span class="nc" id="L506">					pi.setPlugin(new MyPlaceHolderPlugin(internalName));</span>
+<span class="nc" id="L507">					_plugins.add(pi);</span>
+
+<span class="nc" id="L509">				} else</span>
+				{
+<span class="nc" id="L511">					pluginUrls.add(pluginFile.toURI().toURL());</span>
+
+					// See if plugin has any jars in lib dir.
+<span class="nc" id="L514">					final String pluginDirName = Utilities.removeFileNameSuffix(fullFilePath);</span>
+<span class="nc" id="L515">					final File libDir = new File(pluginDirName, &quot;lib&quot;);</span>
+<span class="nc" id="L516">					addPluginLibraries(libDir, pluginUrls);</span>
+
+				}
+<span class="nc" id="L519">			} catch (IOException ex)</span>
+			{
+<span class="nc" id="L521">				String msg = s_stringMgr.getString(&quot;PluginManager.error.loadplugin&quot;, fileName);</span>
+<span class="nc" id="L522">				s_log.error(msg, ex);</span>
+<span class="nc" id="L523">				_app.showErrorDialog(msg, ex);</span>
+<span class="nc" id="L524">			}</span>
+		}
+<span class="nc" id="L526">	}</span>
+
+	private void addPluginLibraries(File libDir, List&lt;URL&gt; pluginUrls)
+	{
+<span class="nc bnc" id="L530" title="All 4 branches missed.">		if (libDir.exists() &amp;&amp; libDir.isDirectory())</span>
+		{
+<span class="nc" id="L532">			File[] libDirFiles = libDir.listFiles();</span>
+<span class="nc bnc" id="L533" title="All 2 branches missed.">			for (int j = 0; j &lt; libDirFiles.length; ++j)</span>
+			{
+<span class="nc bnc" id="L535" title="All 2 branches missed.">				if (libDirFiles[j].isFile())</span>
+				{
+<span class="nc" id="L537">					final String fn = libDirFiles[j].getAbsolutePath();</span>
+<span class="nc bnc" id="L538" title="All 4 branches missed.">					if (fn.toLowerCase().endsWith(&quot;.zip&quot;) || fn.toLowerCase().endsWith(&quot;.jar&quot;))</span>
+					{
+						try
+						{
+<span class="nc" id="L542">							pluginUrls.add(libDirFiles[j].toURI().toURL());</span>
+<span class="nc" id="L543">						} catch (IOException ex)</span>
+						{
+<span class="nc" id="L545">							String msg = s_stringMgr.getString(&quot;PluginManager.error.loadlib&quot;, fn);</span>
+<span class="nc" id="L546">							s_log.error(msg, ex);</span>
+<span class="nc" id="L547">							_app.showErrorDialog(msg, ex);</span>
+<span class="nc" id="L548">						}</span>
+					}
+				}
+			}
+		}
+
+<span class="nc" id="L554">	}</span>
+
+	/**
+	 * Initialize plugins.
+	 */
+	public void initializePlugins()
+	{
+<span class="nc" id="L561">		_app.getWindowManager().addSessionWidgetListener(new WidgetAdapter()</span>
+<span class="nc" id="L562">		{</span>
+			public void widgetOpened(WidgetEvent e)
+			{
+<span class="nc" id="L565">				onWidgetOpened(e);</span>
+<span class="nc" id="L566">			}</span>
+		});
+
+<span class="nc bnc" id="L569" title="All 2 branches missed.">		for (Iterator&lt;IPlugin&gt; it = _loadedPlugins.values().iterator(); it.hasNext();)</span>
+		{
+<span class="nc" id="L571">			IPlugin plugin = it.next();</span>
+			try
+			{
+<span class="nc" id="L574">				final PluginLoadInfo pli = getPluginLoadInfo(plugin);</span>
+<span class="nc" id="L575">				pli.startInitializing();</span>
+<span class="nc" id="L576">				plugin.initialize();</span>
+<span class="nc" id="L577">				pli.endInitializing();</span>
+<span class="nc" id="L578">			} catch (Throwable th)</span>
+			{
+<span class="nc" id="L580">				String msg = s_stringMgr.getString(&quot;PluginManager.error.initplugin&quot;, plugin.getInternalName());</span>
+<span class="nc" id="L581">				s_log.error(msg, th);</span>
+<span class="nc" id="L582">				_app.showErrorDialog(msg, th);</span>
+<span class="nc" id="L583">			}</span>
+<span class="nc" id="L584">		}</span>
+<span class="nc" id="L585">	}</span>
+
+	/**
+	 * Sets the ClassLoaderListener to notify when archive files containing classes are loaded.
+	 * 
+	 * @param listener
+	 *           a ClassLoaderListener implementation
+	 */
+	public void setClassLoaderListener(ClassLoaderListener listener)
+	{
+<span class="nc" id="L595">		classLoaderListener = listener;</span>
+<span class="nc" id="L596">	}</span>
+
+	private void onWidgetOpened(WidgetEvent e)
+	{
+<span class="nc" id="L600">		IWidget widget = e.getWidget();</span>
+
+<span class="nc bnc" id="L602" title="All 2 branches missed.">		if (widget instanceof ISessionWidget)</span>
+		{
+<span class="nc" id="L604">			ISession session = ((ISessionWidget) widget).getSession();</span>
+
+<span class="nc" id="L606">			List&lt;PluginSessionCallback&gt; list = _pluginSessionCallbacksBySessionID.get(session.getIdentifier());</span>
+
+<span class="nc bnc" id="L608" title="All 2 branches missed.">			if (null != list)</span>
+			{
+<span class="nc bnc" id="L610" title="All 2 branches missed.">				for (int i = 0; i &lt; list.size(); i++)</span>
+				{
+<span class="nc" id="L612">					PluginSessionCallback psc = list.get(i);</span>
+
+<span class="nc bnc" id="L614" title="All 2 branches missed.">					if (widget instanceof SQLInternalFrame)</span>
+					{
+<span class="nc" id="L616">						psc.sqlInternalFrameOpened((SQLInternalFrame) widget, session);</span>
+<span class="nc bnc" id="L617" title="All 2 branches missed.">					} else if (widget instanceof ObjectTreeInternalFrame)</span>
+					{
+<span class="nc" id="L619">						psc.objectTreeInternalFrameOpened((ObjectTreeInternalFrame) widget, session);</span>
+					}
+				}
+			}
+		}
+<span class="nc" id="L624">	}</span>
+
+	/**
+	 * Retrieve information about plugin load times
+	 * 
+	 * @return &lt;TT&gt;Iterator&lt;/TT&gt; over a collection of &lt;TT&gt;PluginLoadInfo&lt;/TT&gt; objects.
+	 */
+	public Iterator&lt;PluginLoadInfo&gt; getPluginLoadInfoIterator()
+	{
+<span class="nc" id="L633">		return _pluginLoadInfoColl.values().iterator();</span>
+	}
+
+	private void loadPlugin(Class&lt;?&gt; pluginClass)
+	{
+<span class="nc" id="L638">		PluginInfo pi = new PluginInfo(pluginClass.getName());</span>
+		try
+		{
+<span class="nc" id="L641">			final PluginLoadInfo pli = new PluginLoadInfo();</span>
+<span class="nc" id="L642">			final IPlugin plugin = (IPlugin) pluginClass.newInstance();</span>
+<span class="nc" id="L643">			pli.pluginCreated(plugin);</span>
+<span class="nc" id="L644">			_pluginLoadInfoColl.put(plugin.getInternalName(), pli);</span>
+<span class="nc" id="L645">			pi.setPlugin(plugin);</span>
+<span class="nc" id="L646">			_plugins.add(pi);</span>
+<span class="nc bnc" id="L647" title="All 2 branches missed.">			if (validatePlugin(plugin))</span>
+			{
+<span class="nc" id="L649">				pli.startLoading();</span>
+<span class="nc" id="L650">				plugin.load(_app);</span>
+<span class="nc" id="L651">				pi.setLoaded(true);</span>
+<span class="nc" id="L652">				_loadedPlugins.put(plugin.getInternalName(), plugin);</span>
+<span class="nc bnc" id="L653" title="All 2 branches missed.">				if (ISessionPlugin.class.isAssignableFrom(pluginClass))</span>
+				{
+<span class="nc" id="L655">					_sessionPlugins.add(new SessionPluginInfo(pi));</span>
+				}
+			}
+<span class="nc" id="L658">			pli.endLoading();</span>
+<span class="nc" id="L659">		} catch (Throwable th)</span>
+		{
+<span class="nc" id="L661">			String msg = s_stringMgr.getString(&quot;PluginManager.error.loadpluginclass&quot;, pluginClass.getName());</span>
+<span class="nc" id="L662">			th.printStackTrace();</span>
+<span class="nc" id="L663">			s_log.error(msg, th);</span>
+<span class="nc" id="L664">			_app.showErrorDialog(msg, th);</span>
+<span class="nc" id="L665">		}</span>
+<span class="nc" id="L666">	}</span>
+
+	private boolean validatePlugin(IPlugin plugin)
+	{
+<span class="nc" id="L670">		String pluginInternalName = plugin.getInternalName();</span>
+<span class="nc bnc" id="L671" title="All 4 branches missed.">		if (pluginInternalName == null || pluginInternalName.trim().length() == 0)</span>
+		{
+<span class="nc" id="L673">			s_log.error(&quot;Plugin &quot; + plugin.getClass().getName() + &quot;doesn't return a valid getInternalName()&quot;);</span>
+<span class="nc" id="L674">			return false;</span>
+		}
+
+<span class="nc bnc" id="L677" title="All 2 branches missed.">		if (_loadedPlugins.get(pluginInternalName) != null)</span>
+		{
+<span class="nc" id="L679">			s_log.error(&quot;A Plugin with the internal name &quot; + pluginInternalName + &quot; has already been loaded&quot;);</span>
+<span class="nc" id="L680">			return false;</span>
+		}
+
+<span class="nc" id="L683">		return true;</span>
+	}
+
+	private PluginLoadInfo getPluginLoadInfo(IPlugin plugin)
+	{
+<span class="nc" id="L688">		return _pluginLoadInfoColl.get(plugin.getInternalName());</span>
+	}
+
+	/**
+	 * Allows plugins to access each other without imports.
+	 * 
+	 * @param internalNameOfPlugin
+	 *           Is the accessed plugins internal name returned by IPlugin.getInternalName().
+	 * @param toBindTo
+	 *           Is an interface that is to bind against the object that the accessed plugin returns by its
+	 *           getExternalService() method.
+	 * @return An Object that may be cast to the toBindTo interface and delegates all calls to the object
+	 *         returned by the accessed plugin's getExternalService() method. The method signature of the
+	 *         methods in the toBintTo interface and external service object must be identical. This method
+	 *         returns null if the plugin can not be found / is not loaded.
+	 */
+	public Object bindExternalPluginService(String internalNameOfPlugin, Class&lt;?&gt; toBindTo)
+	{
+<span class="nc" id="L706">		IPlugin plugin = _loadedPlugins.get(internalNameOfPlugin);</span>
+
+<span class="nc bnc" id="L708" title="All 2 branches missed.">		if (null == plugin)</span>
+		{
+<span class="nc" id="L710">			return null;</span>
+		}
+
+<span class="nc" id="L713">		final Object obj = plugin.getExternalService();</span>
+
+<span class="nc bnc" id="L715" title="All 2 branches missed.">		if (null == obj)</span>
+		{
+<span class="nc" id="L717">			throw new RuntimeException(&quot;The plugin &quot; + internalNameOfPlugin</span>
+				+ &quot; doesn't provide any external service.&quot;);
+		}
+
+<span class="nc" id="L721">		InvocationHandler ih = new InvocationHandler()</span>
+<span class="nc" id="L722">		{</span>
+			public Object invoke(Object proxy, Method method, Object[] args) throws Throwable
+			{
+<span class="nc" id="L725">				Method m = obj.getClass().getMethod(method.getName(), method.getParameterTypes());</span>
+<span class="nc" id="L726">				return m.invoke(obj, args);</span>
+			}
+		};
+
+<span class="nc" id="L730">		return Proxy.newProxyInstance(_pluginsClassLoader, new Class[] { toBindTo }, ih);</span>
+	}
+
+	public IAliasPropertiesPanelController[] getAliasPropertiesPanelControllers(SQLAlias alias)
+	{
+<span class="nc" id="L735">		ArrayList&lt;IAliasPropertiesPanelController&gt; ret = new ArrayList&lt;IAliasPropertiesPanelController&gt;();</span>
+<span class="nc bnc" id="L736" title="All 2 branches missed.">		for (Iterator&lt;IPlugin&gt; i = _loadedPlugins.values().iterator(); i.hasNext();)</span>
+		{
+<span class="nc" id="L738">			IPlugin plugin = i.next();</span>
+
+<span class="nc" id="L740">			IAliasPropertiesPanelController[] ctrls = plugin.getAliasPropertiesPanelControllers(alias);</span>
+<span class="nc bnc" id="L741" title="All 2 branches missed.">			if (null != ctrls)</span>
+			{
+<span class="nc" id="L743">				ret.addAll(Arrays.asList(ctrls));</span>
+			}
+<span class="nc" id="L745">		}</span>
+
+<span class="nc" id="L747">		return ret.toArray(new IAliasPropertiesPanelController[ret.size()]);</span>
+	}
+
+	public void aliasCopied(SQLAlias source, SQLAlias target)
+	{
+<span class="nc bnc" id="L752" title="All 2 branches missed.">		for (Iterator&lt;IPlugin&gt; i = _loadedPlugins.values().iterator(); i.hasNext();)</span>
+		{
+<span class="nc" id="L754">			IPlugin plugin = i.next();</span>
+<span class="nc" id="L755">			plugin.aliasCopied(source, target);</span>
+<span class="nc" id="L756">		}</span>
+<span class="nc" id="L757">	}</span>
+
+	public void aliasRemoved(SQLAlias alias)
+	{
+<span class="nc bnc" id="L761" title="All 2 branches missed.">		for (Iterator&lt;IPlugin&gt; i = _loadedPlugins.values().iterator(); i.hasNext();)</span>
+		{
+<span class="nc" id="L763">			IPlugin plugin = i.next();</span>
+<span class="nc" id="L764">			plugin.aliasRemoved(alias);</span>
+<span class="nc" id="L765">		}</span>
+<span class="nc" id="L766">	}</span>
+
+	/**
+	 * @see net.sourceforge.squirrel_sql.client.plugin.IPluginManager#loadPluginsFromList(java.util.Iterator)
+	 */
+	@Override
+	public void loadPluginsFromList(List&lt;String&gt; pluginListIterator)
+	{
+<span class="nc bnc" id="L774" title="All 2 branches missed.">		for (String className : pluginListIterator)</span>
+		{
+			try
+			{
+<span class="nc" id="L778">				loadPlugin(Class.forName(className));</span>
+			}
+<span class="nc" id="L780">			catch (Exception e)</span>
+			{
+<span class="nc" id="L782">				s_log.error(&quot;Unable to load plugin class (&quot; + className + &quot;) from the classpath.  &quot;</span>
+					+ &quot;This plugin was specified by one of the following program arguments : &quot;
+					+ ApplicationArguments.IOptions.PLUGIN_LIST[0] + &quot; or &quot;
+					+ ApplicationArguments.IOptions.PLUGIN_LIST[1] + &quot;. Either remove this argument, or ensure &quot;
+					+ &quot;that the plugin is on the CLASSPATH&quot;);
+<span class="nc" id="L787">			}</span>
+<span class="nc" id="L788">		}</span>
+
+<span class="nc" id="L790">	}</span>
+	
+   /**
+	 * A plugin implementation that serves only to identify plugins that aren't being loaded, but which are
+	 * still installed, and available to load on startup if the user changes the isLoadedOnStartup attribute.
+	 * 
+	 * @author rmmannin
+	 */
+	private static class MyPlaceHolderPlugin extends DefaultPlugin
+	{
+<span class="nc" id="L800">		private String _internalName = null;</span>
+
+		public MyPlaceHolderPlugin(String internalName)
+<span class="nc" id="L803">		{</span>
+<span class="nc" id="L804">			_internalName = internalName;</span>
+<span class="nc" id="L805">		}</span>
+
+		/*
+		 * (non-Javadoc)
+		 * 
+		 * @see net.sourceforge.squirrel_sql.client.plugin.IPlugin#getAuthor()
+		 */
+		public String getAuthor()
+		{
+<span class="nc" id="L814">			return &quot;&quot;;</span>
+		}
+
+		/*
+		 * (non-Javadoc)
+		 * 
+		 * @see net.sourceforge.squirrel_sql.client.plugin.IPlugin#getDescriptiveName()
+		 */
+		public String getDescriptiveName()
+		{
+<span class="nc" id="L824">			return &quot;&quot;;</span>
+		}
+
+		/*
+		 * (non-Javadoc)
+		 * 
+		 * @see net.sourceforge.squirrel_sql.client.plugin.IPlugin#getInternalName()
+		 */
+		public String getInternalName()
+		{
+<span class="nc" id="L834">			return _internalName;</span>
+		}
+
+		/*
+		 * (non-Javadoc)
+		 * 
+		 * @see net.sourceforge.squirrel_sql.client.plugin.IPlugin#getVersion()
+		 */
+		public String getVersion()
+		{
+<span class="nc" id="L844">			return &quot;&quot;;</span>
+		}
+
+	}
+
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

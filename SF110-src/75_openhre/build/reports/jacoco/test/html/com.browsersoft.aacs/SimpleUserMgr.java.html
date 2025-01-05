@@ -1,0 +1,650 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SimpleUserMgr.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">75_openhre</a> &gt; <a href="index.source.html" class="el_package">com.browsersoft.aacs</a> &gt; <span class="el_source">SimpleUserMgr.java</span></div><h1>SimpleUserMgr.java</h1><pre class="source lang-java linenums">/*
+ *   CVS $Id: SimpleUserMgr.java,v 1.1 2006/11/06 19:51:47 grodecki Exp $
+ * 
+ *   ====================================================================
+ *                 Open Source Health Records Exchange
+ *   ====================================================================
+ *
+ *   Copyright (C) 2005 Browsersoft Inc.
+ *
+ *   This program is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License, version 2, 
+ *   as published by the Free Software Foundation.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ *   The GNU General Public License is available at
+ *   http://www.fsf.org/licensing/licenses/gpl.html
+ *
+ *   Email: info@openhre.org
+ *   Web:   http://www.openhre.org
+ */
+package com.browsersoft.aacs;
+
+import jdbm.JDBMEnumeration;
+import jdbm.JDBMHashtable;
+import jdbm.JDBMRecordManager;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.StringReader;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Properties;
+import java.util.StringTokenizer;
+import java.util.Vector;
+
+/**
+ * This class manages a persistent storage of Users. It can add users from a file in
+ * LDAP's LDIF format.  The values required are dn (Distinguished Name), cn (Common Name), userPassword, email,
+ * ou and employeeType.
+ * This is intended as an interface for LDAP, but provides a simple persistent Hashtables using JDBM.
+ *
+ * The id Hashtable (name &quot;userids&quot;) contains the User objects with the email address as the key
+ * The country (name &quot;countries&quot;) Hashtable contains a HashSet of all the organizations in a given country
+ * To get a list of all supported countries simply get the keys of the countries Hashtable
+ * There also is a persistent Hashtable for each organization with is LDAP &quot;o&quot; value as its name
+ * It returns a Hashtable of users within that organization, with key the &quot;cn&quot; (Username) and value &quot;email&quot;
+ * Thus a user can be looked up by username and organization and return the &quot;key&quot; email address from which
+ * the full User object can be obtained from the id Hashtable
+ *
+ * When a new organization is encountered (with a user with &quot;o&quot; and &quot;c&quot; dn parameters, it is registered
+ * into the list of organizations for that country in the country Hashtable
+ *
+ * JDBM (http://jdbm.sourceforge.net) persistent hashtable implemenation is used for persistence
+ *
+ * @author $Author: grodecki $
+ * @version $Id: SimpleUserMgr.java,v 1.1 2006/11/06 19:51:47 grodecki Exp $
+ */
+
+public class SimpleUserMgr implements UserMgr {
+
+    //private JDBMHashtable dn;
+<span class="nc" id="L69">    private JDBMHashtable id = null;</span>
+    private JDBMHashtable users;
+    private JDBMHashtable country;
+<span class="nc" id="L72">    private String username = &quot;&quot;;</span>
+    // private String password = &quot;&quot;;
+    // private String email = &quot;&quot;;
+<span class="nc" id="L75">    private static String userfile = &quot;login.users&quot;;</span>
+<span class="nc" id="L76">    private String userdb = &quot;users&quot;;</span>
+<span class="nc" id="L77">    private static String configFile = &quot;test&quot;;</span>
+    private JDBMRecordManager recman;
+<span class="nc" id="L79">    private static Properties props = new Properties();</span>
+<span class="nc" id="L80">    private Vector profile_vec = null;</span>
+    // private Hashtable users = null;
+
+    private User user;
+<span class="nc" id="L84">    private static org.apache.log4j.Logger cat </span>
+<span class="nc" id="L85">      = org.apache.log4j.Logger.getLogger(SimpleUserMgr.class.getName());</span>
+
+    /**
+     * Public default constructor
+     */
+<span class="nc" id="L90">    public SimpleUserMgr() {</span>
+        // Defer initialization for servlets
+        //  init();
+<span class="nc" id="L93">    }</span>
+
+    /**
+     * Constructor which specifies the configProperties to be read
+     */
+<span class="nc" id="L98">    public SimpleUserMgr(String configProperties) {</span>
+<span class="nc" id="L99">        setConfigFile(configProperties);</span>
+<span class="nc" id="L100">        init();</span>
+<span class="nc" id="L101">    }</span>
+
+    /**
+     * Initialize Persistent storage
+     * There are two primary hashtables.   The first (country) contains a list of the organizations which are keys
+     * to user hashtables for each organization.  The organization hashtable is a map from the username
+     * key to the userId (email address).  The second (id) is the hashtable based on the email address
+     * which is used as a userId since the email address is supposed to be unique.  For each organization
+     * there is a separate hashtable of the users for that organization.  Thus one can look a user up
+     * across organizations or within an organization.  All the user objects are contained in the second (id) hashtable.
+     *
+     */
+    public void init() {
+      //  ResourceBundle bundle = ResourceBundle.getBundle(configFile);
+<span class="nc" id="L115"> 	    Login.loadProperties(props, configFile);</span>
+<span class="nc" id="L116">        userdb = props.getProperty(&quot;users&quot;, userdb);</span>
+//      New code to find the actual db file, as long as it is on the classpath
+<span class="nc" id="L118">        String tmpDb = &quot;/&quot; + userdb + &quot;.db&quot;;</span>
+<span class="nc" id="L119">        URL fileUrl = UserMgr.class.getResource(tmpDb);</span>
+<span class="nc" id="L120">		String pathAndFile = fileUrl.getFile();</span>
+		// Now remove the final '.db' from the returned string.
+<span class="nc" id="L122">		userdb = pathAndFile.substring(0, pathAndFile.length()-3);</span>
+
+<span class="nc" id="L124">        cat.debug(&quot;init: accessing: &quot;+userdb);</span>
+        try {
+<span class="nc" id="L126">            recman = new JDBMRecordManager(userdb);</span>
+            //dn = recman.getHashtable(&quot;usernames&quot;);
+<span class="nc" id="L128">            id = recman.getHashtable(&quot;userids&quot;);</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">            if (cat.isDebugEnabled()) {</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">            	for (JDBMEnumeration en = id.keys(); en.hasMoreElements(); ) {</span>
+<span class="nc" id="L131">            		String key = (String) en.nextElement();</span>
+<span class="nc" id="L132">            		cat.debug(&quot;Key = &quot; + key);</span>
+<span class="nc" id="L133">            	}</span>
+            }
+<span class="nc" id="L135">            country = recman.getHashtable(&quot;countries&quot;);</span>
+<span class="nc" id="L136">        } catch (IOException e) {</span>
+<span class="nc" id="L137">            cat.error(&quot;init: &quot; + e);</span>
+<span class="nc" id="L138">        }</span>
+<span class="nc" id="L139">    }</span>
+
+    /**
+     * add Users from previously defined userfile
+     */
+    public void addUsers() {
+<span class="nc" id="L145">        addUsers(userfile);</span>
+<span class="nc" id="L146">    }</span>
+
+    /**
+     *  Add users from an input file
+     * @param userfile
+     */
+    public void addUsers(String userfile) {
+
+        // Query using JNDI to get list of users, not implemented correctly yet.
+
+        // Read from file to get users (in ldif format)
+        // e.g.:
+        //  dn: cn= David Forslund, o=LANL, c=US
+        //	cn: David Forslund
+        //	email: dwf@lanl.gov
+        //  userPassword: test
+        // Results are put into a User object and the User into a hashtable with email/userId
+        // as the key
+        // various arrays are created for listing the users as needed.
+
+
+        // userfile = props.getProperty(&quot;login.users&quot;, userfile);
+        // String country = props.getProperty(&quot;country&quot;,&quot;US&quot;);
+
+        try {
+
+            // orgs = recman.getHashtable(country);
+            // Read in user list if not already done      ###
+
+<span class="nc" id="L175">            String line = null;</span>
+<span class="nc" id="L176">            InputStream is = getClass().getResourceAsStream(userfile);</span>
+            //if (theFile.exists()) {
+<span class="nc bnc" id="L178" title="All 2 branches missed.">            if (is != null) {</span>
+<span class="nc" id="L179">                cat.debug(&quot;Reading  &quot; + userfile);</span>
+
+                //	FileReader inFile = new FileReader(theFile);
+<span class="nc" id="L182">                InputStreamReader inFile = new InputStreamReader(is);</span>
+<span class="nc" id="L183">                BufferedReader inReader = new BufferedReader(inFile);</span>
+<span class="nc" id="L184">                profile_vec = new Vector();</span>
+<span class="nc" id="L185">                user = null;</span>
+<span class="nc" id="L186">                HashSet set = null;     // unique set of organizations in a country</span>
+<span class="nc bnc" id="L187" title="All 2 branches missed.">                while (((line = inReader.readLine()) != null)) {</span>
+<span class="nc" id="L188">                    parseLine(line);</span>
+                }
+                //HashSet set = (HashSet) orgs.get(country);
+
+                //if (set == null) set = new HashSet();
+<span class="nc" id="L193">                inReader.close();</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">                if ((profile_vec != null)) {</span>
+<span class="nc" id="L195">                    addProfile();</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">                    for (int i = 0; i &lt; profile_vec.size(); i++) {</span>
+<span class="nc" id="L197">                        User u = (User) profile_vec.elementAt(i);</span>
+<span class="nc" id="L198">                        String c = u.getCountry();</span>
+                        //cat.debug(&quot;addUsers\n &quot;+u.toString());
+<span class="nc" id="L200">                        String org = u.getOrg();</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">                        if (c != null) set = (HashSet) country.get(c);</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">                        if (set == null) set = new HashSet();</span>
+                        // get the hashtable for that organization
+                        // Update list  of organizations for a country
+<span class="nc" id="L205">                        set.add(org);</span>
+
+                        //  cat.debug(&quot;organization = &quot; + org);
+<span class="nc" id="L208">                        JDBMHashtable users = recman.getHashtable(org);</span>
+                        // insert userID in users table with userName as key
+<span class="nc" id="L210">                        users.put(u.getUserName(), u.getUserId());   // put userId in dn with dn as key</span>
+
+<span class="nc" id="L212">                        id.put(u.getUserId(), u);   // put user in id with mail as key</span>
+
+<span class="nc" id="L214">                        country.put(c, set);</span>
+                    }
+                    // put the list of names into the organization hashtable
+                    // cat.debug(set.size() + &quot; organizations&quot;);
+
+                }
+
+            }
+
+<span class="nc" id="L223">        } catch (IOException e) {</span>
+<span class="nc" id="L224">            cat.error(&quot;UserMgr reading error adding users &quot; + e, e);</span>
+
+<span class="nc" id="L226">        }</span>
+
+
+        //}
+<span class="nc" id="L230">    }</span>
+
+    /**
+     * parse the line and add the user to the list
+     * @param line to be parsed
+     */
+    public void parseLine(String line) {
+
+        try {
+            //user = null;
+<span class="nc bnc" id="L240" title="All 4 branches missed.">            if (line.startsWith(&quot;#&quot;) || line.startsWith(&quot;//&quot;)) return;</span>
+<span class="nc" id="L241">            StringTokenizer tmp_st = new StringTokenizer(line, &quot;:&quot;);</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">            if (tmp_st.countTokens() == 0) return;</span>
+<span class="nc" id="L243">            String tmp_tok = tmp_st.nextToken();</span>
+            //   System.out.println(&quot;parseLine: &quot;+tmp_tok);
+<span class="nc bnc" id="L245" title="All 2 branches missed.">            if (tmp_tok.equals(&quot;dn&quot;)) {</span>
+                // We have a new defined person so save old data and reset
+<span class="nc bnc" id="L247" title="All 2 branches missed.">                if (user == null) {</span>
+<span class="nc" id="L248">                    user = new User();</span>
+                } else {   // user is complete so store it
+<span class="nc" id="L250">                    addProfile();</span>
+
+                }
+<span class="nc" id="L253">                user.setDN(tmp_st.nextToken().trim());</span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">            } else if (tmp_tok.equals(&quot;cn&quot;)) {</span>
+<span class="nc" id="L255">                user.setUserName(tmp_st.nextToken().trim());</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">            } else if (tmp_tok.equals(&quot;email&quot;)) {</span>
+<span class="nc" id="L257">                user.setUserId(tmp_st.nextToken().trim());</span>
+<span class="nc bnc" id="L258" title="All 2 branches missed.">            } else if (tmp_tok.equals(&quot;userPassword&quot;)) {</span>
+                //user.setPassword(tmp_st.nextToken().trim());
+<span class="nc" id="L260">                user.encodePassword(tmp_st.nextToken().trim());</span>
+<span class="nc bnc" id="L261" title="All 2 branches missed.">            } else if (tmp_tok.equals(&quot;employeeType&quot;)) {</span>
+                // specify role(s) of user
+<span class="nc" id="L263">                user.addRole(tmp_st.nextToken().trim());</span>
+<span class="nc bnc" id="L264" title="All 2 branches missed.">            } else if (tmp_tok.equals(&quot;ou&quot;)) {</span>
+                // specify group(s) of user
+<span class="nc" id="L266">                user.addGroup(tmp_st.nextToken().trim());</span>
+<span class="nc bnc" id="L267" title="All 2 branches missed.">            } else if (tmp_tok.equals(&quot;sn&quot;)) {</span>
+<span class="nc" id="L268">                user.setSurName(tmp_st.nextToken().trim());</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">            } else if (tmp_tok.equals(&quot;ip&quot;)) {</span>
+                // specify ip Addr of user
+<span class="nc" id="L271">                user.setIpAddr(tmp_st.nextToken().trim());</span>
+            }
+            
+<span class="nc" id="L274">        } catch (Exception e) {</span>
+<span class="nc" id="L275">            cat.error(&quot;parseLine failed:&quot; + e);</span>
+<span class="nc" id="L276">        }</span>
+
+<span class="nc" id="L278">    }</span>
+
+    /**
+     * Add the user profile
+     */
+    private void addProfile() {
+<span class="nc" id="L284">        profile_vec.addElement(user);</span>
+        //  cat.debug(&quot;name: &quot;+user.getUserName()+&quot;, email: &quot;+user.getUserId()+&quot;, passwd: &quot;+user.getPassword());
+<span class="nc" id="L286">        user = new User();</span>
+<span class="nc" id="L287">    }</span>
+
+    /**
+     * addUser
+     * @param u String with multiple lines with all the data for a user
+     */
+    public void addUser(String u) {
+<span class="nc" id="L294">        BufferedReader reader = new BufferedReader(new StringReader(u));</span>
+<span class="nc" id="L295">        String line = null;</span>
+<span class="nc" id="L296">        User saveUser = user;</span>
+        try {
+<span class="nc bnc" id="L298" title="All 2 branches missed.">            while ((line = reader.readLine()) != null)</span>
+<span class="nc" id="L299">                parseLine(line);</span>
+<span class="nc bnc" id="L300" title="All 2 branches missed.">            if (user != null) addUser(user);</span>
+<span class="nc" id="L301">        } catch (IOException e) {</span>
+<span class="nc" id="L302">            cat.error(&quot;addUser: &quot; + e);</span>
+<span class="nc" id="L303">        }</span>
+<span class="nc" id="L304">        user = saveUser;</span>
+
+<span class="nc" id="L306">    }</span>
+
+    /**
+     * add User to the Persistent Hashtable
+     * @param theDN The distinguished name (cn= &quot;name&quot;, o=&quot;organization&quot;, c=&quot;country&quot;)
+     * @param cn  LDAP username
+     * @param sn   LDAP surname
+     * @param email   LDAP email address (userId)
+     * @param role
+     * @param password
+     */
+    public void addUser(String theDN, String cn, String sn, String email, String role, String password) {
+<span class="nc" id="L318">        User newUser = new User(email, cn);</span>
+<span class="nc" id="L319">        newUser.addRole(role);</span>
+<span class="nc" id="L320">        newUser.setPassword(password);</span>
+<span class="nc" id="L321">        newUser.setSurName(sn);</span>
+<span class="nc" id="L322">        newUser.setDN(theDN);</span>
+<span class="nc" id="L323">        addUser(newUser);</span>
+<span class="nc" id="L324">    }</span>
+
+    /**
+     *  Add a User already constructed
+     * @param newUser
+     */
+
+    public void addUser(User newUser) {
+
+<span class="nc" id="L333">        String c = newUser.getCountry();</span>
+<span class="nc" id="L334">        String org = newUser.getOrg();</span>
+<span class="nc" id="L335">        String userName = newUser.getUserName();</span>
+<span class="nc" id="L336">        String email = newUser.getUserId();</span>
+<span class="nc" id="L337">        cat.debug(&quot;addUser: &quot; + newUser.toString());</span>
+<span class="nc" id="L338">        User oldUser = getUser(newUser);</span>
+<span class="nc bnc" id="L339" title="All 2 branches missed.">        if (oldUser == null) oldUser = new User();</span>
+
+<span class="nc" id="L341">        oldUser.update(newUser);</span>
+        try {
+            // First make sure the organization is in the country list
+<span class="nc" id="L344">            HashSet set = (HashSet) country.get(c);</span>
+<span class="nc bnc" id="L345" title="All 2 branches missed.">            if (set == null) set = new HashSet();</span>
+<span class="nc" id="L346">            set.add(org);</span>
+<span class="nc" id="L347">            country.put(c, set);</span>
+            // get the users Hashtable based on the organization
+<span class="nc" id="L349">            users = recman.getHashtable(org);</span>
+
+<span class="nc" id="L351">            users.put(userName, email);</span>
+<span class="nc" id="L352">            id.put(email, oldUser);</span>
+<span class="nc" id="L353">            cat.debug(&quot;User: &quot; + oldUser.toString() + &quot; added!&quot;);</span>
+<span class="nc" id="L354">        } catch (IOException e) {</span>
+<span class="nc" id="L355">            cat.error(&quot;addUser: &quot; + e);</span>
+<span class="nc" id="L356">        }</span>
+<span class="nc" id="L357">    }</span>
+
+
+    /**
+     * delete User based on the unique UserId
+     * @param userId corresponding to email address
+     */
+    public void delUser(String userId) {
+        try {
+<span class="nc" id="L366">            cat.debug(&quot;delUser trying to remove: &quot; + userId);</span>
+<span class="nc" id="L367">            User delUser = (User) id.get(userId);</span>
+<span class="nc bnc" id="L368" title="All 2 branches missed.">            if (delUser != null) {</span>
+<span class="nc" id="L369">                id.remove(userId);</span>
+<span class="nc" id="L370">                cat.debug(&quot;delUser removed from id: &quot; + userId);</span>
+<span class="nc" id="L371">                String uName = delUser.getUserName();</span>
+<span class="nc" id="L372">                users = recman.getHashtable(delUser.getOrg());</span>
+<span class="nc" id="L373">                cat.debug(&quot;removing &quot; + uName + &quot; from dn&quot;);</span>
+<span class="nc" id="L374">                String u = (String) users.get(uName);</span>
+<span class="nc bnc" id="L375" title="All 2 branches missed.">                if (u != null) {</span>
+<span class="nc" id="L376">                    users.remove(uName);</span>
+<span class="nc" id="L377">                    cat.debug(&quot;delUser removed from dn: &quot; + uName);</span>
+                }
+<span class="nc" id="L379">            } else</span>
+<span class="nc" id="L380">                cat.debug(&quot;delUser: id='&quot; + userId + &quot;' not found&quot;);</span>
+<span class="nc" id="L381">        } catch (IOException e) {</span>
+<span class="nc" id="L382">            cat.error(&quot;delUser: &quot; + userId + &quot; &quot; + e);</span>
+<span class="nc" id="L383">        }</span>
+
+
+<span class="nc" id="L386">    }</span>
+
+    /**
+     * get the User based on name and organization
+     * @param userName
+     * @param org
+     * @return User
+     */
+    public User getUser(String userName, String org) {
+<span class="nc" id="L395">        User user = null;</span>
+        try {
+<span class="nc" id="L397">            users = recman.getHashtable(org);</span>
+<span class="nc" id="L398">            String userId = (String) users.get(username);</span>
+<span class="nc bnc" id="L399" title="All 2 branches missed.">            if (userId != null) user = (User) id.get(userId);</span>
+<span class="nc bnc" id="L400" title="All 2 branches missed.">            if (user == null) cat.warn(&quot;getUser(&quot; + userName + &quot;,&quot; + org + &quot;): not found&quot;);</span>
+<span class="nc" id="L401">        } catch (IOException e) {</span>
+<span class="nc" id="L402">            cat.error(&quot;getUser: &quot; + e);</span>
+<span class="nc" id="L403">        }</span>
+<span class="nc" id="L404">        return user;</span>
+    }
+
+    public User getUser()
+    {
+<span class="nc" id="L409">    	cat.debug(&quot;userID: &quot;+ user.getUserId());</span>
+<span class="nc" id="L410">    	cat.debug(&quot;userName: &quot;+ user.getUserName());</span>
+<span class="nc" id="L411">        return user;</span>
+    }
+    /**
+     * get User by the unique userId (email)
+     * @param userId
+     * @return User
+     */
+    public User getUser(String userId) {
+<span class="nc" id="L419">        cat.debug(&quot;getUser: &quot; + userId);</span>
+<span class="nc" id="L420">        User user = null;</span>
+        try {
+<span class="nc" id="L422">            user = (User) id.get(userId);</span>
+<span class="nc" id="L423">            cat.debug(&quot;getUser: found user &quot; + user.toString());</span>
+<span class="nc" id="L424">        } catch (Exception e) {</span>
+<span class="nc" id="L425">            user=null;</span>
+<span class="nc" id="L426">            cat.error(&quot;getUser: user not found &quot; + e);</span>
+<span class="nc" id="L427">        }</span>
+        //cat.debug(&quot;getUser: found user &quot; + user.toString());
+<span class="nc" id="L429">        return user;</span>
+    }
+
+    /**
+     * get User with username, org and email
+     * @param username  cn variable
+     * @param org       o variable
+     * @param email       email variable
+     * @return User
+     */
+    public User getUser(String username, String org, String email) {
+<span class="nc" id="L440">        User user = null;</span>
+        try {
+            // try unique email first (this should always return the user)
+<span class="nc bnc" id="L443" title="All 4 branches missed.">            if (email != null &amp;&amp; !email.equals(&quot;&quot;))</span>
+<span class="nc" id="L444">                user = (User) id.get(email);</span>
+<span class="nc bnc" id="L445" title="All 6 branches missed.">            if ((user == null) &amp;&amp; (org != null) &amp;&amp; (username != null)) {</span>
+                // get the user list for the organization
+<span class="nc" id="L447">                users = recman.getHashtable(org);</span>
+<span class="nc bnc" id="L448" title="All 2 branches missed.">                if (users != null) {</span>
+<span class="nc" id="L449">                    String userid = (String) users.get(username);</span>
+<span class="nc bnc" id="L450" title="All 2 branches missed.">                    if (userid != null) user = (User) id.get(userid);</span>
+                }
+            }
+<span class="nc bnc" id="L453" title="All 2 branches missed.">            if (user == null) cat.warn(&quot;getUser(&quot; + username + &quot;,&quot; + org + &quot;,&quot; + email + &quot;): user not found, &quot;);</span>
+<span class="nc" id="L454">        } catch (IOException e) {</span>
+<span class="nc" id="L455">            cat.error(&quot;getUser: &quot; + e);</span>
+<span class="nc" id="L456">        }</span>
+<span class="nc" id="L457">        return user;</span>
+    }
+
+    /**
+     * Find a User given a partially completed User object as a template
+     * @param findUser
+     * @return User
+     */
+    public User getUser(User findUser) {
+<span class="nc" id="L466">        User user = new User();</span>
+<span class="nc" id="L467">        String email = findUser.getUserId();</span>
+        try {
+<span class="nc bnc" id="L469" title="All 4 branches missed.">            if (email != null &amp;&amp; !email.equals(&quot;&quot;))</span>
+<span class="nc" id="L470">                user = (User) id.get(email);</span>
+<span class="nc bnc" id="L471" title="All 6 branches missed.">            if ((user == null) &amp;&amp; (findUser.getOrg() != null) &amp;&amp; findUser.getUserName() != null) {</span>
+<span class="nc" id="L472">                users = recman.getHashtable(findUser.getOrg());</span>
+<span class="nc bnc" id="L473" title="All 2 branches missed.">                if (users != null) {</span>
+<span class="nc" id="L474">                    String userid = (String) users.get(username);</span>
+<span class="nc bnc" id="L475" title="All 2 branches missed.">                    if (userid != null) user = (User) id.get(userid);</span>
+                }
+            }
+<span class="nc bnc" id="L478" title="All 2 branches missed.">            if (user == null) {</span>
+<span class="nc" id="L479">                cat.warn(&quot;getUser(&quot; + findUser.toString() + &quot;): user not found&quot;);</span>
+
+            }
+<span class="nc" id="L482">        } catch (IOException e) {</span>
+<span class="nc" id="L483">            cat.error(&quot;getUser: &quot; + e);</span>
+<span class="nc" id="L484">        }</span>
+<span class="nc" id="L485">        return user;</span>
+
+    }
+
+    /**
+     * Get all the userNames for a given organization
+     * @param org the organization name (o field in LDAP);
+     * @return String[] list of names within the organization
+     */
+    public String[] getNamesbyOrg(String org) {
+<span class="nc" id="L495">        Vector v = new Vector();</span>
+        try {
+<span class="nc" id="L497">            JDBMHashtable users = recman.getHashtable(org);</span>
+<span class="nc" id="L498">            JDBMEnumeration e = users.keys();</span>
+<span class="nc bnc" id="L499" title="All 2 branches missed.">            while (e.hasMoreElements()) {</span>
+<span class="nc" id="L500">                v.addElement(e.nextElement());</span>
+            }
+<span class="nc" id="L502">        } catch (IOException e1) {</span>
+<span class="nc" id="L503">            cat.error(&quot;getNamesbyOrg: &quot; + e1);</span>
+<span class="nc" id="L504">        }</span>
+<span class="nc" id="L505">        String[] s = new String[v.size()];</span>
+<span class="nc" id="L506">        v.copyInto(s);</span>
+<span class="nc" id="L507">        return s;</span>
+    }
+
+    /**
+     * get the email addresses of all users in an organization
+     * @param org name of the organization (o LDAP field)
+     * @return String[] array of email addresses
+     */
+    public String[] getMailbyOrg(String org) {
+<span class="nc" id="L516">        Vector v = new Vector();</span>
+        try {
+<span class="nc" id="L518">            JDBMHashtable users = recman.getHashtable(org);</span>
+<span class="nc" id="L519">            JDBMEnumeration e = users.values();</span>
+<span class="nc bnc" id="L520" title="All 2 branches missed.">            while (e.hasMoreElements()) {</span>
+<span class="nc" id="L521">                v.addElement(e.nextElement());</span>
+            }
+<span class="nc" id="L523">        } catch (IOException e1) {</span>
+<span class="nc" id="L524">            cat.error(&quot;getMailbyOrg: &quot; + e1);</span>
+<span class="nc" id="L525">        }</span>
+<span class="nc" id="L526">        String[] s = new String[v.size()];</span>
+<span class="nc" id="L527">        v.copyInto(s);</span>
+<span class="nc" id="L528">        return s;</span>
+    }
+
+    /**
+     * get list of all UserIds in DB
+     * @return String[] list of UserIds
+     */
+    public String[] getUserIds() {
+        String[] mail;
+<span class="nc bnc" id="L537" title="All 2 branches missed.">        if (id == null) init();</span>
+<span class="nc" id="L538">        ArrayList v = null;</span>
+        try {
+<span class="nc" id="L540">            JDBMEnumeration e = id.keys();</span>
+<span class="nc" id="L541">            v = new ArrayList();</span>
+<span class="nc bnc" id="L542" title="All 2 branches missed.">            while (e.hasMoreElements()) {</span>
+<span class="nc" id="L543">                v.add(e.nextElement());</span>
+            }
+<span class="nc" id="L545">        } catch (IOException e1) {</span>
+<span class="nc" id="L546">            cat.error(&quot;getUserIds: &quot; + e1);</span>
+<span class="nc" id="L547">            return new String[0];</span>
+<span class="nc" id="L548">        }</span>
+<span class="nc" id="L549">        mail = new String[v.size()];</span>
+<span class="nc" id="L550">        v.toArray(mail);</span>
+        // cat.debug(&quot;getUserIds: &quot;+mail.length +&quot; mail: &quot;+mail[0]);
+<span class="nc" id="L552">        return mail;</span>
+    }
+
+    /** obtain list of valid users
+     * @return String[] list of known users
+     */
+    public String[] getUserNames() {
+        String[] names;
+<span class="nc bnc" id="L560" title="All 2 branches missed.">        if (id == null) init();</span>
+<span class="nc" id="L561">        ArrayList v = null;</span>
+        try {
+<span class="nc" id="L563">            JDBMEnumeration e = id.values();</span>
+<span class="nc" id="L564">            v = new ArrayList();</span>
+<span class="nc bnc" id="L565" title="All 2 branches missed.">            while (e.hasMoreElements()) {</span>
+<span class="nc" id="L566">                v.add(((User) e.nextElement()).getUserName());</span>
+            }
+<span class="nc" id="L568">        } catch (IOException e1) {</span>
+<span class="nc" id="L569">            cat.error(&quot;getUserNames: &quot; + e1);</span>
+<span class="nc" id="L570">            return new String[0];</span>
+<span class="nc" id="L571">        }</span>
+        // for (int i = 0;i&lt; v.size(); i++)
+        //      cat.debug(&quot;name: &quot;+v.get(i));
+<span class="nc" id="L574">        names = new String[v.size()];</span>
+<span class="nc" id="L575">        cat.debug(&quot;getUserNames: found &quot; + names.length + &quot; elements&quot;);</span>
+<span class="nc" id="L576">        v.toArray(names);</span>
+
+
+<span class="nc" id="L579">        return names;</span>
+    }
+
+    /**
+     * Bean setter  and getter methods
+     * @param theConfigFile the properties file
+     */
+
+    public static void setConfigFile(String theConfigFile) {
+<span class="nc" id="L588">        configFile = theConfigFile;</span>
+<span class="nc" id="L589">    }</span>
+
+
+    /**
+     *  set the file of users to be read.
+     * @param file to be read
+     */
+    public static void setUserfile(String file) {
+<span class="nc" id="L597">        userfile = file;</span>
+<span class="nc" id="L598">    }</span>
+
+    /**
+     * get all the users in in the persistent hashtable
+     * @return String
+     */
+    public String export() {
+        try {
+<span class="nc" id="L606">            JDBMEnumeration c = id.values();</span>
+<span class="nc" id="L607">            StringBuffer buff = new StringBuffer();</span>
+<span class="nc bnc" id="L608" title="All 2 branches missed.">            while (c.hasMoreElements()) {</span>
+<span class="nc" id="L609">                buff.append(c.nextElement().toString() + '\n');</span>
+            }
+<span class="nc" id="L611">            return buff.toString();</span>
+<span class="nc" id="L612">        } catch (IOException e) {</span>
+<span class="nc" id="L613">            cat.error(&quot;getUsers: &quot; + e);</span>
+<span class="nc" id="L614">            return null;</span>
+        }
+    }
+
+    public boolean checkSecret(String userid, String password, String authType) {
+<span class="nc" id="L619">        user = getUser(userid);</span>
+<span class="nc bnc" id="L620" title="All 2 branches missed.">        if (user != null)</span>
+        {
+<span class="nc" id="L622">	        String passwd = user.getPassword();</span>
+<span class="nc bnc" id="L623" title="All 2 branches missed.">	        if (passwd == null) return false;</span>
+<span class="nc" id="L624">	        return user.checkDigest(passwd, password);</span>
+        }
+<span class="nc" id="L626">        else return false;</span>
+    }
+    
+    public void logOut() {
+<span class="nc" id="L630">    	return;</span>
+    }
+    
+    public static void main(String[] argv) {
+<span class="nc bnc" id="L634" title="All 2 branches missed.">        if (argv.length &lt; 1) {</span>
+<span class="nc" id="L635">            System.out.println(&quot;usage: SimpleUserMgr 'file' where 'file' is a ResourceBundle (file.properties)\n&quot;</span>
+                    + &quot;that has an optional property 'users' which is the name of the database to be created or read\n&quot;
+                    + &quot;and a property 'login.users' is a ldif text file containing the users to be added.&quot;);
+<span class="nc" id="L638">            System.exit(0);</span>
+        }
+<span class="nc" id="L640">        SimpleUserMgr.setConfigFile(argv[0]);</span>
+<span class="nc" id="L641">        System.out.println(&quot;Config Resource is &quot;+argv[0]+&quot;.properties&quot;);</span>
+<span class="nc" id="L642">        SimpleUserMgr userMgr = new SimpleUserMgr();</span>
+<span class="nc" id="L643">        userMgr.init();</span>
+<span class="nc" id="L644">        String file = props.getProperty(userfile,&quot;/users.txt&quot;);</span>
+<span class="nc" id="L645">        System.out.println(&quot;User File is &quot;+file);</span>
+<span class="nc bnc" id="L646" title="All 4 branches missed.">        if (file != null &amp;&amp; file != &quot;&quot;) userMgr.addUsers(file);</span>
+<span class="nc" id="L647">        System.out.println(&quot;Users Added:\n&quot;+userMgr.export());</span>
+<span class="nc" id="L648">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

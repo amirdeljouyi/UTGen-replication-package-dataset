@@ -1,0 +1,661 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FTPConnection.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.technical.ftp</a> &gt; <span class="el_source">FTPConnection.java</span></div><h1>FTPConnection.java</h1><pre class="source lang-java linenums">package net.sf.xbus.technical.ftp;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.net.SocketException;
+import java.util.Hashtable;
+import java.util.Vector;
+
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.core.config.Configuration;
+import net.sf.xbus.base.core.trace.Trace;
+
+import org.apache.commons.net.ftp.FTP;
+import org.apache.commons.net.ftp.FTPClient;
+import org.apache.commons.net.ftp.FTPReply;
+
+/**
+ * &lt;code&gt;FTPConnection&lt;/code&gt; manages connections to FTP servers and provide
+ * methods for read and write access of files via FTP.
+ */
+public class FTPConnection
+{
+	static final private String CHAPTER_FTPCONNECTION = &quot;FTPConnection&quot;;
+
+	/*
+	 * Variables used to implement the Singleton pattern
+	 */
+<span class="nc" id="L31">	private static Hashtable mFTPConnections = new Hashtable();</span>
+
+<span class="nc" id="L33">	private static final Object classLock = FTPConnection.class;</span>
+
+	/*
+	 * Other variables
+	 */
+<span class="nc" id="L38">	private String mName = null;</span>
+
+<span class="nc" id="L40">	private FTPClient mFTPClient = null;</span>
+
+<span class="nc" id="L42">	private boolean mOpen = false;</span>
+
+<span class="nc" id="L44">	private String mHost = null;</span>
+
+<span class="nc" id="L46">	private int mPort = 0;</span>
+
+	/**
+	 * The constructor is private, instances of &lt;code&gt;FTPConnection&lt;/code&gt; can
+	 * only be generated via the method &lt;code&gt;getInstance()&lt;/code&gt;. Each
+	 * instance is put in a &lt;code&gt;Hashtable&lt;/code&gt; with the concatenation of
+	 * the thread name and the connection name as the key.
+	 */
+	private FTPConnection(String name)
+<span class="nc" id="L55">	{</span>
+<span class="nc" id="L56">		mName = name;</span>
+<span class="nc" id="L57">		mFTPConnections.put(getFullName(name), this);</span>
+<span class="nc" id="L58">	}</span>
+
+	/**
+	 * Delivers an open instance of &lt;code&gt;FTPConnection&lt;/code&gt;.
+	 * &lt;p /&gt;
+	 * 
+	 * If it is the first call with this name for the actual thread, a new
+	 * &lt;code&gt;FTPConnection&lt;/code&gt; object will be created. Subsequent calls in
+	 * this thread will deliver the object, that has been created by the first
+	 * call.
+	 * 
+	 * @param name
+	 *            name of the FTPConnection
+	 * @return an open FTPConnection
+	 * @throws XException
+	 *             if something goes wrong
+	 */
+	public static FTPConnection getInstance(String name) throws XException
+	{
+<span class="nc" id="L77">		synchronized (classLock)</span>
+		{
+<span class="nc" id="L79">			FTPConnection ftpConnection = (FTPConnection) mFTPConnections</span>
+<span class="nc" id="L80">					.get(getFullName(name));</span>
+
+<span class="nc bnc" id="L82" title="All 2 branches missed.">			if (ftpConnection == null)</span>
+			{
+<span class="nc" id="L84">				ftpConnection = new FTPConnection(name);</span>
+			}
+
+<span class="nc" id="L87">			ftpConnection.open(false);</span>
+<span class="nc" id="L88">			return ftpConnection;</span>
+		}
+	}
+
+	/**
+	 * Opens a connection to a FTP server, does the login and sets the file
+	 * type.
+	 * 
+	 * @param force
+	 *            Forces the connection to be opened
+	 * @throws XException
+	 *             if something goes wrong
+	 */
+	private void open(boolean force) throws XException
+	{
+<span class="nc bnc" id="L103" title="All 4 branches missed.">		if ((!mOpen) || force)</span>
+		{
+<span class="nc" id="L105">			mFTPClient = new FTPClient();</span>
+
+			/*
+			 * Connect to the FTP Server
+			 */
+<span class="nc" id="L110">			Configuration config = Configuration.getInstance();</span>
+<span class="nc" id="L111">			mHost = config.getValue(CHAPTER_FTPCONNECTION, mName, &quot;Host&quot;);</span>
+<span class="nc" id="L112">			mPort = config.getValueAsIntOptional(CHAPTER_FTPCONNECTION, mName,</span>
+					&quot;Port&quot;);
+
+			try
+			{
+<span class="nc bnc" id="L117" title="All 2 branches missed.">				if (mPort &gt; 0)</span>
+				{
+<span class="nc" id="L119">					mFTPClient.connect(mHost, mPort);</span>
+				}
+				else
+				{
+<span class="nc" id="L123">					mFTPClient.connect(mHost);</span>
+				}
+
+<span class="nc" id="L126">				int reply = getReplyCode();</span>
+
+<span class="nc bnc" id="L128" title="All 2 branches missed.">				if (!FTPReply.isPositiveCompletion(reply))</span>
+				{
+<span class="nc" id="L130">					close();</span>
+<span class="nc" id="L131">					Vector params = new Vector(2);</span>
+<span class="nc" id="L132">					params.add(mHost);</span>
+<span class="nc" id="L133">					params.add(getReplyString());</span>
+<span class="nc" id="L134">					throw new XException(Constants.LOCATION_EXTERN,</span>
+							Constants.LAYER_TECHNICAL,
+							Constants.PACKAGE_TECHNICAL_FTP, &quot;1&quot;, params);
+				}
+
+<span class="nc" id="L139">				mOpen = true;</span>
+
+				/*
+				 * Login to the FTP server
+				 */
+<span class="nc" id="L144">				String user = config.getValue(CHAPTER_FTPCONNECTION, mName,</span>
+						&quot;User&quot;);
+<span class="nc" id="L146">				String password = config.getValueOptional(</span>
+						CHAPTER_FTPCONNECTION, mName, &quot;Password&quot;);
+<span class="nc" id="L148">				String account = config.getValueOptional(CHAPTER_FTPCONNECTION,</span>
+						mName, &quot;Account&quot;);
+
+<span class="nc" id="L151">				boolean successful = false;</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">				if (account == null)</span>
+				{
+<span class="nc" id="L154">					successful = mFTPClient.login(user, password);</span>
+				}
+				else
+				{
+<span class="nc" id="L158">					successful = mFTPClient.login(user, password, account);</span>
+				}
+
+<span class="nc bnc" id="L161" title="All 2 branches missed.">				if (!successful)</span>
+				{
+<span class="nc" id="L163">					close();</span>
+<span class="nc" id="L164">					Vector params = new Vector(3);</span>
+<span class="nc" id="L165">					params.add(mHost);</span>
+<span class="nc" id="L166">					params.add(user);</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">					if (account == null)</span>
+					{
+<span class="nc" id="L169">						throw new XException(Constants.LOCATION_EXTERN,</span>
+								Constants.LAYER_TECHNICAL,
+								Constants.PACKAGE_TECHNICAL_FTP, &quot;2&quot;, params);
+
+					}
+					else
+					{
+<span class="nc" id="L176">						params.add(user);</span>
+<span class="nc" id="L177">						throw new XException(Constants.LOCATION_EXTERN,</span>
+								Constants.LAYER_TECHNICAL,
+								Constants.PACKAGE_TECHNICAL_FTP, &quot;3&quot;, params);
+					}
+
+				}
+
+				/*
+				 * Set the file type
+				 */
+<span class="nc" id="L187">				int fileTypeInt = 0;</span>
+<span class="nc" id="L188">				String fileTypeString = config.getValueOptional(</span>
+						CHAPTER_FTPCONNECTION, mName, &quot;FileType&quot;);
+<span class="nc bnc" id="L190" title="All 2 branches missed.">				if (fileTypeString == null)</span>
+				{
+<span class="nc" id="L192">					fileTypeString = &quot;ASCII&quot;;</span>
+				}
+<span class="nc bnc" id="L194" title="All 2 branches missed.">				if (fileTypeString.toUpperCase().equals(&quot;ASCII&quot;))</span>
+				{
+<span class="nc" id="L196">					fileTypeInt = FTP.ASCII_FILE_TYPE;</span>
+				}
+<span class="nc bnc" id="L198" title="All 2 branches missed.">				else if (fileTypeString.toUpperCase().equals(&quot;BINARY&quot;))</span>
+				{
+<span class="nc" id="L200">					fileTypeInt = FTP.BINARY_FILE_TYPE;</span>
+				}
+				else
+				{
+<span class="nc" id="L204">					close();</span>
+<span class="nc" id="L205">					Vector params = new Vector(1);</span>
+<span class="nc" id="L206">					params.add(fileTypeString);</span>
+<span class="nc" id="L207">					throw new XException(Constants.LOCATION_EXTERN,</span>
+							Constants.LAYER_TECHNICAL,
+							Constants.PACKAGE_TECHNICAL_FTP, &quot;2&quot;, params);
+				}
+<span class="nc" id="L211">				mFTPClient.setFileType(fileTypeInt);</span>
+			}
+<span class="nc" id="L213">			catch (XException e)</span>
+			{
+<span class="nc" id="L215">				close();</span>
+<span class="nc" id="L216">				throw e;</span>
+			}
+<span class="nc" id="L218">			catch (SocketException e)</span>
+			{
+<span class="nc" id="L220">				close();</span>
+<span class="nc" id="L221">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_FTP, &quot;0&quot;, e);
+			}
+<span class="nc" id="L225">			catch (IOException e)</span>
+			{
+<span class="nc" id="L227">				close();</span>
+<span class="nc" id="L228">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_FTP, &quot;0&quot;, e);
+<span class="nc" id="L231">			}</span>
+		}
+<span class="nc" id="L233">	}</span>
+
+	/**
+	 * Closes the connection to the FTP server
+	 */
+	public void close()
+	{
+<span class="nc bnc" id="L240" title="All 2 branches missed.">		if (mOpen)</span>
+		{
+			try
+			{
+<span class="nc bnc" id="L244" title="All 2 branches missed.">				if (mFTPClient != null)</span>
+				{
+<span class="nc" id="L246">					mFTPClient.disconnect();</span>
+				}
+			}
+<span class="nc" id="L249">			catch (Exception e)</span>
+			{
+<span class="nc" id="L251">				Trace.warn(&quot;Cannot disconnect from FTP server for connection &quot;</span>
+						+ mName);
+<span class="nc" id="L253">			}</span>
+		}
+
+<span class="nc" id="L256">		mOpen = false;</span>
+<span class="nc" id="L257">	}</span>
+
+	/**
+	 * Returns the reply code send by the FTP server after an operation
+	 */
+	private int getReplyCode()
+	{
+<span class="nc" id="L264">		return mFTPClient.getReplyCode();</span>
+	}
+
+	/**
+	 * Returns the reply string send by the FTP server after an operation
+	 */
+	private String getReplyString()
+	{
+<span class="nc" id="L272">		return mFTPClient.getReplyString();</span>
+	}
+
+	/**
+	 * Retrieves the content of a file from the FTP server.
+	 * 
+	 * @param workDir
+	 *            working directory where the file is stored, may be null
+	 * @param fileName
+	 *            name of the file without any directory information
+	 * @param encoding
+	 *            encoding of the file
+	 * @return content of the file
+	 * @throws XException
+	 *             if something goes wrong, e.g. the file doesn't exist
+	 */
+	public String retrieveFile(String workDir, String fileName, String encoding)
+			throws XException
+	{
+		try
+		{
+<span class="nc" id="L293">			changeWorkDir(workDir);</span>
+
+<span class="nc" id="L295">			ByteArrayOutputStream outStream = new ByteArrayOutputStream();</span>
+
+<span class="nc" id="L297">			boolean successful = mFTPClient.retrieveFile(fileName, outStream);</span>
+<span class="nc bnc" id="L298" title="All 2 branches missed.">			if (!successful)</span>
+			{
+<span class="nc" id="L300">				outStream.close();</span>
+<span class="nc" id="L301">				Vector params = new Vector(2);</span>
+<span class="nc" id="L302">				params.add(fileName);</span>
+<span class="nc" id="L303">				params.add(getReplyString());</span>
+<span class="nc" id="L304">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_FTP, &quot;5&quot;, params);
+			}
+<span class="nc" id="L308">			String retString = outStream.toString(encoding);</span>
+<span class="nc" id="L309">			outStream.close();</span>
+<span class="nc" id="L310">			return retString;</span>
+		}
+<span class="nc" id="L312">		catch (Throwable e)</span>
+		{
+<span class="nc" id="L314">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL, Constants.PACKAGE_TECHNICAL_FTP,
+					&quot;0&quot;, e);
+		}
+
+	}
+
+	/**
+	 * Changes the working directory used for file operations.
+	 * 
+	 * @param workDir
+	 *            name of the new working directory
+	 * @throws XException
+	 *             if something goes wrong
+	 */
+	private void changeWorkDirInternal(String workDir) throws FTPException,
+			IOException
+	{
+<span class="nc bnc" id="L332" title="All 2 branches missed.">		if (!mFTPClient.changeWorkingDirectory(workDir))</span>
+		{
+<span class="nc" id="L334">			throw new FTPException();</span>
+		}
+<span class="nc" id="L336">	}</span>
+
+	/**
+	 * Changes the working directory used for file operations.
+	 * 
+	 * @param workDir
+	 *            name of the new working directory
+	 * @throws XException
+	 *             if something goes wrong
+	 */
+	private void changeWorkDir(String workDir) throws XException
+	{
+		try
+		{
+<span class="nc bnc" id="L350" title="All 2 branches missed.">			if (workDir != null)</span>
+			{
+<span class="nc" id="L352">				changeWorkDirInternal(workDir);</span>
+			}
+		}
+<span class="nc" id="L355">		catch (Exception e1)</span>
+		{
+			try
+			{
+				/*
+				 * Reopen connection and try a second time
+				 */
+<span class="nc" id="L362">				Trace</span>
+<span class="nc" id="L363">						.warn(&quot;FTP connection may be gone, will try a second time&quot;);</span>
+<span class="nc" id="L364">				open(true);</span>
+<span class="nc" id="L365">				changeWorkDirInternal(workDir);</span>
+			}
+<span class="nc" id="L367">			catch (FTPException e)</span>
+			{
+<span class="nc" id="L369">				Vector params = new Vector(1);</span>
+<span class="nc" id="L370">				params.add(workDir);</span>
+<span class="nc" id="L371">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_FTP, &quot;12&quot;, params);
+			}
+<span class="nc" id="L375">			catch (IOException e)</span>
+			{
+
+<span class="nc" id="L378">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_FTP, &quot;0&quot;);
+<span class="nc" id="L381">			}</span>
+
+<span class="nc" id="L383">		}</span>
+<span class="nc" id="L384">	}</span>
+
+	/**
+	 * Writes the given data to a file on the FTP server. Existing files will be
+	 * overwritten.
+	 * 
+	 * @param data
+	 *            new content of the file on the server
+	 * @param workDir
+	 *            working directory where the file shall be stored, may be null
+	 * @param fileName
+	 *            name of the file without any directory information
+	 * @param encoding
+	 *            encoding of the file
+	 * @throws XException
+	 *             if something goes wrong, e.g. the working directory doesn't
+	 *             exist
+	 */
+	public void storeFile(String data, String workDir, String fileName,
+			String encoding) throws XException
+	{
+		try
+		{
+<span class="nc" id="L407">			changeWorkDir(workDir);</span>
+
+<span class="nc" id="L409">			ByteArrayInputStream inStream = new ByteArrayInputStream(data</span>
+<span class="nc" id="L410">					.getBytes(encoding));</span>
+<span class="nc" id="L411">			boolean successful = mFTPClient.storeFile(fileName, inStream);</span>
+<span class="nc" id="L412">			inStream.close();</span>
+<span class="nc bnc" id="L413" title="All 2 branches missed.">			if (!successful)</span>
+			{
+<span class="nc" id="L415">				Vector params = new Vector(2);</span>
+<span class="nc" id="L416">				params.add(fileName);</span>
+<span class="nc" id="L417">				params.add(getReplyString());</span>
+<span class="nc" id="L418">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_FTP, &quot;9&quot;, params);
+			}
+		}
+<span class="nc" id="L423">		catch (UnsupportedEncodingException e)</span>
+		{
+<span class="nc" id="L425">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL, Constants.PACKAGE_TECHNICAL_FTP,
+					&quot;0&quot;, e);
+		}
+<span class="nc" id="L429">		catch (IOException e)</span>
+		{
+<span class="nc" id="L431">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL, Constants.PACKAGE_TECHNICAL_FTP,
+					&quot;0&quot;, e);
+<span class="nc" id="L434">		}</span>
+<span class="nc" id="L435">	}</span>
+
+	/**
+	 * Renames a file on the FTP server.
+	 * 
+	 * @param workDir
+	 *            working directory, may be null
+	 * @param fromFile
+	 *            old name of the file, without any directory information
+	 * @param toFile
+	 *            new name of the file, without any directory information
+	 * @throws XException
+	 *             if something goes wrong, e.g. the &lt;code&gt;fromFile&lt;/code&gt;
+	 *             doesn't exist
+	 */
+	public void rename(String workDir, String fromFile, String toFile)
+			throws XException
+	{
+		try
+		{
+<span class="nc" id="L455">			changeWorkDir(workDir);</span>
+
+<span class="nc" id="L457">			boolean successful = mFTPClient.rename(fromFile, toFile);</span>
+<span class="nc bnc" id="L458" title="All 2 branches missed.">			if (!successful)</span>
+			{
+<span class="nc" id="L460">				Vector params = new Vector(3);</span>
+<span class="nc" id="L461">				params.add(fromFile);</span>
+<span class="nc" id="L462">				params.add(toFile);</span>
+<span class="nc" id="L463">				params.add(getReplyString());</span>
+<span class="nc" id="L464">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_FTP, &quot;7&quot;, params);
+			}
+		}
+<span class="nc" id="L469">		catch (IOException e)</span>
+		{
+<span class="nc" id="L471">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL, Constants.PACKAGE_TECHNICAL_FTP,
+					&quot;0&quot;, e);
+<span class="nc" id="L474">		}</span>
+<span class="nc" id="L475">	}</span>
+
+	/**
+	 * Deletes a file on the FTP server.
+	 * 
+	 * @param workDir
+	 *            working directory, may be null
+	 * @param fileName
+	 *            name of the file that shall be deleted, without any directory
+	 *            information
+	 * @throws XException
+	 *             if something goes wrong, e.g. the file doesn't exist
+	 */
+	public void delete(String workDir, String fileName) throws XException
+	{
+<span class="nc bnc" id="L490" title="All 2 branches missed.">		if (mOpen)</span>
+		{
+			try
+			{
+<span class="nc" id="L494">				changeWorkDir(workDir);</span>
+
+<span class="nc" id="L496">				boolean successful = mFTPClient.deleteFile(fileName);</span>
+<span class="nc bnc" id="L497" title="All 2 branches missed.">				if (!successful)</span>
+				{
+<span class="nc" id="L499">					Vector params = new Vector(2);</span>
+<span class="nc" id="L500">					params.add(fileName);</span>
+<span class="nc" id="L501">					params.add(getReplyString());</span>
+<span class="nc" id="L502">					throw new XException(Constants.LOCATION_EXTERN,</span>
+							Constants.LAYER_TECHNICAL,
+							Constants.PACKAGE_TECHNICAL_FTP, &quot;8&quot;, params);
+				}
+			}
+<span class="nc" id="L507">			catch (IOException e)</span>
+			{
+<span class="nc" id="L509">				throw new XException(Constants.LOCATION_EXTERN,</span>
+						Constants.LAYER_TECHNICAL,
+						Constants.PACKAGE_TECHNICAL_FTP, &quot;0&quot;, e);
+<span class="nc" id="L512">			}</span>
+		}
+<span class="nc" id="L514">	}</span>
+
+	/**
+	 * Checks if a file exists on the FTP server.
+	 * 
+	 * @param workDir
+	 *            working directory, may be null
+	 * @param fileName
+	 *            name of the file, without any directory information
+	 * @return &lt;code&gt;true&lt;/code&gt; if the file exists, &lt;code&gt;false&lt;/code&gt; if
+	 *         not
+	 * @throws XException
+	 *             if something goes wrong
+	 */
+	public boolean existsFile(String workDir, String fileName)
+			throws XException
+	{
+		try
+		{
+<span class="nc" id="L533">			changeWorkDir(workDir);</span>
+
+<span class="nc" id="L535">			String[] files = mFTPClient.listNames(fileName);</span>
+<span class="nc bnc" id="L536" title="All 4 branches missed.">			if ((files != null) &amp;&amp; (files.length == 1)</span>
+<span class="nc bnc" id="L537" title="All 2 branches missed.">					&amp;&amp; (fileName.equals(files[0])))</span>
+			{
+<span class="nc" id="L539">				return true;</span>
+			}
+			else
+			{
+<span class="nc" id="L543">				return false;</span>
+			}
+		}
+<span class="nc" id="L546">		catch (IOException e)</span>
+		{
+<span class="nc" id="L548">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL, Constants.PACKAGE_TECHNICAL_FTP,
+					&quot;0&quot;, e);
+		}
+	}
+
+	/**
+	 * Returns a string containing host, port, working directory and name of the
+	 * file, mainly used for tracing.
+	 * 
+	 * @param workDir
+	 *            working directory, may be null
+	 * @param fileName
+	 *            name of the file, without any directory information
+	 * @return string as described above
+	 */
+	public String getFTPName(String workDir, String fileName)
+	{
+<span class="nc" id="L566">		StringBuffer buffer = new StringBuffer(&quot;ftp://&quot;).append(mHost);</span>
+<span class="nc bnc" id="L567" title="All 2 branches missed.">		if (mPort &gt; 0)</span>
+		{
+<span class="nc" id="L569">			buffer.append(&quot;:&quot;).append(mPort);</span>
+		}
+<span class="nc bnc" id="L571" title="All 2 branches missed.">		if (workDir != null)</span>
+		{
+<span class="nc" id="L573">			buffer.append(workDir);</span>
+		}
+<span class="nc" id="L575">		buffer.append(&quot;/&quot;);</span>
+<span class="nc" id="L576">		buffer.append(fileName);</span>
+
+<span class="nc" id="L578">		return buffer.toString();</span>
+	}
+
+	/**
+	 * Extracts the name of the directory from a complete file name.
+	 * 
+	 * @param name
+	 *            complete name of a file, containing directory and file name
+	 * @return name of the directory with leading slash, &lt;code&gt;null&lt;/code&gt; if
+	 *         the name doesn't contain any directory information
+	 */
+	static public String getWorkingDirectory(String name)
+	{
+<span class="nc" id="L591">		String workDir = null;</span>
+<span class="nc" id="L592">		int index = 0;</span>
+
+<span class="nc bnc" id="L594" title="All 2 branches missed.">		if ((index = name.lastIndexOf(&quot;/&quot;)) &gt;= 0)</span>
+		{
+<span class="nc" id="L596">			workDir = name.substring(0, index);</span>
+		}
+
+<span class="nc bnc" id="L599" title="All 4 branches missed.">		if ((workDir != null) &amp;&amp; (!workDir.startsWith(&quot;/&quot;)))</span>
+		{
+<span class="nc" id="L601">			StringBuffer newWorkDir = new StringBuffer(workDir.length() + 1);</span>
+<span class="nc" id="L602">			newWorkDir.append(&quot;/&quot;).append(workDir);</span>
+<span class="nc" id="L603">			workDir = newWorkDir.toString();</span>
+		}
+
+<span class="nc" id="L606">		return workDir;</span>
+	}
+
+	/**
+	 * Extracts the name of the file itself from a complete file name.
+	 * 
+	 * @param name
+	 *            complete name of a file, containing directory and file name
+	 * @return name of the file itself
+	 * @throws XException
+	 *             if the name of the file can't be extracted, e.g. the given
+	 *             name ends with a slash
+	 */
+	static public String getFileName(String name) throws XException
+	{
+<span class="nc" id="L621">		String fileName = null;</span>
+<span class="nc" id="L622">		int index = 0;</span>
+<span class="nc" id="L623">		int lastPos = name.length() - 1;</span>
+
+<span class="nc bnc" id="L625" title="All 2 branches missed.">		if ((index = name.lastIndexOf(&quot;/&quot;)) &lt; 0)</span>
+		{
+			/*
+			 * no slash =&gt; no directory
+			 */
+<span class="nc" id="L630">			fileName = name;</span>
+		}
+		else
+		{
+<span class="nc bnc" id="L634" title="All 2 branches missed.">			if (index &lt; lastPos)</span>
+			{
+				/*
+				 * There is at least one character after the slash
+				 */
+<span class="nc" id="L639">				fileName = name.substring(index + 1);</span>
+			}
+		}
+
+<span class="nc bnc" id="L643" title="All 2 branches missed.">		if (fileName == null)</span>
+		{
+<span class="nc" id="L645">			Vector params = new Vector(1);</span>
+<span class="nc" id="L646">			params.add(name);</span>
+<span class="nc" id="L647">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL, Constants.PACKAGE_TECHNICAL_FTP,
+					&quot;11&quot;, params);
+		}
+
+<span class="nc" id="L652">		return fileName;</span>
+	}
+
+	static private String getFullName(String name)
+	{
+<span class="nc" id="L657">		return new StringBuffer().append(name).append(&quot;.&quot;).append(</span>
+<span class="nc" id="L658">				Thread.currentThread().getName()).toString();</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

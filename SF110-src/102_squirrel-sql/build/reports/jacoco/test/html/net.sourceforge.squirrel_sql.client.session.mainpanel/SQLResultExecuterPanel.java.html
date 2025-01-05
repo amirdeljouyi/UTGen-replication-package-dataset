@@ -1,0 +1,1022 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SQLResultExecuterPanel.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.session.mainpanel</a> &gt; <span class="el_source">SQLResultExecuterPanel.java</span></div><h1>SQLResultExecuterPanel.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.session.mainpanel;
+/*
+ * Copyright (C) 2003-2004 Jason Height
+ * jmheight@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+
+import net.sourceforge.squirrel_sql.client.action.ActionCollection;
+import net.sourceforge.squirrel_sql.client.gui.builders.UIFactory;
+import net.sourceforge.squirrel_sql.client.gui.desktopcontainer.DialogWidget;
+import net.sourceforge.squirrel_sql.client.session.ISQLEntryPanel;
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.client.session.SQLExecutionInfo;
+import net.sourceforge.squirrel_sql.client.session.action.CloseAllSQLResultTabsAction;
+import net.sourceforge.squirrel_sql.client.session.action.CloseAllSQLResultTabsButCurrentAction;
+import net.sourceforge.squirrel_sql.client.session.action.CloseCurrentSQLResultTabAction;
+import net.sourceforge.squirrel_sql.client.session.action.ToggleCurrentSQLResultTabStickyAction;
+import net.sourceforge.squirrel_sql.client.session.event.ISQLExecutionListener;
+import net.sourceforge.squirrel_sql.client.session.properties.SessionProperties;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.*;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLConnection;
+import net.sourceforge.squirrel_sql.fw.util.Resources;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+import javax.swing.*;
+import javax.swing.event.EventListenerList;
+import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.beans.PropertyChangeEvent;
+import java.beans.PropertyChangeListener;
+import java.sql.SQLException;
+import java.util.ArrayList;
+/**
+ * This is the panel where SQL scripts are executed and results presented.
+ *
+ */
+public class SQLResultExecuterPanel extends JPanel
+									implements ISQLResultExecuter
+{
+	/** Logger for this class. */
+<span class="nc" id="L60">	private static final ILogger s_log = </span>
+<span class="nc" id="L61">        LoggerController.createLogger(SQLResultExecuterPanel.class);</span>
+
+    /** Internationalized strings for this class. */
+<span class="nc" id="L64">   private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L65">        StringManagerFactory.getStringManager(SQLResultExecuterPanel.class);</span>
+
+   static interface i18n {
+        // i18n[SQLResultExecuterPanel.exec=Executing SQL]
+        String EXEC_SQL_MSG = 
+<span class="nc" id="L70">            s_stringMgr.getString(&quot;SQLResultExecuterPanel.exec&quot;);</span>
+        // i18n[SQLResultExecuterPanel.cancelMsg=Press Cancel to Stop]
+<span class="nc" id="L72">        String CANCEL_SQL_MSG = </span>
+<span class="nc" id="L73">            s_stringMgr.getString(&quot;SQLResultExecuterPanel.cancelMsg&quot;);</span>
+        
+    }
+    
+	private ISession _session;
+
+	private MyPropertiesListener _propsListener;
+
+	/** Each tab is a &lt;TT&gt;ResultTab&lt;/TT&gt; showing the results of a query. */
+	private JTabbedPane _tabbedExecutionsPanel;
+
+<span class="nc" id="L84">   private ArrayList&lt;ResultFrame&gt;_sqlResultFrames = new ArrayList&lt;ResultFrame&gt;();</span>
+
+
+	/** Listeners */
+<span class="nc" id="L88">	private EventListenerList _listeners = new EventListenerList();</span>
+
+   private ResultTabFactory _resultTabFactory;
+
+   private IResultTab _stickyTab;
+
+   /**
+	 * Ctor.
+	 *
+	 * @param	session	 Current session.
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;ISession&lt;/TT&gt; passed.
+	 */
+	public SQLResultExecuterPanel(ISession session)
+<span class="nc" id="L103">	{</span>
+<span class="nc" id="L104">      _resultTabFactory = new ResultTabFactory(session, createSQLResultExecuterPanelFacade());</span>
+<span class="nc" id="L105">		setSession(session);</span>
+<span class="nc" id="L106">		createGUI();</span>
+<span class="nc" id="L107">		propertiesHaveChanged(null);</span>
+<span class="nc" id="L108">	}</span>
+
+   private SQLResultExecuterPanelFacade createSQLResultExecuterPanelFacade()
+   {
+<span class="nc" id="L112">      return new SQLResultExecuterPanelFacade()</span>
+<span class="nc" id="L113">      {</span>
+         @Override
+         public void closeResultTab(ResultTab resultTab)
+         {
+<span class="nc" id="L117">            SQLResultExecuterPanel.this.closeResultTab(resultTab);</span>
+<span class="nc" id="L118">         }</span>
+
+         @Override
+         public void returnToTabbedPane(ResultTab resultTab)
+         {
+<span class="nc" id="L123">            SQLResultExecuterPanel.this.returnToTabbedPane(resultTab);</span>
+<span class="nc" id="L124">         }</span>
+
+         @Override
+         public void createSQLResultFrame(ResultTab resultTab)
+         {
+<span class="nc" id="L129">            SQLResultExecuterPanel.this.createSQLResultFrame(resultTab);</span>
+<span class="nc" id="L130">         }</span>
+
+         @Override
+         public void rerunSQL(String sql, IResultTab resultTab)
+         {
+<span class="nc" id="L135">            SQLResultExecuterPanel.this.rerunSQL(sql, resultTab);</span>
+<span class="nc" id="L136">         }</span>
+
+         @Override
+         public void removeErrorPanel(ErrorPanel errorPanel)
+         {
+<span class="nc" id="L141">            SQLResultExecuterPanel.this.removeErrorPanel(errorPanel);</span>
+<span class="nc" id="L142">         }</span>
+      };
+   }
+
+   public String getTitle()
+	{
+        // i18n[SQLResultExecuterPanel.title=Results]
+<span class="nc" id="L149">		return s_stringMgr.getString(&quot;SQLResultExecuterPanel.title&quot;);</span>
+	}
+
+	public JComponent getComponent()
+	{
+<span class="nc" id="L154">		return this;</span>
+	}
+
+	/**
+	 * Set the current session.
+	 *
+	 * @param	session	 Current session.
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;ISession&lt;/TT&gt; passed.
+	 */
+	public synchronized void setSession(ISession session)
+	{
+<span class="nc bnc" id="L167" title="All 2 branches missed.">		if (session == null)</span>
+		{
+<span class="nc" id="L169">			throw new IllegalArgumentException(&quot;Null ISession passed&quot;);</span>
+		}
+<span class="nc" id="L171">		sessionClosing();</span>
+<span class="nc" id="L172">		_session = session;</span>
+<span class="nc" id="L173">		_propsListener = new MyPropertiesListener();</span>
+<span class="nc" id="L174">		_session.getProperties().addPropertyChangeListener(_propsListener);</span>
+<span class="nc" id="L175">	}</span>
+
+	/** Current session. */
+	public ISession getSession()
+	{
+<span class="nc" id="L180">		return _session;</span>
+	}
+
+	/**
+	 * Add a listener listening for SQL Execution.
+	 *
+	 * @param	lis	 Listener
+	 *
+	 * @throws	IllegalArgumentException
+	 *			If a null &lt;TT&gt;ISQLExecutionListener&lt;/TT&gt; passed.
+	 */
+	public synchronized void addSQLExecutionListener(ISQLExecutionListener lis)
+	{
+<span class="nc bnc" id="L193" title="All 2 branches missed.">		if (lis == null)</span>
+		{
+<span class="nc" id="L195">			throw new IllegalArgumentException(&quot;ISQLExecutionListener == null&quot;);</span>
+		}
+<span class="nc" id="L197">		_listeners.add(ISQLExecutionListener.class, lis);</span>
+<span class="nc" id="L198">	}</span>
+
+	/**
+	 * Remove an SQL execution listener.
+	 *
+	 * @param	lis	Listener
+	 *
+	 * @throws	IllegalArgumentException
+	 *			If a null &lt;TT&gt;ISQLExecutionListener&lt;/TT&gt; passed.
+	 */
+	public synchronized void removeSQLExecutionListener(ISQLExecutionListener lis)
+	{
+<span class="nc bnc" id="L210" title="All 2 branches missed.">		if (lis == null)</span>
+		{
+<span class="nc" id="L212">			throw new IllegalArgumentException(&quot;ISQLExecutionListener == null&quot;);</span>
+		}
+<span class="nc" id="L214">		_listeners.remove(ISQLExecutionListener.class, lis);</span>
+<span class="nc" id="L215">	}</span>
+
+
+	public void execute(ISQLEntryPanel sqlPanel)
+	{
+<span class="nc" id="L220">      removeErrorPanels();</span>
+
+<span class="nc" id="L222">		String sql = sqlPanel.getSQLToBeExecuted();</span>
+<span class="nc bnc" id="L223" title="All 4 branches missed.">		if (sql != null &amp;&amp; sql.length() &gt; 0)</span>
+		{
+<span class="nc" id="L225">			executeSQL(sql);</span>
+		}
+		else
+		{
+            // i18n[SQLResultExecuterPanel.nosqlselected=No SQL selected for execution.]
+<span class="nc" id="L230">            String msg = </span>
+<span class="nc" id="L231">                s_stringMgr.getString(&quot;SQLResultExecuterPanel.nosqlselected&quot;);</span>
+<span class="nc" id="L232">			_session.showErrorMessage(msg);</span>
+		}
+<span class="nc" id="L234">	}</span>
+
+   private void removeErrorPanels()
+   {
+<span class="nc" id="L238">      ArrayList&lt;ErrorPanel&gt; toRemove = new ArrayList&lt;ErrorPanel&gt;();</span>
+
+<span class="nc bnc" id="L240" title="All 2 branches missed.">      for (int i = 0; i &lt; _tabbedExecutionsPanel.getTabCount(); i++)</span>
+      {
+<span class="nc" id="L242">         Component tab = _tabbedExecutionsPanel.getComponentAt(i);</span>
+<span class="nc bnc" id="L243" title="All 2 branches missed.">         if(tab instanceof ErrorPanel)</span>
+         {
+<span class="nc" id="L245">            toRemove.add((ErrorPanel) tab);</span>
+         }
+      }
+
+<span class="nc bnc" id="L249" title="All 2 branches missed.">      for (ErrorPanel errorPanel : toRemove)</span>
+      {
+<span class="nc" id="L251">         closeTab(errorPanel);</span>
+<span class="nc" id="L252">      }</span>
+<span class="nc" id="L253">   }</span>
+
+   public void executeSQL(String sql)
+	{
+<span class="nc bnc" id="L257" title="All 4 branches missed.">      if (sql != null &amp;&amp; sql.trim().length() &gt; 0)</span>
+      {
+<span class="nc" id="L259">         removeErrorPanels();</span>
+
+<span class="nc" id="L261">         String origSQL = sql;</span>
+<span class="nc" id="L262">         sql = fireSQLToBeExecutedEvent(sql);</span>
+
+         // This can happen if an impl of ISQLExecutionListener returns null
+         // from the statementExecuting API method, to indicate that the SQL
+         // shouldn't be executed.
+<span class="nc bnc" id="L267" title="All 2 branches missed.">         if (sql == null)</span>
+         {
+<span class="nc" id="L269">            s_log.info(</span>
+                  &quot;executeSQL: An ISQLExecutionListener veto'd execution of &quot; +
+                        &quot;the following SQL: &quot; + origSQL);
+<span class="nc" id="L272">            return;</span>
+         }
+
+<span class="nc" id="L275">         ISQLExecutionListener[] executionListeners =</span>
+<span class="nc" id="L276">               _listeners.getListeners(ISQLExecutionListener.class);</span>
+
+<span class="nc" id="L278">         ISQLExecutionHandlerListener executionHandlerListener = createSQLExecutionHandlerListener();</span>
+
+<span class="nc" id="L280">         new SQLExecutionHandler((IResultTab)null, _session, sql, executionHandlerListener, executionListeners);</span>
+      }
+<span class="nc" id="L282">   }</span>
+
+   private ISQLExecutionHandlerListener createSQLExecutionHandlerListener()
+   {
+<span class="nc" id="L286">      return</span>
+         new ISQLExecutionHandlerListener()
+<span class="nc" id="L288">         {</span>
+            @Override
+            public void addResultsTab(SQLExecutionInfo info, ResultSetDataSet rsds, ResultSetMetaDataDataSet rsmdds, IDataSetUpdateableTableModel model, IResultTab resultTabToReplace)
+            {
+<span class="nc" id="L292">               onAddResultsTab(info, rsds, rsmdds, model, resultTabToReplace);</span>
+<span class="nc" id="L293">            }</span>
+
+            @Override
+            public void removeCancelPanel(CancelPanelCtrl cancelPanelCtrl, IResultTab resultTabToReplace)
+            {
+<span class="nc" id="L298">               onRemoveCancelPanel(cancelPanelCtrl, resultTabToReplace);</span>
+<span class="nc" id="L299">            }</span>
+
+            @Override
+            public void setCancelPanel(CancelPanelCtrl cancelPanelCtrl)
+            {
+<span class="nc" id="L304">               onSetCancelPanel(cancelPanelCtrl);</span>
+<span class="nc" id="L305">            }</span>
+
+            @Override
+            public void displayErrors(ArrayList&lt;String&gt; sqlExecErrorMsgs, String lastExecutedStatement)
+            {
+<span class="nc" id="L310">               onDisplayErrors(sqlExecErrorMsgs, lastExecutedStatement);</span>
+<span class="nc" id="L311">            }</span>
+         };
+   }
+
+   private void onDisplayErrors(final ArrayList&lt;String&gt; sqlExecErrorMsgs, final String lastExecutedStatement)
+   {
+<span class="nc" id="L317">      Runnable runnable = new Runnable()</span>
+<span class="nc" id="L318">      {</span>
+         public void run()
+         {
+<span class="nc" id="L321">            showErrorPanel(sqlExecErrorMsgs, lastExecutedStatement);</span>
+<span class="nc" id="L322">         }</span>
+      };
+
+<span class="nc" id="L325">      SwingUtilities.invokeLater(runnable);</span>
+<span class="nc" id="L326">   }</span>
+
+   private void showErrorPanel(ArrayList&lt;String&gt; sqlExecErrorMsgs, String lastExecutedStatement)
+   {
+<span class="nc" id="L330">      ErrorPanel errorPanel = _resultTabFactory.createErrorPanel(sqlExecErrorMsgs, lastExecutedStatement);</span>
+<span class="nc" id="L331">      _tabbedExecutionsPanel.add(s_stringMgr.getString(&quot;SQLResultExecuterPanel.ErrorTabHeader&quot;), errorPanel);</span>
+<span class="nc" id="L332">      _tabbedExecutionsPanel.setSelectedComponent(errorPanel);</span>
+<span class="nc" id="L333">   }</span>
+
+
+   private void removeErrorPanel(ErrorPanel errorPanel)
+   {
+<span class="nc" id="L338">      _tabbedExecutionsPanel.remove(errorPanel);</span>
+<span class="nc" id="L339">   }</span>
+
+   private void rerunSQL(String sql, IResultTab resultTab)
+   {
+<span class="nc" id="L343">      new SQLExecutionHandler(resultTab, _session, sql, createSQLExecutionHandlerListener(), new ISQLExecutionListener[0]);</span>
+<span class="nc" id="L344">   }</span>
+
+
+   /**
+	 * Close all the Results frames.
+	 */
+	public synchronized void closeAllSQLResultFrames()
+	{
+<span class="nc bnc" id="L352" title="All 2 branches missed.">      for (ResultFrame sqlResultFrame : _sqlResultFrames)</span>
+      {
+<span class="nc" id="L354">         sqlResultFrame.dispose();</span>
+<span class="nc" id="L355">      }</span>
+<span class="nc" id="L356">	}</span>
+
+	/**
+	 * Close all the Results tabs.
+	 */
+	public synchronized void closeAllSQLResultTabs()
+	{
+<span class="nc" id="L363">      ArrayList&lt;Component&gt; allTabs = getAllTabs();</span>
+
+<span class="nc bnc" id="L365" title="All 2 branches missed.">      for (Component tab : allTabs)</span>
+      {
+<span class="nc" id="L367">         closeTab(tab);</span>
+<span class="nc" id="L368">      }</span>
+
+<span class="nc" id="L370">	}</span>
+
+   private ArrayList&lt;Component&gt; getAllTabs()
+   {
+<span class="nc" id="L374">      ArrayList&lt;Component&gt; allTabs = new ArrayList&lt;Component&gt;();</span>
+<span class="nc bnc" id="L375" title="All 2 branches missed.">      for (int i = 0; i &lt; _tabbedExecutionsPanel.getTabCount(); i++)</span>
+      {
+<span class="nc" id="L377">         Component component = _tabbedExecutionsPanel.getComponentAt(i);</span>
+<span class="nc bnc" id="L378" title="All 2 branches missed.">         if (false == component instanceof CancelPanel)</span>
+         {
+<span class="nc" id="L380">            allTabs.add(component);</span>
+         }
+      }
+<span class="nc" id="L383">      return allTabs;</span>
+   }
+
+   public synchronized void closeAllButCurrentResultTabs()
+   {
+<span class="nc" id="L388">      Component selectedTab = _tabbedExecutionsPanel.getSelectedComponent();</span>
+
+<span class="nc" id="L390">      ArrayList&lt;Component&gt; allTabs = getAllTabs();</span>
+
+
+<span class="nc bnc" id="L393" title="All 2 branches missed.">      for (Component tab : allTabs)</span>
+      {
+<span class="nc bnc" id="L395" title="All 2 branches missed.">         if(tab != selectedTab)</span>
+         {
+<span class="nc" id="L397">            closeTab(tab);</span>
+         }
+
+<span class="nc" id="L400">      }</span>
+<span class="nc" id="L401">   }</span>
+
+   public synchronized void toggleCurrentSQLResultTabSticky()
+   {
+<span class="nc bnc" id="L405" title="All 2 branches missed.">      if (null != _stickyTab)</span>
+      {
+<span class="nc bnc" id="L407" title="All 2 branches missed.">         if(_stickyTab.equals(_tabbedExecutionsPanel.getSelectedComponent()))</span>
+         {
+            // Sticky is turned off. Just remove sticky and return.
+<span class="nc" id="L410">            _stickyTab = null;</span>
+<span class="nc" id="L411">            _tabbedExecutionsPanel.setIconAt(_tabbedExecutionsPanel.getSelectedIndex(), null);</span>
+<span class="nc" id="L412">            return;</span>
+
+         }
+         else
+         {
+            // remove old sticky tab
+<span class="nc" id="L418">            int indexOfStickyTab = getIndexOfTab(_stickyTab);</span>
+<span class="nc bnc" id="L419" title="All 2 branches missed.">            if(-1 != indexOfStickyTab)</span>
+            {
+<span class="nc" id="L421">               _tabbedExecutionsPanel.setIconAt(indexOfStickyTab, null);</span>
+            }
+<span class="nc" id="L423">            _stickyTab = null;</span>
+         }
+      }
+
+<span class="nc bnc" id="L427" title="All 2 branches missed.">      if(false == _tabbedExecutionsPanel.getSelectedComponent() instanceof IResultTab)</span>
+      {
+          //i18n[SQLResultExecuterPanel.nonStickyPanel=Cannot make a cancel panel sticky]
+<span class="nc" id="L430">          String msg = </span>
+<span class="nc" id="L431">              s_stringMgr.getString(&quot;SQLResultExecuterPanel.nonStickyPanel&quot;);</span>
+<span class="nc" id="L432">         JOptionPane.showMessageDialog(_session.getApplication().getMainFrame(), </span>
+                                       msg);
+<span class="nc" id="L434">         return;</span>
+      }
+
+<span class="nc" id="L437">      _stickyTab = (IResultTab) _tabbedExecutionsPanel.getSelectedComponent();</span>
+<span class="nc" id="L438">      int selectedIndex = _tabbedExecutionsPanel.getSelectedIndex();</span>
+
+<span class="nc" id="L440">      ImageIcon icon = getStickyIcon();</span>
+
+<span class="nc" id="L442">      _tabbedExecutionsPanel.setIconAt(selectedIndex, icon);</span>
+<span class="nc" id="L443">   }</span>
+
+   private ImageIcon getStickyIcon()
+   {
+<span class="nc" id="L447">      ActionCollection actionCollection = _session.getApplication().getActionCollection();</span>
+
+<span class="nc" id="L449">      ImageIcon icon =</span>
+<span class="nc" id="L450">         (ImageIcon) actionCollection.get(ToggleCurrentSQLResultTabStickyAction.class).getValue(Action.SMALL_ICON);</span>
+<span class="nc" id="L451">      return icon;</span>
+   }
+
+   private int getIndexOfTab(IResultTab resultTab)
+   {
+<span class="nc" id="L456">      return getIndexOfTab((JComponent)resultTab);</span>
+   }
+
+
+   private int getIndexOfTab(JComponent tab)
+   {
+<span class="nc bnc" id="L462" title="All 2 branches missed.">      if(null == tab)</span>
+      {
+<span class="nc" id="L464">         return -1;</span>
+      }
+
+<span class="nc bnc" id="L467" title="All 2 branches missed.">      for (int i = 0; i &lt; _tabbedExecutionsPanel.getTabCount(); i++)</span>
+      {
+<span class="nc bnc" id="L469" title="All 2 branches missed.">         if (tab == _tabbedExecutionsPanel.getComponentAt(i))</span>
+         {
+<span class="nc" id="L471">            return i;</span>
+         }
+      }
+<span class="nc" id="L474">      return -1;</span>
+   }
+
+
+
+   public synchronized void closeCurrentResultTab()
+   {
+<span class="nc" id="L481">      Component selectedTab = _tabbedExecutionsPanel.getSelectedComponent();</span>
+<span class="nc" id="L482">      closeTab(selectedTab);</span>
+<span class="nc" id="L483">   }</span>
+
+   /**
+	 * Sesssion is ending.
+	 * Remove all listeners that this component has setup. Close all
+	 * torn off result tab windows.
+	 */
+	void sessionClosing()
+	{
+<span class="nc bnc" id="L492" title="All 2 branches missed.">		if (_propsListener != null)</span>
+		{
+<span class="nc" id="L494">			_session.getProperties().removePropertyChangeListener(</span>
+					_propsListener);
+<span class="nc" id="L496">			_propsListener = null;</span>
+		}
+
+<span class="nc" id="L499">		closeAllSQLResultFrames();</span>
+<span class="nc" id="L500">	}</span>
+
+   private void closeTab(Component tab)
+   {
+<span class="nc bnc" id="L504" title="All 2 branches missed.">      if (tab instanceof ErrorPanel)</span>
+      {
+<span class="nc" id="L506">         _tabbedExecutionsPanel.remove(tab);</span>
+      }
+<span class="nc bnc" id="L508" title="All 2 branches missed.">      else if (tab instanceof ResultTab)</span>
+      {
+<span class="nc" id="L510">         closeResultTab((ResultTab) tab);</span>
+      }
+<span class="nc bnc" id="L512" title="All 2 branches missed.">      else if (tab instanceof CancelPanel)</span>
+      {
+<span class="nc" id="L514">         ((CancelPanel)tab).closeBtn.doClick();</span>
+      }
+<span class="nc" id="L516">   }</span>
+
+
+   /**
+	 * Close the passed &lt;TT&gt;ResultTab&lt;/TT&gt;. This is done by clearing
+	 * all data from the tab, removing it from the tabbed panel
+	 * and adding it to the list of available tabs.
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;ResultTab&lt;/TT&gt; passed.
+	 */
+	private void closeResultTab(ResultTab tab)
+	{
+<span class="nc bnc" id="L529" title="All 2 branches missed.">		if (tab == null)</span>
+		{
+<span class="nc" id="L531">			throw new IllegalArgumentException(&quot;Null ResultTab passed&quot;);</span>
+		}
+<span class="nc" id="L533">		s_log</span>
+<span class="nc" id="L534">				.debug(&quot;SQLPanel.closeResultTab(&quot; + tab.getIdentifier().toString()</span>
+                  + &quot;)&quot;);
+<span class="nc" id="L536">		tab.clear();</span>
+<span class="nc" id="L537">		_tabbedExecutionsPanel.remove(tab);</span>
+<span class="nc" id="L538">	}</span>
+
+	/**
+	 * Display the next tab in the SQL results.
+	 */
+	public void gotoNextResultsTab()
+	{
+<span class="nc" id="L545">		final int tabCount = _tabbedExecutionsPanel.getTabCount();</span>
+<span class="nc bnc" id="L546" title="All 2 branches missed.">		if (tabCount &gt; 1)</span>
+		{
+<span class="nc" id="L548">			int nextTabIdx = _tabbedExecutionsPanel.getSelectedIndex() + 1;</span>
+<span class="nc bnc" id="L549" title="All 2 branches missed.">			if (nextTabIdx &gt;= tabCount)</span>
+			{
+<span class="nc" id="L551">				nextTabIdx = 0;</span>
+			}
+<span class="nc" id="L553">			_tabbedExecutionsPanel.setSelectedIndex(nextTabIdx);</span>
+		}
+<span class="nc" id="L555">	}</span>
+
+	/**
+	 * Display the previous tab in the SQL results.
+	 */
+	public void gotoPreviousResultsTab()
+	{
+<span class="nc" id="L562">		final int tabCount = _tabbedExecutionsPanel.getTabCount();</span>
+<span class="nc bnc" id="L563" title="All 2 branches missed.">		if (tabCount &gt; 1)</span>
+		{
+<span class="nc" id="L565">			int prevTabIdx = _tabbedExecutionsPanel.getSelectedIndex() - 1;</span>
+<span class="nc bnc" id="L566" title="All 2 branches missed.">			if (prevTabIdx &lt; 0)</span>
+			{
+<span class="nc" id="L568">				prevTabIdx = tabCount - 1;</span>
+			}
+<span class="nc" id="L570">			_tabbedExecutionsPanel.setSelectedIndex(prevTabIdx);</span>
+		}
+<span class="nc" id="L572">	}</span>
+
+
+   protected String fireSQLToBeExecutedEvent(String sql)
+	{
+		// Guaranteed to be non-null.
+<span class="nc" id="L578">		Object[] listeners = _listeners.getListenerList();</span>
+		// Process the listeners last to first, notifying
+		// those that are interested in this event.
+<span class="nc bnc" id="L581" title="All 2 branches missed.">		for (int i = listeners.length - 2; i &gt;= 0; i -= 2)</span>
+		{
+<span class="nc bnc" id="L583" title="All 2 branches missed.">			if (listeners[i] == ISQLExecutionListener.class)</span>
+			{
+<span class="nc" id="L585">				sql = ((ISQLExecutionListener)listeners[i + 1]).statementExecuting(sql);</span>
+<span class="nc bnc" id="L586" title="All 2 branches missed.">				if (sql == null)</span>
+				{
+<span class="nc" id="L588">					break;</span>
+				}
+			}
+		}
+<span class="nc" id="L592">		return sql;</span>
+	}
+
+	/**
+	 * Create an internal frame for the specified tab and
+	 * display the tab in the internal frame after removing
+	 * it from the tabbed pane.
+	 *
+	 * @param	tab	&lt;TT&gt;ResultTab&lt;/TT&gt; to be displayed in
+	 *				an internal frame.
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;ResultTab&lt;/TT&gt; passed.
+	 */
+	private void createSQLResultFrame(ResultTab tab)
+	{
+<span class="nc bnc" id="L608" title="All 2 branches missed.">		if (tab == null)</span>
+		{
+<span class="nc" id="L610">			throw new IllegalArgumentException(&quot;Null ResultTab passed&quot;);</span>
+		}
+<span class="nc" id="L612">		s_log.debug(&quot;SQLPanel.createSQLResultFrame(&quot; + tab.getIdentifier().toString()</span>
+				+ &quot;)&quot;);
+<span class="nc" id="L614">		_tabbedExecutionsPanel.remove(tab);</span>
+
+
+<span class="nc" id="L617">      ResultFrameListener resultFrameListener = new ResultFrameListener()</span>
+<span class="nc" id="L618">      {</span>
+         @Override
+         public void frameReplaced(ResultFrame oldFrame, ResultFrame newFrame)
+         {
+<span class="nc" id="L622">            onFrameReplaced(oldFrame, newFrame);</span>
+<span class="nc" id="L623">         }</span>
+      };
+
+
+<span class="nc" id="L627">      ResultFrame frame = new ResultFrame(_session, tab, _resultTabFactory, resultFrameListener,true, false);</span>
+<span class="nc" id="L628">      _sqlResultFrames.add(frame);</span>
+<span class="nc" id="L629">   }</span>
+
+   private void onFrameReplaced(ResultFrame oldFrame, ResultFrame newFrame)
+   {
+<span class="nc" id="L633">      _sqlResultFrames.remove(oldFrame);</span>
+<span class="nc" id="L634">      _sqlResultFrames.add(newFrame);</span>
+<span class="nc" id="L635">   }</span>
+
+	/**
+	 * Return the passed tab back into the tabbed pane.
+	 *
+	 * @param	tab	&lt;TT&gt;Resulttab&lt;/TT&gt; to be returned
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;ResultTab&lt;/TT&gt; passed.
+	 */
+	private void returnToTabbedPane(ResultTab tab)
+	{
+<span class="nc bnc" id="L647" title="All 2 branches missed.">		if (tab == null)</span>
+		{
+<span class="nc" id="L649">			throw new IllegalArgumentException(&quot;Null ResultTab passed&quot;);</span>
+		}
+
+<span class="nc" id="L652">		s_log.debug(&quot;SQLPanel.returnToTabbedPane(&quot;</span>
+<span class="nc" id="L653">				+ tab.getIdentifier().toString() + &quot;)&quot;);</span>
+
+<span class="nc bnc" id="L655" title="All 2 branches missed.">      for (ResultFrame sqlResultFrame : _sqlResultFrames)</span>
+      {
+<span class="nc bnc" id="L657" title="All 2 branches missed.">         if(tab == sqlResultFrame.getTab())</span>
+         {
+<span class="nc" id="L659">            _sqlResultFrames.remove(sqlResultFrame);</span>
+<span class="nc" id="L660">            break;</span>
+         }
+<span class="nc" id="L662">      }</span>
+
+
+<span class="nc" id="L665">      addResultsTab(tab, null);</span>
+<span class="nc" id="L666">	}</span>
+
+    /**
+     * @see net.sourceforge.squirrel_sql.client.session.mainpanel.ISQLResultExecuter#getSelectedResultTab()
+     */
+    public IResultTab getSelectedResultTab() {
+<span class="nc" id="L672">        return (IResultTab)_tabbedExecutionsPanel.getSelectedComponent();</span>
+    }
+
+    private void onAddResultsTab(final SQLExecutionInfo exInfo,
+    		final ResultSetDataSet rsds,
+    		final ResultSetMetaDataDataSet mdds,
+    		final IDataSetUpdateableTableModel creator,
+    		final IResultTab resultTabToReplace)
+    {
+<span class="nc" id="L681">    		SwingUtilities.invokeLater(new Runnable()</span>
+<span class="nc" id="L682">    		{</span>
+             public void run()
+             {
+                try
+                {
+<span class="nc" id="L687">                   ResultTab tab = _resultTabFactory.createResultTab(exInfo, creator, rsds, mdds);</span>
+<span class="nc" id="L688">                   addResultsTab(tab, resultTabToReplace);</span>
+<span class="nc" id="L689">                   _tabbedExecutionsPanel.setSelectedComponent(tab);</span>
+                }
+<span class="nc" id="L691">                catch (Throwable t)</span>
+                {
+<span class="nc" id="L693">                   _session.showErrorMessage(t);</span>
+<span class="nc" id="L694">                }</span>
+<span class="nc" id="L695">             }</span>
+          });
+<span class="nc" id="L697">    }</span>
+
+   private void onRemoveCancelPanel(final CancelPanelCtrl cancelPanelCtrl, final IResultTab resultTabToReplace)
+   {
+<span class="nc" id="L701">      SwingUtilities.invokeLater(new Runnable()</span>
+<span class="nc" id="L702">      {</span>
+         public void run()
+         {
+<span class="nc" id="L705">            _tabbedExecutionsPanel.remove(cancelPanelCtrl.getPanel());</span>
+
+<span class="nc" id="L707">            int indexToSelect = -1;</span>
+<span class="nc bnc" id="L708" title="All 2 branches missed.">            if (null == resultTabToReplace)</span>
+            {
+<span class="nc" id="L710">               indexToSelect = getIndexOfTab(_stickyTab);</span>
+            }
+            else
+            {
+<span class="nc" id="L714">               indexToSelect = getIndexOfTab(resultTabToReplace);</span>
+            }
+
+<span class="nc bnc" id="L717" title="All 2 branches missed.">            if (-1 != indexToSelect)</span>
+            {
+<span class="nc" id="L719">               _tabbedExecutionsPanel.setSelectedIndex(indexToSelect);</span>
+            }
+
+<span class="nc" id="L722">         }</span>
+      });
+<span class="nc" id="L724">   }</span>
+
+   private void onSetCancelPanel(final CancelPanelCtrl cancelPanelCtrl)
+   {
+<span class="nc" id="L728">      SwingUtilities.invokeLater(new Runnable()</span>
+<span class="nc" id="L729">      {</span>
+         public void run()
+         {
+<span class="nc" id="L732">            _tabbedExecutionsPanel.addTab(SQLResultExecuterPanel.i18n.EXEC_SQL_MSG,</span>
+                  null,
+<span class="nc" id="L734">                  cancelPanelCtrl.getPanel(),</span>
+                  SQLResultExecuterPanel.i18n.CANCEL_SQL_MSG);
+<span class="nc" id="L736">            _tabbedExecutionsPanel.setSelectedComponent(cancelPanelCtrl.getPanel());</span>
+<span class="nc" id="L737">         }</span>
+      });
+<span class="nc" id="L739">   }</span>
+
+
+
+	private void addResultsTab(ResultTab tab, IResultTab resultTabToReplace)
+	{
+<span class="nc bnc" id="L745" title="All 4 branches missed.">      if(null == resultTabToReplace &amp;&amp; null == _stickyTab)</span>
+      {
+<span class="nc" id="L747">   		_tabbedExecutionsPanel.addTab(tab.getTitle(), null, tab, tab.getViewableSqlString());</span>
+<span class="nc" id="L748">         checkResultTabLimit();</span>
+      }
+      else
+      {
+<span class="nc bnc" id="L752" title="All 4 branches missed.">         if (null != resultTabToReplace &amp;&amp; _session.getProperties().getKeepTableLayoutOnRerun())</span>
+         {
+<span class="nc" id="L754">            TableState sortableTableState = resultTabToReplace.getResultSortableTableState();</span>
+<span class="nc bnc" id="L755" title="All 2 branches missed.">            if (null != sortableTableState)</span>
+            {
+<span class="nc" id="L757">               tab.applyResultSortableTableState(sortableTableState);</span>
+            }
+         }
+
+
+<span class="nc" id="L762">         int indexToReplace = -1;</span>
+<span class="nc" id="L763">         ImageIcon tabIcon = null;</span>
+
+         // Either resultTabToReplace or _stickyTab must be not null here
+<span class="nc bnc" id="L766" title="All 4 branches missed.">         if(null != resultTabToReplace &amp;&amp; _stickyTab != resultTabToReplace)</span>
+         {
+<span class="nc" id="L768">            indexToReplace = getIndexOfTab(resultTabToReplace);</span>
+         }
+         else
+         {
+<span class="nc" id="L772">            indexToReplace = getIndexOfTab(_stickyTab);</span>
+<span class="nc bnc" id="L773" title="All 2 branches missed.">            if(-1 == indexToReplace)</span>
+            {
+               // sticky tab was closed
+<span class="nc" id="L776">               _stickyTab = null;</span>
+            }
+            else
+            {
+<span class="nc" id="L780">               tabIcon = getStickyIcon();</span>
+<span class="nc" id="L781">               _stickyTab = tab;</span>
+            }
+         }
+
+
+<span class="nc bnc" id="L786" title="All 2 branches missed.">         if(-1 == indexToReplace)</span>
+         {
+            // Just add the tab
+<span class="nc" id="L789">            addResultsTab(tab, null);</span>
+<span class="nc" id="L790">            return;</span>
+         }
+
+<span class="nc" id="L793">         closeTabAt(indexToReplace);</span>
+<span class="nc" id="L794">         _tabbedExecutionsPanel.insertTab(tab.getTitle(), tabIcon, tab, tab.getViewableSqlString(), indexToReplace);</span>
+      }
+<span class="nc" id="L796">	}</span>
+
+   private void checkResultTabLimit()
+   {
+<span class="nc" id="L800">      SessionProperties props = _session.getProperties();</span>
+
+<span class="nc bnc" id="L802" title="All 4 branches missed.">      while(props.getLimitSQLResultTabs() &amp;&amp; props.getSqlResultTabLimit() &lt; _tabbedExecutionsPanel.getTabCount())</span>
+      {
+<span class="nc" id="L804">         closeTabAt(0);</span>
+      }
+<span class="nc" id="L806">   }</span>
+
+
+   private void closeTabAt(int index)
+   {
+<span class="nc" id="L811">      Component selectedTab = _tabbedExecutionsPanel.getComponentAt(index);</span>
+<span class="nc" id="L812">      closeTab(selectedTab);</span>
+<span class="nc" id="L813">   }</span>
+
+
+   private void propertiesHaveChanged(String propName)
+	{
+<span class="nc" id="L818">		final SessionProperties props = _session.getProperties();</span>
+
+<span class="nc bnc" id="L820" title="All 2 branches missed.">		if (propName == null</span>
+<span class="nc bnc" id="L821" title="All 2 branches missed.">		        || propName.equals(SessionProperties.IPropertyNames.AUTO_COMMIT))</span>
+		{
+<span class="nc" id="L823">            SetAutoCommitTask task = new SetAutoCommitTask();</span>
+<span class="nc bnc" id="L824" title="All 2 branches missed.">		    if (SwingUtilities.isEventDispatchThread()) {</span>
+<span class="nc" id="L825">                _session.getApplication().getThreadPool().addTask(task);</span>
+            } else {
+<span class="nc" id="L827">                task.run();</span>
+            }
+        }
+
+<span class="nc bnc" id="L831" title="All 2 branches missed.">		if (propName == null</span>
+				|| propName
+<span class="nc bnc" id="L833" title="All 2 branches missed.">						.equals(SessionProperties.IPropertyNames.SQL_EXECUTION_TAB_PLACEMENT))</span>
+		{
+<span class="nc" id="L835">			_tabbedExecutionsPanel.setTabPlacement(props.getSQLExecutionTabPlacement());</span>
+		}
+<span class="nc" id="L837">	}</span>
+
+<span class="nc" id="L839">    private class SetAutoCommitTask implements Runnable {</span>
+                
+        public void run() {
+<span class="nc" id="L842">            final ISQLConnection conn = _session.getSQLConnection();</span>
+<span class="nc" id="L843">            final SessionProperties props = _session.getProperties();</span>
+<span class="nc bnc" id="L844" title="All 2 branches missed.">            if (conn != null)</span>
+            {
+<span class="nc" id="L846">                boolean auto = true;</span>
+                try
+                {
+<span class="nc" id="L849">                    auto = conn.getAutoCommit();</span>
+                }
+<span class="nc" id="L851">                catch (SQLException ex)</span>
+                {
+<span class="nc" id="L853">                    s_log.error(&quot;Error with transaction control&quot;, ex);</span>
+<span class="nc" id="L854">                    _session.showErrorMessage(ex);</span>
+<span class="nc" id="L855">                }</span>
+                try
+                {
+<span class="nc" id="L858">                    conn.setAutoCommit(props.getAutoCommit());</span>
+                }
+<span class="nc" id="L860">                catch (SQLException ex)</span>
+                {
+<span class="nc" id="L862">                    props.setAutoCommit(auto);</span>
+<span class="nc" id="L863">                    _session.showErrorMessage(ex);</span>
+<span class="nc" id="L864">                }</span>
+            }        
+<span class="nc" id="L866">        }</span>
+    }
+   
+	private void createGUI()
+	{
+<span class="nc" id="L871">      final SessionProperties props = _session.getProperties();</span>
+<span class="nc" id="L872">		_tabbedExecutionsPanel = UIFactory.getInstance().createTabbedPane(props.getSQLExecutionTabPlacement(), true);</span>
+
+
+<span class="nc" id="L875">      createTabPopup();</span>
+
+
+<span class="nc" id="L878">      setLayout(new BorderLayout());</span>
+
+<span class="nc" id="L880">		add(_tabbedExecutionsPanel, BorderLayout.CENTER);</span>
+<span class="nc" id="L881">	}</span>
+
+
+   /**
+    * Due to JDK 1.4 Bug 4465870 this doesn't work with JDK 1.4. when scrollable tabbed pane is used.
+    */
+   private void createTabPopup()
+   {
+<span class="nc" id="L889">      final JPopupMenu popup = new JPopupMenu();</span>
+
+      // i18n[SQLResultExecuterPanel.close=Close]
+<span class="nc" id="L892">      String closeLabel = s_stringMgr.getString(&quot;SQLResultExecuterPanel.close&quot;);</span>
+<span class="nc" id="L893">      JMenuItem mnuClose = new JMenuItem(closeLabel);</span>
+<span class="nc" id="L894">      initAccelerator(CloseCurrentSQLResultTabAction.class, mnuClose);</span>
+<span class="nc" id="L895">      mnuClose.addActionListener(new ActionListener()</span>
+<span class="nc" id="L896">      {</span>
+         public void actionPerformed(ActionEvent e)
+         {
+<span class="nc" id="L899">            closeCurrentResultTab();</span>
+<span class="nc" id="L900">         }</span>
+      });
+<span class="nc" id="L902">      popup.add(mnuClose);</span>
+
+      // i18n[SQLResultExecuterPanel.closeAllButThis=Close all but this]
+<span class="nc" id="L905">      String cabtLabel = </span>
+<span class="nc" id="L906">          s_stringMgr.getString(&quot;SQLResultExecuterPanel.closeAllButThis&quot;);</span>
+<span class="nc" id="L907">      JMenuItem mnuCloseAllButThis = new JMenuItem(cabtLabel);</span>
+<span class="nc" id="L908">      initAccelerator(CloseAllSQLResultTabsButCurrentAction.class, mnuCloseAllButThis);</span>
+<span class="nc" id="L909">      mnuCloseAllButThis.addActionListener(new ActionListener()</span>
+<span class="nc" id="L910">      {</span>
+         public void actionPerformed(ActionEvent e)
+         {
+<span class="nc" id="L913">            closeAllButCurrentResultTabs();</span>
+<span class="nc" id="L914">         }</span>
+      });
+<span class="nc" id="L916">      popup.add(mnuCloseAllButThis);</span>
+
+      // i18n[SQLResultExecuterPanel.closeAll=Close all]
+<span class="nc" id="L919">      String caLabel = s_stringMgr.getString(&quot;SQLResultExecuterPanel.closeAll&quot;);</span>
+<span class="nc" id="L920">      JMenuItem mnuCloseAll = new JMenuItem(caLabel);</span>
+<span class="nc" id="L921">      initAccelerator(CloseAllSQLResultTabsAction.class, mnuCloseAll);</span>
+<span class="nc" id="L922">      mnuCloseAll.addActionListener(new ActionListener()</span>
+<span class="nc" id="L923">      {</span>
+         public void actionPerformed(ActionEvent e)
+         {
+<span class="nc" id="L926">            closeAllSQLResultTabs();</span>
+<span class="nc" id="L927">         }</span>
+      });
+<span class="nc" id="L929">      popup.add(mnuCloseAll);</span>
+
+      // i18n[SQLResultExecuterPanel.toggleSticky=Toggle sticky]
+<span class="nc" id="L932">      String tsLabel = </span>
+<span class="nc" id="L933">          s_stringMgr.getString(&quot;SQLResultExecuterPanel.toggleSticky&quot;);</span>
+<span class="nc" id="L934">      JMenuItem mnuToggleSticky = new JMenuItem(tsLabel);</span>
+<span class="nc" id="L935">      initAccelerator(ToggleCurrentSQLResultTabStickyAction.class, mnuToggleSticky);</span>
+<span class="nc" id="L936">      mnuToggleSticky.addActionListener(new ActionListener()</span>
+<span class="nc" id="L937">      {</span>
+         public void actionPerformed(ActionEvent e)
+         {
+<span class="nc" id="L940">            toggleCurrentSQLResultTabSticky();</span>
+<span class="nc" id="L941">         }</span>
+      });
+<span class="nc" id="L943">      popup.add(mnuToggleSticky);</span>
+
+<span class="nc" id="L945">      _tabbedExecutionsPanel.addMouseListener(new MouseAdapter()</span>
+<span class="nc" id="L946">      {</span>
+         public void mousePressed(MouseEvent e)
+         {
+<span class="nc" id="L949">            maybeShowPopup(e, popup);</span>
+<span class="nc" id="L950">         }</span>
+
+         public void mouseReleased(MouseEvent e)
+         {
+<span class="nc" id="L954">            maybeShowPopup(e, popup);</span>
+<span class="nc" id="L955">         }</span>
+      });
+<span class="nc" id="L957">   }</span>
+
+   private void initAccelerator(Class&lt;? extends Action&gt; actionClass, JMenuItem mnuItem)
+   {
+<span class="nc" id="L961">      Action action = _session.getApplication().getActionCollection().get(actionClass);</span>
+
+<span class="nc" id="L963">      String accel = (String) action.getValue(Resources.ACCELERATOR_STRING);</span>
+<span class="nc bnc" id="L964" title="All 2 branches missed.">      if(   null != accel</span>
+<span class="nc bnc" id="L965" title="All 2 branches missed.">         &amp;&amp; 0 != accel.trim().length())</span>
+      {
+<span class="nc" id="L967">         mnuItem.setAccelerator(KeyStroke.getKeyStroke(accel));</span>
+      }
+<span class="nc" id="L969">   }</span>
+
+   private void maybeShowPopup(MouseEvent e, JPopupMenu popup)
+   {
+<span class="nc bnc" id="L973" title="All 2 branches missed.">      if (e.isPopupTrigger())</span>
+      {
+<span class="nc" id="L975">         int tab = _tabbedExecutionsPanel.getUI().tabForCoordinate(_tabbedExecutionsPanel, e.getX(), e.getY());</span>
+<span class="nc bnc" id="L976" title="All 2 branches missed.">         if (-1 != tab)</span>
+         {
+<span class="nc" id="L978">            popup.show(e.getComponent(), e.getX(), e.getY());</span>
+         }
+      }
+<span class="nc" id="L981">   }</span>
+
+
+<span class="nc" id="L984">   private class MyPropertiesListener implements PropertyChangeListener</span>
+	{
+<span class="nc" id="L986">		private boolean _listening = true;</span>
+
+		void stopListening()
+		{
+<span class="nc" id="L990">			_listening = false;</span>
+<span class="nc" id="L991">		}</span>
+
+		void startListening()
+		{
+<span class="nc" id="L995">			_listening = true;</span>
+<span class="nc" id="L996">		}</span>
+
+		public void propertyChange(PropertyChangeEvent evt)
+		{
+<span class="nc bnc" id="L1000" title="All 2 branches missed.">			if (_listening)</span>
+			{
+<span class="nc" id="L1002">				propertiesHaveChanged(evt.getPropertyName());</span>
+			}
+<span class="nc" id="L1004">		}</span>
+	}
+
+	private final static class ResultTabInfo
+	{
+		final ResultTab _tab;
+		ResultFrame _resultFrame;
+
+		ResultTabInfo(ResultTab tab)
+<span class="nc" id="L1013">		{</span>
+<span class="nc bnc" id="L1014" title="All 2 branches missed.">			if (tab == null)</span>
+			{
+<span class="nc" id="L1016">				throw new IllegalArgumentException(&quot;Null ResultTab passed&quot;);</span>
+			}
+<span class="nc" id="L1018">			_tab = tab;</span>
+<span class="nc" id="L1019">		}</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

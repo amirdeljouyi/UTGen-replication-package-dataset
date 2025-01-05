@@ -1,0 +1,578 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CodeGenerator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">84_ifx-framework</a> &gt; <a href="index.source.html" class="el_package">org.sourceforge.ifx.tools</a> &gt; <span class="el_source">CodeGenerator.java</span></div><h1>CodeGenerator.java</h1><pre class="source lang-java linenums">/*
+ * $Id: CodeGenerator.java,v 1.8 2005/12/28 09:46:40 spal Exp $
+ * $Source: /cvsroot/ifx-framework/code/src/org/sourceforge/ifx/tools/CodeGenerator.java,v $
+ * IFX-Framework - IFX XML to JavaBean application framework.
+ * Copyright (C) 2003  The IFX-Framework Team
+ * 
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ * 
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ * 
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+package org.sourceforge.ifx.tools;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStreamReader;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import org.jdom.Document;
+import org.jdom.Element;
+import org.jdom.Namespace;
+import org.jdom.input.SAXBuilder;
+
+/**
+ * CodeGenerator uses JDOM to parse the IFX Schema file and build the source
+ * code for the IFX beans under the given directory.
+ * @author Sujit Pal (spal@users.sourceforge.net)
+ * @version $Revision: 1.8 $
+ */
+public class CodeGenerator {
+
+    /** Where will the output be generated relative to calling dir? */
+    private static final String OUTPUT_DIR = &quot;src-gen&quot;;
+    /** Where is the GPL header kept relative to calling dir? */
+    private static final String GPL_TEMPLATE = &quot;docs/lgpl.template&quot;;
+    /** What is going to be the package root of the beans? */
+    private static final String DEFAULT_PACKAGE_ROOT = &quot;org.sourceforge.ifx.framework.&quot;;
+    /** Base class from which all our objects descend from */
+    private static final String ROOT_CLASS = 
+        &quot;org.sourceforge.ifx.basetypes.IFXObject&quot;;
+    /** Basetype from which all ifx beans inherit from */
+    private static final String IBASETYPE = 
+        &quot;org.sourceforge.ifx.basetypes.IBaseType&quot;;
+    /** Standard javadoc comment */
+    private static final String DEFAULT_CLASS_JAVADOC = &quot;Generated code.&quot;;
+    /** Some xsd: to Java mappings */
+<span class="nc" id="L60">    private static final String[][] BASE_MAP_DATA = {</span>
+        {&quot;xsd:string&quot;, &quot;org.sourceforge.ifx.basetypes.IFXString&quot;},
+        {&quot;xsd:hexBinary&quot;, &quot;org.sourceforge.ifx.basetypes.IFXHexBinary&quot;},
+        {&quot;xsd:base64Binary&quot;, &quot;org.sourceforge.ifx.basetypes.IFXBase64Binary&quot;},
+        {&quot;xsd:date&quot;, &quot;org.sourceforge.ifx.basetypes.IFXDate&quot;},
+        {&quot;xsd:time&quot;, &quot;org.sourceforge.ifx.basetypes.IFXTime&quot;},
+        {&quot;xsd:dateTime&quot;, &quot;org.sourceforge.ifx.basetypes.IFXDateTime&quot;},
+        {&quot;xsd:decimal&quot;, &quot;org.sourceforge.ifx.basetypes.IFXDecimal&quot;},
+        {&quot;xsd:long&quot;, &quot;org.sourceforge.ifx.basetypes.IFXLong&quot;},
+        {&quot;xsd:ID&quot;, &quot;org.sourceforge.ifx.basetypes.IFXString&quot;},
+        {&quot;xsd:boolean&quot;, &quot;org.sourceforge.ifx.basetypes.IFXBoolean&quot;}
+    };
+
+<span class="nc" id="L73">    private String filename = null;</span>
+<span class="nc" id="L74">    private Map fqcnMap = new HashMap();</span>
+<span class="nc" id="L75">    private Map beanMap = new HashMap();</span>
+<span class="nc" id="L76">    private String headerTemplate = null;</span>
+    private Namespace defNS;
+
+    /**
+     * Default constructor. Sets up some global variables.
+     */
+<span class="nc" id="L82">    public CodeGenerator() {</span>
+<span class="nc" id="L83">        this.headerTemplate = getHeaderTemplate();</span>
+<span class="nc" id="L84">        this.defNS = Namespace.getNamespace(&quot;xsd&quot;, &quot;http://www.w3.org/2001/XMLSchema&quot;);</span>
+<span class="nc" id="L85">    }</span>
+
+    /**
+     * Sets the name of the xsd file to be read to generate the beans. The
+     * file name should be specified relative to the current calling directory.
+     * @param filename the name of the xsd file to read.
+     */
+    public void setInputFileName(String filename) {
+<span class="nc" id="L93">        this.filename = filename;</span>
+<span class="nc" id="L94">    }</span>
+    
+    /**
+     * Parses the xsd file and hands off the generation of source files
+     * to the generateSource() method.
+     * @exception Exception if any is thrown.
+     */
+    public void run() throws Exception {
+        // open main file
+<span class="nc" id="L103">        SAXBuilder builder = new SAXBuilder(false);</span>
+<span class="nc" id="L104">        File mainSchemaFile = new File(this.filename);</span>
+<span class="nc" id="L105">        String basedir = mainSchemaFile.getParent();</span>
+<span class="nc" id="L106">        Document mainDoc = builder.build(new FileInputStream(mainSchemaFile));</span>
+<span class="nc" id="L107">        Element schemaElement = mainDoc.getRootElement();</span>
+        // handle imports
+<span class="nc" id="L109">        Map namespaceMap = new HashMap();</span>
+<span class="nc" id="L110">        List namespaces = schemaElement.getAdditionalNamespaces();</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">        for (int i = 0; i &lt; namespaces.size(); i++) {</span>
+<span class="nc" id="L112">            Namespace ns = (Namespace) namespaces.get(i);</span>
+<span class="nc" id="L113">            namespaceMap.put(ns.getURI(), ns.getPrefix());</span>
+        }
+<span class="nc" id="L115">        List children = schemaElement.getChildren(&quot;import&quot;, schemaElement.getNamespace());</span>
+<span class="nc" id="L116">        Document[] importedDocs = new Document[children.size()];</span>
+<span class="nc" id="L117">        Map documentPackageMap = new HashMap();</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">        for (int i = 0; i &lt; importedDocs.length; i++) {</span>
+<span class="nc" id="L119">            Element importElement = (Element) children.get(i);</span>
+<span class="nc" id="L120">            String namespaceURI = importElement.getAttributeValue(&quot;namespace&quot;);</span>
+<span class="nc" id="L121">            String schemaLocation = importElement.getAttributeValue(&quot;schemaLocation&quot;);</span>
+<span class="nc" id="L122">            importedDocs[i] = builder.build(new FileInputStream(basedir + File.separatorChar + schemaLocation));</span>
+<span class="nc" id="L123">            documentPackageMap.put(importedDocs[i], DEFAULT_PACKAGE_ROOT + (String) namespaceMap.get(namespaceURI) + &quot;.&quot;);</span>
+<span class="nc" id="L124">            buildBaseNameMap(importedDocs[i], (String) documentPackageMap.get(importedDocs[i]));</span>
+        }
+        // build the base name map for the main doc
+<span class="nc" id="L127">        buildBaseNameMap(mainDoc, DEFAULT_PACKAGE_ROOT);</span>
+        // now generate the source for the imports
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        for (int i = 0; i &lt; importedDocs.length; i++) {</span>
+<span class="nc" id="L130">            parseDocument(importedDocs[i], (String) documentPackageMap.get(importedDocs[i]));</span>
+        }
+        // and generate the source for the main file
+<span class="nc" id="L133">        parseDocument(mainDoc, DEFAULT_PACKAGE_ROOT);</span>
+        // clean up and complete
+<span class="nc" id="L135">        System.out.print(&quot;Writing element and bean mappings&quot;);</span>
+<span class="nc" id="L136">        writeMaps();</span>
+<span class="nc" id="L137">        System.out.println(&quot;...done&quot;);</span>
+<span class="nc" id="L138">        System.out.print(&quot;Writing package.html files for Javadocs&quot;);</span>
+<span class="nc" id="L139">        writePackageHtml();</span>
+<span class="nc" id="L140">        System.out.println(&quot;...done&quot;);</span>
+<span class="nc" id="L141">    }</span>
+
+    /**
+     * Builds a Map of bean names to fully qualified class names and 
+     * populates a class global Map object.
+     * @param beanElements a List of Elements, each Element corresponds
+     * to an IFX Framework bean.
+     * @param packageRoot the package root for this Document. This
+     * is the same as the default package root for the main document, but
+     * is offset by the namespace for the imported Document objects. 
+     */
+    public void buildBaseNameMap(Document doc, String packageRoot) throws Exception {
+        // build mappings for the base types first, if not already built
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        if (fqcnMap.get(&quot;xsd:string&quot;) == null) {</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">            for (int i = 0; i &lt; BASE_MAP_DATA.length; i++) {</span>
+<span class="nc" id="L156">                fqcnMap.put(BASE_MAP_DATA[i][0], BASE_MAP_DATA[i][1]);</span>
+            }
+        }
+        // build up the mappings for this document object.
+<span class="nc" id="L160">        List elements = doc.getRootElement().getChildren();</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">        for (Iterator it = elements.iterator(); it.hasNext();) {</span>
+<span class="nc" id="L162">            Element element = (Element) it.next();</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">            if (&quot;import&quot;.equals(element.getName())) {</span>
+<span class="nc" id="L164">                continue;</span>
+            }
+<span class="nc" id="L166">            String classname = getClassNameFromElement(element, packageRoot);</span>
+<span class="nc" id="L167">            String beanName = classname.substring(classname.lastIndexOf('.') + 1);</span>
+<span class="nc" id="L168">            String oldClass = (String) fqcnMap.get(beanName);</span>
+<span class="nc bnc" id="L169" title="All 4 branches missed.">            if (oldClass != null &amp;&amp; oldClass.startsWith(&quot;java.&quot;)) {</span>
+                // prevents overwriting map for Long and Boolean IFX types
+<span class="nc" id="L171">                continue;</span>
+            } else {
+<span class="nc" id="L173">                fqcnMap.put(beanName, classname);</span>
+            }
+<span class="nc" id="L175">        }</span>
+<span class="nc" id="L176">    }</span>
+
+    /**
+     * Parses the Document object and generates the source for each of the
+     * elements in teh Document object.
+     * @param doc the Document object to parse.
+     * @param packageRoot the package root.
+     * @throws Exception if one is thrown.
+     */
+    public void parseDocument(Document doc, String packageRoot) throws Exception {
+<span class="nc" id="L186">        Element rootElement = doc.getRootElement();</span>
+<span class="nc" id="L187">        List beanElements = rootElement.getChildren();</span>
+<span class="nc" id="L188">        int numElements = beanElements.size();</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">        for (int i = 0; i &lt; numElements; i++) {</span>
+<span class="nc" id="L190">            Element beanElement = (Element) beanElements.get(i);</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">            if (&quot;import&quot;.equals(beanElement.getName())) {</span>
+<span class="nc" id="L192">                continue;</span>
+            }
+<span class="nc" id="L194">            String className = getClassNameFromElement(beanElement, packageRoot);</span>
+<span class="nc" id="L195">            System.out.print(&quot;Generating: &quot; + className);</span>
+<span class="nc" id="L196">            generateSource(className, beanElement);</span>
+<span class="nc" id="L197">            System.out.println(&quot;...done&quot;);</span>
+<span class="nc" id="L198">            beanMap.put(beanElement.getAttributeValue(&quot;name&quot;), className);</span>
+        }
+<span class="nc" id="L200">    }</span>
+
+    /**
+     * Generates the fully qualified class name from the Element and the
+     * package root string.
+     * @param element the Element to parse.
+     * @param packageRoot the root of the package tree this bean should live in.
+     * @return the fully qualified class name.
+     */
+    private String getClassNameFromElement(Element element, String packageRoot) {
+<span class="nc" id="L210">        String packageNameKey = element.getName();</span>
+<span class="nc" id="L211">        String packageName = packageRoot + packageNameKey.toLowerCase();</span>
+<span class="nc" id="L212">        String nameAttr = element.getAttributeValue(&quot;name&quot;);</span>
+<span class="nc" id="L213">        return packageName + &quot;.&quot; + normalize(nameAttr);</span>
+    }
+        
+    /**
+     * Builds a String from the supplied license template.
+     * @return the header template for each source file.
+     */
+    private String getHeaderTemplate() {
+        try {
+<span class="nc" id="L222">            BufferedReader reader = new BufferedReader(new InputStreamReader(</span>
+                new FileInputStream(GPL_TEMPLATE)));
+            String line;
+<span class="nc" id="L225">            StringBuffer buf = new StringBuffer();</span>
+<span class="nc bnc" id="L226" title="All 2 branches missed.">            while ((line = reader.readLine()) != null) {</span>
+<span class="nc" id="L227">                buf.append(line).append(&quot;\n&quot;);</span>
+            }
+<span class="nc" id="L229">            return buf.toString();</span>
+<span class="nc" id="L230">        } catch (Exception e) { return &quot;&quot;; }</span>
+    }
+
+    /**
+     * The workhorse method. Parses and generates the bean source for
+     * each top level element in the xsd file.
+     * @param classname the fully qualified class name to generate.
+     * @param beanElement the top level element.
+     * @exception Exception if any are thrown.
+     */
+    private void generateSource(String classname, Element beanElement) 
+            throws Exception {
+<span class="nc" id="L242">        String beanName = classname.substring(classname.lastIndexOf('.') + 1);</span>
+<span class="nc" id="L243">        String packageName = classname.substring(0, classname.lastIndexOf('.'));</span>
+<span class="nc" id="L244">        JavaSource source = new JavaSource();</span>
+        // set the superclass to IFXObject by default, this will be reset
+        // by some classes which actually have a superclass defined by the
+        // IFX spec. The idea here is that if a class does not have a parent
+        // it will extend the IFXObject, not java.lang.Object.
+<span class="nc" id="L249">        source.setSuperClass(ROOT_CLASS);</span>
+<span class="nc" id="L250">        source.setPackageName(packageName);</span>
+<span class="nc" id="L251">        source.setClassName(beanName);</span>
+<span class="nc bnc" id="L252" title="All 2 branches missed.">        if (beanElement.getName().equals(&quot;simpleType&quot;)) {</span>
+            // restriction is modelled as a superclass
+<span class="nc" id="L254">            Element restrictionElement = </span>
+<span class="nc" id="L255">                beanElement.getChild(&quot;restriction&quot;, defNS);</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">            if (restrictionElement != null) {</span>
+<span class="nc" id="L257">                String base = restrictionElement.getAttributeValue(&quot;base&quot;);</span>
+<span class="nc bnc" id="L258" title="All 2 branches missed.">                if (base.startsWith(&quot;xsd:&quot;)) {</span>
+<span class="nc" id="L259">                    source.setInterface(IBASETYPE);</span>
+                }
+<span class="nc" id="L261">                base = normalize(base);</span>
+<span class="nc" id="L262">                source.setSuperClass((String) fqcnMap.get(base));</span>
+<span class="nc" id="L263">                Element maxlengthElement = </span>
+<span class="nc" id="L264">                    restrictionElement.getChild(&quot;maxlength&quot;, defNS);</span>
+<span class="nc bnc" id="L265" title="All 2 branches missed.">                if (maxlengthElement != null) {</span>
+<span class="nc" id="L266">                    source.setClassJavadocs(&quot;maxlength = &quot; + </span>
+<span class="nc" id="L267">                        maxlengthElement.getAttributeValue(&quot;value&quot;));</span>
+                }
+            }
+<span class="nc" id="L270">            Element annotationElement = </span>
+<span class="nc" id="L271">                beanElement.getChild(&quot;annotation&quot;, defNS);</span>
+<span class="nc bnc" id="L272" title="All 2 branches missed.">            if (annotationElement != null) {</span>
+<span class="nc" id="L273">                Element documentationElement = </span>
+<span class="nc" id="L274">                    annotationElement.getChild(&quot;documentation&quot;, defNS);</span>
+<span class="nc" id="L275">                source.setClassJavadocs(documentationElement.getText());</span>
+            }
+<span class="nc bnc" id="L277" title="All 2 branches missed.">        } else if (beanElement.getName().equals(&quot;complexType&quot;)) {</span>
+            // annotation: defines some documentation
+<span class="nc" id="L279">            Element annotationElement = </span>
+<span class="nc" id="L280">                beanElement.getChild(&quot;annotation&quot;, defNS);</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">            if (annotationElement != null) {</span>
+<span class="nc" id="L282">                Element documentationElement = </span>
+<span class="nc" id="L283">                    annotationElement.getChild(&quot;documentation&quot;, defNS);</span>
+<span class="nc" id="L284">                source.setClassJavadocs(documentationElement.getText());</span>
+            }
+            // complexContent: this defines a superclass
+<span class="nc" id="L287">            Element complexContentElement = </span>
+<span class="nc" id="L288">                beanElement.getChild(&quot;complexContent&quot;, defNS);</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">            if (complexContentElement != null) {</span>
+<span class="nc" id="L290">                Element extensionElement = </span>
+<span class="nc" id="L291">                    complexContentElement.getChild(&quot;extension&quot;, defNS);</span>
+<span class="nc bnc" id="L292" title="All 2 branches missed.">                if (extensionElement != null) {</span>
+<span class="nc" id="L293">                    String base = extensionElement.getAttributeValue(&quot;base&quot;);</span>
+<span class="nc bnc" id="L294" title="All 2 branches missed.">                    if (base.startsWith(&quot;xsd:&quot;)) {</span>
+<span class="nc" id="L295">                        source.setInterface(IBASETYPE);</span>
+                    }
+<span class="nc" id="L297">                    base = normalize(base);</span>
+<span class="nc" id="L298">                    source.setSuperClass((String) fqcnMap.get(base));</span>
+                }
+            }
+            // optional attribute id appears in some complexType elements.
+            // This is handled by having a special id attribute
+<span class="nc" id="L303">            Element attributeElement = beanElement.getChild(&quot;attribute&quot;, defNS);</span>
+<span class="nc bnc" id="L304" title="All 2 branches missed.">            if (attributeElement != null) {</span>
+<span class="nc" id="L305">                String name = attributeElement.getAttributeValue(&quot;name&quot;);</span>
+<span class="nc" id="L306">                String type = attributeElement.getAttributeValue(&quot;type&quot;);</span>
+<span class="nc" id="L307">                name = normalize(name);</span>
+<span class="nc" id="L308">                type = normalize(type);</span>
+<span class="nc" id="L309">                source.addMemberVariable(</span>
+<span class="nc" id="L310">                    name, (String) fqcnMap.get(type), false);</span>
+            }
+<span class="nc" id="L312">            List childElements = beanElement.getChildren();</span>
+<span class="nc" id="L313">            Iterator childIter = childElements.iterator();</span>
+<span class="nc bnc" id="L314" title="All 2 branches missed.">            while (childIter.hasNext()) {</span>
+<span class="nc" id="L315">                Element childElement = (Element) childIter.next();</span>
+<span class="nc bnc" id="L316" title="All 2 branches missed.">                if (childElement.getName().equals(&quot;sequence&quot;)) {</span>
+                    // sequence: defines a composite, content can be an element
+                    // or another sequence, for sequence drill down to the 
+                    // element and addMemberVariable, sequence can be choice
+<span class="nc" id="L320">                    processSequence(childElement, source, false);</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">                } else if (childElement.getName().equals(&quot;choice&quot;)) {</span>
+                    // choice: interface description, take the first one and 
+                    // prefix I to it and put in interface directory.
+<span class="nc" id="L324">                    processChoice(childElement, source, false);</span>
+                }
+<span class="nc" id="L326">            }</span>
+<span class="nc bnc" id="L327" title="All 2 branches missed.">        } else if (beanElement.getName().equals(&quot;element&quot;)) {</span>
+<span class="nc" id="L328">            String type = beanElement.getAttributeValue(&quot;type&quot;);</span>
+<span class="nc bnc" id="L329" title="All 2 branches missed.">            if (type != null) {</span>
+                // simply extends another type at the top level
+<span class="nc" id="L331">                source.setSuperClass(</span>
+<span class="nc" id="L332">                    (String) fqcnMap.get(normalize(type)));</span>
+            } else {
+                // contains a complex type composed of other element
+<span class="nc" id="L335">                Element complexElement = </span>
+<span class="nc" id="L336">                    beanElement.getChild(&quot;complexType&quot;, defNS);</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">                if (complexElement != null) {</span>
+<span class="nc" id="L338">                    List complexElementChildren = </span>
+<span class="nc" id="L339">                        complexElement.getChildren();</span>
+<span class="nc" id="L340">                    Iterator complexElementChildrenIter = </span>
+<span class="nc" id="L341">                        complexElementChildren.iterator();</span>
+<span class="nc bnc" id="L342" title="All 2 branches missed.">                    while (complexElementChildrenIter.hasNext()) {</span>
+<span class="nc" id="L343">                        Element complexElementChild = </span>
+<span class="nc" id="L344">                            (Element) complexElementChildrenIter.next();</span>
+<span class="nc bnc" id="L345" title="All 2 branches missed.">                        if (complexElementChild.getName().equals(</span>
+                                &quot;sequence&quot;)) {
+<span class="nc" id="L347">                            processSequence(complexElementChild, source, false);</span>
+<span class="nc bnc" id="L348" title="All 2 branches missed.">                        } else if (complexElementChild.getName().equals(</span>
+                                &quot;choice&quot;)) {
+<span class="nc" id="L350">                            processChoice(complexElementChild, source, false);</span>
+<span class="nc bnc" id="L351" title="All 2 branches missed.">                        } else if (complexElementChild.getName().equals(</span>
+                                &quot;complexContent&quot;)) {
+<span class="nc" id="L353">                            Element extensionElement = </span>
+<span class="nc" id="L354">                              complexElementChild.getChild(&quot;extension&quot;, defNS);</span>
+<span class="nc" id="L355">                            String base = </span>
+<span class="nc" id="L356">                                extensionElement.getAttributeValue(&quot;base&quot;);</span>
+<span class="nc bnc" id="L357" title="All 2 branches missed.">                            if (base.startsWith(&quot;xsd:&quot;)) {</span>
+<span class="nc" id="L358">                                source.setInterface(IBASETYPE);</span>
+                            }
+<span class="nc" id="L360">                            base = normalize(base);</span>
+<span class="nc" id="L361">                            source.addMemberVariable(</span>
+<span class="nc" id="L362">                                base,(String) fqcnMap.get(base), false);</span>
+                        }
+<span class="nc" id="L364">                    }</span>
+                }
+            }
+        }
+        // dump the java source
+<span class="nc" id="L369">        VelocityWriter writer = new VelocityWriter();</span>
+<span class="nc" id="L370">        writer.write(classname, source);</span>
+<span class="nc" id="L371">    }</span>
+
+    /**
+     * Figures out the file name from a fully qualified class name for an
+     * IFX bean and returns a File handle for it.
+     * @param classname the fully qualified class name of the IFX bean.
+     * @return the File handle.
+     */
+    private File getFileName(String classname) throws Exception {
+<span class="nc" id="L380">        File f = new File(OUTPUT_DIR + File.separator + </span>
+<span class="nc" id="L381">            classname.replace('.', File.separatorChar) + &quot;.java&quot;);</span>
+<span class="nc" id="L382">        f.getParentFile().mkdirs();</span>
+<span class="nc" id="L383">        return f;</span>
+    }
+
+    /**
+     * Normalizes XML name declarations to Java like names. Replaces dots
+     * (.) with underscore(_), and colon(:) with dot(.).
+     * @param s the String to normalize.
+     * @return the normalized string.
+     */
+    private String normalize(String s) {
+<span class="nc" id="L393">        String temp = s;</span>
+<span class="nc bnc" id="L394" title="All 2 branches missed.">        if (s.startsWith(&quot;xsd:&quot;)) {</span>
+<span class="nc" id="L395">            return temp;</span>
+<span class="nc bnc" id="L396" title="All 2 branches missed.">        } else if (s.startsWith(&quot;ifx:&quot;)) {</span>
+<span class="nc" id="L397">            return temp.substring(4);</span>
+        } else {
+<span class="nc bnc" id="L399" title="All 2 branches missed.">            if (s.indexOf(':') &gt; -1) {</span>
+<span class="nc" id="L400">                temp = s.substring(s.indexOf(':') + 1);</span>
+            }
+<span class="nc" id="L402">            return temp.replace('.', '_');</span>
+        }
+    }
+
+    /**
+     * Processes the sequence element and adds a property to the source
+     * object if it finds an element. This is a recursive function, if
+     * it finds an embedded sequence, it will call itself, if it finds
+     * an embedded choice element, then it will call the choice, and 
+     * daisy chaining is also possible.
+     * @param seqEl the sequence element.
+     * @param source the JavaSource object to update.
+     * @param hasMultiple if maxOccurs=unbounded on enclosing element.
+     * @exception Exception if thrown.
+     */
+    private void processSequence(Element seqEl, JavaSource source, 
+            boolean hasMultiple) throws Exception {
+<span class="nc" id="L419">        boolean hasMulti = hasMultiple;</span>
+<span class="nc" id="L420">        String maxOccurs = seqEl.getAttributeValue(&quot;maxOccurs&quot;);</span>
+<span class="nc bnc" id="L421" title="All 2 branches missed.">        if ((&quot;unbounded&quot;).equals(maxOccurs)) {</span>
+<span class="nc" id="L422">            hasMulti = true;</span>
+        }
+<span class="nc" id="L424">        List sequenceElements = seqEl.getChildren();</span>
+<span class="nc" id="L425">        Iterator sequenceElementIter = sequenceElements.iterator();</span>
+<span class="nc bnc" id="L426" title="All 2 branches missed.">        while (sequenceElementIter.hasNext()) {</span>
+<span class="nc" id="L427">            Element sequenceElement = (Element) sequenceElementIter.next();</span>
+<span class="nc bnc" id="L428" title="All 2 branches missed.">            if (sequenceElement.getName().equals(&quot;element&quot;)) {</span>
+<span class="nc" id="L429">                String ref = sequenceElement.getAttributeValue(&quot;ref&quot;);</span>
+<span class="nc bnc" id="L430" title="All 2 branches missed.">                if (ref != null) {</span>
+<span class="nc" id="L431">                    ref = normalize(ref);</span>
+                } else {
+<span class="nc" id="L433">                    ref = sequenceElement.getAttributeValue(&quot;name&quot;);</span>
+<span class="nc" id="L434">                    String type = sequenceElement.getAttributeValue(&quot;type&quot;);</span>
+<span class="nc bnc" id="L435" title="All 2 branches missed.">                    if (type != null) {</span>
+<span class="nc" id="L436">                        ref = type;</span>
+                    }
+<span class="nc" id="L438">                    ref = normalize(ref);</span>
+                }
+<span class="nc" id="L440">                maxOccurs = sequenceElement.getAttributeValue(&quot;maxOccurs&quot;);</span>
+<span class="nc bnc" id="L441" title="All 4 branches missed.">                hasMulti = hasMulti || (&quot;unbounded&quot;).equals(maxOccurs);</span>
+<span class="nc" id="L442">                source.addMemberVariable(</span>
+<span class="nc" id="L443">                    ref, (String) fqcnMap.get(ref), hasMulti);</span>
+<span class="nc bnc" id="L444" title="All 2 branches missed.">            } else if (sequenceElement.getName().equals(&quot;sequence&quot;)) {</span>
+<span class="nc" id="L445">                processSequence(sequenceElement, source, hasMulti);</span>
+<span class="nc bnc" id="L446" title="All 2 branches missed.">            } else if (sequenceElement.getName().equals(&quot;choice&quot;)) {</span>
+<span class="nc" id="L447">                processChoice(sequenceElement, source, hasMulti);</span>
+            }
+<span class="nc" id="L449">        }</span>
+<span class="nc" id="L450">    }</span>
+
+    /**
+     * Processes the choice element. This builds a marker interface by
+     * prefixing the first element with I and putting it into the
+     * interfaces directory. This is also a recursive method, although
+     * recursion is more likely to be of the daisy chain variety than 
+     * the direct one, going by the data.
+     * @param chEl the choice element.
+     * @param source the JavaSource object to update.
+     * @param hasMultiple if maxOccurs=unbounded for enclosing element.
+     * @exception Exception if thrown.
+     */
+    private void processChoice(Element chEl, JavaSource source, 
+            boolean hasMultiple) throws Exception {
+<span class="nc" id="L465">        boolean hasMulti = hasMultiple;</span>
+<span class="nc" id="L466">        String maxOccurs = chEl.getAttributeValue(&quot;maxOccurs&quot;);</span>
+<span class="nc bnc" id="L467" title="All 2 branches missed.">        if ((&quot;unbounded&quot;).equals(maxOccurs)) {</span>
+<span class="nc" id="L468">            hasMulti = true;</span>
+        }
+<span class="nc" id="L470">        List elementElements = chEl.getChildren(&quot;element&quot;, defNS);</span>
+<span class="nc" id="L471">        String ref0 = null;</span>
+<span class="nc bnc" id="L472" title="All 2 branches missed.">        if (elementElements.size() &gt; 0) {</span>
+<span class="nc" id="L473">            ref0 = ((Element) elementElements.get(0)).getAttributeValue(&quot;ref&quot;);</span>
+            // for version 1.7 on, @ref has been replaced by @type
+<span class="nc bnc" id="L475" title="All 2 branches missed.">            if (ref0 == null) {</span>
+<span class="nc" id="L476">                ref0 = ((Element) elementElements.get(0)).getAttributeValue(&quot;type&quot;);</span>
+            }
+<span class="nc" id="L478">            ref0 = normalize(ref0);</span>
+        }
+        // build the marker interface
+<span class="nc" id="L481">        MarkerInterface mi = new MarkerInterface();</span>
+<span class="nc bnc" id="L482" title="All 2 branches missed.">        mi.setName(&quot;I&quot; + (ref0 == null ? &quot;Choice_&quot; : ref0));</span>
+<span class="nc" id="L483">        mi.setPackage(DEFAULT_PACKAGE_ROOT + &quot;interfaces&quot;);</span>
+<span class="nc" id="L484">        VelocityWriter writer = new VelocityWriter();</span>
+<span class="nc" id="L485">        writer.write(mi.getPackage() + &quot;.&quot; + mi.getName(), mi);</span>
+        // build properties for each of the embedded elements
+<span class="nc" id="L487">        int numElementElements = elementElements.size();</span>
+<span class="nc bnc" id="L488" title="All 2 branches missed.">        for (int i = 0; i &lt; numElementElements; i++) {</span>
+<span class="nc" id="L489">            Element elementElement = (Element) elementElements.get(i);</span>
+<span class="nc" id="L490">            String ref = elementElement.getAttributeValue(&quot;ref&quot;);</span>
+            // for version 1.7, @ref has been replaced with @type
+<span class="nc bnc" id="L492" title="All 2 branches missed.">            if (ref != null) {</span>
+<span class="nc" id="L493">                ref = normalize(ref);</span>
+            } else {
+<span class="nc" id="L495">                ref = elementElement.getAttributeValue(&quot;name&quot;);</span>
+<span class="nc" id="L496">                String type = elementElement.getAttributeValue(&quot;type&quot;);</span>
+<span class="nc bnc" id="L497" title="All 2 branches missed.">                if (type != null) {</span>
+<span class="nc" id="L498">                    ref = type;</span>
+                }
+<span class="nc" id="L500">                ref = normalize(ref);</span>
+            }
+<span class="nc" id="L502">            maxOccurs = elementElement.getAttributeValue(&quot;maxOccurs&quot;);</span>
+<span class="nc bnc" id="L503" title="All 4 branches missed.">            hasMulti = hasMulti || (&quot;unbounded&quot;).equals(maxOccurs);</span>
+<span class="nc bnc" id="L504" title="All 2 branches missed.">            if (hasMulti) {</span>
+<span class="nc" id="L505">                source.addMemberVariable(</span>
+<span class="nc" id="L506">                    ref, (String) fqcnMap.get(ref), true);</span>
+            } else {
+<span class="nc" id="L508">                source.addMemberVariable(</span>
+<span class="nc" id="L509">                    ref, (String) fqcnMap.get(ref), false);</span>
+            }
+        }
+        // hand off for embedded sequences
+<span class="nc" id="L513">        List sequenceElements = chEl.getChildren(&quot;sequence&quot;, defNS);</span>
+<span class="nc" id="L514">        int numSequenceElements = sequenceElements.size();</span>
+<span class="nc bnc" id="L515" title="All 2 branches missed.">        for (int i = 0; i &lt; numSequenceElements; i++) {</span>
+<span class="nc" id="L516">            Element sequenceElement = (Element) sequenceElements.get(i);</span>
+<span class="nc" id="L517">            processSequence(sequenceElement, source, hasMulti);</span>
+        }
+<span class="nc" id="L519">    }</span>
+
+    /**
+     * Writes out a bean,properties file for use by IfxXmlDecoder.
+     * @exception Exception if one is thrown by the method.
+     */
+    private void writeMaps() throws Exception {
+<span class="nc" id="L526">        PropertyFile elementMapProps = new PropertyFile();</span>
+<span class="nc" id="L527">        PropertyFile beanMapProps = new PropertyFile();</span>
+<span class="nc" id="L528">        Iterator iter = beanMap.keySet().iterator();</span>
+<span class="nc bnc" id="L529" title="All 2 branches missed.">        while (iter.hasNext()) {</span>
+<span class="nc" id="L530">            String elementName = (String) iter.next();</span>
+<span class="nc" id="L531">            String className = (String) beanMap.get(elementName);</span>
+<span class="nc" id="L532">            elementMapProps.addProperty(elementName, className);</span>
+<span class="nc" id="L533">            beanMapProps.addProperty(className, elementName);</span>
+<span class="nc" id="L534">        }</span>
+<span class="nc" id="L535">        VelocityWriter writer = new VelocityWriter();</span>
+<span class="nc" id="L536">        writer.setBaseDir(OUTPUT_DIR);</span>
+<span class="nc" id="L537">        writer.setSuffix(&quot;properties&quot;);</span>
+<span class="nc" id="L538">        writer.write(&quot;org.sourceforge.ifx.framework.elementmap&quot;, </span>
+            elementMapProps);
+<span class="nc" id="L540">        writer.write(&quot;org.sourceforge.ifx.framework.beanmap&quot;, beanMapProps);</span>
+<span class="nc" id="L541">    }</span>
+
+    /**
+     * Generate the package.html file for each generated package.
+     */
+    private void writePackageHtml() {
+        try {
+<span class="nc" id="L548">            VelocityWriter writer = new VelocityWriter();</span>
+<span class="nc" id="L549">            writer.setBaseDir(OUTPUT_DIR);</span>
+<span class="nc" id="L550">            writer.setSuffix(&quot;html&quot;);</span>
+<span class="nc" id="L551">            String[] packageNames = {</span>
+                &quot;complextype&quot;, &quot;element&quot;, &quot;interfaces&quot;, &quot;simpletype&quot;
+            };
+<span class="nc bnc" id="L554" title="All 2 branches missed.">            for (int i = 0; i &lt; packageNames.length; i++) {</span>
+<span class="nc" id="L555">                PackageHtml packageHtmlBean = new PackageHtml();</span>
+<span class="nc" id="L556">                packageHtmlBean.setPackageName(packageNames[i]);</span>
+<span class="nc" id="L557">                writer.write(&quot;org.sourceforge.ifx.framework.&quot; + </span>
+                    packageNames[i] + &quot;.package&quot;, packageHtmlBean);
+            }
+<span class="nc" id="L560">        } catch (Exception e) { e.printStackTrace();} //:IGNORE: will not happen</span>
+<span class="nc" id="L561">    }</span>
+
+    /**
+     * This is how we are called.
+     * @param argv an array of arguments, only one is needed, its the
+     * xsd file to read.
+     */
+    public static void main(String[] argv) {
+        try {
+<span class="nc" id="L570">            CodeGenerator generator = new CodeGenerator();</span>
+<span class="nc" id="L571">            generator.setInputFileName(argv[0]);</span>
+<span class="nc" id="L572">            generator.run();</span>
+<span class="nc" id="L573">        } catch (Exception e) {</span>
+<span class="nc" id="L574">            e.printStackTrace();</span>
+<span class="nc" id="L575">        }</span>
+<span class="nc" id="L576">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

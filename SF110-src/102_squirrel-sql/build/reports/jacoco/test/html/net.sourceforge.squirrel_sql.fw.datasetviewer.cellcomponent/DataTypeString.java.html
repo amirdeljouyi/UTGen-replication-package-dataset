@@ -1,0 +1,999 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DataTypeString.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent</a> &gt; <span class="el_source">DataTypeString.java</span></div><h1>DataTypeString.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent;
+/*
+ * Copyright (C) 2001-2003 Colin Bell
+ * colbell@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.Insets;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.Types;
+import java.util.HashMap;
+import java.util.Iterator;
+
+import javax.swing.BorderFactory;
+import javax.swing.JCheckBox;
+import javax.swing.JScrollPane;
+import javax.swing.JTable;
+import javax.swing.JTextArea;
+import javax.swing.JTextField;
+import javax.swing.SwingUtilities;
+import javax.swing.event.ChangeEvent;
+import javax.swing.event.ChangeListener;
+import javax.swing.text.JTextComponent;
+
+import net.sourceforge.squirrel_sql.fw.datasetviewer.CellDataPopup;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.ColumnDisplayDefinition;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.whereClause.IWhereClausePart;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.whereClause.IsNullWhereClausePart;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.whereClause.EmptyWhereClausePart;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.whereClause.ParameterWhereClausePart;
+import net.sourceforge.squirrel_sql.fw.gui.IntegerField;
+import net.sourceforge.squirrel_sql.fw.gui.OkJPanel;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLDatabaseMetaData;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+
+
+/**
+ * @author gwg
+ *
+ * This class provides the display components for handling String data types,
+ * specifically SQL types CHAR, VARCHAR, and LONGVARCHAR.
+ * The display components are for:
+ * &lt;UL&gt;
+ * &lt;LI&gt; read-only display within a table cell
+ * &lt;LI&gt; editing within a table cell
+ * &lt;LI&gt; read-only or editing display within a separate window
+ * &lt;/UL&gt;
+ * The class also contains 
+ * &lt;UL&gt;
+ * &lt;LI&gt; a function to compare two display values
+ * to see if they are equal.  This is needed because the display format
+ * may not be the same as the internal format, and all internal object
+ * types may not provide an appropriate equals() function.
+ * &lt;LI&gt; a function to return a printable text form of the cell contents,
+ * which is used in the text version of the table.
+ * &lt;/UL&gt;
+ * &lt;P&gt;
+ * The components returned from this class extend RestorableJTextField
+ * and RestorableJTextArea for use in editing table cells that
+ * contain values of this data type.  It provides the special behavior for null
+ * handling and resetting the cell to the original value.
+ */
+public class DataTypeString extends BaseDataTypeComponent
+	implements IDataTypeComponent
+{
+<span class="nc" id="L90">	private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L91">		StringManagerFactory.getStringManager(DataTypeString.class);</span>
+
+	/* whether nulls are allowed or not */
+	private boolean _isNullable;
+
+	/* the number of characters allowed in this field */
+	private int _columnSize;
+
+	/* table of which we are part (needed for creating popup dialog) */
+	private JTable _table;
+
+	/* The JTextComponent that is being used for editing */
+	private IRestorableTextComponent _textComponent;
+
+	/* The CellRenderer used for this data type */
+	//??? For now, use the same renderer as everyone else.
+	//??
+	//?? IN FUTURE: change this to use a new instance of renederer
+	//?? for this data type.
+<span class="nc" id="L110">	private DefaultColumnRenderer _renderer = DefaultColumnRenderer.getInstance();</span>
+
+	/**
+	 * default length of strings when truncated
+	 */
+	private final static int DEFAULT_LIMIT_READ_LENGTH = 100;
+
+	/**
+	 * Name of this class, which is needed because the class name is needed
+	 * by the static method getControlPanel, so we cannot use something
+	 * like getClass() to find this name.
+	 */
+	private static final String thisClassName =
+		&quot;net.sourceforge.squirrel_sql.fw.datasetviewer.cellcomponent.DataTypeString&quot;;
+
+	/*
+	 * Properties settable by the user
+	 */
+	// flag for whether we have already loaded the properties or not
+<span class="nc" id="L129">	private static boolean propertiesAlreadyLoaded = false;</span>
+
+	/**
+	 * If &lt;tt&gt;true&lt;/tt&gt; then show newlines as &quot;\n&quot; for the in-cell display,
+	 * otherwise do not display newlines in the in-cell display
+	 * (i.e. they are thrown out by JTextField when it loads the text document behind the cell).
+	 */
+<span class="nc" id="L136">	private static boolean _makeNewlinesVisibleInCell = true;</span>
+
+	/**
+	 * If &lt;tt&gt;true&lt;/tt&gt; then use the LONGVARCHAR data type in the WHERE clause,
+	 * otherwise do not include it.
+	 * Oracle does not allow that type to be used in a WHERE clause
+	 */
+<span class="nc" id="L143">	private static boolean _useLongInWhere = true;</span>
+
+	/**
+	 * If &lt;tt&gt;true&lt;/tt&gt; then limit the size of string data that is read
+	 * during the initial table load.
+	 */
+<span class="nc" id="L149">	private static boolean _limitRead = false;</span>
+
+	/**
+	 * If &lt;tt&gt;_limitRead&lt;/tt&gt; is &lt;tt&gt;true&lt;/tt&gt; then this is how many characters
+	 * to read during the initial table load.
+	 */
+<span class="nc" id="L155">	private static int _limitReadLength = DEFAULT_LIMIT_READ_LENGTH;</span>
+
+	/**
+	 * If &lt;tt&gt;_limitRead&lt;/tt&gt; is &lt;tt&gt;true&lt;/tt&gt; and
+	 * this is &lt;tt&gt;true&lt;/tt&gt;, then only columns whose label is listed in
+	 * &lt;tt&gt;_limitReadColumnList&lt;/tt&gt; are limited.
+	 */
+<span class="nc" id="L162">	private static boolean _limitReadOnSpecificColumns = false;</span>
+
+	/**
+	 * If &lt;tt&gt;_limitRead&lt;/tt&gt; is &lt;tt&gt;true&lt;/tt&gt; and
+	 * &lt;tt&gt;_limitReadOnSpecificColumns is &lt;tt&gt;true&lt;/tt&gt;, then only columns whose label is listed here.
+	 * The column names are converted to ALL CAPS before being put on this list
+	 * so that they will match the label retrieved from _colDef.
+	 */
+<span class="nc" id="L170">	private static HashMap&lt;String, String&gt; _limitReadColumnNameMap = </span>
+	    new HashMap&lt;String, String&gt;();
+
+
+	/**
+	 * Constructor - save the data needed by this data type.
+	 */
+<span class="nc" id="L177">	public DataTypeString(JTable table, ColumnDisplayDefinition colDef) {</span>
+<span class="nc" id="L178">		_table = table;</span>
+<span class="nc" id="L179">		_colDef = colDef;</span>
+<span class="nc" id="L180">		_isNullable = colDef.isNullable();</span>
+<span class="nc" id="L181">		_columnSize = colDef.getColumnSize();</span>
+
+<span class="nc" id="L183">		loadProperties();</span>
+<span class="nc" id="L184">	}</span>
+
+	/**
+	 * For sub-classes
+	 */
+<span class="nc" id="L189">	protected DataTypeString() {</span>
+	    
+<span class="nc" id="L191">	}</span>
+	
+	/** Internal function to get the user-settable properties from the DTProperties,
+	 * if they exist, and to ensure that defaults are set if the properties have
+	 * not yet been created.
+	 * &lt;P&gt;
+	 * This method may be called from different places depending on whether
+	 * an instance of this class is created before the user brings up the Session
+	 * Properties window.  In either case, the data is static and is set only
+	 * the first time we are called.
+	 */
+	private static void loadProperties() {
+
+<span class="nc bnc" id="L204" title="All 2 branches missed.">		if (propertiesAlreadyLoaded == false) {</span>
+			// get parameters previously set by user, or set default values
+<span class="nc" id="L206">			_makeNewlinesVisibleInCell = true;	// set to the default</span>
+<span class="nc" id="L207">			String makeNewlinesVisibleString = DTProperties.get(thisClassName, &quot;makeNewlinesVisibleInCell&quot;);</span>
+<span class="nc bnc" id="L208" title="All 4 branches missed.">			if (makeNewlinesVisibleString != null &amp;&amp; makeNewlinesVisibleString.equals(&quot;false&quot;))</span>
+<span class="nc" id="L209">				_makeNewlinesVisibleInCell = false;</span>
+
+<span class="nc" id="L211">			_useLongInWhere = true;	// set to the default</span>
+<span class="nc" id="L212">			String useLongInWhereString = DTProperties.get(thisClassName, &quot;useLongInWhere&quot;);</span>
+<span class="nc bnc" id="L213" title="All 4 branches missed.">			if (useLongInWhereString != null &amp;&amp; useLongInWhereString.equals(&quot;false&quot;))</span>
+<span class="nc" id="L214">				_useLongInWhere = false;</span>
+
+<span class="nc" id="L216">			_limitRead = false;	// set to default</span>
+<span class="nc" id="L217">			String limitReadString = DTProperties.get(thisClassName, &quot;limitRead&quot;);</span>
+<span class="nc bnc" id="L218" title="All 4 branches missed.">			if (limitReadString != null &amp;&amp; limitReadString.equals(&quot;true&quot;))</span>
+<span class="nc" id="L219">				_limitRead = true;</span>
+
+<span class="nc" id="L221">			_limitReadLength = DEFAULT_LIMIT_READ_LENGTH;	// set to default</span>
+<span class="nc" id="L222">			String limitReadLengthString = DTProperties.get(thisClassName, &quot;limitReadLength&quot;);</span>
+<span class="nc bnc" id="L223" title="All 2 branches missed.">			if (limitReadLengthString != null)</span>
+<span class="nc" id="L224">				_limitReadLength = Integer.parseInt(limitReadLengthString);</span>
+
+<span class="nc" id="L226">			_limitReadOnSpecificColumns = false;	// set to default</span>
+<span class="nc" id="L227">			String limitReadOnSpecificColumnsString = DTProperties.get(thisClassName, &quot;limitReadOnSpecificColumns&quot;);</span>
+<span class="nc bnc" id="L228" title="All 4 branches missed.">			if (limitReadOnSpecificColumnsString != null &amp;&amp; limitReadOnSpecificColumnsString.equals(&quot;true&quot;))</span>
+<span class="nc" id="L229">				_limitReadOnSpecificColumns = true;</span>
+
+			// the list of specific column names is in comma-separated format
+			// with a comma in front of the first entry as well
+<span class="nc" id="L233">			_limitReadColumnNameMap.clear();	// empty the map of old values</span>
+
+<span class="nc" id="L235">			String nameString = DTProperties.get(thisClassName, &quot;limitReadColumnNames&quot;);</span>
+<span class="nc" id="L236">			int start = 0;</span>
+			int end;
+			String name;
+
+<span class="nc bnc" id="L240" title="All 4 branches missed.">			while (nameString != null &amp;&amp; start &lt; nameString.length()) {</span>
+<span class="nc" id="L241">				end = nameString.indexOf(',', start + 1);</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">				if (end &gt; -1) {</span>
+<span class="nc" id="L243">					name = nameString.substring(start+1, end);</span>
+<span class="nc" id="L244">					start = end;</span>
+				}
+				else {
+<span class="nc" id="L247">					name = nameString.substring(start+1);</span>
+<span class="nc" id="L248">					start = nameString.length();</span>
+				}
+
+<span class="nc" id="L251">				_limitReadColumnNameMap.put(name, null);</span>
+			}
+
+<span class="nc" id="L254">			propertiesAlreadyLoaded = true;</span>
+		}
+<span class="nc" id="L256">	}</span>
+
+	/**
+	 * Return the name of the java class used to hold this data type.
+	 */
+	public String getClassName() {
+<span class="nc" id="L262">		return &quot;java.lang.String&quot;;</span>
+	}
+
+	/*
+	 * First we have the cell-related and Text-table operations.
+	 */
+
+
+	/**
+	 * Render a value into text for this DataType.
+	 */
+	public String renderObject(Object value) {
+<span class="nc" id="L274">		String text = (String)_renderer.renderObject(value);</span>
+<span class="nc bnc" id="L275" title="All 2 branches missed.">		if (_makeNewlinesVisibleInCell) {</span>
+<span class="nc" id="L276">			 text = text.replaceAll(&quot;\n&quot;, &quot;/\\n&quot;);</span>
+		}
+<span class="nc" id="L278">		return text;</span>
+	}
+
+	/**
+	 * This Data Type can be edited in a table cell.
+	 * &lt;P&gt;
+	 * If the data includes newlines, the user must not be allowed to edit it
+	 * in the cell because the CellEditor uses a JTextField which filters out newlines.
+	 * If we try to use anything other than a JTextField, or use a JTextField with no
+	 * newline filtering, the text is not visible in the cell, so the user cannot even read
+	 * the text, much less edit it.  The simplest solution is to allow editing of multi-line
+	 * text only in the Popup window.
+	 */
+	public boolean isEditableInCell(Object originalValue) {
+		//			prevent editing if text contains newlines
+<span class="nc bnc" id="L293" title="All 4 branches missed.">		 if (originalValue != null &amp;&amp; ((String)originalValue).indexOf('\n') &gt; -1)</span>
+<span class="nc" id="L294">			 return false;</span>
+<span class="nc" id="L295">		else return true;</span>
+	}
+
+	/**
+	 * See if a value in a column has been limited in some way and
+	 * needs to be re-read before being used for editing.
+	 * For read-only tables this may actually return true since we want
+	 * to be able to view the entire contents of the cell even if it was not
+	 * completely loaded during the initial table setup.
+	 */
+	public boolean needToReRead(Object originalValue) {
+		// if we are not limiting anything, return false
+<span class="nc bnc" id="L307" title="All 2 branches missed.">		if (_limitRead == false)</span>
+<span class="nc" id="L308">			return false;</span>
+
+		// if the value is null, then it was read ok
+<span class="nc bnc" id="L311" title="All 2 branches missed.">		if (originalValue == null)</span>
+<span class="nc" id="L312">			return false;</span>
+
+		// we are limiting some things.
+		// if the string we have is less than the limit, then we are ok
+		// and do not need to re-read (because we already have the whole thing).
+<span class="nc bnc" id="L317" title="All 2 branches missed.">		if (((String)originalValue).length() &lt; _limitReadLength)</span>
+<span class="nc" id="L318">			return false;</span>
+
+		// if the data is longer than the limit, then we have previously
+		// re-read the contents and we do not need to re-read it again
+<span class="nc bnc" id="L322" title="All 2 branches missed.">		if (((String)originalValue).length() &gt; _limitReadLength)</span>
+<span class="nc" id="L323">			return false;</span>
+
+		// if we are limiting all columns, then we need to re-read
+		// because we do not know if we have all the data or not
+<span class="nc bnc" id="L327" title="All 2 branches missed.">		if (_limitReadOnSpecificColumns == false)</span>
+<span class="nc" id="L328">			return true;</span>
+
+		// check for the case where we are limiting some columns
+		// but not limiting this particular column
+<span class="nc bnc" id="L332" title="All 2 branches missed.">		if (_limitReadColumnNameMap.containsKey(_colDef.getColumnName()))</span>
+<span class="nc" id="L333">			return true;	// column is limited and length == limit, so need to re-read</span>
+<span class="nc" id="L334">		else return false;	// column is not limited, so we have the whole thing</span>
+	}
+
+	/**
+	 * Return a JTextField usable in a CellEditor.
+	 */
+	public JTextField getJTextField() {
+<span class="nc" id="L341">		_textComponent = new RestorableJTextField();</span>
+
+		// special handling of operations while editing this data type
+<span class="nc" id="L344">		((RestorableJTextField)_textComponent).addKeyListener(new KeyTextHandler());</span>
+
+		//
+		// handle mouse events for double-click creation of popup dialog.
+		// This happens only in the JTextField, not the JTextArea, so we can
+		// make this an inner class within this method rather than a separate
+		// inner class as is done with the KeyTextHandler class.
+		//
+<span class="nc" id="L352">		((RestorableJTextField)_textComponent).addMouseListener(new MouseAdapter()</span>
+<span class="nc" id="L353">		{</span>
+			public void mousePressed(MouseEvent evt)
+			{
+<span class="nc bnc" id="L356" title="All 2 branches missed.">				if (evt.getClickCount() == 2)</span>
+				{
+<span class="nc" id="L358">					MouseEvent tableEvt = SwingUtilities.convertMouseEvent(</span>
+<span class="nc" id="L359">						(RestorableJTextField)DataTypeString.this._textComponent,</span>
+<span class="nc" id="L360">						evt, DataTypeString.this._table);</span>
+<span class="nc" id="L361">					CellDataPopup.showDialog(DataTypeString.this._table,</span>
+						DataTypeString.this._colDef, tableEvt, true);
+				}
+<span class="nc" id="L364">			}</span>
+		});	// end of mouse listener
+
+<span class="nc" id="L367">		return (JTextField)_textComponent;</span>
+	}
+
+	/**
+	 * Implement the interface for validating and converting to internal object.
+	 * Null is a valid successful return, so errors are indicated only by
+	 * existance or not of a message in the messageBuffer.
+	 */
+	public Object validateAndConvert(String value, Object originalValue, StringBuffer messageBuffer) {
+		// handle null, which is shown as the special string &quot;&lt;null&gt;&quot;
+<span class="nc bnc" id="L377" title="All 2 branches missed.">		if (value.equals(&quot;&lt;null&gt;&quot;))</span>
+<span class="nc" id="L378">			return null;</span>
+
+		// Do the conversion into the object in a safe manner
+<span class="nc" id="L381">		return value;	// Special case: the input is exactly the output</span>
+	}
+
+	/**
+	 * If true, this tells the PopupEditableIOPanel to use the
+	 * binary editing panel rather than a pure text panel.
+	 * The binary editing panel assumes the data is an array of bytes,
+	 * converts it into text form, allows the user to change how that
+	 * data is displayed (e.g. Hex, Decimal, etc.), and converts
+	 * the data back from text to bytes when the user editing is completed.
+	 * If this returns false, this DataType class must
+	 * convert the internal data into a text string that
+	 * can be displayed (and edited, if allowed) in a TextField
+	 * or TextArea, and must handle all
+	 * user key strokes related to editing of that data.
+	 */
+	public boolean useBinaryEditingPanel() {
+<span class="nc" id="L398">		return false;</span>
+	}
+
+
+
+	/*
+		 * Now define the Popup-related operations.
+		 */
+
+
+	/**
+	 * Returns true if data type may be edited in the popup,
+	 * false if not.
+	 */
+	public boolean isEditableInPopup(Object originalValue) {
+		// The only thing that would prevent us from editing a string in the popup
+		// is if that string has been truncated when read from the DB.
+		// Thus, being able to edit the string is the same as not needing to re-read
+		// the data.
+<span class="nc bnc" id="L417" title="All 2 branches missed.">		return ! needToReRead(originalValue);</span>
+	}
+
+	/*
+		 * Return a JTextArea usable in the CellPopupDialog.
+		 */
+	 public JTextArea getJTextArea(Object value) {
+<span class="nc" id="L424">		_textComponent = new RestorableJTextArea();</span>
+
+		// value is a simple string representation of the data,
+		// but NOT the same one used in the Text and in-cell operations.
+		// The in-cell version may replace newline chars with &quot;\n&quot; while this version
+		// does not.  In other respects it is the same as the in-cell version because both
+		// use the _renderer object to do the rendering.
+<span class="nc" id="L431">		((RestorableJTextArea)_textComponent).setText((String)_renderer.renderObject(value));</span>
+
+		// special handling of operations while editing this data type
+<span class="nc" id="L434">		((RestorableJTextArea)_textComponent).addKeyListener(new KeyTextHandler());</span>
+
+<span class="nc" id="L436">		return (RestorableJTextArea)_textComponent;</span>
+	 }
+
+	/**
+	 * Validating and converting in Popup is identical to cell-related operation.
+	 */
+	public Object validateAndConvertInPopup(String value, Object originalValue, StringBuffer messageBuffer) {
+<span class="nc" id="L443">		return validateAndConvert(value, originalValue, messageBuffer);</span>
+	}
+
+
+	/*
+	 * The following is used by both in-cell and Popup operations.
+	 */
+
+
+	/*
+		 * Internal class for handling key events during editing
+		 * of both JTextField and JTextArea.
+		 */
+<span class="nc" id="L456">	 private class KeyTextHandler extends BaseKeyTextHandler {</span>
+		// special handling of operations while editing Strings
+		public void keyTyped(KeyEvent e) {
+<span class="nc" id="L459">			char c = e.getKeyChar();</span>
+
+			// as a coding convenience, create a reference to the text component
+			// that is typecast to JTextComponent.  this is not essential, as we
+			// could typecast every reference, but this makes the code cleaner
+<span class="nc" id="L464">			JTextComponent _theComponent = (JTextComponent)DataTypeString.this._textComponent;</span>
+<span class="nc" id="L465">			String text = _theComponent.getText();</span>
+
+			//?? Is there any way to check for invalid input?  Valid input includes
+			//?? at least any printable character, but could it also include unprintable
+			//?? characters?
+
+			// check for max size reached (only works when DB provides non-zero scale info
+<span class="nc bnc" id="L472" title="All 2 branches missed.">			if (DataTypeString.this._columnSize &gt; 0 &amp;&amp;</span>
+<span class="nc bnc" id="L473" title="All 6 branches missed.">				text.length()&gt;= DataTypeString.this._columnSize &amp;&amp;</span>
+				c != KeyEvent.VK_BACK_SPACE &amp;&amp;
+				c != KeyEvent.VK_DELETE) {
+				// max size reached
+<span class="nc" id="L477">				e.consume();</span>
+<span class="nc" id="L478">				_beepHelper.beep(_theComponent);</span>
+
+				// Note: tabs and newlines are allowed in string fields, even though they are unusual.
+			}
+
+			// handle cases of null
+			// The processing is different when nulls are allowed and when they are not.
+			//
+
+<span class="nc bnc" id="L487" title="All 2 branches missed.">			if ( DataTypeString.this._isNullable) {</span>
+
+				// user enters something when field is null
+<span class="nc bnc" id="L490" title="All 2 branches missed.">				if (text.equals(&quot;&lt;null&gt;&quot;)) {</span>
+<span class="nc bnc" id="L491" title="All 4 branches missed.">					if ((c==KeyEvent.VK_BACK_SPACE) || (c == KeyEvent.VK_DELETE)) {</span>
+						// delete when null =&gt; original value
+<span class="nc" id="L493">						DataTypeString.this._textComponent.restoreText();</span>
+<span class="nc" id="L494">						e.consume();</span>
+					}
+					else {
+						// non-delete when null =&gt; clear field and add text
+<span class="nc" id="L498">						DataTypeString.this._textComponent.updateText(&quot;&quot;);</span>
+						// fall through to normal processing of this key stroke
+					}
+				}
+				else {
+					// for strings, a &quot;blank&quot; field is allowed, so only
+					// switch to null when there is nothing left in the field
+					// and user does delete
+<span class="nc bnc" id="L506" title="All 4 branches missed.">					if ((c == KeyEvent.VK_BACK_SPACE) || (c == KeyEvent.VK_DELETE)) {</span>
+<span class="nc bnc" id="L507" title="All 2 branches missed.">						if (text.length() == 0 ) {</span>
+							// about to delete last thing in field, so replace with null
+<span class="nc" id="L509">							DataTypeString.this._textComponent.updateText(&quot;&lt;null&gt;&quot;);</span>
+<span class="nc" id="L510">							e.consume();</span>
+						}
+					}
+				}
+			}
+			else {
+                // field is not nullable
+                //
+<span class="nc" id="L518">                handleNotNullableField(text, c, e, _textComponent);</span>
+			}
+<span class="nc" id="L520">		}</span>
+	}
+
+
+
+
+	/*
+		 * DataBase-related functions
+		 */
+
+	 /**
+	  * On input from the DB, read the data from the ResultSet into the appropriate
+	  * type of object to be stored in the table cell.
+	  */
+	public Object readResultSet(ResultSet rs, int index, boolean limitDataRead)
+		throws java.sql.SQLException {
+
+<span class="nc" id="L537">		String data = rs.getString(index);</span>
+<span class="nc bnc" id="L538" title="All 2 branches missed.">		if (rs.wasNull())</span>
+<span class="nc" id="L539">			return null;</span>
+		else {
+			// if this column is being limited, then truncate the data if needed
+			// (start with a quick check for the data being shorter than the limit,
+			// in which case we don't need to worry about it).
+<span class="nc bnc" id="L544" title="All 4 branches missed.">			if (limitDataRead == true &amp;&amp; _limitRead == true</span>
+<span class="nc bnc" id="L545" title="All 2 branches missed.">				&amp;&amp; data.length() &gt;= _limitReadLength) {</span>
+
+				// data is longer than the limit, so we need to do more checking
+<span class="nc bnc" id="L548" title="All 4 branches missed.">				if (_limitReadOnSpecificColumns == false ||</span>
+					(_limitReadOnSpecificColumns == true &amp;&amp;
+<span class="nc bnc" id="L550" title="All 2 branches missed.">						_limitReadColumnNameMap.containsKey(_colDef.getColumnName()))) {</span>
+					// this column is limited, so truncate the data
+<span class="nc" id="L552">					data = data.substring(0, _limitReadLength);</span>
+				}
+
+			}
+<span class="nc" id="L556">			return data;</span>
+
+		}
+	}
+
+	/**
+	 * When updating the database, generate a string form of this object value
+	 * that can be used in the WHERE clause to match the value in the database.
+	 * A return value of null means that this column cannot be used in the WHERE
+	 * clause, while a return of &quot;null&quot; (or &quot;is null&quot;, etc) means that the column
+	 * can be used in the WHERE clause and the value is actually a null value.
+	 * This function must also include the column label so that its output
+	 * is of the form:
+	 * 	&quot;columnName = value&quot;
+	 * or
+	 * 	&quot;columnName is null&quot;
+	 * or whatever is appropriate for this column in the database.
+	 */
+	public IWhereClausePart getWhereClauseValue(Object value, ISQLDatabaseMetaData md) {
+		// first do special check to see if we should use LONGVARCHAR
+		// in the WHERE clause.
+		// (Oracle does not allow this.)
+<span class="nc bnc" id="L578" title="All 4 branches missed.">		if (_colDef.getSqlType() == Types.LONGVARCHAR &amp;&amp;</span>
+			_useLongInWhere == false)
+<span class="nc" id="L580">			return null;	// this column cannot be used in a WHERE clause</span>
+
+<span class="nc bnc" id="L582" title="All 4 branches missed.">		if (value == null || value.toString() == null )</span>
+<span class="nc" id="L583">			return new IsNullWhereClausePart(_colDef);</span>
+		else {
+			// We cannot use this data in the WHERE clause if it has been truncated.
+			// Since being truncated is the same as needing to re-read,
+			// only use this in the WHERE clause if we do not need to re-read
+<span class="nc bnc" id="L588" title="All 2 branches missed.">			if ( ! needToReRead(value))</span>
+			{
+<span class="nc" id="L590">				return new ParameterWhereClausePart(_colDef, value, this);</span>
+			}
+			else 
+			{ 
+<span class="nc" id="L594">				return new EmptyWhereClausePart();	// value is truncated, so do not use in WHERE clause</span>
+			}
+		}
+	}
+
+
+	/**
+	 * When updating the database, insert the appropriate datatype into the
+	 * prepared statment at the given variable position.
+	 */
+	public void setPreparedStatementValue(PreparedStatement pstmt, Object value, int position)
+		throws java.sql.SQLException {
+<span class="nc bnc" id="L606" title="All 2 branches missed.">		if (value == null) {</span>
+<span class="nc" id="L607">			pstmt.setNull(position, _colDef.getSqlType());</span>
+		}
+		else {
+<span class="nc" id="L610">			pstmt.setString(position, ((String)value));</span>
+		}
+<span class="nc" id="L612">	}</span>
+
+	/**
+	 * Get a default value for the table used to input data for a new row
+	 * to be inserted into the DB.
+	 */
+	public Object getDefaultValue(String dbDefaultValue) {
+<span class="nc bnc" id="L619" title="All 2 branches missed.">		if (dbDefaultValue != null) {</span>
+			// try to use the DB default value
+<span class="nc" id="L621">			StringBuffer mbuf = new StringBuffer();</span>
+<span class="nc" id="L622">			Object newObject = validateAndConvert(dbDefaultValue, null, mbuf);</span>
+
+			// if there was a problem with converting, then just fall through
+			// and continue as if there was no default given in the DB.
+			// Otherwise, use the converted object
+<span class="nc bnc" id="L627" title="All 2 branches missed.">			if (mbuf.length() == 0)</span>
+<span class="nc" id="L628">				return newObject;</span>
+		}
+
+		// no default in DB.  If nullable, use null.
+<span class="nc bnc" id="L632" title="All 2 branches missed.">		if (_isNullable)</span>
+<span class="nc" id="L633">			return null;</span>
+
+		// field is not nullable, so create a reasonable default value
+<span class="nc" id="L636">		return &quot;&quot;;</span>
+	}
+
+
+	/*
+		 * File IO related functions
+		 */
+
+
+	 /**
+	  * Say whether or not object can be exported to and imported from
+	  * a file.  We put both export and import together in one test
+	  * on the assumption that all conversions can be done both ways.
+	  */
+	 public boolean canDoFileIO() {
+<span class="nc" id="L651">		 return true;</span>
+	 }
+
+	 /**
+	  * Read a file and construct a valid object from its contents.
+	  * Errors are returned by throwing an IOException containing the
+	  * cause of the problem as its message.
+	  * &lt;P&gt;
+	  * DataType is responsible for validating that the imported
+	  * data can be converted to an object, and then must return
+	  * a text string that can be used in the Popup window text area.
+	  * This object-to-text conversion is the same as is done by
+	  * the DataType object internally in the getJTextArea() method.
+	  * 
+	  * &lt;P&gt;
+	  * File is assumed to be printable text characters,
+	  * possibly including newlines and tabs but not characters
+	  * that would require a binary representation to display
+	  * to user.
+	  */
+	public String importObject(FileInputStream inStream)
+		 throws IOException {
+
+<span class="nc" id="L674">		 InputStreamReader inReader = new InputStreamReader(inStream);</span>
+
+<span class="nc" id="L676">		 int fileSize = inStream.available();</span>
+
+<span class="nc" id="L678">		 char charBuf[] = new char[fileSize];</span>
+
+<span class="nc" id="L680">		 int count = inReader.read(charBuf, 0, fileSize);</span>
+
+<span class="nc bnc" id="L682" title="All 2 branches missed.">		 if (count != fileSize)</span>
+<span class="nc" id="L683">			 throw new IOException(</span>
+				 &quot;Could read only &quot;+ count +
+				 &quot; chars from a total file size of &quot; + fileSize +
+				 &quot;. Import failed.&quot;);
+
+		 // convert to string
+		 // Special case: some systems tack a newline at the end of
+		 // the text read.  Assume that if last char is a newline that
+		 // we want everything else in the line.
+		 String fileText;
+<span class="nc bnc" id="L693" title="All 2 branches missed.">		 if (charBuf[count-1] == KeyEvent.VK_ENTER)</span>
+<span class="nc" id="L694">			 fileText = new String(charBuf, 0, count-1);</span>
+<span class="nc" id="L695">		 else fileText = new String(charBuf);</span>
+
+		 // data must fit into the column's max size
+<span class="nc bnc" id="L698" title="All 4 branches missed.">		 if (_columnSize &gt; 0 &amp;&amp; fileText.length() &gt; _columnSize)</span>
+<span class="nc" id="L699">			 throw new IOException(</span>
+<span class="nc" id="L700">				 &quot;File contains &quot;+fileText.length()+</span>
+				 &quot; characters which exceeds this column's limit of &quot;+
+				 _columnSize+&quot;.\nImport Aborted.&quot;);
+
+<span class="nc" id="L704">		 return fileText;</span>
+	}
+
+
+	 /**
+	  * Construct an appropriate external representation of the object
+	  * and write it to a file.
+	  * Errors are returned by throwing an IOException containing the
+	  * cause of the problem as its message.
+	  * &lt;P&gt;
+	  * DataType is responsible for validating that the given text
+	  * text from a Popup JTextArea can be converted to an object.
+	  * This text-to-object conversion is the same as validateAndConvertInPopup,
+	  * which may be used internally by the object to do the validation.
+	  * &lt;P&gt;
+	  * The DataType object must flush and close the output stream before returning.
+	  * Typically it will create another object (e.g. an OutputWriter), and
+	  * that is the object that must be flushed and closed.
+	  * 
+	  * &lt;P&gt;
+	  * File is assumed to be printable text characters,
+	  * possibly including newlines and tabs but not characters
+	  * that would require a binary representation to display
+	  * to user.
+	  */
+	 public void exportObject(FileOutputStream outStream, String text)
+		 throws IOException {
+
+<span class="nc" id="L732">		 OutputStreamWriter outWriter = new OutputStreamWriter(outStream);</span>
+
+		 // for string, just send the text to the output file
+<span class="nc" id="L735">		 outWriter.write(text);</span>
+<span class="nc" id="L736">		outWriter.flush();</span>
+<span class="nc" id="L737">		outWriter.close();</span>
+<span class="nc" id="L738">	 }</span>
+
+
+	/*
+		 * Property change control panel
+		 */
+
+	 /**
+	  * Generate a JPanel containing controls that allow the user
+	  * to adjust the properties for this DataType.
+	  * All properties are static accross all instances of this DataType. 
+	  * However, the class may choose to apply the information differentially,
+	  * such as keeping a list (also entered by the user) of table/column names
+	  * for which certain properties should be used.
+	  * &lt;P&gt;
+	  * This is called ONLY if there is at least one property entered into the DTProperties
+	  * for this class.
+	  * &lt;P&gt;
+	  * Since this method is called by reflection on the Method object derived from this class,
+	  * it does not need to be included in the Interface.
+	  * It would be nice to include this in the Interface for consistancy, documentation, etc,
+	  * but the Interface does not seem to like static methods.
+	  */
+	 public static OkJPanel getControlPanel() {
+
+		/*
+				 * If you add this method to one of the standard DataTypes in the
+				 * fw/datasetviewer/cellcomponent directory, you must also add the name
+				 * of that DataType class to the list in CellComponentFactory, method
+				 * getControlPanels, variable named initialClassNameList.
+				 * If the class is being registered with the factory using registerDataType,
+				 * then you should not include the class name in the list (it will be found
+				 * automatically), but if the DataType is part of the case statement in the
+				 * factory method getDataTypeObject, then it does need to be explicitly listed
+				 * in the getControlPanels method also.
+				 */
+
+		 // if this panel is called before any instances of the class have been
+		 // created, we need to load the properties from the DTProperties.
+<span class="nc" id="L777">		 loadProperties();</span>
+
+<span class="nc" id="L779">		return new ClobOkJPanel();</span>
+	 }
+
+
+
+	 /**
+	  * Inner class that extends OkJPanel so that we can call the ok()
+	  * method to save the data when the user is happy with it.
+	  */
+	 private static class ClobOkJPanel extends OkJPanel {
+		/*
+		 * GUI components - need to be here because they need to be
+		 * accessible from the event handlers to alter each other's state.
+		 */
+
+        private static final long serialVersionUID = -578848466466561988L;
+
+        // check box for whether to show newlines as &quot;\n&quot; for in-cell display
+<span class="nc" id="L797">		private JCheckBox _makeNewlinesVisibleInCellChk =</span>
+			// i18n[dataTypeString.newlines=Show newlines as \\n within cells]
+<span class="nc" id="L799">			new JCheckBox(s_stringMgr.getString(&quot;dataTypeString.newlines&quot;));</span>
+
+		// check box for whether to use LONGVARCHAR in WHERE clause
+		// (Oracle does not allow that type in WHERE clause)
+<span class="nc" id="L803">		private JCheckBox _useLongInWhereChk =</span>
+			// i18n[dataTypeString.allowLongVarchar=Allow LONGVARCHAR type to be used in WHERE clause]
+<span class="nc" id="L805">			new JCheckBox(s_stringMgr.getString(&quot;dataTypeString.allowLongVarchar&quot;));</span>
+
+		// check box for whether to do any limiting of the data read during initial table load
+<span class="nc" id="L808">		private JCheckBox _limitReadChk =</span>
+			// i18n[dataTypeString.limitSize=Limit size of strings read during initial table load to max of:]
+<span class="nc" id="L810">			new JCheckBox(s_stringMgr.getString(&quot;dataTypeString.limitSize&quot;));</span>
+
+		// check box for whether to show newlines as &quot;\n&quot; for in-cell display
+<span class="nc" id="L813">		private IntegerField _limitReadLengthTextField =</span>
+			new IntegerField(5);
+
+		// check box for whether to show newlines as &quot;\n&quot; for in-cell display
+<span class="nc" id="L817">		private JCheckBox _limitReadOnSpecificColumnsChk =</span>
+			// i18n[dataTypeString.limitReadOnly=Limit read only on columns with these names:]
+<span class="nc" id="L819">			new JCheckBox(s_stringMgr.getString(&quot;dataTypeString.limitReadOnly&quot;));</span>
+
+		// check box for whether to show newlines as &quot;\n&quot; for in-cell display
+<span class="nc" id="L822">		private JTextArea _limitReadColumnNameTextArea =</span>
+			new JTextArea(5, 12);
+
+
+<span class="nc" id="L826">		public ClobOkJPanel() {</span>
+
+			/* set up the controls */
+
+			// checkbox for displaying newlines as \n in-cell
+<span class="nc" id="L831">			_makeNewlinesVisibleInCellChk.setSelected(_makeNewlinesVisibleInCell);</span>
+
+			// checkbox for using LONG in WHERE clause
+<span class="nc" id="L834">			_useLongInWhereChk.setSelected(_useLongInWhere);</span>
+
+			// checkbox for limit/no-limit on data read during initial table load
+<span class="nc" id="L837">			_limitReadChk.setSelected(_limitRead);</span>
+<span class="nc" id="L838">			_limitReadChk.addChangeListener(new ChangeListener(){</span>
+				public void stateChanged(ChangeEvent e) {
+<span class="nc" id="L840">					_limitReadLengthTextField.setEnabled(_limitReadChk.isSelected());</span>
+<span class="nc" id="L841">					_limitReadOnSpecificColumnsChk.setEnabled(_limitReadChk.isSelected());</span>
+<span class="nc bnc" id="L842" title="All 2 branches missed.">					_limitReadColumnNameTextArea.setEnabled(_limitReadChk.isSelected() &amp;&amp;</span>
+<span class="nc bnc" id="L843" title="All 2 branches missed.">						(_limitReadOnSpecificColumnsChk.isSelected()));</span>
+<span class="nc" id="L844">				}</span>
+			});
+
+
+			// fill in the current limit length
+<span class="nc" id="L849">			_limitReadLengthTextField.setInt(_limitReadLength);</span>
+
+			// set the flag for whether or not to limit only on specific fields
+<span class="nc" id="L852">			_limitReadOnSpecificColumnsChk.setSelected(_limitReadOnSpecificColumns);</span>
+<span class="nc" id="L853">			_limitReadOnSpecificColumnsChk.addChangeListener(new ChangeListener(){</span>
+				public void stateChanged(ChangeEvent e) {
+<span class="nc" id="L855">					_limitReadColumnNameTextArea.setEnabled(</span>
+<span class="nc" id="L856">						_limitReadOnSpecificColumnsChk.isSelected());</span>
+<span class="nc" id="L857">				}</span>
+			});
+
+			// fill in list of column names to check against
+<span class="nc" id="L861">			Iterator&lt;String&gt; names = _limitReadColumnNameMap.keySet().iterator();</span>
+<span class="nc" id="L862">			StringBuffer namesText = new StringBuffer();</span>
+<span class="nc bnc" id="L863" title="All 2 branches missed.">			while (names.hasNext()) {</span>
+<span class="nc bnc" id="L864" title="All 2 branches missed.">				if (namesText.length() &gt; 0)</span>
+<span class="nc" id="L865">					namesText.append(&quot;\n&quot; + names.next());</span>
+<span class="nc" id="L866">				else namesText.append(names.next());</span>
+			}
+<span class="nc" id="L868">			_limitReadColumnNameTextArea.setText(namesText.toString());</span>
+
+			// handle cross-connection between fields
+<span class="nc" id="L871">			_limitReadLengthTextField.setEnabled(_limitReadChk.isSelected());</span>
+<span class="nc" id="L872">			_limitReadOnSpecificColumnsChk.setEnabled(_limitReadChk.isSelected());</span>
+<span class="nc bnc" id="L873" title="All 2 branches missed.">			_limitReadColumnNameTextArea.setEnabled(_limitReadChk.isSelected() &amp;&amp;</span>
+<span class="nc bnc" id="L874" title="All 2 branches missed.">				(_limitReadOnSpecificColumnsChk.isSelected()));;</span>
+
+			/*
+			 * Create the panel and add the GUI items to it
+			  */
+
+<span class="nc" id="L880">			setLayout(new GridBagLayout());</span>
+
+<span class="nc" id="L882">			setBorder(BorderFactory.createTitledBorder(</span>
+				// i18n[dataTypeString.typeChar=CHAR, VARCHAR, LONGVARCHAR   (SQL types 1, 12, -1)]
+<span class="nc" id="L884">				s_stringMgr.getString(&quot;dataTypeString.typeChar&quot;)));</span>
+<span class="nc" id="L885">			final GridBagConstraints gbc = new GridBagConstraints();</span>
+<span class="nc" id="L886">			gbc.fill = GridBagConstraints.HORIZONTAL;</span>
+<span class="nc" id="L887">			gbc.insets = new Insets(4, 4, 4, 4);</span>
+<span class="nc" id="L888">			gbc.anchor = GridBagConstraints.WEST;</span>
+
+<span class="nc" id="L890">			gbc.gridx = 0;</span>
+<span class="nc" id="L891">			gbc.gridy = 0;</span>
+
+<span class="nc" id="L893">			gbc.gridwidth = GridBagConstraints.REMAINDER;</span>
+<span class="nc" id="L894">			add(_makeNewlinesVisibleInCellChk, gbc);</span>
+
+<span class="nc" id="L896">			gbc.gridx = 0;</span>
+<span class="nc" id="L897">			gbc.gridy++;</span>
+<span class="nc" id="L898">			gbc.gridwidth = GridBagConstraints.REMAINDER;</span>
+<span class="nc" id="L899">			add(_useLongInWhereChk, gbc);</span>
+
+<span class="nc" id="L901">			gbc.gridy++;</span>
+<span class="nc" id="L902">			gbc.gridx = 0;</span>
+<span class="nc" id="L903">			gbc.gridwidth = 1;</span>
+<span class="nc" id="L904">			add(_limitReadChk, gbc);</span>
+
+<span class="nc" id="L906">			gbc.gridx++;</span>
+<span class="nc" id="L907">			gbc.gridwidth = 1;</span>
+<span class="nc" id="L908">			add(_limitReadLengthTextField, gbc);</span>
+
+<span class="nc" id="L910">			gbc.gridy++;</span>
+<span class="nc" id="L911">			gbc.gridx = 0;</span>
+<span class="nc" id="L912">			gbc.gridwidth = 1;</span>
+<span class="nc" id="L913">			add(_limitReadOnSpecificColumnsChk, gbc);</span>
+
+<span class="nc" id="L915">			gbc.gridx++;</span>
+<span class="nc" id="L916">			gbc.gridwidth = GridBagConstraints.REMAINDER;</span>
+<span class="nc" id="L917">			JScrollPane scrollPane = new JScrollPane();</span>
+
+			// If we don't always show the scrollbars the whole DataTypePreferencesPanel is flickering like hell.
+<span class="nc" id="L920">			scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_ALWAYS);</span>
+<span class="nc" id="L921">			scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);</span>
+
+<span class="nc" id="L923">			scrollPane.setViewportView(_limitReadColumnNameTextArea);</span>
+<span class="nc" id="L924">			add(scrollPane, gbc);</span>
+
+
+<span class="nc" id="L927">		} // end of constructor for inner class</span>
+
+
+		/**
+		  * User has clicked OK in the surrounding JPanel,
+		 * so save the current state of all variables
+		  */
+		public void ok() {
+			// get the values from the controls and set them in the static properties
+<span class="nc" id="L936">			_makeNewlinesVisibleInCell = _makeNewlinesVisibleInCellChk.isSelected();</span>
+<span class="nc" id="L937">			DTProperties.put(thisClassName,</span>
+<span class="nc" id="L938">				&quot;makeNewlinesVisibleInCell&quot;, Boolean.valueOf(_makeNewlinesVisibleInCell).toString());</span>
+
+<span class="nc" id="L940">			_useLongInWhere = _useLongInWhereChk.isSelected();</span>
+<span class="nc" id="L941">			DTProperties.put(thisClassName,</span>
+<span class="nc" id="L942">				&quot;useLongInWhere&quot;, Boolean.valueOf(_useLongInWhere).toString());</span>
+
+<span class="nc" id="L944">			_limitRead = _limitReadChk.isSelected();</span>
+<span class="nc" id="L945">			DTProperties.put(thisClassName,</span>
+<span class="nc" id="L946">				&quot;limitRead&quot;, Boolean.valueOf(_limitRead).toString());</span>
+
+<span class="nc" id="L948">			_limitReadLength = _limitReadLengthTextField.getInt();</span>
+<span class="nc" id="L949">			DTProperties.put(thisClassName,</span>
+<span class="nc" id="L950">				&quot;limitReadLength&quot;, Integer.toString(_limitReadLength));</span>
+
+<span class="nc" id="L952">			_limitReadOnSpecificColumns = _limitReadOnSpecificColumnsChk.isSelected();</span>
+<span class="nc" id="L953">			DTProperties.put(thisClassName,</span>
+<span class="nc" id="L954">				&quot;limitReadOnSpecificColumns&quot;, Boolean.valueOf(_limitReadOnSpecificColumns).toString());</span>
+
+			// Handle list of column names
+
+			// remove old name list from map
+<span class="nc" id="L959">			_limitReadColumnNameMap.clear();</span>
+			// extract column names from text area
+<span class="nc" id="L961">			String columnNameText = _limitReadColumnNameTextArea.getText();</span>
+
+<span class="nc" id="L963">			int start = 0;</span>
+			int end;
+			String name;
+<span class="nc" id="L966">			String propertyString = &quot;&quot;;</span>
+
+<span class="nc bnc" id="L968" title="All 2 branches missed.">			while (start &lt; columnNameText.length()) {</span>
+				// find the next name in the text
+<span class="nc" id="L970">				end = columnNameText.indexOf('\n', start+1);</span>
+<span class="nc bnc" id="L971" title="All 2 branches missed.">				if (end &gt; -1) {</span>
+<span class="nc" id="L972">					name = columnNameText.substring(start, end);</span>
+<span class="nc" id="L973">					start = end;</span>
+				}
+				else {
+<span class="nc" id="L976">					name = columnNameText.substring(start);</span>
+<span class="nc" id="L977">					start = columnNameText.length();</span>
+				}
+
+				// cleanup and standardize the name, and add it to the map
+<span class="nc" id="L981">				name = name.trim().toUpperCase();</span>
+<span class="nc bnc" id="L982" title="All 2 branches missed.">				if (name.length() == 0)</span>
+<span class="nc" id="L983">					continue;	// skip blank lines</span>
+
+<span class="nc" id="L985">				_limitReadColumnNameMap.put(name.trim().toUpperCase(), null);</span>
+
+				// add name to comma-separated string for saving in properties
+<span class="nc" id="L988">				propertyString += &quot;,&quot; + name.trim().toUpperCase();</span>
+			}	// end while
+
+<span class="nc" id="L991">			DTProperties.put(thisClassName,</span>
+				&quot;limitReadColumnNames&quot;, propertyString);
+
+<span class="nc" id="L994">		}	// end ok</span>
+
+	 } // end of inner class
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

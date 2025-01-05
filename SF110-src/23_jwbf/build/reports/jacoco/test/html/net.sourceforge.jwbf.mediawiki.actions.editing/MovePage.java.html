@@ -1,0 +1,258 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MovePage.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">23_jwbf</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.jwbf.mediawiki.actions.editing</a> &gt; <span class="el_source">MovePage.java</span></div><h1>MovePage.java</h1><pre class="source lang-java linenums">package net.sourceforge.jwbf.mediawiki.actions.editing;
+
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_12;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_13;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_14;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_15;
+import static net.sourceforge.jwbf.mediawiki.actions.MediaWiki.Version.MW1_16;
+
+import java.io.IOException;
+import java.io.StringReader;
+
+import lombok.extern.slf4j.Slf4j;
+import net.sourceforge.jwbf.core.actions.Post;
+import net.sourceforge.jwbf.core.actions.util.ActionException;
+import net.sourceforge.jwbf.core.actions.util.HttpAction;
+import net.sourceforge.jwbf.core.actions.util.ProcessException;
+import net.sourceforge.jwbf.mediawiki.actions.MediaWiki;
+import net.sourceforge.jwbf.mediawiki.actions.util.MWAction;
+import net.sourceforge.jwbf.mediawiki.actions.util.SupportedBy;
+import net.sourceforge.jwbf.mediawiki.bots.MediaWikiBot;
+
+import org.jdom.Document;
+import org.jdom.Element;
+import org.jdom.JDOMException;
+import org.jdom.input.SAXBuilder;
+import org.xml.sax.InputSource;
+
+/**
+ * Action class using the MediaWiki-API's &lt;a
+ * href=&quot;http://www.mediawiki.org/wiki/API:Edit_-_Move&quot;&gt;&quot;action=move&quot;&lt;/a&gt;.
+ * 
+ * &lt;p&gt;
+ * To allow your bot to move articles in your MediaWiki add the following line
+ * to your MediaWiki's LocalSettings.php:&lt;br&gt;
+ * 
+ * &lt;pre&gt;
+ * $wgEnableWriteAPI = true;
+ * $wgGroupPermissions['bot']['move'] = true;
+ * $wgGroupPermissions['bot']['movefile'] = true;            // optional
+ * $wgGroupPermissions['bot']['move-subpages'] = true;       // optional
+ * $wgGroupPermissions['bot']['move-rootuserpages'] = true;  // optional
+ * &lt;/pre&gt;
+ * 
+ * &lt;p&gt;
+ * Move an article with
+ * 
+ * &lt;pre&gt;
+ * String oldtitle = ...
+ * String newtitle = ...
+ * String reason = ...
+ * Boolean withsubpages = ...
+ * Boolean noredirect = ...
+ * 
+ * MediaWikiBot bot = ...
+ * bot.performAction(new MovePage(bot, oldtitle, newtitle, reason, withsubpages, noredirect));
+ * &lt;/pre&gt;
+ * 
+ * @author Christoph Giesel
+ */
+<span class="fc" id="L60">@Slf4j</span>
+@SupportedBy({ MW1_12, MW1_13, MW1_14, MW1_15, MW1_16 })
+public class MovePage extends MWAction {
+
+  private final String oldtitle;
+  private final String newtitle;
+  private final String reason;
+  private final boolean withsubpages;
+  private final boolean noredirect;
+  private final GetApiToken token;
+<span class="nc" id="L70">  private boolean moveToken = true;</span>
+
+  /**
+   * Constructs a new &lt;code&gt;MovePage&lt;/code&gt; action.
+   * 
+   * @param bot
+   *          the MediaWikiBot
+   * @param oldtitle
+   *          title to move
+   * @param newtitle
+   *          new title
+   * @param reason
+   *          reason why to move
+   * @param withsubpages
+   *          if &lt;b&gt;TRUE&lt;/b&gt; also move the subpages
+   * @param noredirect
+   *          if &lt;b&gt;TRUE&lt;/b&gt; create no redirects
+   * @throws ProcessException
+   *           ProcessException
+   * @throws ActionException
+   *           ActionException
+   */
+  public MovePage(MediaWikiBot bot, String oldtitle, String newtitle,
+      String reason, boolean withsubpages, boolean noredirect)
+      throws ProcessException, ActionException {
+<span class="nc" id="L95">    super(bot.getVersion());</span>
+<span class="nc" id="L96">    token = new GetApiToken(GetApiToken.Intoken.MOVE, oldtitle,</span>
+<span class="nc" id="L97">        bot.getVersion(), bot.getUserinfo());</span>
+<span class="nc" id="L98">    this.oldtitle = oldtitle;</span>
+<span class="nc" id="L99">    this.newtitle = newtitle;</span>
+<span class="nc" id="L100">    this.reason = reason;</span>
+<span class="nc" id="L101">    this.withsubpages = withsubpages;</span>
+<span class="nc" id="L102">    this.noredirect = noredirect;</span>
+
+<span class="nc bnc" id="L104" title="All 6 branches missed.">    if (oldtitle == null || oldtitle.length() == 0 || newtitle == null</span>
+<span class="nc bnc" id="L105" title="All 2 branches missed.">        || newtitle.length() == 0) {</span>
+<span class="nc" id="L106">      throw new IllegalArgumentException(</span>
+          &quot;The arguments 'oldtitle' and 'newtitle' must not be null or empty&quot;);
+    }
+
+<span class="nc bnc" id="L110" title="All 2 branches missed.">    if (!bot.getUserinfo().getRights().contains(&quot;move&quot;)) {</span>
+<span class="nc" id="L111">      throw new ProcessException(</span>
+          &quot;The given user doesn't have the rights to move. &quot;
+              + &quot;Add '$wgGroupPermissions['bot']['move'] = true;' &quot;
+              + &quot;to your MediaWiki's LocalSettings.php might solve this problem.&quot;);
+    }
+
+<span class="nc bnc" id="L117" title="All 2 branches missed.">    if (withsubpages</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">        &amp;&amp; !bot.getUserinfo().getRights().contains(&quot;move-subpages&quot;)) {</span>
+<span class="nc" id="L119">      throw new ProcessException(</span>
+          &quot;The given user doesn't have the rights to move subpages. &quot;
+              + &quot;Add '$wgGroupPermissions['bot']['move-subpages'] = true;' &quot;
+              + &quot;to your MediaWiki's LocalSettings.php might solve this problem.&quot;);
+    }
+<span class="nc" id="L124">  }</span>
+
+  /**
+   * @return the delete action
+   */
+  private HttpAction getSecondRequest() {
+<span class="nc" id="L130">    HttpAction msg = null;</span>
+<span class="nc bnc" id="L131" title="All 4 branches missed.">    if (token.getToken() == null || token.getToken().length() == 0) {</span>
+<span class="nc" id="L132">      throw new IllegalArgumentException(&quot;The argument 'token' must not be \&quot;&quot;</span>
+<span class="nc" id="L133">          + String.valueOf(token.getToken()) + &quot;\&quot;&quot;);</span>
+    }
+<span class="nc bnc" id="L135" title="All 2 branches missed.">    if (log.isTraceEnabled()) {</span>
+<span class="nc" id="L136">      log.trace(&quot;enter MovePage.generateMoveRequest(String)&quot;);</span>
+    }
+
+<span class="nc" id="L139">    String uS = &quot;/api.php&quot;</span>
+        + &quot;?action=move&quot;
+        + &quot;&amp;from=&quot;
+<span class="nc" id="L142">        + MediaWiki.encode(oldtitle)</span>
+        + &quot;&amp;to=&quot;
+<span class="nc" id="L144">        + MediaWiki.encode(newtitle)</span>
+        + &quot;&amp;token=&quot;
+<span class="nc bnc" id="L146" title="All 6 branches missed.">        + MediaWiki.encode(token.getToken())</span>
+        + (withsubpages ? &quot;&amp;movesubpages&quot; : &quot;&quot;)
+        + (noredirect ? &quot;&amp;noredirect&quot; : &quot;&quot;)
+<span class="nc bnc" id="L149" title="All 2 branches missed.">        + ((reason != null &amp;&amp; reason.length() != 0) ? &quot;&amp;reason=&quot;</span>
+<span class="nc" id="L150">            + MediaWiki.encode(reason) : &quot;&quot;) + &quot;&amp;movetalk&amp;format=xml&quot;;</span>
+
+<span class="nc bnc" id="L152" title="All 2 branches missed.">    if (log.isDebugEnabled()) {</span>
+<span class="nc" id="L153">      log.debug(&quot;move url: \&quot;&quot; + uS + &quot;\&quot;&quot;);</span>
+    }
+<span class="nc" id="L155">    msg = new Post(uS);</span>
+
+<span class="nc" id="L157">    return msg;</span>
+  }
+
+  /**
+   * 
+   * {@inheritDoc}
+   */
+  @Override
+  public String processReturningText(String s, HttpAction hm)
+      throws ProcessException {
+<span class="nc" id="L167">    super.processReturningText(s, hm);</span>
+
+<span class="nc bnc" id="L169" title="All 2 branches missed.">    if (moveToken) {</span>
+<span class="nc" id="L170">      token.processReturningText(s, hm);</span>
+<span class="nc" id="L171">      moveToken = false;</span>
+    } else {
+
+<span class="nc bnc" id="L174" title="All 2 branches missed.">      if (log.isTraceEnabled()) {</span>
+<span class="nc" id="L175">        log.trace(&quot;enter MovePage.processAllReturningText(String)&quot;);</span>
+      }
+<span class="nc bnc" id="L177" title="All 2 branches missed.">      if (log.isDebugEnabled()) {</span>
+<span class="nc" id="L178">        log.debug(&quot;Got returning text: \&quot;&quot; + s + &quot;\&quot;&quot;);</span>
+      }
+<span class="nc" id="L180">      SAXBuilder builder = new SAXBuilder();</span>
+      try {
+<span class="nc" id="L182">        Document doc = builder.build(new InputSource(new StringReader(s)));</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">        if (!containsError(doc)) {</span>
+<span class="nc" id="L184">          process(doc);</span>
+        }
+<span class="nc" id="L186">      } catch (JDOMException e) {</span>
+<span class="nc" id="L187">        String msg = e.getMessage();</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">        if (s.startsWith(&quot;unknown_action:&quot;)) {</span>
+<span class="nc" id="L189">          msg = &quot;unknown_action; Adding '$wgEnableWriteAPI = true;' to your MediaWiki's &quot;</span>
+              + &quot;LocalSettings.php might remove this problem.&quot;;
+        }
+<span class="nc" id="L192">        log.error(msg, e);</span>
+<span class="nc" id="L193">        throw new ProcessException(msg, e);</span>
+<span class="nc" id="L194">      } catch (IOException e) {</span>
+<span class="nc" id="L195">        log.error(e.getMessage(), e);</span>
+<span class="nc" id="L196">        throw new ProcessException(e);</span>
+<span class="nc" id="L197">      }</span>
+<span class="nc" id="L198">      setHasMoreMessages(false);</span>
+    }
+
+<span class="nc" id="L201">    return &quot;&quot;;</span>
+  }
+
+  /**
+   * Determines if the given XML {@link Document} contains an error message
+   * which then would printed by the logger.
+   * 
+   * @param doc
+   *          XML &lt;code&gt;Document&lt;/code&gt;
+   * @throws JDOMException
+   *           thrown if the document could not be parsed
+   * @return if
+   */
+  private boolean containsError(Document doc) {
+<span class="nc" id="L215">    Element elem = doc.getRootElement().getChild(&quot;error&quot;);</span>
+<span class="nc bnc" id="L216" title="All 2 branches missed.">    if (elem != null) {</span>
+<span class="nc" id="L217">      log.error(elem.getAttributeValue(&quot;code&quot;) + &quot;: &quot;</span>
+<span class="nc" id="L218">          + elem.getAttributeValue(&quot;info&quot;));</span>
+
+<span class="nc" id="L220">      return true;</span>
+    }
+<span class="nc" id="L222">    return false;</span>
+  }
+
+  /**
+   * Processing the XML {@link Document} returned from the MediaWiki API.
+   * 
+   * @param doc
+   *          XML &lt;code&gt;Document&lt;/code&gt;
+   * @throws JDOMException
+   *           thrown if the document could not be parsed
+   */
+  private void process(Document doc) {
+<span class="nc" id="L234">    Element elem = doc.getRootElement().getChild(&quot;move&quot;);</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">    if (elem != null) {</span>
+      // process reply for delete request
+<span class="nc bnc" id="L237" title="All 2 branches missed.">      if (log.isInfoEnabled()) {</span>
+<span class="nc" id="L238">        log.info(&quot;Moved article '&quot; + elem.getAttributeValue(&quot;from&quot;) + &quot;' to '&quot;</span>
+<span class="nc" id="L239">            + elem.getAttributeValue(&quot;to&quot;) + &quot;'&quot; + &quot; with reason '&quot;</span>
+<span class="nc" id="L240">            + elem.getAttributeValue(&quot;reason&quot;) + &quot;'&quot;);</span>
+      }
+    } else {
+<span class="nc" id="L243">      log.error(&quot;Unknow reply. This is not a reply for a delete action.&quot;);</span>
+    }
+<span class="nc" id="L245">  }</span>
+
+  /**
+   * {@inheritDoc}
+   */
+  public HttpAction getNextMessage() {
+<span class="nc bnc" id="L251" title="All 2 branches missed.">    if (token.hasMoreMessages()) {</span>
+<span class="nc" id="L252">      setHasMoreMessages(true);</span>
+<span class="nc" id="L253">      return token.getNextMessage();</span>
+    }
+<span class="nc" id="L255">    return getSecondRequest();</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

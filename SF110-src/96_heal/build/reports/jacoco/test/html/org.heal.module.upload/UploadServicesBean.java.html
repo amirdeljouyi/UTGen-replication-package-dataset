@@ -1,0 +1,486 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UploadServicesBean.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">96_heal</a> &gt; <a href="index.source.html" class="el_package">org.heal.module.upload</a> &gt; <span class="el_source">UploadServicesBean.java</span></div><h1>UploadServicesBean.java</h1><pre class="source lang-java linenums">package org.heal.module.upload;
+
+import com.sun.media.jai.codec.ImageCodec;
+import com.sun.media.jai.codec.ImageEncoder;
+
+import org.heal.module.metadata.CompleteMetadataBean;
+import org.heal.module.metadata.MetadataBean;
+import org.heal.module.metadata.ThumbnailBean;
+import org.heal.util.FileLocator;
+
+import javax.media.Buffer;
+import javax.media.ConfigureCompleteEvent;
+import javax.media.ControllerEvent;
+import javax.media.ControllerListener;
+import javax.media.Duration;
+import javax.media.Manager;
+import javax.media.MediaLocator;
+import javax.media.Player;
+import javax.media.PrefetchCompleteEvent;
+import javax.media.RealizeCompleteEvent;
+import javax.media.ResourceUnavailableEvent;
+import javax.media.Time;
+import javax.media.control.FrameGrabbingControl;
+import javax.media.control.FramePositioningControl;
+import javax.media.format.VideoFormat;
+import javax.media.jai.Interpolation;
+import javax.media.jai.JAI;
+import javax.media.jai.PlanarImage;
+import javax.media.protocol.DataSource;
+import java.awt.Dimension;
+import java.awt.image.DataBuffer;
+import java.awt.image.renderable.ParameterBlock;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.Serializable;
+import java.net.MalformedURLException;
+import java.net.URL;
+
+/**
+ *
+ * @author Seth Wright
+ * @version 0.1
+ */
+<span class="nc" id="L45">public class UploadServicesBean implements Serializable {</span>
+    public static final int MAX_THUMB_WIDTH = 85;
+    public static final int MAX_THUMB_HEIGHT = 85;
+    private static final String JPEG_EXTENSION = &quot;.jpg&quot;;
+    private static final String THUMB_PREFIX = &quot;thb_&quot;;
+
+<span class="nc" id="L51">    private FileLocator fileLocator = null;</span>
+
+    public String getUploadPath() {
+<span class="nc bnc" id="L54" title="All 2 branches missed.">        if (fileLocator == null) return null;</span>
+<span class="nc" id="L55">        return fileLocator.getUploadURL();</span>
+    }
+
+    public void setFileLocator(FileLocator newFileLocator) {
+<span class="nc" id="L59">        fileLocator = newFileLocator;</span>
+<span class="nc" id="L60">    }</span>
+
+    public FileLocator getFileLocator() {
+<span class="nc" id="L63">        return fileLocator;</span>
+    }
+
+    /**
+     * Assumes that the metadata property in the CompleteMetadataBean parameter
+     * exists and already has a metadataId set.  (This implies that the
+     * metadata has already been validated and stored in the database at least
+     * once).  This method will then update the metadata's height and width
+     * parameters and generate a thumbnail if it can.  If it cannot generate a
+     * thumbnail, none will be set.  Either way, the database should be
+     * updated with the complete metadata bean after calling this method.
+     * The sourceFilePath is the location on disk of the source image
+     * we are trying to process.  If either parameter or the metadata property
+     * of the complete parameter is null, this method will return false.  Also,
+     * if the location setting in the metadata is null, false will be returned.
+     * If the method successfully determines the width and height of the
+     * image, true is returned.  Otherwise false is returned.  Whether or
+     * not a thumbnail is generated is not a factor in the return value of this
+     * method.
+     */
+    public boolean processImage(CompleteMetadataBean complete,
+                                String sourceFilePath)
+            throws IOException {
+        MetadataBean metadata;
+        String sourceLocation;
+        String metadataId;
+<span class="nc bnc" id="L89" title="All 2 branches missed.">        if (complete == null ||</span>
+<span class="nc bnc" id="L90" title="All 2 branches missed.">                (metadata = complete.getMetadata()) == null ||</span>
+<span class="nc bnc" id="L91" title="All 4 branches missed.">                (sourceLocation = metadata.getLocation()) == null ||</span>
+                sourceFilePath == null) {
+
+<span class="nc" id="L94">            return false;</span>
+        }
+        //metadataId may or may not be null
+<span class="nc" id="L97">        metadataId = metadata.getMetadataId();</span>
+
+<span class="nc bnc" id="L99" title="All 2 branches missed.">        if (sourceLocation == null) {</span>
+<span class="nc" id="L100">            return false;</span>
+        }
+        try {
+<span class="nc" id="L103">            PlanarImage image = JAI.create(&quot;fileload&quot;, sourceFilePath);</span>
+<span class="nc" id="L104">            metadata.setFileHeight(&quot;&quot; + image.getHeight());</span>
+<span class="nc" id="L105">            metadata.setFileWidth(&quot;&quot; + image.getWidth());</span>
+<span class="nc" id="L106">            ThumbnailBean thumbnail = null;</span>
+            try {
+<span class="nc" id="L108">                thumbnail = generateThumbnail(sourceLocation,</span>
+                        metadataId,
+                        image);
+<span class="nc" id="L111">            } catch (Exception ex) {</span>
+<span class="nc" id="L112">                ex.printStackTrace();</span>
+<span class="nc" id="L113">                thumbnail = null;</span>
+<span class="nc" id="L114">            }</span>
+<span class="nc" id="L115">            complete.setThumbnail(thumbnail);</span>
+<span class="nc" id="L116">        } catch (Exception ex) {</span>
+<span class="nc" id="L117">            ex.printStackTrace();</span>
+<span class="nc" id="L118">            return false;</span>
+<span class="nc" id="L119">        }</span>
+<span class="nc" id="L120">        return true;</span>
+    }
+
+    /**
+     * Inner class used to wait for the media players used in
+     * the audio and video processing to realize.
+     */
+<span class="nc" id="L127">    private class RealizeListener implements ControllerListener {</span>
+<span class="nc" id="L128">        Object waitSync = new Object();</span>
+<span class="nc" id="L129">        boolean stateTransitionOK = true;</span>
+
+        /**
+         * Block until the player has transitioned to the given state.
+         * Return false if the transition failed.
+         */
+        boolean waitForState(int state, Player p) {
+<span class="nc" id="L136">            synchronized (waitSync) {</span>
+                try {
+<span class="nc bnc" id="L138" title="All 4 branches missed.">                    while (p.getState() &lt; state &amp;&amp; stateTransitionOK)</span>
+<span class="nc" id="L139">                        waitSync.wait();</span>
+<span class="nc" id="L140">                } catch (Exception e) {</span>
+<span class="nc" id="L141">                }</span>
+<span class="nc" id="L142">            }</span>
+<span class="nc" id="L143">            return stateTransitionOK;</span>
+        }
+
+        /**
+         * Controller Listener.
+         */
+        public void controllerUpdate(ControllerEvent evt) {
+
+<span class="nc bnc" id="L151" title="All 6 branches missed.">            if (evt instanceof ConfigureCompleteEvent ||</span>
+                    evt instanceof RealizeCompleteEvent ||
+                    evt instanceof PrefetchCompleteEvent) {
+<span class="nc" id="L154">                synchronized (waitSync) {</span>
+<span class="nc" id="L155">                    stateTransitionOK = true;</span>
+<span class="nc" id="L156">                    waitSync.notifyAll();</span>
+<span class="nc" id="L157">                }</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">            } else if (evt instanceof ResourceUnavailableEvent) {</span>
+<span class="nc" id="L159">                synchronized (waitSync) {</span>
+<span class="nc" id="L160">                    stateTransitionOK = false;</span>
+<span class="nc" id="L161">                    waitSync.notifyAll();</span>
+<span class="nc" id="L162">                }</span>
+            }
+<span class="nc" id="L164">        }</span>
+    }
+
+    /**
+     * Extracts the width and height of the video media represented by
+     * the player and stores that information in the Metadata bean.
+     * If successful, true is returned, otherwise false is returned.
+     * The player needs to be in the realized state before this method
+     * is called.
+     */
+    private boolean readWidthAndHeight(Player player, MetadataBean metadata) {
+<span class="nc" id="L175">        FramePositioningControl fpc = (FramePositioningControl) player.getControl(&quot;javax.media.control.FramePositioningControl&quot;);</span>
+<span class="nc" id="L176">        FrameGrabbingControl fgc = (FrameGrabbingControl) player.getControl(&quot;javax.media.control.FrameGrabbingControl&quot;);</span>
+
+<span class="nc bnc" id="L178" title="All 4 branches missed.">        if (fpc == null || fgc == null) {</span>
+<span class="nc" id="L179">            System.err.println(&quot;Unable to get a positioning or grabbing control.&quot;);</span>
+<span class="nc" id="L180">            return false;</span>
+        }
+<span class="nc" id="L182">        fpc.seek(1);</span>
+<span class="nc" id="L183">        Buffer image = fgc.grabFrame();</span>
+<span class="nc" id="L184">        VideoFormat format = (VideoFormat) image.getFormat();</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">        if (format != null) {</span>
+<span class="nc" id="L186">            System.err.println(&quot;Unable to get video format for initial frame of movie.&quot;);</span>
+<span class="nc" id="L187">            Dimension size = format.getSize();</span>
+<span class="nc" id="L188">            metadata.setFileWidth(&quot;&quot; + size.width);</span>
+<span class="nc" id="L189">            metadata.setFileHeight(&quot;&quot; + size.height);</span>
+<span class="nc" id="L190">            return true;</span>
+        } else {
+<span class="nc" id="L192">            return false;</span>
+        }
+    }
+
+    /**
+     * Takes the video file stored at the given location and
+     * extracts the duration, width, and height of the video
+     * and stores that information in the metadata bean
+     * provided.  If an error occurs, false is returned, otherwise
+     * true is returned.  False will also be returned if either
+     * parameter is null, or the complete metadata bean's metadata bean
+     * is null.
+     */
+    public boolean processVideo(CompleteMetadataBean complete,
+                                String sourceFilePath) {
+        MetadataBean metadata;
+<span class="nc bnc" id="L208" title="All 2 branches missed.">        if (complete == null ||</span>
+<span class="nc bnc" id="L209" title="All 4 branches missed.">                (metadata = complete.getMetadata()) == null ||</span>
+                sourceFilePath == null) {
+
+<span class="nc" id="L212">            return false;</span>
+        }
+        try {
+<span class="nc" id="L215">            Player player = getAndRealizePlayer(sourceFilePath);</span>
+<span class="nc bnc" id="L216" title="All 2 branches missed.">            if (player == null) return false;</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">            if (!readDuration(player, metadata)) return false;</span>
+            //we got duration, so we should be able to find a frame
+<span class="nc" id="L219">            return readWidthAndHeight(player, metadata);</span>
+<span class="nc" id="L220">        } catch (Exception ex) {</span>
+<span class="nc" id="L221">            ex.printStackTrace();</span>
+<span class="nc" id="L222">            return false;</span>
+        }
+    }
+
+    /**
+     * Given a source file path, creates a data source/media locator
+     * for that file, creates a new player, and waits for the
+     * player to be realized.  If no errors occur, the created player
+     * (in the realized state), is returned and ready for use.
+     * If an error occurs, null is returned.
+     */
+    private Player getAndRealizePlayer(String sourceFilePath)
+            throws MalformedURLException {
+<span class="nc bnc" id="L235" title="All 2 branches missed.">        if (sourceFilePath == null) return null;</span>
+<span class="nc" id="L236">        File file = new File(sourceFilePath);</span>
+<span class="nc" id="L237">        URL url = file.toURL();</span>
+
+        MediaLocator ml;
+        Player player;
+
+<span class="nc bnc" id="L242" title="All 2 branches missed.">        if ((ml = new MediaLocator(url)) == null) {</span>
+<span class="nc" id="L243">            System.err.println(&quot;Unable to load media file.&quot;);</span>
+<span class="nc" id="L244">            return null;</span>
+        }
+
+<span class="nc" id="L247">        DataSource ds = null;</span>
+
+        // Create a DataSource given the media locator.
+        try {
+<span class="nc" id="L251">            ds = Manager.createDataSource(ml);</span>
+<span class="nc" id="L252">        } catch (Exception e) {</span>
+<span class="nc" id="L253">            System.err.println(&quot;added here1: &quot; + e);</span>
+
+<span class="nc" id="L255">            e.printStackTrace();</span>
+<span class="nc" id="L256">            return null;</span>
+<span class="nc" id="L257">        }</span>
+
+        try {
+<span class="nc" id="L260">            player = Manager.createPlayer(ds);</span>
+<span class="nc" id="L261">        } catch (Exception e) {</span>
+<span class="nc" id="L262">            System.err.println(&quot;Failed to create a player from the given DataSource: &quot; + e);</span>
+<span class="nc" id="L263">            return null;</span>
+<span class="nc" id="L264">        }</span>
+<span class="nc" id="L265">        RealizeListener realizeListener = new RealizeListener();</span>
+<span class="nc" id="L266">        player.addControllerListener(realizeListener);</span>
+<span class="nc" id="L267">        player.realize();</span>
+<span class="nc bnc" id="L268" title="All 2 branches missed.">        if (!realizeListener.waitForState(player.Realized, player)) {</span>
+<span class="nc" id="L269">            System.err.println(&quot;Failed to realize the player.&quot;);</span>
+<span class="nc" id="L270">            return null;</span>
+        }
+<span class="nc" id="L272">        return player;</span>
+    }
+
+    /**
+     * Given a source file path, this method
+     * gleans the duration (in milliseconds) of the audio.
+     * This information is then stored in the Duration field
+     * of the MetadataBean contained within the passed in
+     * CompleteMetadataBean.  If either of the parameters is null
+     * then false is returned.
+     * If the duration is successfully acquired, true is returned.
+     * Otherwise, false is returned.
+     */
+    public boolean processAudio(CompleteMetadataBean complete,
+                                String sourceFilePath) {
+        MetadataBean metadata;
+<span class="nc bnc" id="L288" title="All 2 branches missed.">        if (complete == null ||</span>
+<span class="nc bnc" id="L289" title="All 4 branches missed.">                (metadata = complete.getMetadata()) == null ||</span>
+                sourceFilePath == null) {
+
+<span class="nc" id="L292">            return false;</span>
+        }
+        try {
+<span class="nc" id="L295">            Player player = getAndRealizePlayer(sourceFilePath);</span>
+<span class="nc bnc" id="L296" title="All 2 branches missed.">            if (player == null) return false;</span>
+<span class="nc" id="L297">            return readDuration(player, metadata);</span>
+<span class="nc" id="L298">        } catch (Exception ex) {</span>
+<span class="nc" id="L299">            ex.printStackTrace();</span>
+<span class="nc" id="L300">            return false;</span>
+        }
+    }
+
+    /**
+     * Gets the duration of the media loaded by the Player and
+     * stores that information (in milliseconds) in the metadata
+     * bean's duration field.
+     * The player must be in the realized state for this to work
+     * correctly, and the metadata must not be null.  If an error occurs,
+     * false is returned.  Otherwise true is returned, meaning that
+     * the duration was successfully stored in the metadata bean.
+     */
+    private boolean readDuration(Player player, MetadataBean metadata) {
+<span class="nc bnc" id="L314" title="All 4 branches missed.">        if (player == null || metadata == null) return false;</span>
+<span class="nc" id="L315">        Time t = player.getDuration();</span>
+<span class="nc bnc" id="L316" title="All 2 branches missed.">        if (t != Duration.DURATION_UNKNOWN) {</span>
+<span class="nc" id="L317">            int milliseconds = (int) (t.getSeconds() * 1000);</span>
+<span class="nc" id="L318">            metadata.setDuration(&quot;&quot; + milliseconds);</span>
+<span class="nc" id="L319">            return true;</span>
+        } else {
+<span class="nc" id="L321">            return false;</span>
+        }
+    }
+
+    /**
+     * Given the path to an image file, opens that image and dynamically
+     * generates a thumbnail scaled to fit within the specified dimensions.
+     * The scaling means that the thumbnail's height will be no greater than
+     * the maxHeight parameter and the thumbnail's width will be no greater
+     * than the maxWidth parameter.  The unit of measurement for both
+     * maxWidth and maxHeight are pixels.
+     * It is important that the provided CompleteMetadataBean already have
+     * a MetadataBean set with a metadataId assigned.  If not, the
+     * ThumbnailBean generated will not contain a metadataId setting and
+     * the caller is responsible for setting it.
+     * KNOWN PROBLEM: DUE TO A BUG IN THE JAVA ADVANCED IMAGING GIF DECODER
+     * GIFS WITH TRANSPARENT BACKGROUNDS MAY NOT BE READ PROPERLY.
+     */
+    public ThumbnailBean generateThumbnail(String sourceLocation,
+                                           String metadataId,
+                                           PlanarImage image)
+            throws IOException {
+<span class="nc" id="L343">        ThumbnailBean thumbnail = null;</span>
+
+<span class="nc bnc" id="L345" title="All 2 branches missed.">        if (sourceLocation == null) {</span>
+<span class="nc" id="L346">            return null;  //failed because there was no metadata bean</span>
+        }
+<span class="nc" id="L348">        String thumbLocation = getThumbnailLocationFromSource(sourceLocation,</span>
+                THUMB_PREFIX,
+                JPEG_EXTENSION);
+
+<span class="nc" id="L352">        String thumbFilePath = fileLocator.getThumbnailFilePath(thumbLocation);</span>
+<span class="nc bnc" id="L353" title="All 2 branches missed.">        if (thumbFilePath != null) {</span>
+<span class="nc" id="L354">            File thumbFile = new File(thumbFilePath);</span>
+<span class="nc" id="L355">            File parentDir = thumbFile.getParentFile();</span>
+<span class="nc bnc" id="L356" title="All 2 branches missed.">            if (!parentDir.exists()) {</span>
+<span class="nc" id="L357">                parentDir.mkdirs();</span>
+            }
+        }
+
+<span class="nc" id="L361">        ParameterBlock parameters = getThumbnailParameterBlock(image);</span>
+
+<span class="nc" id="L363">        PlanarImage thumb = JAI.create(&quot;scale&quot;, parameters, null);</span>
+
+<span class="nc" id="L365">        thumbnail = new ThumbnailBean();</span>
+<span class="nc" id="L366">        thumbnail.setFileWidth(&quot;&quot; + thumb.getWidth());</span>
+<span class="nc" id="L367">        thumbnail.setFileHeight(&quot;&quot; + thumb.getHeight());</span>
+<span class="nc" id="L368">        thumbnail.setLocation(thumbLocation);</span>
+<span class="nc" id="L369">        thumbnail.setMetadataId(metadataId);</span>
+
+        //This is a workaround for a bug in the jpeg encoder, to read more
+        //about the bug, see:
+        //http://www.sun.com/software/imaging/JAI/11/bugs_codec.html
+<span class="nc" id="L374">        ParameterBlock pb = new ParameterBlock();</span>
+<span class="nc" id="L375">        pb.addSource(thumb);</span>
+<span class="nc" id="L376">        pb.add(DataBuffer.TYPE_BYTE);</span>
+<span class="nc" id="L377">        PlanarImage thumbByte = JAI.create(&quot;format&quot;, pb);</span>
+
+
+<span class="nc" id="L380">        FileOutputStream dst = null;</span>
+        try {
+<span class="nc" id="L382">            dst = new FileOutputStream(thumbFilePath);</span>
+<span class="nc" id="L383">            ImageEncoder enc = ImageCodec.createImageEncoder(&quot;JPEG&quot;,</span>
+                    dst,
+                    null);
+<span class="nc" id="L386">            enc.encode(thumbByte);</span>
+        } finally {
+            try {
+<span class="nc bnc" id="L389" title="All 2 branches missed.">                if (dst != null) {</span>
+<span class="nc" id="L390">                    dst.close();</span>
+                }
+<span class="nc" id="L392">            } catch (Exception ex) {</span>
+                //ignore for now, we just want the stream closed.
+<span class="nc" id="L394">            }</span>
+        }
+<span class="nc" id="L396">        return thumbnail;</span>
+    }
+
+    /**
+     * Given a location for a content file (e.g. /seth/images/brain.gif)
+     * This method will return a string indicating the thumbnail
+     * location to use (e.g. /seth/images/thb_brain.jpg).  Please note
+     * that this method assumes that all thumbnails will be jpgs.
+     */
+    private String getThumbnailLocationFromSource(String sourceLocation,
+                                                  String thumbPrefix,
+                                                  String thumbSuffix) {
+<span class="nc" id="L408">        int index = sourceLocation.lastIndexOf('/');</span>
+        String prefix;
+        String tempname;
+        String finalname;
+<span class="nc bnc" id="L412" title="All 2 branches missed.">        if (index == -1) {</span>
+<span class="nc" id="L413">            prefix = &quot;&quot;;</span>
+<span class="nc" id="L414">            tempname = sourceLocation;</span>
+        } else {
+<span class="nc" id="L416">            prefix = sourceLocation.substring(0, index + 1);</span>
+<span class="nc" id="L417">            tempname = sourceLocation.substring(index + 1);</span>
+        }
+<span class="nc" id="L419">        int extensionIndex = tempname.lastIndexOf('.');</span>
+<span class="nc bnc" id="L420" title="All 2 branches missed.">        if (extensionIndex == -1) {</span>
+<span class="nc" id="L421">            finalname = thumbPrefix + tempname + thumbSuffix;</span>
+        } else {
+<span class="nc" id="L423">            finalname = thumbPrefix +</span>
+<span class="nc" id="L424">                    tempname.substring(0, extensionIndex) +</span>
+                    thumbSuffix;
+        }
+<span class="nc" id="L427">        return prefix + finalname;</span>
+    }
+
+
+    /**
+     * This method determines sets up the parameter block for the
+     * scaling function used to create the thumbnail.  Given an
+     * image, it calculates the scaling required to gain the desired
+     * size of thumbnail.
+     * Okay, so we're trying to constrain the thumbnail image as such:
+     * We want the maximum dimension of either height or width to
+     * be MAX_THUMB_HEIGHT or MAX_THUMB_WIDTH.  So, we figure out the
+     * float to multiply the image height by in order to make it fit within
+     * the specified maximum.  We do the same with the width parameter.
+     * The equation for this is: 1/(dimension/max) = max/dimension
+     * This will give us a scalar that is less than one (e.g. 0.5), or if
+     * the dimension is already less than the maximum, we set the
+     * dimension's scalar to 1.0F.
+     * Then, once we have determined the scalar for each, we take the
+     * smaller of the two because that is the dimension that requires the
+     * most scaling to be brought within it's max dimension.
+     */
+    private ParameterBlock getThumbnailParameterBlock(PlanarImage image) {
+<span class="nc" id="L450">        ParameterBlock parameters = new ParameterBlock();</span>
+
+<span class="nc" id="L452">        int height = image.getHeight();</span>
+<span class="nc" id="L453">        int width = image.getWidth();</span>
+        float heightscalar;
+        float widthscalar;
+
+<span class="nc bnc" id="L457" title="All 2 branches missed.">        if (height &gt; MAX_THUMB_HEIGHT) {</span>
+<span class="nc" id="L458">            heightscalar = ((float) MAX_THUMB_HEIGHT) / ((float) height);</span>
+        } else {
+<span class="nc" id="L460">            heightscalar = 1.0F; //no scaling involved</span>
+        }
+
+<span class="nc bnc" id="L463" title="All 2 branches missed.">        if (width &gt; MAX_THUMB_WIDTH) {</span>
+<span class="nc" id="L464">            widthscalar = ((float) MAX_THUMB_WIDTH) / ((float) width);</span>
+        } else {
+<span class="nc" id="L466">            widthscalar = 1.0F; //no scaling involved</span>
+        }
+
+<span class="nc bnc" id="L469" title="All 2 branches missed.">        float scalar = (widthscalar &lt; heightscalar ? widthscalar : heightscalar);</span>
+<span class="nc" id="L470">        parameters.addSource(image);</span>
+<span class="nc" id="L471">        parameters.add(scalar); //x scalar</span>
+<span class="nc" id="L472">        parameters.add(scalar); //y scalar</span>
+<span class="nc" id="L473">        parameters.add(0.0F);</span>
+<span class="nc" id="L474">        parameters.add(0.0F);</span>
+
+        //these offer different algorithms for doing the scaling.
+        Interpolation interp;
+<span class="nc" id="L478">        interp = Interpolation.getInstance(Interpolation.INTERP_NEAREST);</span>
+        // interp = Interpolation.getInstance(Interpolation.INTERP_BILINEAR);
+        // interp = Interpolation.getInstance(Interpolation.INTERP_BICUBIC);
+<span class="nc" id="L481">        parameters.add(interp);</span>
+
+<span class="nc" id="L483">        return parameters;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

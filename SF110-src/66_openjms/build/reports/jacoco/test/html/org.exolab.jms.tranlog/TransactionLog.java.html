@@ -1,0 +1,441 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TransactionLog.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.tranlog</a> &gt; <span class="el_source">TransactionLog.java</span></div><h1>TransactionLog.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2001-2003 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ *
+ * $Id: TransactionLog.java,v 1.1 2004/11/26 01:51:01 tanderson Exp $
+ *
+ * Date			Author  Changes
+ * 20/11/2001   jima    Created
+ */
+package org.exolab.jms.tranlog;
+
+
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.LinkedList;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+
+/**
+ * The resource manager uses transaction logs to record the persistent records
+ * for the resource manager in case of recovery. All records are logged
+ * sequentially and each records has an associated XID. Log files have a finite
+ * size, after which they are closed and a new log file is opened. There is
+ * only one current transaction log file per resource manager.
+ */
+public class TransactionLog {
+
+    /**
+     * The name of this log file
+     */
+<span class="nc" id="L80">    private String _name = null;</span>
+
+    /**
+     * Maintains the running total of the file size
+     */
+<span class="nc" id="L85">    private long _size = 0;</span>
+
+    /**
+     * Cache the DataOutputStream handle
+     */
+<span class="nc" id="L90">    private transient DataOutputStream _dos = null;</span>
+
+    /**
+     * The logger
+     */
+<span class="nc" id="L95">    private static final Log _log = LogFactory.getLog(TransactionLog.class);</span>
+
+
+    /**
+     * Create a transaction log with the specified name, which includes the
+     * directory it will reside in. If the create flag is true then it will
+     * create the log file. If the create flag is false then it will assume
+     * that the log file already exists and will attempt to open it.
+     * &lt;p&gt;
+     * Attempting to create a file that already exists or open a non-exisitent
+     * log file with throw the TransactionLogException exception.
+     *
+     * @param name - the name of the transaction log absolute or final
+     * @param vreate - flag inidicating whether to open or create the log
+     * @throws TransactionLogException
+     */
+    public TransactionLog(String name, boolean create)
+<span class="nc" id="L112">        throws TransactionLogException {</span>
+<span class="nc bnc" id="L113" title="All 2 branches missed.">        if ((name == null) ||</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">            (name.length() == 0)) {</span>
+<span class="nc" id="L115">            throw new IllegalArgumentException(&quot;Can't specify a null or empty name&quot;);</span>
+        }
+
+<span class="nc" id="L118">        _name = name;</span>
+<span class="nc" id="L119">        File file = new File(name);</span>
+
+        // check if the file needs to be created and whether it already
+        // exists.
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        if (create) {</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">            if (file.exists()) {</span>
+<span class="nc" id="L125">                throw new TransactionLogException(name +</span>
+                    &quot; already exists&quot;);
+            } else {
+                try {
+<span class="nc" id="L129">                    (new FileOutputStream(file)).close();</span>
+<span class="nc" id="L130">                } catch (Exception exception) {</span>
+                    // rethrow the exception
+<span class="nc" id="L132">                    throw new TransactionLogException(</span>
+                        &quot;Failed to create the log file &quot; + name + &quot; b/c&quot; +
+                        exception);
+<span class="nc" id="L135">                }</span>
+            }
+        } else {
+            // check to see if a file needs to be open and that it actually
+            // exists.
+<span class="nc bnc" id="L140" title="All 2 branches missed.">            if (!file.exists()) {</span>
+<span class="nc" id="L141">                throw new TransactionLogException(name + &quot; does not exists&quot;);</span>
+            }
+        }
+
+        // set the size of the file
+<span class="nc" id="L146">        _size = (new File(name)).length();</span>
+<span class="nc" id="L147">    }</span>
+
+    /**
+     * Return the name of the transaction log file
+     *
+     * @return String
+     */
+    public String getName() {
+<span class="nc" id="L155">        return _name;</span>
+    }
+
+    /**
+     * Add an {@link StateTransactionLogEntry} using the specified txid,
+     * rid and state
+     *
+     * @param txid - the transaction identifier
+     * @param expiry - expiry time for the transaction
+     * @param rid - the resource identifier
+     * @param state - the transaction log state
+     * @throws TransactionLogException - if the entry cannot be created
+     */
+    public synchronized void logTransactionState(ExternalXid txid, long expiry,
+                                                 String rid,
+                                                 TransactionState state)
+        throws TransactionLogException {
+        try {
+<span class="nc" id="L173">            StateTransactionLogEntry entry = new StateTransactionLogEntry(txid, rid);</span>
+<span class="nc" id="L174">            entry.setState(state);</span>
+<span class="nc" id="L175">            entry.setExpiryTime(expiry);</span>
+
+<span class="nc" id="L177">            DataOutputStream dos = getOutputStream();</span>
+<span class="nc" id="L178">            byte[] blob = SerializationHelper.serialize(entry);</span>
+<span class="nc" id="L179">            dos.writeLong(blob.length);</span>
+<span class="nc" id="L180">            dos.write(blob, 0, blob.length);</span>
+<span class="nc" id="L181">            dos.flush();</span>
+
+            // update the size
+<span class="nc" id="L184">            _size += blob.length;</span>
+<span class="nc" id="L185">        } catch (Exception exception) {</span>
+<span class="nc" id="L186">            throw new TransactionLogException(&quot;Error in logTransactionState &quot; +</span>
+<span class="nc" id="L187">                exception.toString());</span>
+<span class="nc" id="L188">        }</span>
+<span class="nc" id="L189">    }</span>
+
+    /**
+     * Add an {@link DataTransactionLogEntry} using the specified txid,
+     * rid and data
+     *
+     * @param txid - the transaction identifier
+     * @param expiry - transaction expiry time
+     * @param rid - the resource identifier
+     * @param data - the opaque data to write
+     * @throws TransactionLogException - if the entry cannot be created
+     */
+    public synchronized void logTransactionData(ExternalXid txid, long expiry, String rid,
+                                                Object data)
+        throws TransactionLogException {
+        try {
+<span class="nc" id="L205">            DataTransactionLogEntry entry = new DataTransactionLogEntry(txid, rid);</span>
+<span class="nc" id="L206">            entry.setData(data);</span>
+<span class="nc" id="L207">            entry.setExpiryTime(expiry);</span>
+
+<span class="nc" id="L209">            DataOutputStream dos = getOutputStream();</span>
+<span class="nc" id="L210">            byte[] blob = SerializationHelper.serialize(entry);</span>
+<span class="nc" id="L211">            dos.writeLong(blob.length);</span>
+<span class="nc" id="L212">            dos.write(blob, 0, blob.length);</span>
+<span class="nc" id="L213">            dos.flush();</span>
+
+            // update the size
+<span class="nc" id="L216">            _size += blob.length;</span>
+<span class="nc" id="L217">        } catch (Exception exception) {</span>
+<span class="nc" id="L218">            throw new TransactionLogException(&quot;Error in logTransactionData &quot; +</span>
+<span class="nc" id="L219">                exception.toString());</span>
+<span class="nc" id="L220">        }</span>
+<span class="nc" id="L221">    }</span>
+
+    /**
+     * Close the transaction log
+     *
+     * @throws TransactionLogException - if it fails to close the log
+     */
+    public void close()
+        throws TransactionLogException {
+        try {
+<span class="nc bnc" id="L231" title="All 2 branches missed.">            if (_dos != null) {</span>
+<span class="nc" id="L232">                _dos.close();</span>
+            }
+<span class="nc" id="L234">        } catch (IOException exception) {</span>
+<span class="nc" id="L235">            throw new TransactionLogException(&quot;Error in close &quot; +</span>
+<span class="nc" id="L236">                exception.toString());</span>
+<span class="nc" id="L237">        }</span>
+<span class="nc" id="L238">    }</span>
+
+    /**
+     * Return the size of the transaction log file.
+     *
+     * @return long - the length of the file
+     */
+    public long size() {
+<span class="nc" id="L246">        return _size;</span>
+    }
+
+    /**
+     * Force a recovery of this log file. This will close the output file stream
+     * if one is opened and then read each entry from the log file and send it to
+     * the specified listener, if one is allocated.
+     * &lt;p&gt;
+     * The returned data structure is a HashMap, where the key is a
+     * {@link ExternalXid} and the entries are LinkedList of {@link
+     * BaseTransactionLogEntry} objects
+     *
+     * @return HashMap - a list of open transactions
+     * @throws TransactionLogException - if there is a prob recovering
+     */
+    public synchronized HashMap recover()
+        throws TransactionLogException {
+<span class="nc" id="L263">        return getOpenTransactionList();</span>
+    }
+
+    /**
+     * Check if we can garbage collect this transaction log. It will go through
+     * the log file and check to see whether there are any open transaction. If
+     * there are no open transactions the it is a candidate for garage collection
+     *
+     * @return boolean - true if we can garbage collect; false otherwise
+     */
+    public synchronized boolean canGarbageCollect() {
+<span class="nc" id="L274">        boolean result = false;</span>
+
+        try {
+<span class="nc" id="L277">            HashMap records = getOpenTransactionList();</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">            if (records.size() == 0) {</span>
+<span class="nc" id="L279">                result = true;</span>
+            }
+<span class="nc" id="L281">        } catch (Exception ignore) {</span>
+<span class="nc" id="L282">            ignore.printStackTrace();</span>
+<span class="nc" id="L283">        }</span>
+
+<span class="nc" id="L285">        return result;</span>
+    }
+
+    /**
+     * Destroy this transaction log, which basically removes it from the
+     * file system
+     *
+     * @throws TransactionLogException
+     */
+    public synchronized void destroy()
+        throws TransactionLogException {
+        try {
+<span class="nc" id="L297">            close();</span>
+<span class="nc bnc" id="L298" title="All 2 branches missed.">            if (!(new File(_name)).delete()) {</span>
+<span class="nc" id="L299">                _log.error(&quot;Failed to destroy &quot; + _name);</span>
+            }
+<span class="nc" id="L301">        } catch (Exception exception) {</span>
+<span class="nc" id="L302">            throw new TransactionLogException(&quot;Error in destroy &quot; +</span>
+<span class="nc" id="L303">                exception.toString());</span>
+
+<span class="nc" id="L305">        }</span>
+<span class="nc" id="L306">    }</span>
+
+    // override Object.equals
+    public boolean equals(Object obj) {
+<span class="nc" id="L310">        boolean result = false;</span>
+
+<span class="nc bnc" id="L312" title="All 2 branches missed.">        if ((obj instanceof TransactionLog) &amp;&amp;</span>
+<span class="nc bnc" id="L313" title="All 2 branches missed.">            (((TransactionLog) obj)._name.equals(_name))) {</span>
+<span class="nc" id="L314">            result = true;</span>
+        }
+
+<span class="nc" id="L317">        return result;</span>
+    }
+
+    /**
+     * Return an instance of the output stream. If one does not exist then
+     * create it.
+     *
+     * @return DataOutputStream - the output stream
+     */
+    private DataOutputStream getOutputStream()
+        throws IOException, FileNotFoundException {
+<span class="nc bnc" id="L328" title="All 2 branches missed.">        if (_dos == null) {</span>
+<span class="nc" id="L329">            _dos = new DataOutputStream(</span>
+                new BufferedOutputStream(
+                    new FileOutputStream(_name, true)));
+        }
+
+<span class="nc" id="L334">        return _dos;</span>
+    }
+
+    /**
+     * Return a list of open transactions in a HashMap. The key is the transaction
+     * id and the data is a vector of associated data records in a LinkedList
+     *
+     * @return HashMap
+     * @throws TransactionLogException - if there is a prob recovering
+     */
+    private HashMap getOpenTransactionList()
+        throws TransactionLogException {
+
+<span class="nc" id="L347">        HashMap records = new HashMap();</span>
+
+        // if the output stream is opened then close it
+        try {
+<span class="nc bnc" id="L351" title="All 2 branches missed.">            if (_dos != null) {</span>
+<span class="nc" id="L352">                _dos.close();</span>
+<span class="nc" id="L353">                _dos = null;</span>
+            }
+<span class="nc" id="L355">        } catch (Exception exception) {</span>
+<span class="nc" id="L356">            throw new TransactionLogException(&quot;Error in recover &quot; +</span>
+<span class="nc" id="L357">                exception.toString());</span>
+<span class="nc" id="L358">        }</span>
+
+
+<span class="nc" id="L361">        FileInputStream fis = null;</span>
+        try {
+<span class="nc" id="L363">            fis = new FileInputStream(_name);</span>
+<span class="nc" id="L364">            DataInputStream dis = new DataInputStream(new BufferedInputStream(fis));</span>
+
+<span class="nc bnc" id="L366" title="All 2 branches missed.">            while (dis.available() &gt; 0) {</span>
+<span class="nc" id="L367">                byte[] blob = new byte[(int) dis.readLong()];</span>
+<span class="nc" id="L368">                dis.readFully(blob);</span>
+<span class="nc" id="L369">                Object object = SerializationHelper.deserialize(blob);</span>
+<span class="nc bnc" id="L370" title="All 2 branches missed.">                if (object instanceof StateTransactionLogEntry) {</span>
+<span class="nc" id="L371">                    StateTransactionLogEntry state = (StateTransactionLogEntry) object;</span>
+<span class="nc" id="L372">                    LinkedList list = null;</span>
+<span class="nc bnc" id="L373" title="All 4 branches missed.">                    switch (state.getState().getOrd()) {</span>
+                        case TransactionState.OPENED_ORD:
+<span class="nc bnc" id="L375" title="All 2 branches missed.">                            if (records.containsKey(state.getExternalXid())) {</span>
+<span class="nc" id="L376">                                _log.error(&quot;OPENED_ORD : Transaction log is inconsistent&quot;);</span>
+<span class="nc" id="L377">                                continue;</span>
+                            }
+
+<span class="nc" id="L380">                            list = new LinkedList();</span>
+<span class="nc" id="L381">                            records.put(state.getExternalXid(), list);</span>
+<span class="nc" id="L382">                            list.add(state);</span>
+<span class="nc" id="L383">                            break;</span>
+
+                        case TransactionState.PREPARED_ORD:
+<span class="nc" id="L386">                            list = (LinkedList) records.get(state.getExternalXid());</span>
+<span class="nc bnc" id="L387" title="All 2 branches missed.">                            if (list == null) {</span>
+<span class="nc" id="L388">                                _log.error(&quot;PREPARED_ORD : Transaction log is inconsistent&quot;);</span>
+<span class="nc" id="L389">                                continue;</span>
+                            }
+
+<span class="nc" id="L392">                            list.add(state);</span>
+<span class="nc" id="L393">                            break;</span>
+
+                        case TransactionState.CLOSED_ORD:
+<span class="nc bnc" id="L396" title="All 2 branches missed.">                            if (records.get(state.getExternalXid()) == null) {</span>
+<span class="nc" id="L397">                                _log.error(&quot;CLOSED_ORD : Transaction log is inconsistent&quot;);</span>
+<span class="nc" id="L398">                                continue;</span>
+                            }
+
+<span class="nc" id="L401">                            records.remove(state.getExternalXid());</span>
+<span class="nc" id="L402">                            break;</span>
+
+                        default:
+                            break;
+                    }
+<span class="nc bnc" id="L407" title="All 2 branches missed.">                } else if (object instanceof DataTransactionLogEntry) {</span>
+<span class="nc" id="L408">                    DataTransactionLogEntry data = (DataTransactionLogEntry) object;</span>
+<span class="nc" id="L409">                    LinkedList list = (LinkedList) records.get(data.getExternalXid());</span>
+<span class="nc bnc" id="L410" title="All 2 branches missed.">                    if (list == null) {</span>
+<span class="nc" id="L411">                        _log.error(&quot;DATA : Transaction log is inconsistent&quot;);</span>
+<span class="nc" id="L412">                        continue;</span>
+                    }
+
+<span class="nc" id="L415">                    list.add(data);</span>
+<span class="nc" id="L416">                } else {</span>
+<span class="nc" id="L417">                    System.err.println(&quot;There is no support for log entry &quot; +</span>
+<span class="nc" id="L418">                        &quot;records of type &quot; + object.getClass().getName());</span>
+                }
+
+<span class="nc" id="L421">            }</span>
+<span class="nc" id="L422">        } catch (Exception exception) {</span>
+<span class="nc" id="L423">            throw new TransactionLogException(&quot;Error in recover &quot; +</span>
+<span class="nc" id="L424">                exception.toString());</span>
+        } finally {
+<span class="nc bnc" id="L426" title="All 2 branches missed.">            if (fis != null) {</span>
+                try {
+<span class="nc" id="L428">                    fis.close();</span>
+<span class="nc" id="L429">                } catch (Exception exception) {</span>
+<span class="nc" id="L430">                    throw new TransactionLogException(&quot;Error in recover &quot; +</span>
+<span class="nc" id="L431">                        exception.toString());</span>
+<span class="nc" id="L432">                }</span>
+            }
+        }
+
+<span class="nc" id="L436">        return records;</span>
+
+    }
+
+} //-- TransactionLog
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

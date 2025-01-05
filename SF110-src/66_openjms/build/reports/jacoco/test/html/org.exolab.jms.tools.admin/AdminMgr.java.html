@@ -1,0 +1,722 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AdminMgr.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.tools.admin</a> &gt; <span class="el_source">AdminMgr.java</span></div><h1>AdminMgr.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2000-2003 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: AdminMgr.java,v 1.3 2006/02/23 11:02:57 tanderson Exp $
+ *
+ * Date         Author  Changes
+ */
+
+
+package org.exolab.jms.tools.admin;
+
+import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.PrintStream;
+import java.util.ArrayList;
+import javax.swing.*;
+import javax.swing.event.TreeExpansionEvent;
+import javax.swing.event.TreeExpansionListener;
+import javax.swing.tree.DefaultMutableTreeNode;
+import javax.swing.tree.DefaultTreeModel;
+import javax.swing.tree.TreePath;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.log4j.xml.DOMConfigurator;
+import org.apache.oro.text.regex.Pattern;
+import org.apache.oro.text.regex.PatternMatcherInput;
+import org.apache.oro.text.regex.Perl5Compiler;
+import org.apache.oro.text.regex.Perl5Matcher;
+import org.exolab.jms.config.AdminConfiguration;
+import org.exolab.jms.config.Configuration;
+import org.exolab.jms.config.ConfigurationLoader;
+import org.exolab.jms.util.CommandLine;
+
+
+/**
+ * This class is the Gui controller for the JMS administration. It displays data
+ * as a hierarchical set of tree nodes.
+ * &lt;p/&gt;
+ * &lt;P&gt;The Root is all the contactable JMS servers, idealy there can be several
+ * of these all on different ports, with one common admin port they all listen
+ * to. A user selects a JMSServer then connects via the menu item. This allows
+ * the admin GUI to connect to the server via the main port and begin displaying
+ * all its Queue/Topics and registered consumers.
+ * &lt;p/&gt;
+ * If there are no queue/topics for a consumer the node will be empty. Selecting
+ * a consumer allows a user to see what its details are, i.e last message
+ * received and acked, whether the consumer is currently active/deactive paused
+ * etc.
+ * &lt;p/&gt;
+ * &lt;P&gt;The Gui can also be used to add/remove queue/topics and consumer
+ * registrations.
+ * &lt;p/&gt;
+ * Reliable Topics are read only, since they cannot be persisted, they simply
+ * display a snapshot at the time of connection.
+ * &lt;p/&gt;
+ * &lt;P&gt;For the moment this is not truly dynamic, that is a refresh needs to be
+ * activated on the Gui to cause an update (other than changes made through the
+ * Gui istelf).
+ *
+ * @author &lt;a href=&quot;mailto:mourikis@exolab.org&quot;&gt;Jim Mourikis&lt;/a&gt;
+ * @version $Revision: 1.3 $ $Date: 2006/02/23 11:02:57 $
+ */
+public class AdminMgr extends JFrame {
+
+    private JMenu _file;
+    private JMenuItem _exit;
+    private JMenu _connections;
+    private JMenuItem _refresh;
+    private JMenuItem _online;
+    private JMenuItem _offline;
+    private JMenuItem _disconnect;
+    private JMenuItem _startup;
+    private JMenuItem _shutdown;
+    private JTree _serverProperties;
+    private JTextField _messageArea;
+
+    private Configuration _config;
+
+    // If this Admin object is connected to any OpenJMS
+<span class="nc" id="L129">    private boolean _connected = false;</span>
+
+    /**
+     * The server start command
+     */
+<span class="nc" id="L134">    private static String _serverStart = null;</span>
+
+    /**
+     * The server configuration file path
+     */
+<span class="nc" id="L139">    private static String _serverConfig = null;</span>
+
+    // redirect stream to local console.
+<span class="nc" id="L142">    private StreamRedirect _output = null;</span>
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L147">    private static final Log _log = LogFactory.getLog(AdminMgr.class);</span>
+
+
+<span class="nc" id="L150">    public AdminMgr(String path) throws Exception {</span>
+<span class="nc" id="L151">        _config = new ConfigurationLoader().load(path);</span>
+<span class="nc" id="L152">        initComponents(path);</span>
+<span class="nc" id="L153">        pack();</span>
+<span class="nc" id="L154">    }</span>
+
+    /**
+     * This method is called from within the constructor to initialize the form.
+     * All the GUI objects are created, and callbacks registered.
+     */
+    private void initComponents(String title) {
+<span class="nc" id="L161">        JMenuBar menuBar = new JMenuBar();</span>
+<span class="nc" id="L162">        _file = new JMenu();</span>
+<span class="nc" id="L163">        _exit = new JMenuItem();</span>
+<span class="nc" id="L164">        JMenu actions = new JMenu();</span>
+<span class="nc" id="L165">        _connections = new JMenu();</span>
+<span class="nc" id="L166">        _refresh = new JMenuItem();</span>
+<span class="nc" id="L167">        _online = new JMenuItem();</span>
+<span class="nc" id="L168">        _offline = new JMenuItem();</span>
+<span class="nc" id="L169">        _disconnect = new JMenuItem();</span>
+<span class="nc" id="L170">        JSeparator separator = new JSeparator();</span>
+<span class="nc" id="L171">        _startup = new JMenuItem();</span>
+<span class="nc" id="L172">        _shutdown = new JMenuItem();</span>
+<span class="nc" id="L173">        JScrollPane jmsServers = new JScrollPane();</span>
+<span class="nc" id="L174">        JComboBox jmsCombo = new JComboBox();</span>
+<span class="nc" id="L175">        _serverProperties = new JTree();</span>
+<span class="nc" id="L176">        setTitle(&quot;OpenJMS Administrator: &quot; + title);</span>
+<span class="nc" id="L177">        DefaultTreeModel serverModel =</span>
+<span class="nc" id="L178">                OpenJMSServer.createServerList(_serverProperties);</span>
+<span class="nc" id="L179">        _serverProperties.setModel(serverModel);</span>
+<span class="nc" id="L180">        AdminInfo info = new AdminInfo();</span>
+<span class="nc" id="L181">        _serverProperties.setCellRenderer(info);</span>
+
+<span class="nc" id="L183">        _messageArea = new JTextField();</span>
+<span class="nc" id="L184">        _file.setText(&quot;File&quot;);</span>
+<span class="nc" id="L185">        _exit.setToolTipText(&quot;Exit administration&quot;);</span>
+<span class="nc" id="L186">        _exit.setText(&quot;Exit&quot;);</span>
+<span class="nc" id="L187">        _exit.setMnemonic('x');</span>
+
+<span class="nc" id="L189">        _serverProperties.setRootVisible(false);</span>
+<span class="nc" id="L190">        _serverProperties.setShowsRootHandles(true);</span>
+<span class="nc" id="L191">        _serverProperties.putClientProperty(&quot;JTree.lineStyle&quot;, &quot;Angled&quot;);</span>
+<span class="nc" id="L192">        _serverProperties.setCellEditor(new OpenJMSEditor(_serverProperties,</span>
+                jmsCombo));
+<span class="nc" id="L194">        _serverProperties.setEditable(false);</span>
+<span class="nc" id="L195">        setupCallbacks();</span>
+<span class="nc" id="L196">        _file.add(_exit);</span>
+<span class="nc" id="L197">        _file.setMnemonic('F');</span>
+<span class="nc" id="L198">        menuBar.add(_file);</span>
+<span class="nc" id="L199">        actions.setText(&quot;Actions&quot;);</span>
+<span class="nc" id="L200">        actions.setMnemonic('A');</span>
+<span class="nc" id="L201">        _connections.setText(&quot;Connections&quot;);</span>
+<span class="nc" id="L202">        _connections.setMnemonic('C');</span>
+<span class="nc" id="L203">        _refresh.setToolTipText(&quot;Refresh the display&quot;);</span>
+<span class="nc" id="L204">        _online.setToolTipText(&quot;Connect to a running OpenJMS Server&quot;);</span>
+<span class="nc" id="L205">        _offline.setToolTipText(&quot;Connect directly to an OpenJMS database&quot;);</span>
+<span class="nc" id="L206">        _refresh.setText(&quot;Refresh&quot;);</span>
+<span class="nc" id="L207">        _refresh.setMnemonic('R');</span>
+<span class="nc" id="L208">        actions.add(_refresh);</span>
+
+<span class="nc" id="L210">        _online.setText(&quot;Online&quot;);</span>
+<span class="nc" id="L211">        _online.setMnemonic('O');</span>
+<span class="nc" id="L212">        _offline.setText(&quot;Offline&quot;);</span>
+<span class="nc" id="L213">        _offline.setMnemonic('f');</span>
+<span class="nc" id="L214">        _connections.add(_online);</span>
+<span class="nc" id="L215">        _connections.add(_offline);</span>
+<span class="nc" id="L216">        actions.add(_connections);</span>
+<span class="nc" id="L217">        _disconnect.setToolTipText</span>
+<span class="nc" id="L218">                (&quot;Disconnect from any connected OpenJMS Servers&quot;);</span>
+<span class="nc" id="L219">        _disconnect.setText(&quot;Disconnect&quot;);</span>
+<span class="nc" id="L220">        _disconnect.setMnemonic('D');</span>
+<span class="nc" id="L221">        actions.add(_disconnect);</span>
+
+<span class="nc" id="L223">        actions.add(separator);</span>
+<span class="nc" id="L224">        _startup.setToolTipText(&quot;Start the OpenJMS server&quot;);</span>
+<span class="nc" id="L225">        _startup.setText(&quot;Start OpenJMS&quot;);</span>
+<span class="nc" id="L226">        _startup.setMnemonic('S');</span>
+<span class="nc" id="L227">        _shutdown.setToolTipText(&quot;Shutdown the connected OpenJMS server&quot;);</span>
+<span class="nc" id="L228">        _shutdown.setText(&quot;Shutdown OpenJMS&quot;);</span>
+<span class="nc" id="L229">        _shutdown.setMnemonic('h');</span>
+<span class="nc" id="L230">        actions.add(_startup);</span>
+<span class="nc" id="L231">        actions.add(_shutdown);</span>
+<span class="nc" id="L232">        menuBar.add(actions);</span>
+
+<span class="nc" id="L234">        jmsServers.setViewportView(_serverProperties);</span>
+
+
+<span class="nc" id="L237">        getContentPane().add(jmsServers, BorderLayout.CENTER);</span>
+
+<span class="nc" id="L239">        _messageArea.setToolTipText(&quot;Message Area&quot;);</span>
+<span class="nc" id="L240">        _messageArea.setEditable(false);</span>
+<span class="nc" id="L241">        _messageArea.setForeground(java.awt.Color.red);</span>
+<span class="nc" id="L242">        _messageArea.setText(&quot;Not Connected&quot;);</span>
+<span class="nc" id="L243">        _messageArea.setHorizontalAlignment(SwingConstants.CENTER);</span>
+
+
+<span class="nc" id="L246">        getContentPane().add(_messageArea, BorderLayout.SOUTH);</span>
+<span class="nc" id="L247">        setJMenuBar(menuBar);</span>
+<span class="nc" id="L248">        _startup.setEnabled(true);</span>
+<span class="nc" id="L249">        _shutdown.setEnabled(false);</span>
+<span class="nc" id="L250">        _refresh.setEnabled(false);</span>
+<span class="nc" id="L251">        _disconnect.setEnabled(false);</span>
+<span class="nc" id="L252">    }</span>
+
+    /**
+     * The exit method for the application, when the user shutdowns the form.
+     */
+    private void exitAdmin() {
+<span class="nc" id="L258">        System.exit(0);</span>
+<span class="nc" id="L259">    }</span>
+
+    /**
+     * Exit the Application when a user selects File-&gt;Exit from the menu
+     */
+    private void exitForm() {
+<span class="nc" id="L265">        System.exit(0);</span>
+<span class="nc" id="L266">    }</span>
+
+    /**
+     * Refresh the display, and repaint all items.
+     */
+    private void refresh() {
+<span class="nc bnc" id="L272" title="All 2 branches missed.">        if (AbstractAdminConnection.instance() instanceof OnlineConnection) {</span>
+<span class="nc" id="L273">            setConnected(false, null);</span>
+<span class="nc" id="L274">            setConnected(true, &quot;Connected - Online Mode&quot;);</span>
+<span class="nc" id="L275">            _startup.setEnabled(false);</span>
+<span class="nc" id="L276">            _shutdown.setEnabled(true);</span>
+
+        } else {
+<span class="nc" id="L279">            ((OpenJMSServer) (_serverProperties.getModel().getRoot()</span>
+<span class="nc" id="L280">            )).refresh();</span>
+        }
+<span class="nc" id="L282">    }</span>
+
+    /**
+     * Start the OpenJMSServer.
+     */
+    private void startup() {
+
+        try {
+<span class="nc" id="L290">            String args[] = getStartCommand();</span>
+
+<span class="nc" id="L292">            System.out.print(&quot;running &quot;);</span>
+<span class="nc bnc" id="L293" title="All 2 branches missed.">            for (int i = 0, j = args.length; i &lt; j; i++) {</span>
+<span class="nc" id="L294">                System.out.print(args[i] + &quot; &quot;);</span>
+            }
+<span class="nc" id="L296">            System.out.println();</span>
+
+<span class="nc bnc" id="L298" title="All 2 branches missed.">            if (_output != null) {</span>
+                // Stop the old redirect if any.
+<span class="nc" id="L300">                _output.interrupt();</span>
+            }
+<span class="nc" id="L302">            Process proc = Runtime.getRuntime().exec(args);</span>
+            // Redirect output
+<span class="nc" id="L304">            _output = new StreamRedirect(proc.getInputStream());</span>
+            // kick it off
+<span class="nc" id="L306">            _output.start();</span>
+<span class="nc" id="L307">        } catch (Exception err) {</span>
+<span class="nc" id="L308">            JOptionPane.showMessageDialog</span>
+<span class="nc" id="L309">                    (this, &quot;Failed to Startup OpenJMSServer:\n&quot; + err</span>
+                            + &quot;\nCheck config file&quot;,
+                            &quot;OpenJMSServer Startup&quot;, JOptionPane.ERROR_MESSAGE);
+<span class="nc" id="L312">        }</span>
+<span class="nc" id="L313">    }</span>
+
+    /**
+     * When a user wishes to connect to all known OpenJMSServers. Attempt to
+     * create an RMI connection to the OpenJMSServer. If the server is not
+     * running, this will fail. The user can start the server through the start
+     * server command, and attempt to re-connect, or use the offline method
+     * below.
+     */
+    private void onlineConnect() {
+        try {
+            // if online.
+<span class="nc" id="L325">            new OnlineConnection(this, _config);</span>
+<span class="nc" id="L326">            _startup.setEnabled(false);</span>
+<span class="nc" id="L327">            _shutdown.setEnabled(true);</span>
+<span class="nc" id="L328">            setConnected(true, &quot;Connected - Online Mode&quot;);</span>
+<span class="nc" id="L329">        } catch (Exception err) {</span>
+<span class="nc" id="L330">            JOptionPane.showMessageDialog</span>
+<span class="nc" id="L331">                    (this, err.getMessage(), &quot;Online Connection Error&quot;,</span>
+                            JOptionPane.ERROR_MESSAGE);
+<span class="nc" id="L333">        }</span>
+<span class="nc" id="L334">    }</span>
+
+
+    /**
+     * Connect to the database in offline mode.
+     */
+    private void offlineConnect() {
+        try {
+            // if online.
+<span class="nc" id="L343">            new OfflineConnection(this, _config);</span>
+<span class="nc" id="L344">            _startup.setEnabled(false);</span>
+<span class="nc" id="L345">            _shutdown.setEnabled(false);</span>
+<span class="nc" id="L346">            setConnected(true, &quot;Connected - OFFLine Mode&quot;);</span>
+<span class="nc" id="L347">        } catch (Exception err) {</span>
+<span class="nc" id="L348">            error(&quot;Database error&quot;, err.getMessage(), err);</span>
+<span class="nc" id="L349">        }</span>
+<span class="nc" id="L350">    }</span>
+
+    /**
+     * Disconnect from a connected OpenJMSServer. Close the database, set the
+     * connected flag to false, stop displaying the OpenJMS folder.
+     */
+    private void disconnect() {
+        try {
+<span class="nc" id="L358">            AbstractAdminConnection.instance().close();</span>
+<span class="nc" id="L359">            setConnected(false, null);</span>
+<span class="nc" id="L360">        } catch (Exception e) {</span>
+<span class="nc" id="L361">            JOptionPane.showMessageDialog</span>
+<span class="nc" id="L362">                    (this, e.getMessage(), &quot;Database Close Error&quot;,</span>
+                            JOptionPane.ERROR_MESSAGE);
+<span class="nc" id="L364">        }</span>
+<span class="nc" id="L365">    }</span>
+
+    /**
+     * A conveniance routine to open/close all database connections, and fix up
+     * the display.
+     * &lt;p/&gt;
+     * &lt;P&gt;When connecting, show the root object, get any persistent queue/topic
+     * names currently in the db, and display them. Turn off the connection
+     * menu, enable the disconnection and shutdown and the context menus. Set
+     * the message area text to connected.
+     * &lt;p/&gt;
+     * &lt;P&gt;When disconnecting, turn off the root, destroy all Gui objects close
+     * the db connection, turn off all context sensitive menus, disable
+     * disconnection menu and enable connection. Set the message text to
+     * disconnected.
+     *
+     * @param c a flag inidication if this is a connection or disconnection.
+     */
+    private void setConnected(boolean c, String st) {
+<span class="nc bnc" id="L384" title="All 2 branches missed.">        if (c) {</span>
+<span class="nc" id="L385">            _serverProperties.setRootVisible(true);</span>
+<span class="nc" id="L386">            ((OpenJMSServer)</span>
+<span class="nc" id="L387">                    (_serverProperties.getModel().getRoot())).displayConnections();</span>
+<span class="nc" id="L388">            _connections.setEnabled(false);</span>
+<span class="nc" id="L389">            _refresh.setEnabled(true);</span>
+            // _shutdown.setEnabled(true);
+<span class="nc" id="L391">            _disconnect.setEnabled(true);</span>
+            // _startup.setEnabled(false);
+<span class="nc" id="L393">            _messageArea.setForeground(java.awt.Color.green.darker().darker());</span>
+<span class="nc" id="L394">            _messageArea.setText(st);</span>
+<span class="nc" id="L395">            _connected = true;</span>
+        } else {
+<span class="nc" id="L397">            _serverProperties.setRootVisible(false);</span>
+<span class="nc" id="L398">            OpenJMSServer root =</span>
+<span class="nc" id="L399">                    (OpenJMSServer) _serverProperties.getModel().getRoot();</span>
+<span class="nc" id="L400">            root.removeAllChildren();</span>
+<span class="nc" id="L401">            DefaultTreeModel model =</span>
+<span class="nc" id="L402">                    (DefaultTreeModel) _serverProperties.getModel();</span>
+<span class="nc" id="L403">            model.nodeStructureChanged((DefaultMutableTreeNode) root);</span>
+<span class="nc" id="L404">            _connections.setEnabled(true);</span>
+<span class="nc" id="L405">            _startup.setEnabled(true);</span>
+<span class="nc" id="L406">            _shutdown.setEnabled(false);</span>
+<span class="nc" id="L407">            _refresh.setEnabled(false);</span>
+<span class="nc" id="L408">            _disconnect.setEnabled(false);</span>
+<span class="nc" id="L409">            _messageArea.setForeground(java.awt.Color.red);</span>
+<span class="nc" id="L410">            _messageArea.setText(&quot;Not Connected&quot;);</span>
+<span class="nc" id="L411">            _connected = false;</span>
+        }
+<span class="nc" id="L413">    }</span>
+
+    /**
+     * Set up all Action menu callbacks, and mouse events for the tree and its
+     * nodes. Check all mose 2 key presses on a node, select the node, then call
+     * the nodes appropriate display methos to display its specific popup
+     * menus.
+     * &lt;p/&gt;
+     * &lt;P&gt;When first connected, all queue/topics displayed are not expaned. This
+     * is just a performance saver, since their could potentially be hundreds of
+     * objects. A callback is set up, so that when a queue/topic is expanded, it
+     * is lokked up only then to determine what consumers are registered with
+     * it.
+     */
+    private void setupCallbacks() {
+
+<span class="nc" id="L429">        addWindowListener(new WindowAdapter() {</span>
+
+            public void windowClosing(WindowEvent evt) {
+<span class="nc" id="L432">                exitForm();</span>
+<span class="nc" id="L433">            }</span>
+        }
+        );
+
+
+<span class="nc" id="L438">        _serverProperties.addMouseListener(new MouseAdapter() {</span>
+
+            public void mousePressed(MouseEvent e) {
+<span class="nc bnc" id="L441" title="All 2 branches missed.">                if (!_connected) {</span>
+<span class="nc" id="L442">                    return;</span>
+                }
+
+<span class="nc bnc" id="L445" title="All 2 branches missed.">                if (SwingUtilities.isRightMouseButton(e)) {</span>
+<span class="nc" id="L446">                    int selRow = _serverProperties.getRowForLocation</span>
+<span class="nc" id="L447">                            (e.getX(), e.getY());</span>
+
+<span class="nc" id="L449">                    _serverProperties.setSelectionRow(selRow);</span>
+<span class="nc" id="L450">                    Object loc =</span>
+<span class="nc" id="L451">                            _serverProperties.getLastSelectedPathComponent();</span>
+<span class="nc bnc" id="L452" title="All 2 branches missed.">                    if (loc instanceof OpenJMSNode) {</span>
+<span class="nc" id="L453">                        OpenJMSNode node = (OpenJMSNode) loc;</span>
+<span class="nc" id="L454">                        node.displayCommands</span>
+<span class="nc" id="L455">                                (_serverProperties.getRowBounds(selRow));</span>
+<span class="nc bnc" id="L456" title="All 2 branches missed.">                    } else if (loc instanceof OpenJMSServer) {</span>
+<span class="nc" id="L457">                        ((OpenJMSServer) loc).displayCommands</span>
+<span class="nc" id="L458">                                (_serverProperties.getRowBounds(selRow));</span>
+                    }
+                }
+<span class="nc" id="L461">            }</span>
+        }
+        );
+
+<span class="nc" id="L465">        _serverProperties.addTreeExpansionListener(new TreeExpansionListener() {</span>
+
+            public void treeCollapsed(TreeExpansionEvent e) {
+                // todo Anything.....
+<span class="nc" id="L469">            }</span>
+
+            public void treeExpanded(TreeExpansionEvent e) {
+<span class="nc" id="L472">                TreePath path = e.getPath();</span>
+<span class="nc" id="L473">                Object loc = path.getLastPathComponent();</span>
+<span class="nc bnc" id="L474" title="All 2 branches missed.">                if (loc instanceof OpenJMSNode) {</span>
+<span class="nc" id="L475">                    OpenJMSNode node = (OpenJMSNode) loc;</span>
+<span class="nc" id="L476">                    node.update();</span>
+                }
+<span class="nc" id="L478">            }</span>
+        }
+        );
+
+        /**
+         _serverProperties.addTreeSelectionListener(new TreeSelectionListener()
+         {
+         public void valueChanged(TreeSelectionEvent e)
+         {
+         TreePath path = e.getPath();
+         Object loc = path.getLastPathComponent();
+         if (loc instanceof OpenJMSNode)
+         {
+         OpenJMSNode node = (OpenJMSNode)loc;
+         System.out.println(node);
+         }
+         }
+         }
+         );
+
+         **/
+<span class="nc" id="L499">        _exit.addActionListener(new ActionListener() {</span>
+
+            public void actionPerformed(ActionEvent evt) {
+<span class="nc" id="L502">                exitAdmin();</span>
+<span class="nc" id="L503">            }</span>
+        }
+        );
+
+
+<span class="nc" id="L508">        _refresh.addActionListener(new ActionListener() {</span>
+
+            public void actionPerformed(ActionEvent evt) {
+<span class="nc" id="L511">                refresh();</span>
+<span class="nc" id="L512">            }</span>
+        }
+        );
+
+
+<span class="nc" id="L517">        _online.addActionListener(new ActionListener() {</span>
+
+            public void actionPerformed(ActionEvent evt) {
+<span class="nc" id="L520">                onlineConnect();</span>
+<span class="nc" id="L521">            }</span>
+        }
+        );
+
+<span class="nc" id="L525">        _offline.addActionListener(new ActionListener() {</span>
+            public void actionPerformed(ActionEvent evt) {
+<span class="nc" id="L527">                offlineConnect();</span>
+<span class="nc" id="L528">            }</span>
+        }
+        );
+
+<span class="nc" id="L532">        _disconnect.addActionListener(new ActionListener() {</span>
+            public void actionPerformed(ActionEvent evt) {
+<span class="nc" id="L534">                disconnect();</span>
+<span class="nc" id="L535">            }</span>
+        }
+        );
+
+<span class="nc" id="L539">        _startup.addActionListener(new ActionListener() {</span>
+            public void actionPerformed(ActionEvent evt) {
+<span class="nc" id="L541">                startup();</span>
+<span class="nc" id="L542">            }</span>
+        }
+        );
+
+<span class="nc" id="L546">        _shutdown.addActionListener(new ActionListener() {</span>
+
+            public void actionPerformed(ActionEvent evt) {
+                try {
+<span class="nc" id="L550">                    AbstractAdminConnection.instance().stopServer();</span>
+<span class="nc" id="L551">                    setConnected(false, null);</span>
+<span class="nc" id="L552">                } catch (NullPointerException err) {</span>
+<span class="nc" id="L553">                    JOptionPane.showMessageDialog</span>
+<span class="nc" id="L554">                            (_file, &quot;Must connect with online mode \nto &quot;</span>
+                                    + &quot;shutdown server&quot;, &quot;Shutdown Error&quot;,
+                                    JOptionPane.ERROR_MESSAGE);
+<span class="nc" id="L557">                }</span>
+<span class="nc" id="L558">            }</span>
+        }
+        );
+<span class="nc" id="L561">    }</span>
+
+    /**
+     * The main entry point for this admin gui. The main form and any support
+     * dialogs are created. An initial size is given, and the gui placed in the
+     * middle of the screen
+     *
+     * @param args the command line arguments
+     */
+    public static void main(String args[]) {
+        try {
+<span class="nc" id="L572">            CommandLine cmdline = new CommandLine(args);</span>
+
+<span class="nc" id="L574">            boolean helpSet = cmdline.exists(&quot;help&quot;);</span>
+<span class="nc" id="L575">            boolean configSet = cmdline.exists(&quot;config&quot;);</span>
+<span class="nc" id="L576">            boolean stopServer = cmdline.exists(&quot;stopServer&quot;);</span>
+<span class="nc" id="L577">            String username = cmdline.value(&quot;u&quot;);</span>
+<span class="nc" id="L578">            String password = cmdline.value(&quot;p&quot;);</span>
+
+<span class="nc bnc" id="L580" title="All 2 branches missed.">            if (helpSet) {</span>
+<span class="nc" id="L581">                usage();</span>
+<span class="nc bnc" id="L582" title="All 6 branches missed.">            } else if (!configSet &amp;&amp; !stopServer &amp;&amp; args.length != 0) {</span>
+                // invalid argument specified
+<span class="nc" id="L584">                usage();</span>
+            } else {
+<span class="nc" id="L586">                String configFile = cmdline.value(&quot;config&quot;);</span>
+<span class="nc bnc" id="L587" title="All 2 branches missed.">                if (configFile == null) {</span>
+<span class="nc" id="L588">                    String home = getOpenJMSHome();</span>
+<span class="nc" id="L589">                    configFile = home + &quot;/config/openjms.xml&quot;;</span>
+                }
+<span class="nc" id="L591">                Configuration config = new ConfigurationLoader().load(configFile);</span>
+<span class="nc" id="L592">                String path = config.getLoggerConfiguration().getFile();</span>
+<span class="nc bnc" id="L593" title="All 2 branches missed.">                if (path != null) {</span>
+<span class="nc" id="L594">                    DOMConfigurator.configure(path);</span>
+                }
+<span class="nc" id="L596">                AdminConfiguration adminConfig = null;</span>
+
+<span class="nc" id="L598">                adminConfig = config.getAdminConfiguration();</span>
+<span class="nc" id="L599">                _serverStart = adminConfig.getScript();</span>
+<span class="nc" id="L600">                _serverConfig = adminConfig.getConfig();</span>
+<span class="nc bnc" id="L601" title="All 2 branches missed.">                if (_serverConfig == null) {</span>
+<span class="nc" id="L602">                    _serverConfig = configFile;</span>
+                }
+
+<span class="nc bnc" id="L605" title="All 2 branches missed.">                if (stopServer) {</span>
+                    // this is a special mode that will just attempt
+                    // a connection to the server and stop it. No GUI
+
+<span class="nc" id="L609">                    new OnlineConnection(username, password, config);</span>
+<span class="nc" id="L610">                    AbstractAdminConnection.instance().stopServer();</span>
+                } else {
+<span class="nc" id="L612">                    AdminMgr admin = new AdminMgr(configFile);</span>
+<span class="nc" id="L613">                    QueryDialog.create(admin);</span>
+<span class="nc" id="L614">                    CreateQueueDialog.create(admin);</span>
+<span class="nc" id="L615">                    CreateTopicDialog.create(admin);</span>
+<span class="nc" id="L616">                    CreateLogonDialog.create(admin);</span>
+<span class="nc" id="L617">                    CreateUserDialog.create(admin);</span>
+<span class="nc" id="L618">                    ChangePasswordDialog.create(admin);</span>
+<span class="nc" id="L619">                    Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();</span>
+                    // About center of screen
+<span class="nc" id="L621">                    admin.setLocation(screen.width / 2 - 150, screen.height / 2 - 150);</span>
+<span class="nc" id="L622">                    admin.setSize(300, 300);</span>
+<span class="nc" id="L623">                    admin.invalidate();</span>
+<span class="nc" id="L624">                    admin.show();</span>
+                }
+            }
+<span class="nc" id="L627">        } catch (Exception err) {</span>
+<span class="nc" id="L628">            err.printStackTrace();</span>
+<span class="nc" id="L629">            System.err.println(&quot;Failed to initialize AdminMgr.\nExiting....&quot;);</span>
+<span class="nc" id="L630">        }</span>
+<span class="nc" id="L631">    }</span>
+
+    /**
+     * Print out information on running this sevice
+     */
+    static protected void usage() {
+<span class="nc" id="L637">        PrintStream out = System.out;</span>
+
+<span class="nc" id="L639">        out.println(&quot;\n\n&quot;);</span>
+<span class="nc" id="L640">        out.println(&quot;=====================================================&quot;);</span>
+<span class="nc" id="L641">        out.println(&quot;Usage information for &quot; + AdminMgr.class.getName());</span>
+<span class="nc" id="L642">        out.println(&quot;=====================================================&quot;);</span>
+<span class="nc" id="L643">        out.println(&quot;\n&quot; + AdminMgr.class.getName());</span>
+<span class="nc" id="L644">        out.println(&quot;    [-help | -config &lt;xml config file&gt;]\n&quot;);</span>
+<span class="nc" id="L645">        out.println(&quot;\t-help   displays this screen\n&quot;);</span>
+<span class="nc" id="L646">        out.println(&quot;\t-config file name of xml-based config file\n&quot;);</span>
+<span class="nc" id="L647">    }</span>
+
+    /**
+     * A simple class to re-direct the output stream from JMS to the local
+     * console
+     */
+    class StreamRedirect extends Thread {
+
+        InputStream is_;
+
+<span class="nc" id="L657">        StreamRedirect(InputStream is) {</span>
+<span class="nc" id="L658">            is_ = is;</span>
+<span class="nc" id="L659">        }</span>
+
+        public void run() {
+            try {
+<span class="nc" id="L663">                InputStreamReader isr = new InputStreamReader(is_);</span>
+<span class="nc" id="L664">                BufferedReader br = new BufferedReader(isr);</span>
+<span class="nc" id="L665">                String line = null;</span>
+<span class="nc bnc" id="L666" title="All 2 branches missed.">                while ((line = br.readLine()) != null) {</span>
+<span class="nc" id="L667">                    System.out.println(line);</span>
+                }
+<span class="nc" id="L669">            } catch (IOException ioe) {</span>
+<span class="nc" id="L670">                ioe.printStackTrace();</span>
+<span class="nc" id="L671">            }</span>
+<span class="nc" id="L672">        }</span>
+    }
+
+    private String[] getStartCommand() throws Exception {
+<span class="nc" id="L676">        ArrayList args = new ArrayList();</span>
+
+<span class="nc bnc" id="L678" title="All 2 branches missed.">        if (_serverStart != null) {</span>
+<span class="nc" id="L679">            Perl5Compiler compiler = new Perl5Compiler();</span>
+<span class="nc" id="L680">            Pattern pattern = compiler.compile(&quot;'.*'|[^\\s]*&quot;);</span>
+<span class="nc" id="L681">            Perl5Matcher matcher = new Perl5Matcher();</span>
+<span class="nc" id="L682">            PatternMatcherInput input = new PatternMatcherInput(_serverStart);</span>
+
+<span class="nc bnc" id="L684" title="All 2 branches missed.">            while (matcher.contains(input, pattern)) {</span>
+<span class="nc" id="L685">                String arg = matcher.getMatch().toString();</span>
+<span class="nc bnc" id="L686" title="All 4 branches missed.">                if (arg.startsWith(&quot;'&quot;) &amp;&amp; arg.endsWith(&quot;'&quot;)) {</span>
+<span class="nc" id="L687">                    arg = arg.substring(1, arg.length() - 1);</span>
+                }
+<span class="nc" id="L689">                args.add(arg);</span>
+<span class="nc" id="L690">            }</span>
+        }
+
+<span class="nc" id="L693">        args.add(&quot;-config&quot;);</span>
+<span class="nc" id="L694">        args.add(_serverConfig);</span>
+
+<span class="nc" id="L696">        return (String[]) args.toArray(new String[0]);</span>
+    }
+
+    /**
+     * Returns the value of the openjms.home environment variable
+     */
+    private static String getOpenJMSHome() {
+<span class="nc" id="L703">        return System.getProperty(&quot;openjms.home&quot;,</span>
+<span class="nc" id="L704">                System.getProperty(&quot;user.dir&quot;));</span>
+    }
+
+    /**
+     * Display and log an error
+     *
+     * @param title
+     * @param message
+     * @param exception
+     */
+    private void error(String title, String message, Exception exception) {
+<span class="nc" id="L715">        _log.error(message, exception);</span>
+<span class="nc" id="L716">        JOptionPane.showMessageDialog(this, message, title,</span>
+                JOptionPane.ERROR_MESSAGE);
+<span class="nc" id="L718">    }</span>
+
+} //-- AdminMgr
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,468 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SQLExecutionHandler.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.session.mainpanel</a> &gt; <span class="el_source">SQLExecutionHandler.java</span></div><h1>SQLExecutionHandler.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.session.mainpanel;
+
+import net.sourceforge.squirrel_sql.client.preferences.SquirrelPreferences;
+import net.sourceforge.squirrel_sql.client.session.*;
+import net.sourceforge.squirrel_sql.client.session.event.ISQLExecutionListener;
+import net.sourceforge.squirrel_sql.client.session.properties.SessionProperties;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.DataSetException;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.IDataSetUpdateableTableModel;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.ResultSetDataSet;
+import net.sourceforge.squirrel_sql.fw.datasetviewer.ResultSetMetaDataDataSet;
+import net.sourceforge.squirrel_sql.fw.dialects.DialectFactory;
+import net.sourceforge.squirrel_sql.fw.dialects.DialectType;
+import net.sourceforge.squirrel_sql.fw.sql.SQLExecutionException;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.StringUtilities;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+import java.sql.ResultSet;
+import java.sql.SQLWarning;
+import java.text.NumberFormat;
+import java.util.ArrayList;
+
+/**
+ * This class is the handler for the execution of sql against the SQLExecuterPanel
+ */
+class SQLExecutionHandler implements ISQLExecuterHandler
+{
+<span class="nc" id="L30">   private static final ILogger s_log =</span>
+<span class="nc" id="L31">        LoggerController.createLogger(SQLExecutionHandler.class);</span>
+
+<span class="nc" id="L33">   private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L34">       StringManagerFactory.getStringManager(SQLExecutionHandler.class);</span>
+
+
+   private CancelPanelCtrl _cancelPanelCtrl;
+   private SQLExecuterTask _executer;
+   private ISession _session;
+   private ISQLExecutionHandlerListener _executionHandlerListener;
+
+<span class="nc" id="L42">   private static enum SQLType</span>
+   {
+<span class="nc" id="L44">      INSERT, SELECT, UPDATE, DELETE, UNKNOWN</span>
+   }
+
+
+
+   /**
+    * Hold onto the current ResultDataSet so if the execution is
+    * cancelled then this can be cancelled.
+    */
+<span class="nc" id="L53">   private ResultSetDataSet rsds = null;</span>
+
+<span class="nc" id="L55">   private String sqlToBeExecuted = null;</span>
+<span class="nc" id="L56">   private SQLType sqlType = null;</span>
+   private IResultTab _resultTabToReplace;
+<span class="nc" id="L58">   private boolean _largeScript = false;</span>
+<span class="nc" id="L59">   private double _scriptTotalTime = 0;</span>
+<span class="nc" id="L60">   private double _scriptQueryTime = 0;</span>
+<span class="nc" id="L61">   private double _scriptOutptutTime = 0;</span>
+<span class="nc" id="L62">   private int _scriptRowsInserted = 0;</span>
+<span class="nc" id="L63">   private int _scriptRowsSelected = 0;</span>
+<span class="nc" id="L64">   private int _scriptRowsUpdated = 0;</span>
+<span class="nc" id="L65">   private int _scriptRowsDeleted = 0;</span>
+
+   public SQLExecutionHandler(IResultTab resultTabToReplace,
+                              ISession session,
+                              String sql,
+                              ISQLExecutionHandlerListener executionHandlerListener,
+                              ISQLExecutionListener[] executionListeners)
+<span class="nc" id="L72">   {</span>
+<span class="nc" id="L73">      _session = session;</span>
+<span class="nc" id="L74">      _executionHandlerListener = executionHandlerListener;</span>
+
+
+<span class="nc" id="L77">      _executer = new SQLExecuterTask(_session, sql, this, executionListeners);</span>
+<span class="nc" id="L78">      SquirrelPreferences prefs = _session.getApplication().getSquirrelPreferences();</span>
+
+<span class="nc bnc" id="L80" title="All 2 branches missed.">      if (prefs.getLargeScriptStmtCount() &gt; 0</span>
+<span class="nc bnc" id="L81" title="All 2 branches missed.">            &amp;&amp; _executer.getQueryCount() &gt; prefs.getLargeScriptStmtCount())</span>
+      {
+<span class="nc" id="L83">         _executer.setExecutionListeners(new ISQLExecutionListener[0]);</span>
+<span class="nc" id="L84">         setLargeScript(true);</span>
+      }
+
+
+
+<span class="nc" id="L89">      _resultTabToReplace = resultTabToReplace;</span>
+<span class="nc" id="L90">      CancelPanelListener listener = new CancelPanelListener()</span>
+<span class="nc" id="L91">      {</span>
+         @Override
+         public void cancelRequested()
+         {
+<span class="nc" id="L95">            onCancelRequested();</span>
+<span class="nc" id="L96">         }</span>
+
+         @Override
+         public void closeRquested()
+         {
+<span class="nc" id="L101">            _executionHandlerListener.removeCancelPanel(_cancelPanelCtrl, null);</span>
+<span class="nc" id="L102">         }</span>
+      };
+
+<span class="nc" id="L105">      _cancelPanelCtrl = new CancelPanelCtrl(listener, session);</span>
+<span class="nc" id="L106">      _executionHandlerListener.setCancelPanel(_cancelPanelCtrl);</span>
+
+
+
+
+<span class="nc" id="L111">      _session.getApplication().getThreadPool().addTask(_executer);</span>
+<span class="nc" id="L112">   }</span>
+
+   private void onCancelRequested()
+   {
+      try
+      {
+<span class="nc bnc" id="L118" title="All 2 branches missed.">         if (_executer != null)</span>
+         {
+<span class="nc" id="L120">            _executer.cancel();</span>
+         }
+      }
+<span class="nc" id="L123">      catch (Throwable th)</span>
+      {
+<span class="nc" id="L125">         s_log.error(&quot;Error occured cancelling SQL&quot;, th);</span>
+<span class="nc" id="L126">      }</span>
+<span class="nc" id="L127">   }</span>
+
+   /**
+    * Set whether or not the script is large.  If the script is large, then
+    * do some performance optimizations with the GUI so that it remains
+    * responsive.  If the UI is not responsive, then the user is not able
+    * to see what is happening, nor are they able to control it (cancelling
+    * becomes ineffective)
+    *
+    * @param aBoolean whether or not the script is large.
+    */
+   public void setLargeScript(boolean aBoolean)
+   {
+<span class="nc" id="L140">      _largeScript = aBoolean;</span>
+<span class="nc" id="L141">   }</span>
+
+   /**
+    * Determines whether or not the current statement SQL should be rendered.
+    * Since too many statements can cause the UI to stop rendering the
+    * statements, we back off rendering after many statements so that the UI
+    * can continue to provide feedback to the user.
+    *
+    * @param current
+    * @param total
+    * @return
+    */
+   private boolean shouldRenderSQL(int current, int total)
+   {
+<span class="nc bnc" id="L155" title="All 2 branches missed.">      if (!_largeScript)</span>
+      {
+<span class="nc" id="L157">         return true;</span>
+      }
+<span class="nc" id="L159">      boolean result = true;</span>
+      // Back-off a bit after a hundred updates to allow the UI to update
+<span class="nc bnc" id="L161" title="All 6 branches missed.">      if (total &gt; 200 &amp;&amp; current &gt; 100 &amp;&amp; current % 10 != 0)</span>
+      {
+<span class="nc" id="L163">         result = false;</span>
+      }
+<span class="nc bnc" id="L165" title="All 6 branches missed.">      if (total &gt; 1000 &amp;&amp; current &gt; 500 &amp;&amp; current % 50 != 0)</span>
+      {
+<span class="nc" id="L167">         result = false;</span>
+      }
+<span class="nc bnc" id="L169" title="All 6 branches missed.">      if (total &gt; 2000 &amp;&amp; current &gt; 1000 &amp;&amp; current % 100 != 0)</span>
+      {
+<span class="nc" id="L171">         result = false;</span>
+      }
+<span class="nc" id="L173">      return result;</span>
+   }
+
+   public void sqlToBeExecuted(final String sql)
+   {
+<span class="nc" id="L178">      _cancelPanelCtrl.incCurrentQueryIndex();</span>
+<span class="nc" id="L179">      int currentStmtCount = _cancelPanelCtrl.getCurrentQueryIndex();</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">      if (!shouldRenderSQL(currentStmtCount, _cancelPanelCtrl.getTotalCount()))</span>
+      {
+<span class="nc" id="L182">         return;</span>
+      }
+<span class="nc" id="L184">      final String cleanSQL = StringUtilities.cleanString(sql);</span>
+<span class="nc" id="L185">      sqlToBeExecuted = cleanSQL;</span>
+<span class="nc" id="L186">      sqlType = getSQLType(cleanSQL);</span>
+
+<span class="nc" id="L188">      _cancelPanelCtrl.setSQL(sqlToBeExecuted);</span>
+
+      // i18n[SQLResultExecuterPanel.execStatus=Executing SQL...]
+<span class="nc" id="L191">      String status = s_stringMgr.getString(&quot;SQLResultExecuterPanel.execStatus&quot;);</span>
+<span class="nc" id="L192">      _cancelPanelCtrl.setStatusLabel(status);</span>
+<span class="nc" id="L193">   }</span>
+
+   private SQLType getSQLType(String sql)
+   {
+<span class="nc" id="L197">      SQLType result = SQLType.UNKNOWN;</span>
+<span class="nc bnc" id="L198" title="All 2 branches missed.">      if (sql.toLowerCase().startsWith(&quot;insert&quot;))</span>
+      {
+<span class="nc" id="L200">         result = SQLType.INSERT;</span>
+      }
+<span class="nc bnc" id="L202" title="All 2 branches missed.">      if (sql.toLowerCase().startsWith(&quot;update&quot;))</span>
+      {
+<span class="nc" id="L204">         result = SQLType.UPDATE;</span>
+      }
+<span class="nc bnc" id="L206" title="All 2 branches missed.">      if (sql.toLowerCase().startsWith(&quot;select&quot;))</span>
+      {
+<span class="nc" id="L208">         result = SQLType.SELECT;</span>
+      }
+<span class="nc bnc" id="L210" title="All 2 branches missed.">      if (sql.toLowerCase().startsWith(&quot;delete&quot;))</span>
+      {
+<span class="nc" id="L212">         result = SQLType.DELETE;</span>
+      }
+<span class="nc" id="L214">      return result;</span>
+   }
+
+
+   /**
+    * This will - depending on the size of the script - print a message
+    * indicating the time that it took to execute one or more queries.
+    * When executing a large script (as defined by the user, but default is
+    * &gt; 200 statements) we don't want to keep sending messages to the
+    * message panel, otherwise the UI will get behind and slow the execution
+    * of the script and prevent the user from cancelling the operation.  So
+    * this method will track the total time when executing a large script,
+    * otherwise for small scripts it puts out a message for every statemselect * from employeeent.
+    */
+   public void sqlExecutionComplete(final SQLExecutionInfo exInfo,
+                                    final int processedStatementCount,
+                                    final int statementCount)
+   {
+<span class="nc" id="L232">      final Integer numberResultRowsRead = exInfo.getNumberResultRowsRead();</span>
+
+<span class="nc bnc" id="L234" title="All 2 branches missed.">      if (_largeScript)</span>
+      {
+<span class="nc" id="L236">         double executionLength = ((double) exInfo.getSQLExecutionElapsedMillis()) / 1000;</span>
+<span class="nc" id="L237">         double outputLength = ((double) exInfo.getResultsProcessingElapsedMillis()) / 1000;</span>
+<span class="nc" id="L238">         double totalLength = executionLength + outputLength;</span>
+
+         // Track the time in aggregate for the script.
+<span class="nc" id="L241">         _scriptQueryTime += executionLength;</span>
+<span class="nc" id="L242">         _scriptOutptutTime += outputLength;</span>
+<span class="nc" id="L243">         _scriptTotalTime += totalLength;</span>
+
+         // When we get to the last statement, if the script is large,
+         // show the user the total execution time.
+<span class="nc bnc" id="L247" title="All 2 branches missed.">         if (statementCount == processedStatementCount)</span>
+         {
+<span class="nc" id="L249">            printScriptExecDetails(statementCount,</span>
+                  _scriptQueryTime,
+                  _scriptOutptutTime,
+                  _scriptTotalTime);
+         }
+<span class="nc" id="L254">      }</span>
+      else
+      {
+<span class="nc" id="L257">         allProcessingComplete(exInfo, processedStatementCount, statementCount, numberResultRowsRead);</span>
+      }
+<span class="nc" id="L259">   }</span>
+
+   private void allProcessingComplete(SQLExecutionInfo exInfo, int processedStatementCount, int statementCount, Integer numberResultRowsRead)
+   {
+<span class="nc" id="L263">      double executionLength = ((double) exInfo.getSQLExecutionElapsedMillis()) / 1000;</span>
+<span class="nc" id="L264">      double outputLength = ((double) exInfo.getResultsProcessingElapsedMillis()) / 1000;</span>
+<span class="nc" id="L265">      double totalLength = executionLength + outputLength;</span>
+
+<span class="nc" id="L267">      final NumberFormat nbrFmt = NumberFormat.getNumberInstance();</span>
+
+<span class="nc" id="L269">      Object[] args = new Object[]{</span>
+<span class="nc" id="L270">            Integer.valueOf(processedStatementCount),</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">            Integer.valueOf(statementCount),</span>
+<span class="nc" id="L272">            numberResultRowsRead == null ? 0 : numberResultRowsRead,</span>
+<span class="nc" id="L273">            nbrFmt.format(totalLength),</span>
+<span class="nc" id="L274">            nbrFmt.format(executionLength),</span>
+<span class="nc" id="L275">            nbrFmt.format(outputLength)</span>
+      };
+
+      //i18n[SQLResultExecuterPanel.queryStatistics=Query {0} of {1}
+      //elapsed time (seconds) - Total: {2}, SQL query: {3},
+      //Building output: {4}]
+<span class="nc" id="L281">      String stats = s_stringMgr.getString(&quot;SQLResultExecuterPanel.queryStatistics&quot;, args);</span>
+
+<span class="nc" id="L283">      _session.showMessage(stats);</span>
+<span class="nc" id="L284">   }</span>
+
+   private void printScriptExecDetails(int statementCount,
+                                       double executionLength,
+                                       double outputLength,
+                                       double totalLength)
+   {
+<span class="nc" id="L291">      final NumberFormat nbrFmt = NumberFormat.getNumberInstance();</span>
+
+<span class="nc" id="L293">      Object[] args = new Object[]{</span>
+<span class="nc" id="L294">            Integer.valueOf(statementCount),</span>
+<span class="nc" id="L295">            nbrFmt.format(totalLength),</span>
+<span class="nc" id="L296">            nbrFmt.format(executionLength),</span>
+<span class="nc" id="L297">            nbrFmt.format(outputLength)</span>
+      };
+
+      //i18n[SQLResultExecuterPanel.scriptQueryStatistics=Executed {0}
+      //queries; elapsed time (seconds) - Total: {1}, SQL query: {2},
+      //Building output: {3}]
+<span class="nc" id="L303">      String stats = s_stringMgr.getString(&quot;SQLResultExecuterPanel.scriptQueryStatistics&quot;, args);</span>
+
+<span class="nc" id="L305">      String[] counts =</span>
+<span class="nc" id="L306">            new String[]{Integer.toString(_scriptRowsInserted),</span>
+<span class="nc" id="L307">                  Integer.toString(_scriptRowsSelected),</span>
+<span class="nc" id="L308">                  Integer.toString(_scriptRowsUpdated),</span>
+<span class="nc" id="L309">                  Integer.toString(_scriptRowsDeleted)};</span>
+
+      //i18n[SQLResultExecuterPanel.scriptStmtCounts=Row update
+      //counts: {0} Inserts, {1} Selects, {2} Updates, {3} Deletes
+<span class="nc" id="L313">      String msg =</span>
+<span class="nc" id="L314">            s_stringMgr.getString(&quot;SQLResultExecuterPanel.scriptStmtCounts&quot;, counts);</span>
+
+<span class="nc" id="L316">      _session.showMessage(msg);</span>
+<span class="nc" id="L317">      _session.showMessage(stats);</span>
+<span class="nc" id="L318">   }</span>
+
+   public void sqlExecutionCancelled()
+   {
+<span class="nc bnc" id="L322" title="All 2 branches missed.">      if (rsds != null)</span>
+      {
+<span class="nc" id="L324">         rsds.cancelProcessing();</span>
+      }
+      // i18n[SQLResultExecuterPanel.canceleRequested=Query execution cancel requested by user.]
+//          String canc =
+//          s_stringMgr.getString(&quot;SQLResultExecuterPanel.canceleRequested&quot;);
+//          getSession().getMessageHandler().showMessage(canc);
+<span class="nc" id="L330">   }</span>
+
+   public void sqlDataUpdated(int updateCount)
+   {
+
+<span class="nc" id="L335">      Integer count = Integer.valueOf(updateCount);</span>
+<span class="nc" id="L336">      String msg = &quot;&quot;;</span>
+
+<span class="nc bnc" id="L338" title="All 5 branches missed.">      switch (sqlType)</span>
+      {
+         case INSERT:
+<span class="nc bnc" id="L341" title="All 2 branches missed.">            if (_largeScript)</span>
+            {
+<span class="nc" id="L343">               _scriptRowsInserted++;</span>
+            }
+            else
+            {
+               // i18n[SQLResultExecuterPanel.rowsUpdated={0} Row(s) Inserted]
+<span class="nc" id="L348">               msg = s_stringMgr.getString(&quot;SQLResultExecuterPanel.rowsInserted&quot;, count);</span>
+            }
+<span class="nc" id="L350">            break;</span>
+         case SELECT:
+<span class="nc bnc" id="L352" title="All 2 branches missed.">            if (_largeScript)</span>
+            {
+<span class="nc" id="L354">               _scriptRowsSelected++;</span>
+            }
+            else
+            {
+               // i18n[SQLResultExecuterPanel.rowsSelected={0} Row(s) Selected]
+<span class="nc" id="L359">               msg = s_stringMgr.getString(&quot;SQLResultExecuterPanel.rowsSelected&quot;, count);</span>
+            }
+<span class="nc" id="L361">            break;</span>
+         case UPDATE:
+<span class="nc bnc" id="L363" title="All 2 branches missed.">            if (_largeScript)</span>
+            {
+<span class="nc" id="L365">               _scriptRowsUpdated++;</span>
+            }
+            else
+            {
+               // i18n[SQLResultExecuterPanel.rowsUpdated={0} Row(s) Updated]
+<span class="nc" id="L370">               msg = s_stringMgr.getString(&quot;SQLResultExecuterPanel.rowsUpdated&quot;, count);</span>
+            }
+<span class="nc" id="L372">            break;</span>
+         case DELETE:
+<span class="nc bnc" id="L374" title="All 2 branches missed.">            if (_largeScript)</span>
+            {
+<span class="nc" id="L376">               _scriptRowsDeleted++;</span>
+            }
+            else
+            {
+               // i18n[SQLResultExecuterPanel.rowsDeleted={0} Row(s) Deleted]
+<span class="nc" id="L381">               msg = s_stringMgr.getString(&quot;SQLResultExecuterPanel.rowsDeleted&quot;, count);</span>
+            }
+            break;
+      }
+<span class="nc bnc" id="L385" title="All 2 branches missed.">      if (_largeScript)</span>
+      {
+<span class="nc" id="L387">         return;</span>
+      }
+<span class="nc" id="L389">      _session.showMessage(msg);</span>
+<span class="nc" id="L390">   }</span>
+
+   public void sqlResultSetAvailable(ResultSet rs, SQLExecutionInfo info, IDataSetUpdateableTableModel model)
+         throws DataSetException
+   {
+	   // i18n[SQLResultExecuterPanel.outputStatus=Building output...]
+<span class="nc" id="L396">	   String outputStatus = s_stringMgr.getString(&quot;SQLResultExecuterPanel.outputStatus&quot;);</span>
+
+<span class="nc" id="L398">	   _cancelPanelCtrl.setStatusLabel(outputStatus);</span>
+<span class="nc" id="L399">	   rsds = new ResultSetDataSet();</span>
+	   try {
+
+<span class="nc" id="L402">		   SessionProperties props = _session.getProperties();</span>
+
+<span class="nc" id="L404">		   ResultSetMetaDataDataSet rsmdds = null;</span>
+<span class="nc bnc" id="L405" title="All 2 branches missed.">		   if (props.getShowResultsMetaData())</span>
+		   {
+<span class="nc" id="L407">			   rsmdds = new ResultSetMetaDataDataSet(rs);</span>
+		   }
+<span class="nc" id="L409">		   DialectType dialectType =</span>
+<span class="nc" id="L410">				   DialectFactory.getDialectType(_session.getMetaData());</span>
+
+         // rsds.setContentsTabResultSet() reads the result set. So results processing on the DB is over
+         // and this time is measured. None is interested in the time that it takes us to render Swing tables ...
+<span class="nc" id="L414">		   info.resultsProcessingComplete(rsds.setContentsTabResultSet(rs, null, dialectType));</span>
+
+<span class="nc" id="L416">		   _executionHandlerListener.addResultsTab(info, rsds, rsmdds, model, _resultTabToReplace);</span>
+
+      }finally{
+    	  /*
+    	   * Make sure, that in any case, even when a exception occurs, the rsds is set to null, so that
+    	   * the GC can clean them.
+    	   */
+<span class="nc" id="L423">    	  rsds = null;</span>
+	}
+
+<span class="nc" id="L426">   }</span>
+
+   public void sqlExecutionWarning(SQLWarning warn)
+   {
+<span class="nc" id="L430">      _session.showMessage(warn);</span>
+<span class="nc" id="L431">   }</span>
+
+   public void sqlStatementCount(int statementCount)
+   {
+<span class="nc" id="L435">      _cancelPanelCtrl.setQueryCount(statementCount);</span>
+<span class="nc" id="L436">   }</span>
+
+   public void sqlCloseExecutionHandler(ArrayList&lt;String&gt; sqlExecErrorMsgs, String lastExecutedStatement)
+   {
+<span class="nc" id="L440">      _executionHandlerListener.removeCancelPanel(_cancelPanelCtrl, _resultTabToReplace);</span>
+
+<span class="nc bnc" id="L442" title="All 6 branches missed.">      if (null != sqlExecErrorMsgs &amp;&amp; 0 &lt; sqlExecErrorMsgs.size() &amp;&amp; _session.getProperties().getShowSQLErrorsInTab())</span>
+      {
+<span class="nc" id="L444">         _executionHandlerListener.displayErrors(sqlExecErrorMsgs, lastExecutedStatement);</span>
+      }
+
+<span class="nc" id="L447">      _executer = null;</span>
+<span class="nc" id="L448">   }</span>
+
+   public String sqlExecutionException(Throwable th, String postErrorString)
+   {
+<span class="nc" id="L452">      SQLExecutionException ex =</span>
+            new SQLExecutionException(th, postErrorString);
+
+<span class="nc" id="L455">      String message = _session.formatException(ex);</span>
+
+<span class="nc" id="L457">      _session.showErrorMessage(message);</span>
+
+<span class="nc bnc" id="L459" title="All 2 branches missed.">      if (_session.getProperties().getWriteSQLErrorsToLog())</span>
+      {
+<span class="nc" id="L461">         s_log.info(message);</span>
+      }
+
+<span class="nc" id="L464">      return message;</span>
+   }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,712 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SessionManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.session</a> &gt; <span class="el_source">SessionManager.java</span></div><h1>SessionManager.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.session;
+/*
+ * Copyright (C) 2004 Colin Bell
+ * colbell@users.sourceforge.net
+ *
+ * Modifications Copyright (C) 2003-2004 Jason Height
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+import java.sql.SQLException;
+import java.util.*;
+
+import javax.swing.*;
+import javax.swing.event.EventListenerList;
+
+import net.sourceforge.squirrel_sql.client.IApplication;
+import net.sourceforge.squirrel_sql.client.MultipleWindowsHandler;
+import net.sourceforge.squirrel_sql.client.gui.db.SQLAlias;
+import net.sourceforge.squirrel_sql.client.gui.db.ISQLAliasExt;
+import net.sourceforge.squirrel_sql.client.session.event.ISessionListener;
+import net.sourceforge.squirrel_sql.client.session.event.SessionEvent;
+import net.sourceforge.squirrel_sql.fw.gui.Dialogs;
+import net.sourceforge.squirrel_sql.fw.id.IIdentifier;
+import net.sourceforge.squirrel_sql.fw.id.IntegerIdentifierFactory;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLConnection;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLDriver;
+import net.sourceforge.squirrel_sql.fw.sql.SQLConnection;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+/**
+ * This class manages sessions.
+ *
+ * @author &lt;A HREF=&quot;mailto:colbell@users.sourceforge.net&quot;&gt;Colin Bell&lt;/A&gt;
+ */
+public class SessionManager
+{
+   /** Logger for this class. */
+<span class="nc" id="L53">   private static final ILogger s_log =</span>
+<span class="nc" id="L54">      LoggerController.createLogger(SessionManager.class);</span>
+
+   /** Internationalized strings for this class. */
+<span class="nc" id="L57">   private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L58">      StringManagerFactory.getStringManager(SessionManager.class);</span>
+
+   /** Application API. */
+   private final IApplication _app;
+
+   private ISession _activeSession;
+
+   /** Linked list of sessions. */
+<span class="nc" id="L66">   private final LinkedList&lt;ISession&gt; _sessionsList = new LinkedList&lt;ISession&gt;();</span>
+
+   /** Map of sessions keyed by session ID. */
+<span class="nc" id="L69">   private final Map&lt;IIdentifier, ISession&gt; _sessionsById = new HashMap&lt;IIdentifier, ISession&gt;();</span>
+
+<span class="nc" id="L71">   private EventListenerList listenerList = new EventListenerList();</span>
+
+   /** Factory used to generate session IDs. */
+<span class="nc" id="L74">   private final IntegerIdentifierFactory _idFactory = new IntegerIdentifierFactory(1);</span>
+<span class="nc" id="L75">   private ArrayList&lt;IAllowedSchemaChecker&gt; _allowedSchemaCheckers = new ArrayList&lt;IAllowedSchemaChecker&gt;();</span>
+<span class="nc" id="L76">   private Hashtable&lt;IIdentifier, String[]&gt; _allowedSchemasBySessionID = new Hashtable&lt;IIdentifier, String[]&gt;();</span>
+<span class="nc" id="L77">   private HashSet&lt;IIdentifier&gt; _inCloseSession = new HashSet&lt;IIdentifier&gt;();</span>
+
+   /**
+    * Ctor.
+    *
+    * @param	app		Application API.
+    *
+    * @throws	IllegalArgumentException
+    * 			Thrown if &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;IApplication&lt;/TT&gt; passed.
+    */
+   public SessionManager(IApplication app)
+   {
+<span class="nc" id="L89">      super();</span>
+<span class="nc bnc" id="L90" title="All 2 branches missed.">      if (app == null)</span>
+      {
+<span class="nc" id="L92">         throw new IllegalArgumentException(&quot;IApplication == null&quot;);</span>
+      }
+
+<span class="nc" id="L95">      _app = app;</span>
+<span class="nc" id="L96">   }</span>
+
+   /**
+    * Create a new session.
+    *
+    * @param	app			Application API.
+    * @param	driver		JDBC driver for session.
+    * @param	alias		Defines URL to database.
+    * @param	conn		Connection to database.
+    * @param	user		User name connected with.
+    * @param	password	Password for &lt;TT&gt;user&lt;/TT&gt;
+    *
+    * @throws	IllegalArgumentException
+    *			Thrown if IApplication, ISQLDriver, ISQLAlias,
+    * 			or SQLConnection is passed as null.
+    */
+   public synchronized ISession createSession(IApplication app,
+                                              ISQLDriver driver, SQLAlias alias,
+                                              SQLConnection conn, String user,
+                                              String password)
+   {
+<span class="nc bnc" id="L117" title="All 2 branches missed.">      if (app == null)</span>
+      {
+<span class="nc" id="L119">         throw new IllegalArgumentException(&quot;null IApplication passed&quot;);</span>
+      }
+<span class="nc bnc" id="L121" title="All 2 branches missed.">      if (driver == null)</span>
+      {
+<span class="nc" id="L123">         throw new IllegalArgumentException(&quot;null ISQLDriver passed&quot;);</span>
+      }
+<span class="nc bnc" id="L125" title="All 2 branches missed.">      if (alias == null)</span>
+      {
+<span class="nc" id="L127">         throw new IllegalArgumentException(&quot;null ISQLAlias passed&quot;);</span>
+      }
+<span class="nc bnc" id="L129" title="All 2 branches missed.">      if (conn == null)</span>
+      {
+<span class="nc" id="L131">         throw new IllegalArgumentException(&quot;null SQLConnection passed&quot;);</span>
+      }
+
+<span class="nc" id="L134">      final Session sess = new Session(app, driver, alias, conn, user,</span>
+<span class="nc" id="L135">                              password, _idFactory.createIdentifier());</span>
+<span class="nc" id="L136">      _sessionsList.addLast(sess);</span>
+<span class="nc" id="L137">      _sessionsById.put(sess.getIdentifier(), sess);</span>
+
+<span class="nc" id="L139">      fireSessionAdded(sess);</span>
+<span class="nc" id="L140">      setActiveSession(sess, false);</span>
+
+<span class="nc" id="L142">      return sess;</span>
+   }
+
+   public void setActiveSession(ISession session, boolean force)
+   {
+<span class="nc bnc" id="L147" title="All 4 branches missed.">      if (session != _activeSession || force)</span>
+      {
+<span class="nc" id="L149">         _activeSession = session;</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">         if (null != _activeSession &amp;&amp; MultipleWindowsHandler.DETACH_SESSION_WINDOW)</span>
+         {
+            System.out.println(&quot;NextSessionAction.setSession  &quot; + (null != session.getActiveSessionWindow()?session.getActiveSessionWindow().getTitle() : &quot; OPENING&quot;));
+         }
+<span class="nc" id="L154">         fireSessionActivated(session);</span>
+      }
+<span class="nc" id="L156">   }</span>
+
+   /**
+    * Retrieve an array of all the sessions currently connected.
+    *
+    * @return array of all connected sessions.
+    */
+   public synchronized ISession[] getConnectedSessions()
+   {
+<span class="nc" id="L165">      return _sessionsList.toArray(new ISession[_sessionsList.size()]);</span>
+   }
+
+   /**
+    * Retrieve the session that is currently activated within the
+    * session manager. Any new sql worksheets etc will be created
+    * against this session
+    */
+   public synchronized ISession getActiveSession()
+   {
+<span class="nc" id="L175">      return _activeSession;</span>
+   }
+
+   /**
+    * Get the next session opened after the passed one.
+    *
+    * @return	The next session or the first one if the passed one is
+    * 			the last session.
+    */
+   public synchronized ISession getNextSession(ISession session)
+   {
+<span class="nc" id="L186">      final int sessionCount = _sessionsList.size();</span>
+<span class="nc" id="L187">      int idx = _sessionsList.indexOf(session);</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">      if (idx != -1)</span>
+      {
+<span class="nc" id="L190">         ++idx;</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">         if (idx &gt;= sessionCount)</span>
+         {
+<span class="nc" id="L193">            idx = 0;</span>
+         }
+<span class="nc" id="L195">         return _sessionsList.get(idx);</span>
+      }
+
+<span class="nc" id="L198">      s_log.error(&quot;SessionManager.getNextSession()-&gt; Session &quot; +</span>
+<span class="nc" id="L199">               session.getIdentifier() + &quot; not found in _sessionsList&quot;);</span>
+<span class="nc bnc" id="L200" title="All 2 branches missed.">      if (sessionCount &gt; 0)</span>
+      {
+<span class="nc" id="L202">         s_log.error(&quot;SessionManager.getNextSession()-&gt; Returning first session&quot;);</span>
+<span class="nc" id="L203">         return _sessionsList.getFirst();</span>
+      }
+<span class="nc" id="L205">      s_log.error(&quot;SessionManager.getNextSession()-&gt; List empty so returning passed session&quot;);</span>
+<span class="nc" id="L206">      return session;</span>
+   }
+
+   /**
+    * Get the next session opened before the passed one.
+    *
+    * @return	The previous session or the last one if the passed one is
+    * 			the first session.
+    */
+   public synchronized ISession getPreviousSession(ISession session)
+   {
+<span class="nc" id="L217">      final int sessionCount = _sessionsList.size();</span>
+<span class="nc" id="L218">      int idx = _sessionsList.indexOf(session);</span>
+<span class="nc bnc" id="L219" title="All 2 branches missed.">      if (idx != -1)</span>
+      {
+<span class="nc" id="L221">         --idx;</span>
+<span class="nc bnc" id="L222" title="All 2 branches missed.">         if (idx &lt; 0)</span>
+         {
+<span class="nc" id="L224">            idx = sessionCount - 1;</span>
+         }
+<span class="nc" id="L226">         return _sessionsList.get(idx);</span>
+      }
+
+<span class="nc" id="L229">      s_log.error(&quot;SessionManager.getPreviousSession()-&gt; Session &quot; +</span>
+<span class="nc" id="L230">               session.getIdentifier() + &quot; not found in _sessionsList&quot;);</span>
+<span class="nc bnc" id="L231" title="All 2 branches missed.">      if (sessionCount &gt; 0)</span>
+      {
+<span class="nc" id="L233">         s_log.error(&quot;SessionManager.getPreviousSession()-&gt; Returning last session&quot;);</span>
+<span class="nc" id="L234">         return _sessionsList.getLast();</span>
+      }
+<span class="nc" id="L236">      s_log.error(&quot;SessionManager.getPreviousSession()-&gt; List empty so returning passed session&quot;);</span>
+<span class="nc" id="L237">      return session;</span>
+   }
+
+   /**
+    * Retrieve the session for the passed identifier.
+    *
+    * @param	sessionID	ID of session we are trying to retrieve.
+    *
+    * @throws	IllegalArgumentException
+    * 			Thrown if &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;IIdentifier&lt;/TT&gt; passed.
+    */
+   public ISession getSession(IIdentifier sessionID)
+   {
+<span class="nc" id="L250">      return _sessionsById.get(sessionID);</span>
+   }
+
+   /**
+    * Close a session.
+    *
+    * @param	session		Session to close.
+    *
+    * @return	&lt;tt&gt;true&lt;/tt&gt; if session was closed else &lt;tt&gt;false&lt;/tt&gt;.
+    *
+    * @throws	IllegalArgumentException
+    *			Thrown if &lt;TT&gt;null&lt;/TT&gt;ISession passed.
+    */
+   public synchronized boolean closeSession(ISession session)
+   {
+<span class="nc bnc" id="L265" title="All 2 branches missed.">      if (session == null)</span>
+      {
+<span class="nc" id="L267">         throw new IllegalArgumentException(&quot;ISession == null&quot;);</span>
+      }
+
+      try
+      {
+<span class="nc bnc" id="L272" title="All 2 branches missed.">         if(_inCloseSession.contains(session.getIdentifier()))</span>
+         {
+<span class="nc" id="L274">            return false;</span>
+         }
+
+<span class="nc" id="L277">         _inCloseSession.add(session.getIdentifier());</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">         if (confirmClose(session))</span>
+         {
+            // TODO: Should have session listeners instead of these calls.
+<span class="nc" id="L281">            session.getApplication().getPluginManager().sessionEnding(session);</span>
+
+<span class="nc" id="L283">            fireSessionClosing(session);</span>
+            try {
+<span class="nc" id="L285">            	session.close();</span>
+<span class="nc" id="L286">            } catch (SQLException sqle) {</span>
+<span class="nc" id="L287">                s_log.error(&quot;Error closing Session&quot;, sqle);</span>
+<span class="nc" id="L288">                session.showErrorMessage(s_stringMgr.getString(&quot;SessionManager.ErrorClosingSession&quot;, sqle));</span>
+<span class="nc" id="L289">            }</span>
+<span class="nc" id="L290">            fireSessionClosed(session);</span>
+
+<span class="nc" id="L292">            final IIdentifier sessionId = session.getIdentifier();</span>
+<span class="nc bnc" id="L293" title="All 2 branches missed.">            if (!_sessionsList.remove(session))</span>
+            {
+<span class="nc" id="L295">               s_log.error(&quot;SessionManager.closeSession()-&gt; Session &quot; +</span>
+                     sessionId +
+                     &quot; not found in _sessionsList when trying to remove it.&quot;);
+            }
+<span class="nc bnc" id="L299" title="All 2 branches missed.">            if (_sessionsById.remove(sessionId) == null)</span>
+            {
+<span class="nc" id="L301">               s_log.error(&quot;SessionManager.closeSession()-&gt; Session &quot; +</span>
+                     sessionId +
+                     &quot; not found in _sessionsById when trying to remove it.&quot;);
+            }
+
+<span class="nc bnc" id="L306" title="All 2 branches missed.">            if (_sessionsList.isEmpty())</span>
+            {
+<span class="nc" id="L308">               fireAllSessionsClosed();</span>
+            }
+
+            // Activate another session since the current
+            // active session has closed.
+<span class="nc bnc" id="L313" title="All 2 branches missed.">            if (session == _activeSession)</span>
+            {
+<span class="nc bnc" id="L315" title="All 2 branches missed.">               if (!_sessionsList.isEmpty())</span>
+               {
+<span class="nc" id="L317">                  setActiveSession(_sessionsList.getLast(), false);</span>
+               }
+               else
+               {
+<span class="nc" id="L321">                  _activeSession = null;</span>
+               }
+            }
+            else
+            {
+<span class="nc" id="L326">               setActiveSession(_activeSession, true);</span>
+            }
+
+<span class="nc" id="L329">            _allowedSchemasBySessionID.remove(session.getIdentifier());</span>
+
+<span class="nc" id="L331">            return true;</span>
+         }
+      }
+<span class="nc" id="L334">      catch (Throwable ex)</span>
+      {
+<span class="nc" id="L336">         s_log.error(&quot;Error closing Session&quot;, ex);</span>
+<span class="nc" id="L337">         session.showErrorMessage(s_stringMgr.getString(&quot;SessionManager.ErrorClosingSession&quot;, ex));</span>
+      }
+      finally
+      {
+<span class="nc" id="L341">         _inCloseSession.remove(session.getIdentifier());</span>
+      }
+
+<span class="nc" id="L344">      return false;</span>
+   }
+
+   /**
+    * Closes all currently open sessions.
+    *
+    * @return	&lt;tt&gt;true&lt;/tt&gt; if all sessions closed else &lt;tt&gt;false&lt;/tt&gt;.
+    *
+    * @throws	SQLException
+    * 			Thrown if an error closing the SQL connection. The session
+    * 			will still be closed even though the connection may not have
+    *			been.
+    */
+   synchronized public boolean closeAllSessions()
+   {
+      // Get an array since we dont want trouble with the sessionsList when
+      // we remove the sessions from it.
+<span class="nc" id="L361">      final ISession[] sessions = getConnectedSessions();</span>
+<span class="nc bnc" id="L362" title="All 2 branches missed.">      for (int i = sessions.length - 1; i &gt;= 0; i--)</span>
+      {
+<span class="nc bnc" id="L364" title="All 2 branches missed.">         if (!closeSession(sessions[i]))</span>
+         {
+<span class="nc" id="L366">            return false;</span>
+         }
+      }
+<span class="nc" id="L369">      return true;</span>
+   }
+
+   synchronized public boolean closeAllButCurrentSessions()
+   {
+<span class="nc" id="L374">      ISession activeSession = getActiveSession();</span>
+
+      // Get an array since we dont want trouble with the sessionsList when
+      // we remove the sessions from it.
+<span class="nc" id="L378">      final ISession[] sessions = getConnectedSessions();</span>
+<span class="nc bnc" id="L379" title="All 2 branches missed.">      for (int i = sessions.length - 1; i &gt;= 0; i--)</span>
+      {
+<span class="nc bnc" id="L381" title="All 2 branches missed.">         if(sessions[i] == activeSession)</span>
+         {
+<span class="nc" id="L383">            continue; </span>
+         }
+
+<span class="nc bnc" id="L386" title="All 2 branches missed.">         if (!closeSession(sessions[i]))</span>
+         {
+<span class="nc" id="L388">            return false;</span>
+         }
+      }
+<span class="nc" id="L391">      return true;</span>
+   }
+
+
+   /**
+    * Adds a session listener
+    *
+    * @param	lis		The listener to add.
+    */
+   public void addSessionListener(ISessionListener lis)
+   {
+<span class="nc bnc" id="L402" title="All 2 branches missed.">      if (lis != null)</span>
+      {
+<span class="nc" id="L404">         listenerList.add(ISessionListener.class, lis);</span>
+      }
+      else
+      {
+<span class="nc" id="L408">         s_log.error(&quot;Attempted to add null listener: SessionManager.addSessionListener&quot;);</span>
+      }
+<span class="nc" id="L410">   }</span>
+
+   /**
+    * Removes a session listener
+    *
+    * @param	lis		The listener to remove.
+    */
+   public void removeSessionListener(ISessionListener lis)
+   {
+<span class="nc bnc" id="L419" title="All 2 branches missed.">      if (lis != null)</span>
+      {
+<span class="nc" id="L421">         listenerList.remove(ISessionListener.class, lis);</span>
+      }
+      else
+      {
+<span class="nc" id="L425">         s_log.error(&quot;Attempted to remove null listener: SessionManager.addSessionListener&quot;);</span>
+      }
+<span class="nc" id="L427">   }</span>
+
+   /**
+    * Fired when a session is connected (added) to the session
+    * manager
+    */
+   protected void fireSessionAdded(ISession session)
+   {
+<span class="nc" id="L435">      Object[] listeners = listenerList.getListenerList();</span>
+<span class="nc" id="L436">      SessionEvent evt = null;</span>
+<span class="nc bnc" id="L437" title="All 2 branches missed.">      for (int i = listeners.length - 2; i &gt;= 0; i -= 2)</span>
+      {
+<span class="nc bnc" id="L439" title="All 2 branches missed.">         if (listeners[i] == ISessionListener.class)</span>
+         {
+            // Lazily create the event:
+<span class="nc bnc" id="L442" title="All 2 branches missed.">            if (evt == null)</span>
+<span class="nc" id="L443">               evt = new SessionEvent(session);</span>
+<span class="nc" id="L444">            ((ISessionListener)listeners[i + 1]).sessionConnected(evt);</span>
+         }
+      }
+<span class="nc" id="L447">   }</span>
+
+   /**
+    * Fired when a session is closed (removed) from the session manager
+    */
+   protected void fireSessionClosed(ISession session)
+   {
+<span class="nc" id="L454">      Object[] listeners = listenerList.getListenerList();</span>
+<span class="nc" id="L455">      SessionEvent evt = null;</span>
+<span class="nc bnc" id="L456" title="All 2 branches missed.">      for (int i = listeners.length - 2; i &gt;= 0; i -= 2)</span>
+      {
+<span class="nc bnc" id="L458" title="All 2 branches missed.">         if (listeners[i] == ISessionListener.class)</span>
+         {
+            // Lazily create the event:
+<span class="nc bnc" id="L461" title="All 2 branches missed.">            if (evt == null)</span>
+<span class="nc" id="L462">               evt = new SessionEvent(session);</span>
+<span class="nc" id="L463">            ((ISessionListener)listeners[i + 1]).sessionClosed(evt);</span>
+         }
+      }
+<span class="nc" id="L466">   }</span>
+
+   /**
+    * Fired when a session is about to close from the session manager
+    */
+   protected void fireSessionClosing(ISession session)
+   {
+<span class="nc" id="L473">      Object[] listeners = listenerList.getListenerList();</span>
+<span class="nc" id="L474">      SessionEvent evt = null;</span>
+<span class="nc bnc" id="L475" title="All 2 branches missed.">      for (int i = listeners.length - 2; i &gt;= 0; i -= 2)</span>
+      {
+<span class="nc bnc" id="L477" title="All 2 branches missed.">         if (listeners[i] == ISessionListener.class)</span>
+         {
+            // Lazily create the event:
+<span class="nc bnc" id="L480" title="All 2 branches missed.">            if (evt == null)</span>
+            {
+<span class="nc" id="L482">               evt = new SessionEvent(session);</span>
+            }
+<span class="nc" id="L484">            ((ISessionListener)listeners[i + 1]).sessionClosing(evt);</span>
+         }
+      }
+<span class="nc" id="L487">   }</span>
+
+   /**
+    * Fired when all the session have been closed (removed) from the
+    * session manager
+    */
+   protected void fireAllSessionsClosed()
+   {
+<span class="nc" id="L495">      Object[] listeners = listenerList.getListenerList();</span>
+<span class="nc bnc" id="L496" title="All 2 branches missed.">      for (int i = listeners.length - 2; i &gt;= 0; i -= 2)</span>
+      {
+<span class="nc bnc" id="L498" title="All 2 branches missed.">         if (listeners[i] == ISessionListener.class)</span>
+         {
+<span class="nc" id="L500">            ((ISessionListener)listeners[i + 1]).allSessionsClosed();</span>
+         }
+      }
+<span class="nc" id="L503">   }</span>
+
+   /**
+    * Fired when the active session changed
+    */
+   protected void fireSessionActivated(ISession session)
+   {
+<span class="nc" id="L510">      Object[] listeners = listenerList.getListenerList();</span>
+<span class="nc" id="L511">      SessionEvent evt = null;</span>
+<span class="nc bnc" id="L512" title="All 2 branches missed.">      for (int i = listeners.length - 2; i &gt;= 0; i -= 2)</span>
+      {
+<span class="nc bnc" id="L514" title="All 2 branches missed.">         if (listeners[i] == ISessionListener.class)</span>
+         {
+            // Lazily create the event:
+<span class="nc bnc" id="L517" title="All 2 branches missed.">            if (evt == null)</span>
+<span class="nc" id="L518">               evt = new SessionEvent(session);</span>
+<span class="nc" id="L519">            ((ISessionListener)listeners[i + 1]).sessionActivated(evt);</span>
+         }
+      }
+<span class="nc" id="L522">   }</span>
+
+   /**
+    * Confirm whether session is to be closed.
+    *
+    * @param	session		Session being closed.
+    *
+    * @return	&lt;tt&gt;true&lt;/tt&gt; if confirmed to close session.
+    */
+   private boolean confirmClose(ISession session)
+   {
+<span class="nc bnc" id="L533" title="All 2 branches missed.">      if (!_app.getSquirrelPreferences().getConfirmSessionClose())</span>
+      {
+<span class="nc" id="L535">            return session.confirmClose();</span>
+        }
+
+<span class="nc" id="L538">      final String msg = s_stringMgr.getString(&quot;SessionManager.confirmClose&quot;,</span>
+<span class="nc" id="L539">                     session.getTitle());</span>
+<span class="nc bnc" id="L540" title="All 2 branches missed.">      if (!Dialogs.showYesNo(_app.getMainFrame(), msg)) {</span>
+<span class="nc" id="L541">            return false;</span>
+        } else {
+<span class="nc" id="L543">            return session.confirmClose();</span>
+        }
+   }
+
+   protected void fireConnectionClosedForReconnect(Session session)
+   {
+<span class="nc" id="L549">      Object[] listeners = listenerList.getListenerList();</span>
+<span class="nc" id="L550">      SessionEvent evt = null;</span>
+<span class="nc bnc" id="L551" title="All 2 branches missed.">      for (int i = listeners.length - 2; i &gt;= 0; i -= 2)</span>
+      {
+<span class="nc bnc" id="L553" title="All 2 branches missed.">         if (listeners[i] == ISessionListener.class)</span>
+         {
+            // Lazily create the event:
+<span class="nc bnc" id="L556" title="All 2 branches missed.">            if (evt == null)</span>
+<span class="nc" id="L557">               evt = new SessionEvent(session);</span>
+<span class="nc" id="L558">            ((ISessionListener)listeners[i + 1]).connectionClosedForReconnect(evt);</span>
+         }
+      }
+<span class="nc" id="L561">   }</span>
+
+   protected void fireReconnected(Session session)
+   {
+<span class="nc" id="L565">      Object[] listeners = listenerList.getListenerList();</span>
+<span class="nc" id="L566">      SessionEvent evt = null;</span>
+<span class="nc bnc" id="L567" title="All 2 branches missed.">      for (int i = listeners.length - 2; i &gt;= 0; i -= 2)</span>
+      {
+<span class="nc bnc" id="L569" title="All 2 branches missed.">         if (listeners[i] == ISessionListener.class)</span>
+         {
+            // Lazily create the event:
+<span class="nc bnc" id="L572" title="All 2 branches missed.">            if (evt == null)</span>
+<span class="nc" id="L573">               evt = new SessionEvent(session);</span>
+<span class="nc" id="L574">            ((ISessionListener)listeners[i + 1]).reconnected(evt);</span>
+         }
+      }
+<span class="nc" id="L577">   }</span>
+
+   protected void fireReconnectFailed(Session session)
+   {
+<span class="nc" id="L581">      Object[] listeners = listenerList.getListenerList();</span>
+<span class="nc" id="L582">      SessionEvent evt = null;</span>
+<span class="nc bnc" id="L583" title="All 2 branches missed.">      for (int i = listeners.length - 2; i &gt;= 0; i -= 2)</span>
+      {
+<span class="nc bnc" id="L585" title="All 2 branches missed.">         if (listeners[i] == ISessionListener.class)</span>
+         {
+            // Lazily create the event:
+<span class="nc bnc" id="L588" title="All 2 branches missed.">            if (evt == null)</span>
+<span class="nc" id="L589">               evt = new SessionEvent(session);</span>
+<span class="nc" id="L590">            ((ISessionListener)listeners[i + 1]).reconnectFailed(evt);</span>
+         }
+      }
+<span class="nc" id="L593">   }</span>
+
+
+   protected void fireSessionFinalized(final IIdentifier sessionIdentifier)
+   {
+      // invokeLater to make the call synchronto the event queue
+<span class="nc" id="L599">      SwingUtilities.invokeLater(new Runnable()</span>
+<span class="nc" id="L600">      {</span>
+         public void run()
+         {
+<span class="nc" id="L603">            Object[] listeners = listenerList.getListenerList();</span>
+<span class="nc bnc" id="L604" title="All 2 branches missed.">            for (int i = listeners.length - 2; i &gt;= 0; i -= 2)</span>
+            {
+<span class="nc bnc" id="L606" title="All 2 branches missed.">               if (listeners[i] == ISessionListener.class)</span>
+               {
+<span class="nc" id="L608">                  ((ISessionListener)listeners[i + 1]).sessionFinalized(sessionIdentifier);</span>
+               }
+            }
+<span class="nc" id="L611">         }</span>
+      });
+
+<span class="nc" id="L614">   }</span>
+
+   public void addAllowedSchemaChecker(IAllowedSchemaChecker allowedSchemaChecker)
+   {
+<span class="nc" id="L618">      _allowedSchemaCheckers.add(allowedSchemaChecker);</span>
+<span class="nc" id="L619">   }</span>
+
+
+   public boolean areAllSchemasAllowed(ISession session)
+   {
+      try
+      {
+<span class="nc" id="L626">         String[] allowedSchemas = getAllowedSchemas(session);</span>
+<span class="nc" id="L627">         String[] schemas = session.getSQLConnection().getSQLMetaData().getSchemas();</span>
+
+<span class="nc bnc" id="L629" title="All 2 branches missed.">         return allowedSchemas.length == schemas.length;</span>
+      }
+<span class="nc" id="L631">      catch (SQLException e)</span>
+      {
+<span class="nc" id="L633">         s_log.error(&quot;Failed to check allowed Schemas&quot;, e);</span>
+<span class="nc" id="L634">         return true;</span>
+      }
+   }
+
+   public String[] getAllowedSchemas(ISession session)
+   {
+<span class="nc" id="L640">      String[] allowedSchemas = _allowedSchemasBySessionID.get(session.getIdentifier());</span>
+<span class="nc bnc" id="L641" title="All 2 branches missed.">      if(null == allowedSchemas)</span>
+      {
+<span class="nc" id="L643">         allowedSchemas = getAllowedSchemas(session.getSQLConnection(), session.getAlias());</span>
+<span class="nc" id="L644">         _allowedSchemasBySessionID.put(session.getIdentifier(), allowedSchemas);</span>
+      }
+
+<span class="nc" id="L647">      return allowedSchemas;</span>
+
+   }
+
+
+   /**
+    * Note: This Method does not cache allowed Schemas.
+    * It is preferable to use getAllowedSchemas(ISession) if a Session is avaialable.
+    */
+   public String[] getAllowedSchemas(ISQLConnection con, ISQLAliasExt alias)
+   {
+      try
+      {
+         // Do not do new HashMap() here.
+<span class="nc" id="L661">         HashMap&lt;String, Object&gt; uniqueAllowedSchemas = null;</span>
+
+<span class="nc bnc" id="L663" title="All 2 branches missed.">         for (int i = 0; i &lt; _allowedSchemaCheckers.size(); i++)</span>
+         {
+<span class="nc" id="L665">            String[] allowedSchemas = null;</span>
+            try
+            {
+<span class="nc" id="L668">               allowedSchemas = (_allowedSchemaCheckers.get(i)).getAllowedSchemas(con, alias);</span>
+            }
+<span class="nc" id="L670">            catch (Exception e)</span>
+            {
+<span class="nc" id="L672">               s_log.error(&quot;Failed to get allowed Schemas from Plugin&quot;, e);</span>
+<span class="nc" id="L673">            }</span>
+
+<span class="nc bnc" id="L675" title="All 2 branches missed.">            if(null != allowedSchemas)</span>
+            {
+<span class="nc bnc" id="L677" title="All 2 branches missed.">               if(null == uniqueAllowedSchemas)</span>
+               {
+<span class="nc" id="L679">                  uniqueAllowedSchemas = new HashMap&lt;String, Object&gt;();</span>
+               }
+
+<span class="nc bnc" id="L682" title="All 2 branches missed.">               for (int j = 0; j &lt; allowedSchemas.length; j++)</span>
+               {
+<span class="nc" id="L684">                  uniqueAllowedSchemas.put(allowedSchemas[j], null);</span>
+               }
+            }
+         }
+
+<span class="nc bnc" id="L689" title="All 2 branches missed.">         if(null == uniqueAllowedSchemas)</span>
+         {
+<span class="nc" id="L691">            return con.getSQLMetaData().getSchemas();</span>
+         }
+         else
+         {
+<span class="nc" id="L695">            ArrayList&lt;String&gt; list = new ArrayList&lt;String&gt;(uniqueAllowedSchemas.keySet());</span>
+<span class="nc" id="L696">            Collections.sort(list);</span>
+<span class="nc" id="L697">            return list.toArray(new String[list.size()]);</span>
+         }
+      }
+<span class="nc" id="L700">      catch (Exception e)</span>
+      {
+<span class="nc" id="L702">         s_log.error(&quot;Failed to get allowed Schemas&quot;, e);</span>
+<span class="nc" id="L703">         return new String[0];</span>
+      }
+   }
+
+   public void clearAllowedSchemaCache(ISession session)
+   {
+<span class="nc" id="L709">      _allowedSchemasBySessionID.remove(session.getIdentifier());</span>
+<span class="nc" id="L710">   }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

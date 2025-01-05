@@ -1,0 +1,300 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BasicEventManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.events</a> &gt; <span class="el_source">BasicEventManager.java</span></div><h1>BasicEventManager.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2000-2004 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: BasicEventManager.java,v 1.4 2006/02/23 11:17:38 tanderson Exp $
+ */
+package org.exolab.jms.events;
+
+import java.util.Comparator;
+import java.util.HashMap;
+
+import EDU.oswego.cs.dl.util.concurrent.PooledExecutor;
+import org.exolab.jms.common.threads.ThreadPoolFactory;
+import org.exolab.jms.common.util.OrderedQueue;
+import org.exolab.jms.service.BasicService;
+
+
+/**
+ * The EventManager manages {@link Event} objects. It has methods to register
+ * and unregister events. It also extends {@link Runnable} interface which
+ * defines the thread responsible for dispatching events.
+ * &lt;p/&gt;
+ * An event is defined to occur at sometime in the future, as specified either
+ * by an absolute time through {@link #registerEvent} or as relative time
+ * through {@link #registerEventRelative}. An event must have an associated
+ * event type and may have an attached &lt;code&gt;Serializable&lt;/code&gt;, which is used
+ * when the EventManager makes a callback to the registered handler when the
+ * event fires.
+ * &lt;p/&gt;
+ * The register methids will return an event identifier which can subsequently
+ * be used to unregister the event through the {@link #unregisterEvent} event.
+ * This is the only means of unregister an event.
+ * &lt;p/&gt;
+ * If the {@link Event} object is incorrectly specified then the {@link
+ * IllegalEventDefinedException} exception is raised.
+ * &lt;p/&gt;
+ * When an event fires the {@link EventManager} is responsible for ensuring that
+ * the event handler is notified. If the event handler has since been removed
+ * then the EventManager must gracefully abort the delivery and continue
+ * processing the next event.
+ * &lt;p/&gt;
+ * Objects of type {@link Event} need to survive subsequent {@link EventManager}
+ * restarts, as such they must be persisted, which implies that the {@link
+ * EventHandler} needs to also be persisted. The ability to store the {@link
+ * EventHandler} as a &lt;code&gt;HandleIfc&lt;/code&gt; object which can later be resolved
+ * to an object will be required.
+ *
+ * @author &lt;a href=&quot;mailto:wood@intalio.com&quot;&gt;Chris Wood&lt;/a&gt;
+ * @version $Revision: 1.4 $ $Date: 2006/02/23 11:17:38 $
+ */
+public class BasicEventManager
+        extends BasicService
+        implements EventManager {
+
+    // The max number of threads for this pool.
+    private static final int MAX_THREADS = 5;
+
+    /**
+     * Maps ids to events.
+     */
+<span class="nc" id="L99">    private final HashMap _events = new HashMap();</span>
+
+    /**
+     * Thread pool.
+     */
+    private PooledExecutor _pool;
+
+    /**
+     * Synchonization for the following two collections.
+     */
+<span class="nc" id="L109">    private final Object _queueSync = new Object();</span>
+
+    /**
+     * Event queue.
+     */
+<span class="nc" id="L114">    private final OrderedQueue _queue = new OrderedQueue(_queueComparator);</span>
+
+    /**
+     * Used to generate unique queue entry ids.
+     */
+    private long _seed;
+
+
+    /**
+     * Construct a new &lt;code&gt;BasicEventManager&lt;/code&gt;.
+     */
+    public BasicEventManager(ThreadPoolFactory factory) {
+<span class="nc" id="L126">        super(&quot;BasicEventManager&quot;);</span>
+
+<span class="nc" id="L128">        _pool = factory.create(getName(), MAX_THREADS);</span>
+<span class="nc" id="L129">    }</span>
+
+    /**
+     * Register an event to be fired once and only once at the specified
+     * abolsute time. The event object must be Serializable so that it can be
+     * persisted and restored across EventManager restarts.
+     * &lt;p/&gt;
+     * If the specified event is ill-defined then the IllegalEventDefined-
+     * Exception exception is thrown.
+     * &lt;p/&gt;
+     * Similarly, if the abolsute time has already passed then the exception
+     * IllegalEventDefinedException is raised.
+     * &lt;p/&gt;
+     * The method returns an unique event identifier, which can subsequently be
+     * used to deregister the event.
+     *
+     * @param event    information about the event
+     * @param absolute the abolsute time, in ms, that the event must fire
+     * @return String  unique event identifier
+     * @throws IllegalEventDefinedException
+     */
+    public String registerEvent(Event event, long absolute)
+            throws IllegalEventDefinedException {
+<span class="nc" id="L152">        synchronized (_queueSync) {</span>
+<span class="nc" id="L153">            QueueEntry entry = new QueueEntry(event, absolute, generateId());</span>
+
+            // add entry to the queue.
+<span class="nc" id="L156">            _queue.add(entry);</span>
+<span class="nc" id="L157">            _events.put(entry.id, entry);</span>
+
+            // notify the event thread.
+<span class="nc" id="L160">            _queueSync.notifyAll();</span>
+<span class="nc" id="L161">            return entry.id;</span>
+        }
+    }
+
+    /**
+     * Register an event to be fired once and only once at a time relative to
+     * now. The event object must be Serializable so that it can be persisted
+     * and restored across EventManager restarts.
+     * &lt;p/&gt;
+     * If the specified event is ill-defined then the IllegalEventDefined-
+     * Exception exception is thrown.
+     * &lt;p/&gt;
+     * The method returns an unique event identifier, which can subsequently be
+     * used to deregister the event.
+     *
+     * @param event    information about the event
+     * @param relative the relative time in ms (currently no reference to
+     *                 locale).
+     * @return String  unique event identifier,
+     * @throws IllegalEventDefinedException
+     */
+    public String registerEventRelative(Event event, long relative)
+            throws IllegalEventDefinedException {
+<span class="nc" id="L184">        return registerEvent(event, System.currentTimeMillis() + relative);</span>
+    }
+
+    /**
+     * Unregister the event specified by the event identifier. If the event does
+     * not exist then fail silently.
+     *
+     * @param id unique event identifier.
+     */
+    public void unregisterEvent(String id) {
+<span class="nc" id="L194">        synchronized (_queueSync) {</span>
+            // remove from the events list
+<span class="nc" id="L196">            Object obj = _events.remove(id);</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">            if (obj == null) {</span>
+<span class="nc" id="L198">                return;</span>
+            }
+            // remove from the queue.
+<span class="nc" id="L201">            _queue.remove(obj);</span>
+<span class="nc" id="L202">        }</span>
+<span class="nc" id="L203">    }</span>
+
+    // implementation of BasicService.run
+    public void run() {
+<span class="nc" id="L207">        synchronized (_queueSync) {</span>
+            QueueEntry entry;
+            long currentTime;
+<span class="nc bnc" id="L210" title="All 2 branches missed.">            while (!Thread.interrupted()) {</span>
+<span class="nc" id="L211">                currentTime = System.currentTimeMillis();</span>
+                try {
+<span class="nc" id="L213">                    entry = (QueueEntry) _queue.firstElement();</span>
+<span class="nc" id="L214">                } catch (java.util.NoSuchElementException ex) {</span>
+                    // queue is empty.
+                    try {
+<span class="nc" id="L217">                        _queueSync.wait();</span>
+<span class="nc" id="L218">                    } catch (InterruptedException ex1) {</span>
+<span class="nc" id="L219">                        break;</span>
+<span class="nc" id="L220">                    }</span>
+<span class="nc" id="L221">                    continue;</span>
+<span class="nc" id="L222">                }</span>
+
+<span class="nc bnc" id="L224" title="All 2 branches missed.">                if (entry.absolute &lt;= currentTime) {</span>
+                    // trigger any expired events
+                    try {
+<span class="nc" id="L227">                        _pool.execute(entry);</span>
+<span class="nc" id="L228">                    } catch (InterruptedException ex) {</span>
+<span class="nc" id="L229">                        break;</span>
+<span class="nc" id="L230">                    }</span>
+<span class="nc" id="L231">                    _queue.removeFirstElement();</span>
+<span class="nc" id="L232">                    _events.remove(entry.id);</span>
+                } else {
+                    // wait for either the next event to expire or an element to be
+                    // added to the queue.
+                    try {
+<span class="nc" id="L237">                        _queueSync.wait(entry.absolute - currentTime);</span>
+<span class="nc" id="L238">                    } catch (InterruptedException ex) {</span>
+<span class="nc" id="L239">                        break;</span>
+<span class="nc" id="L240">                    }</span>
+                }
+            }
+<span class="nc" id="L243">        }</span>
+<span class="nc" id="L244">    }</span>
+
+    /**
+     * Generate unique queued object identifier.
+     */
+    private synchronized String generateId() {
+<span class="nc" id="L250">        return Long.toString(++_seed);</span>
+    }
+
+    /**
+     * Compare queue entries on expiration times
+     */
+<span class="nc" id="L256">    private static final Comparator _queueComparator =</span>
+<span class="nc" id="L257">            new Comparator() {</span>
+
+                public int compare(Object obj1, Object obj2) {
+<span class="nc" id="L260">                    QueueEntry qe1 = (QueueEntry) obj1;</span>
+<span class="nc" id="L261">                    QueueEntry qe2 = (QueueEntry) obj2;</span>
+
+<span class="nc bnc" id="L263" title="All 2 branches missed.">                    if (qe1.absolute &lt; qe2.absolute) {</span>
+<span class="nc" id="L264">                        return -1;</span>
+                    }
+<span class="nc bnc" id="L266" title="All 2 branches missed.">                    if (qe1.absolute &gt; qe2.absolute) {</span>
+<span class="nc" id="L267">                        return 1;</span>
+                    }
+<span class="nc" id="L269">                    return 0;</span>
+                }
+
+                public boolean equals(Object that) {
+<span class="nc bnc" id="L273" title="All 2 branches missed.">                    return (this == that);</span>
+                }
+            };
+
+    /**
+     * Entry on the task queue.
+     */
+    class QueueEntry implements Runnable {
+
+<span class="nc" id="L282">        QueueEntry(Event event, long absolute, String id) {</span>
+<span class="nc" id="L283">            this.absolute = absolute;</span>
+<span class="nc" id="L284">            this.event = event;</span>
+<span class="nc" id="L285">            this.id = id;</span>
+<span class="nc" id="L286">        }</span>
+
+        private long absolute;
+        private Event event;
+        private String id;
+
+        public void run() {
+<span class="nc" id="L293">            event.getEventListener().handleEvent(event.getEventType(),</span>
+<span class="nc" id="L294">                    event.getCallbackObject(),</span>
+<span class="nc" id="L295">                    System.currentTimeMillis());</span>
+<span class="nc" id="L296">        }</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

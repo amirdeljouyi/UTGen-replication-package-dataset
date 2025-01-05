@@ -1,0 +1,468 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Consumers.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.persistence</a> &gt; <span class="el_source">Consumers.java</span></div><h1>Consumers.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2000-2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ */
+
+package org.exolab.jms.persistence;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Vector;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import org.exolab.jms.client.JmsDestination;
+import org.exolab.jms.client.JmsTopic;
+
+
+/**
+ * This class provides persistency for ConsumerState objects in an RDBMS
+ * database.
+ *
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.4 $ $Date: 2007/04/16 02:50:21 $
+ */
+class Consumers {
+
+    /**
+     * The seed generator.
+     */
+    private final SeedGenerator _seeds;
+
+    /**
+     * The destination manager.
+     */
+    private Destinations _destinations;
+
+    /**
+     * A cache for all durable consumers.
+     */
+<span class="nc" id="L84">    private final HashMap _consumers = new HashMap();</span>
+
+    /**
+     * The name of the column that uniquely identifies the consumer.
+     */
+    private static final String CONSUMER_ID_SEED = &quot;consumerId&quot;;
+
+    /**
+     * The name of the table that maintains a list of message handles per
+     * consumer.
+     */
+    private static final String CONSUMER_MESSAGE = &quot;message_handles&quot;;
+
+    /**
+     * The logger.
+     */
+<span class="nc" id="L100">    private static final Log _log = LogFactory.getLog(Consumers.class);</span>
+
+
+    /**
+     * Construct a new &lt;code&gt;Consumers&lt;/code&gt;.
+     *
+     * @param seeds the seed generator
+     * @param connection the connection to use
+     * @throws PersistenceException if initialisation fails
+     */
+    public Consumers(SeedGenerator seeds,
+<span class="nc" id="L111">                     Connection connection) throws PersistenceException {</span>
+<span class="nc" id="L112">        _seeds = seeds;</span>
+<span class="nc" id="L113">        init(connection);</span>
+<span class="nc" id="L114">    }</span>
+
+    /**
+     * Sets the destination manager
+     *
+     * @param destinations the destination manager
+     */
+    public void setDestinations(Destinations destinations) {
+<span class="nc" id="L122">        _destinations = destinations;</span>
+<span class="nc" id="L123">    }</span>
+
+    /**
+     * Add a new durable consumer to the database if it does not already exist.
+     * A durable consumer is specified by a destination name and a consumer
+     * name.
+     * &lt;p/&gt;
+     * The destination must resolve to a valid JmsDestination object
+     *
+     * @param connection the database connection to use
+     * @param dest       the name of the destination
+     * @param consumer   the name of the consumer
+     * @throws PersistenceException if the consumer cannot be added
+     */
+    public synchronized void add(Connection connection, String dest,
+                                 String consumer)
+            throws PersistenceException {
+
+<span class="nc" id="L141">        JmsDestination destination = null;</span>
+<span class="nc" id="L142">        long destinationId = 0;</span>
+
+<span class="nc" id="L144">        synchronized (_destinations) {</span>
+<span class="nc" id="L145">            destination = _destinations.get(dest);</span>
+<span class="nc bnc" id="L146" title="All 2 branches missed.">            if (destination == null) {</span>
+<span class="nc" id="L147">                raise(&quot;add&quot;, consumer, dest, &quot;destination is invalid&quot;);</span>
+            }
+<span class="nc" id="L149">            destinationId = _destinations.getId(dest);</span>
+<span class="nc" id="L150">        }</span>
+
+        // check that for a topic the consumer name is not the same as the
+        // destination name
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        if ((destination instanceof JmsTopic) &amp;&amp;</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">                (consumer.equals(dest))) {</span>
+<span class="nc" id="L156">            raise(&quot;add&quot;, consumer, dest,</span>
+                  &quot;The consumer name and destination name cannot be the same&quot;);
+        }
+
+        // get the next id from the seed table
+<span class="nc" id="L161">        long consumerId = _seeds.next(connection, CONSUMER_ID_SEED);</span>
+
+<span class="nc" id="L163">        PreparedStatement insert = null;</span>
+        try {
+<span class="nc" id="L165">            insert = connection.prepareStatement(</span>
+                    &quot;insert into consumers values (?,?,?,?)&quot;);
+
+<span class="nc" id="L168">            long created = (new Date()).getTime();</span>
+<span class="nc" id="L169">            insert.setString(1, consumer);</span>
+<span class="nc" id="L170">            insert.setLong(2, destinationId);</span>
+<span class="nc" id="L171">            insert.setLong(3, consumerId);</span>
+<span class="nc" id="L172">            insert.setLong(4, created);</span>
+<span class="nc" id="L173">            insert.executeUpdate();</span>
+
+<span class="nc" id="L175">            Consumer map = new Consumer(consumer, consumerId,</span>
+                                        destinationId, created);
+
+            // check to see if the durable consumer already exists. If it
+            // does then do not add it but signal and error
+<span class="nc bnc" id="L180" title="All 2 branches missed.">            if (!_consumers.containsKey(consumer)) {</span>
+<span class="nc" id="L181">                _consumers.put(consumer, map);</span>
+            } else {
+<span class="nc" id="L183">                _log.error(&quot;Durable consumer with name &quot; + consumer</span>
+                           + &quot; already exists.&quot;);
+            }
+<span class="nc" id="L186">        } catch (Exception exception) {</span>
+<span class="nc" id="L187">            throw new PersistenceException(&quot;Failed to add consumer, destination=&quot;</span>
+                                           + dest +
+                                           &quot;, name=&quot; + consumer, exception);
+        } finally {
+<span class="nc" id="L191">            SQLHelper.close(insert);</span>
+        }
+<span class="nc" id="L193">    }</span>
+
+    /**
+     * Remove a consumer from the database. If the destination is of type queue
+     * then the destination name and the consumer name are identical.
+     *
+     * @param connection - the connection to use
+     * @param name       - the consumer name
+     * @throws PersistenceException - if the consumer cannot be removed
+     */
+    public synchronized void remove(Connection connection, String name)
+            throws PersistenceException {
+
+<span class="nc" id="L206">        PreparedStatement delete = null;</span>
+
+        // locate the consumer
+<span class="nc" id="L209">        Consumer map = (Consumer) _consumers.get(name);</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">        if (map == null) {</span>
+<span class="nc" id="L211">            raise(&quot;remove&quot;, name, &quot;consumer does not exist&quot;);</span>
+        }
+
+        try {
+<span class="nc" id="L215">            delete = connection.prepareStatement(</span>
+                    &quot;delete from consumers where name=?&quot;);
+<span class="nc" id="L217">            delete.setString(1, name);</span>
+<span class="nc" id="L218">            delete.executeUpdate();</span>
+
+            // now delete all the corresponding handles in the consumer
+            // message table
+<span class="nc" id="L222">            remove(CONSUMER_MESSAGE, map.consumerId, connection);</span>
+
+            // remove the consumer from the local cache
+<span class="nc" id="L225">            _consumers.remove(name);</span>
+<span class="nc" id="L226">        } catch (SQLException exception) {</span>
+<span class="nc" id="L227">            throw new PersistenceException(&quot;Failed to remove consumer=&quot; + name,</span>
+                                           exception);
+        } finally {
+<span class="nc" id="L230">            SQLHelper.close(delete);</span>
+        }
+<span class="nc" id="L232">    }</span>
+
+    /**
+     * Return the id of the durable consumer.
+     *
+     * @param name the consumer name
+     * @return the consumer identity
+     */
+    public synchronized long getConsumerId(String name) {
+<span class="nc" id="L241">        Consumer map = (Consumer) _consumers.get(name);</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">        return (map != null) ? map.consumerId : 0;</span>
+    }
+
+    /**
+     * Return true if a consumer exists
+     *
+     * @param name - the consumer name
+     */
+    public synchronized boolean exists(String name) {
+<span class="nc bnc" id="L251" title="All 2 branches missed.">        return (_consumers.get(name) != null);</span>
+    }
+
+    /**
+     * Returns a list of consumer names associated with a topic.
+     *
+     * @param destination the topic to query
+     */
+    public synchronized Vector getDurableConsumers(String destination) {
+<span class="nc" id="L260">        Vector result = new Vector();</span>
+<span class="nc" id="L261">        long destinationId = _destinations.getId(destination);</span>
+<span class="nc bnc" id="L262" title="All 2 branches missed.">        if (destinationId != 0) {</span>
+<span class="nc" id="L263">            Iterator iter = _consumers.values().iterator();</span>
+<span class="nc bnc" id="L264" title="All 2 branches missed.">            while (iter.hasNext()) {</span>
+<span class="nc" id="L265">                Consumer map = (Consumer) iter.next();</span>
+<span class="nc bnc" id="L266" title="All 2 branches missed.">                if (map.destinationId == destinationId) {</span>
+<span class="nc" id="L267">                    result.add(map.name);</span>
+                }
+<span class="nc" id="L269">            }</span>
+        }
+
+<span class="nc" id="L272">        return result;</span>
+    }
+
+    /**
+     * Return a map of consumer names to destinations names.
+     *
+     * @return list of all durable consumers
+     */
+    public synchronized HashMap getAllDurableConsumers() {
+<span class="nc" id="L281">        HashMap result = new HashMap();</span>
+
+<span class="nc" id="L283">        Iterator iter = _consumers.values().iterator();</span>
+<span class="nc bnc" id="L284" title="All 2 branches missed.">        while (iter.hasNext()) {</span>
+<span class="nc" id="L285">            Consumer map = (Consumer) iter.next();</span>
+<span class="nc" id="L286">            JmsDestination dest = _destinations.get(map.destinationId);</span>
+
+<span class="nc bnc" id="L288" title="All 2 branches missed.">            if (dest instanceof JmsTopic) {</span>
+<span class="nc" id="L289">                result.put(map.name, dest.getName());</span>
+            }
+<span class="nc" id="L291">        }</span>
+
+<span class="nc" id="L293">        return result;</span>
+    }
+
+    /**
+     * Return the consumer name corresponding to the specified identity
+     *
+     * @param id - the consumer identity
+     */
+    public synchronized String getConsumerName(long id) {
+<span class="nc" id="L302">        String name = null;</span>
+<span class="nc" id="L303">        Iterator iter = _consumers.values().iterator();</span>
+
+<span class="nc bnc" id="L305" title="All 2 branches missed.">        while (iter.hasNext()) {</span>
+<span class="nc" id="L306">            Consumer map = (Consumer) iter.next();</span>
+<span class="nc bnc" id="L307" title="All 2 branches missed.">            if (map.consumerId == id) {</span>
+<span class="nc" id="L308">                name = map.name;</span>
+<span class="nc" id="L309">                break;</span>
+            }
+<span class="nc" id="L311">        }</span>
+
+<span class="nc" id="L313">        return name;</span>
+    }
+
+    /**
+     * Deallocates resources owned or referenced by the instance
+     */
+    public synchronized void close() {
+<span class="nc" id="L320">        _consumers.clear();</span>
+<span class="nc" id="L321">    }</span>
+
+    /**
+     * Removes all cached consumer details for a given destination
+     *
+     * @param destinationId the Id of the destination
+     */
+    protected synchronized void removeCached(long destinationId) {
+<span class="nc" id="L329">        Object[] list = _consumers.values().toArray();</span>
+<span class="nc bnc" id="L330" title="All 2 branches missed.">        for (int i = 0; i &lt; list.length; i++) {</span>
+<span class="nc" id="L331">            Consumer map = (Consumer) list[i];</span>
+<span class="nc bnc" id="L332" title="All 2 branches missed.">            if (map.destinationId == destinationId) {</span>
+<span class="nc" id="L333">                _consumers.remove(map.name);</span>
+            }
+        }
+<span class="nc" id="L336">    }</span>
+
+    /**
+     * Initialises the cache of consumers.
+     *
+     * @param connection the connection to use
+     * @throws PersistenceException if initialisation fails
+     */
+    private void init(Connection connection) throws PersistenceException {
+<span class="nc" id="L345">        PreparedStatement select = null;</span>
+<span class="nc" id="L346">        ResultSet set = null;</span>
+        try {
+<span class="nc" id="L348">            select = connection.prepareStatement(</span>
+                    &quot;select name, consumerId, destinationId, created &quot;
+                    + &quot;from consumers&quot;);
+<span class="nc" id="L351">            set = select.executeQuery();</span>
+<span class="nc" id="L352">            String name = null;</span>
+<span class="nc" id="L353">            long consumerId = 0;</span>
+<span class="nc" id="L354">            long destinationId = 0;</span>
+<span class="nc" id="L355">            long created = 0;</span>
+<span class="nc" id="L356">            Consumer map = null;</span>
+<span class="nc bnc" id="L357" title="All 2 branches missed.">            while (set.next()) {</span>
+<span class="nc" id="L358">                name = set.getString(1);</span>
+<span class="nc" id="L359">                consumerId = set.getLong(2);</span>
+<span class="nc" id="L360">                destinationId = set.getLong(3);</span>
+<span class="nc" id="L361">                created = set.getLong(4);</span>
+<span class="nc" id="L362">                map = new Consumer(name, consumerId, destinationId,</span>
+                                   created);
+<span class="nc" id="L364">                _consumers.put(name, map);</span>
+            }
+<span class="nc" id="L366">        } catch (SQLException exception) {</span>
+<span class="nc" id="L367">            throw new PersistenceException(&quot;Failed to retrieve consumers&quot;,</span>
+                                           exception);
+        } finally {
+<span class="nc" id="L370">            SQLHelper.close(set);</span>
+<span class="nc" id="L371">            SQLHelper.close(select);</span>
+        }
+<span class="nc" id="L373">    }</span>
+
+    /**
+     * Remove all the rows in the specified table with the corresponding
+     * consumer identity.
+     *
+     * @param table      - the table to destroy
+     * @param consumerId - the target consumerId
+     * @param connection - the database connection to use
+     * @throws SQLException - thrown on any error
+     */
+    private void remove(String table, long consumerId, Connection connection)
+            throws SQLException {
+
+<span class="nc" id="L387">        PreparedStatement delete = null;</span>
+        try {
+<span class="nc" id="L389">            delete = connection.prepareStatement(</span>
+                    &quot;delete from &quot; + table + &quot; where consumerId=?&quot;);
+<span class="nc" id="L391">            delete.setLong(1, consumerId);</span>
+<span class="nc" id="L392">            delete.executeUpdate();</span>
+        } finally {
+<span class="nc" id="L394">            SQLHelper.close(delete);</span>
+        }
+<span class="nc" id="L396">    }</span>
+
+    /**
+     * Raise a PersistenceException with the specified parameters
+     *
+     * @param operation   - operation that failed
+     * @param name        - corresponding consumert name
+     * @param destination - corresponding destination
+     * @param reason      - the reason for the exception
+     */
+    private void raise(String operation, String name, String destination,
+                       String reason)
+            throws PersistenceException {
+<span class="nc" id="L409">        throw new PersistenceException(</span>
+                &quot;Cannot &quot; + operation + &quot; consumer=&quot; + name
+                + &quot;, destination=&quot; + destination + &quot;: &quot; + reason);
+    }
+
+    /**
+     * Raise a PersistenceException with the specified parameters
+     *
+     * @param operation - operation that failed
+     * @param name      - corresponding consumert name
+     * @param reason    - the reasone for the exception
+     */
+    private void raise(String operation, String name, String reason)
+            throws PersistenceException {
+<span class="nc" id="L423">        throw new PersistenceException(&quot;Cannot &quot; + operation + &quot; consumer=&quot; +</span>
+                                       name + &quot;: &quot; + reason);
+    }
+
+    /**
+     * This is an internal class that is used to store consumer entries
+     */
+    private class Consumer {
+
+        /**
+         * The name of the consumer
+         */
+        public String name;
+
+        /**
+         * The unique consumer identity
+         */
+        public long consumerId;
+
+        /**
+         * The identity of the destination that this durable consumer is
+         * subscribed too
+         */
+        public long destinationId;
+
+        /**
+         * The time that this durable consumer was created
+         */
+        public long created;
+
+
+        public Consumer(String name, long consumerId, long destinationId,
+<span class="nc" id="L455">                        long created) {</span>
+
+<span class="nc" id="L457">            this.name = name;</span>
+<span class="nc" id="L458">            this.consumerId = consumerId;</span>
+<span class="nc" id="L459">            this.destinationId = destinationId;</span>
+<span class="nc" id="L460">            this.created = created;</span>
+<span class="nc" id="L461">        }</span>
+
+        public String getKey() {
+<span class="nc" id="L464">            return name;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

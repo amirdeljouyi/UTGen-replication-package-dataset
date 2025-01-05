@@ -1,0 +1,1254 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>WindowManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.gui</a> &gt; <span class="el_source">WindowManager.java</span></div><h1>WindowManager.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.gui;
+/*
+ * Copyright (C) 2003-2006 Colin Bell
+ * colbell@users.sourceforge.net
+ *
+ * Modifications Copyright (C) 2003-2004 Jason Height
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+
+import net.sourceforge.squirrel_sql.client.IApplication;
+import net.sourceforge.squirrel_sql.client.action.ActionCollection;
+import net.sourceforge.squirrel_sql.client.gui.db.*;
+import net.sourceforge.squirrel_sql.client.gui.desktopcontainer.*;
+import net.sourceforge.squirrel_sql.client.gui.mainframe.MainFrame;
+import net.sourceforge.squirrel_sql.client.gui.mainframe.MainFrameWindowState;
+import net.sourceforge.squirrel_sql.client.gui.mainframe.WidgetUtils;
+import net.sourceforge.squirrel_sql.client.gui.session.ObjectTreeInternalFrame;
+import net.sourceforge.squirrel_sql.client.gui.session.SQLInternalFrame;
+import net.sourceforge.squirrel_sql.client.gui.session.SessionInternalFrame;
+import net.sourceforge.squirrel_sql.client.gui.util.ThreadCheckingRepaintManager;
+import net.sourceforge.squirrel_sql.client.mainframe.action.*;
+import net.sourceforge.squirrel_sql.client.preferences.SquirrelPreferences;
+import net.sourceforge.squirrel_sql.client.session.IObjectTreeAPI;
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.client.session.SessionManager;
+import net.sourceforge.squirrel_sql.client.session.event.SessionAdapter;
+import net.sourceforge.squirrel_sql.client.session.event.SessionEvent;
+import net.sourceforge.squirrel_sql.client.session.properties.EditWhereColsSheet;
+import net.sourceforge.squirrel_sql.client.session.properties.SessionPropertiesSheet;
+import net.sourceforge.squirrel_sql.client.session.sqlfilter.SQLFilterSheet;
+import net.sourceforge.squirrel_sql.fw.gui.GUIUtils;
+import net.sourceforge.squirrel_sql.fw.gui.WindowState;
+import net.sourceforge.squirrel_sql.fw.gui.debug.DebugEventListener;
+import net.sourceforge.squirrel_sql.fw.id.IIdentifier;
+import net.sourceforge.squirrel_sql.fw.sql.IDatabaseObjectInfo;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLAlias;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLDriver;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+import javax.swing.*;
+import javax.swing.event.EventListenerList;
+import java.awt.*;
+import java.beans.PropertyVetoException;
+/**
+ * This class manages the windows for the application.
+ *
+ * TODO: Correct these notes
+ * &lt;p&gt;When a session closes the window manager will ensure that
+ * all of the windows for that sesion are closed.
+ * &lt;p&gt;Similarily when a window is closed the windows manager will ensure that
+ * references to the window are removed for the session.
+ *
+ * JASON: Prior to this patch there was some code movement from this class to
+ * Sessionmanager. The idea being that Sessionmanager was the controller.
+ * Do we still want to do this? Remember in the future there will probably be
+ * an SDI as well as MDI version of the windows.
+ *
+ * @author &lt;A HREF=&quot;mailto:colbell@users.sourceforge.net&quot;&gt;Colin Bell&lt;/A&gt;
+ * @author &lt;A HREF=&quot;mailto:jmheight@users.sourceforge.net&quot;&gt;Jason Height&lt;/A&gt;
+ */
+public class WindowManager
+{
+	/** Logger for this class. */
+<span class="nc" id="L80">	private static final ILogger s_log =</span>
+<span class="nc" id="L81">		LoggerController.createLogger(WindowManager.class);</span>
+
+	/** Internationalized strings for this class. */
+<span class="nc" id="L84">	private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L85">		StringManagerFactory.getStringManager(WindowManager.class);</span>
+
+	/**
+	 * Key to client property stored in internal frame that udentifies the
+	 * internal frame.
+	 */
+<span class="nc" id="L91">	private static final String MENU = WindowManager.class.getName() + &quot;.menu&quot;;</span>
+
+	/** Application API. */
+	private final IApplication _app;
+
+	/** Window manager for driver windows. */
+	private DriverWindowManager _driverWinMgr;
+
+	/** Window manager for aliases windows. */
+	private AliasWindowManager _aliasWinMgr;
+
+	/** Applications main frame. */
+	private MainFrame _mainFrame;
+
+	/** Window containing list of database aliases. */
+	private AliasesListInternalFrame _aliasesListWindow;
+
+	/** Window containing list of JDBC driver definitions. */
+	private DriversListInternalFrame _driversListWindow;
+
+	/** Window Factory for alias maintenace windows. */
+//	private final AliasWindowFactory _aliasWinFactory;
+
+	/**
+	 * Map of windows(s) that are currently open for a session, keyed by
+	 * session ID.
+	 */
+<span class="nc" id="L118">	private final SessionWindowsHolder _sessionWindows = new SessionWindowsHolder();</span>
+
+<span class="nc" id="L120">	private final SessionWindowListener _windowListener = new SessionWindowListener();</span>
+
+//	private int _lastSessionIdx = 1;
+
+	// JASON: Mow that multiple object trees exist storing the edit
+	// where by objectInfo within session won't work. It needs to be objectinfo
+	// within something else.
+//	private final Map _editWhereColsSheets = new HashMap();
+
+<span class="nc" id="L129">	private final SessionListener _sessionListener = new SessionListener();</span>
+
+<span class="nc" id="L131">	private EventListenerList _listenerList = new EventListenerList();</span>
+
+<span class="nc" id="L133">	private boolean _sessionClosing = false;</span>
+
+	/**
+	 * Ctor.
+	 *
+	 * @param	app		Application API.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;IApplication&lt;/TT&gt; passed.
+	 */
+	public WindowManager(IApplication app, boolean enableUserInterfaceDebug)
+	{
+<span class="nc" id="L145">		super();</span>
+<span class="nc bnc" id="L146" title="All 2 branches missed.">		if (app == null)</span>
+		{
+<span class="nc" id="L148">			throw new IllegalArgumentException(&quot;IApplication == null&quot;);</span>
+		}
+
+<span class="nc bnc" id="L151" title="All 2 branches missed.">		if (s_log.isDebugEnabled())</span>
+		{
+<span class="nc" id="L153">			RepaintManager.setCurrentManager(new ThreadCheckingRepaintManager());</span>
+		}
+
+<span class="nc" id="L156">		_app = app;</span>
+
+<span class="nc" id="L158">		_aliasWinMgr = new AliasWindowManager(_app);</span>
+<span class="nc" id="L159">		_driverWinMgr = new DriverWindowManager(_app);</span>
+
+<span class="nc" id="L161">		GUIUtils.processOnSwingEventThread(new Runnable()</span>
+<span class="nc" id="L162">		{</span>
+			public void run()
+			{
+<span class="nc" id="L165">				initialize();</span>
+<span class="nc" id="L166">			}</span>
+		}, true);
+<span class="nc" id="L168">		new DebugEventListener().setEnabled(enableUserInterfaceDebug);</span>
+<span class="nc" id="L169">	}</span>
+
+	/**
+	 * Retrieve applications main frame.
+	 *
+	 * @return	Applications main frame.
+	 */
+	public MainFrame getMainFrame()
+	{
+<span class="nc" id="L178">		return _mainFrame;</span>
+	}
+
+	public AliasesListInternalFrame getAliasesListInternalFrame()
+	{
+<span class="nc" id="L183">		return _aliasesListWindow;</span>
+	}
+
+	public DriversListInternalFrame getDriversListInternalFrame()
+	{
+<span class="nc" id="L188">		return _driversListWindow;</span>
+	}
+
+	public WindowState getAliasesWindowState()
+	{
+<span class="nc" id="L193">		return new WindowState(_aliasesListWindow.getInternalFrame());</span>
+	}
+
+	public WindowState getDriversWindowState()
+	{
+<span class="nc" id="L198">		return new WindowState(_driversListWindow.getInternalFrame());</span>
+	}
+
+   /**
+    * Get a maintenance sheet for the passed alias. If a maintenance sheet already
+    * exists it will be brought to the front. If one doesn't exist it will be
+    * created.
+    *
+    * @param	alias	The alias that user has requested to modify.
+    *
+    * @throws	IllegalArgumentException
+    *			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;ISQLAlias&lt;/TT&gt; passed.
+    */
+   public void showModifyAliasInternalFrame(final ISQLAlias alias)
+   {
+<span class="nc bnc" id="L213" title="All 2 branches missed.">      if (alias == null)</span>
+      {
+<span class="nc" id="L215">         throw new IllegalArgumentException(&quot;ISQLAlias == null&quot;);</span>
+      }
+
+<span class="nc" id="L218">      _aliasWinMgr.showModifyAliasInternalFrame(alias);</span>
+<span class="nc" id="L219">   }</span>
+
+	/**
+	 * Create and show a new maintenance window to allow the user to create a
+	 * new alias.
+	 */
+	public void showNewAliasInternalFrame()
+	{
+<span class="nc" id="L227">		_aliasWinMgr.showNewAliasInternalFrame();</span>
+<span class="nc" id="L228">	}</span>
+
+	/**
+	 * Create and show a new maintenance sheet that will allow the user to create a
+	 * new alias that is a copy of the passed one.
+	 *
+	 * @return	The new maintenance sheet.
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;ISQLAlias&lt;/TT&gt; passed.
+	 */
+	public void showCopyAliasInternalFrame(final SQLAlias alias)
+	{
+<span class="nc bnc" id="L241" title="All 2 branches missed.">		if (alias == null)</span>
+		{
+<span class="nc" id="L243">			throw new IllegalArgumentException(&quot;ISQLAlias == null&quot;);</span>
+		}
+
+<span class="nc" id="L246">		_aliasWinMgr.showCopyAliasInternalFrame(alias);</span>
+<span class="nc" id="L247">	}</span>
+
+	/**
+	 * Get a maintenance sheet for the passed driver. If a maintenance sheet
+	 * already exists it will be brought to the front. If one doesn't exist
+	 * it will be created.
+	 *
+	 * @param	driver	The driver that user has requested to modify.
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;ISQLDriver&lt;/TT&gt; passed.
+	 */
+	public void showModifyDriverInternalFrame(final ISQLDriver driver)
+	{
+<span class="nc bnc" id="L261" title="All 2 branches missed.">		if (driver == null)</span>
+		{
+<span class="nc" id="L263">			throw new IllegalArgumentException(&quot;ISQLDriver == null&quot;);</span>
+		}
+
+<span class="nc" id="L266">		_driverWinMgr.showModifyDriverInternalFrame(driver);</span>
+<span class="nc" id="L267">	}</span>
+
+	/**
+	 * Create and show a new maintenance window to allow the user to create a
+	 * new driver.
+	 */
+	public void showNewDriverInternalFrame()
+	{
+<span class="nc" id="L275">		_driverWinMgr.showNewDriverInternalFrame();</span>
+<span class="nc" id="L276">	}</span>
+
+	/**
+	 * Create and show a new maintenance sheet that will allow the user to
+	 * create a new driver that is a copy of the passed one.
+	 *
+	 * @return	The new maintenance sheet.
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;ISQLDriver&lt;/TT&gt; passed.
+	 */
+	public void showCopyDriverInternalFrame(final ISQLDriver driver)
+	{
+<span class="nc bnc" id="L289" title="All 2 branches missed.">		if (driver == null)</span>
+		{
+<span class="nc" id="L291">			throw new IllegalArgumentException(&quot;ISQLDriver == null&quot;);</span>
+		}
+
+<span class="nc" id="L294">		_driverWinMgr.showCopyDriverInternalFrame(driver);</span>
+<span class="nc" id="L295">	}</span>
+
+	/**
+	 * Registers a sheet that is attached to a session. This sheet will
+	 * be automatically closed when the session is closing.
+	 * &lt;p/&gt;&lt;b&gt;There is no need to call this method manually.&lt;/b&gt; Any
+	 * classes that properly extend BaseSessionInternalFrame will be registered.
+	 */
+	public synchronized void registerSessionSheet(ISessionWidget sheet)
+	{
+        //i18n[WindowManager.registerSessionSheet=Registering {0} in WindowManager]
+<span class="nc" id="L306">        String dbg = </span>
+<span class="nc" id="L307">            s_stringMgr.getString(&quot;WindowManager.registerSessionSheet&quot;,</span>
+<span class="nc" id="L308">                                  sheet.getClass().getName());</span>
+<span class="nc" id="L309">		s_log.debug(dbg);</span>
+<span class="nc" id="L310">		final IIdentifier sessionIdentifier = sheet.getSession().getIdentifier();</span>
+
+		// Store ptr to newly open window in list of windows per session.
+<span class="nc" id="L313">		final int idx = _sessionWindows.addFrame(sessionIdentifier, sheet);</span>
+
+		// For all windows (other than the first one opened) for a session
+		// add a number on the end of the title to differentiate them in
+		// menus etc.
+<span class="nc bnc" id="L318" title="All 2 branches missed.">		if ( idx &gt; 1)</span>
+		{
+<span class="nc" id="L320">			sheet.setTitle(sheet.getTitle() + &quot; (&quot; + idx + &quot;)&quot;);</span>
+		}
+
+<span class="nc" id="L323">		sheet.addWidgetListener(_windowListener);</span>
+<span class="nc" id="L324">	}</span>
+
+	/**
+	 * Adds a listener to the sheets attached to this session &lt;p/&gt;When new
+	 * sheets are constructed, they are automatically added to the session via
+	 * the registerSessionSheet method. &lt;p/&gt;All other listener events fire due
+	 * to interaction with the frame. &lt;p/&gt;The
+	 * InternalFrameListener.internalFrameOpened is a good location to tailor
+	 * the session sheets (ie internal frame) from a plugin. Examples can be
+	 * found in the oracle plugin of how to modify how a session sheet.
+	 */
+	public void addSessionWidgetListener(WidgetAdapter listener)
+	{
+<span class="nc bnc" id="L337" title="All 2 branches missed.">		if (listener == null)</span>
+		{
+<span class="nc" id="L339">			throw new IllegalArgumentException(&quot;InternalFrameListener == null&quot;);</span>
+		}
+
+<span class="nc" id="L342">		_listenerList.add(WidgetListener.class, listener);</span>
+<span class="nc" id="L343">	}</span>
+
+	/**
+	 * Create a new internal frame for the passed session.
+	 *
+	 * @param	session		Session we are creating internal frame for.
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if ISession is passed as null.
+	 */
+	public synchronized SessionInternalFrame createInternalFrame(ISession session)
+	{
+<span class="nc bnc" id="L355" title="All 2 branches missed.">		if (session == null)</span>
+		{
+<span class="nc" id="L357">			throw new IllegalArgumentException(&quot;ISession == null&quot;);</span>
+		}
+
+<span class="nc" id="L360">		final SessionInternalFrame sif = new SessionInternalFrame(session);</span>
+
+<span class="nc" id="L362">		session.setSessionInternalFrame(sif);</span>
+<span class="nc" id="L363">		_app.getPluginManager().sessionStarted(session);</span>
+<span class="nc" id="L364">		_app.getMainFrame().addWidget(sif);</span>
+
+		// If we don't invokeLater here no Short-Cut-Key is sent
+		// to the internal frame
+		// seen under java version &quot;1.4.1_01&quot; and Linux
+<span class="nc" id="L369">		SwingUtilities.invokeLater(new Runnable()</span>
+<span class="nc" id="L370">		{</span>
+			public void run()
+			{
+<span class="nc" id="L373">				sif.setVisible(true);</span>
+<span class="nc" id="L374">                sif.getObjectTreeAPI().selectRoot();</span>
+<span class="nc" id="L375">			}</span>
+		});
+
+<span class="nc" id="L378">		return sif;</span>
+	}
+
+//    /**
+//     * A callback method to allow the session we are creating to tell us it has
+//     * finished it's initialization. It's important that the plugins are only
+//     * notified that a session has been started, after the session window and
+//     * it's associated toolbar have been created, and populated with the core
+//     * toolbar menu-items.
+//     *
+//     * @param session the ISession whose SessionPanel has finished it's
+//     *                initialization.
+//     */
+//    public void sessionInitComplete(ISession session) {
+//        _app.getPluginManager().sessionStarted(session);
+//    }
+    
+	/**
+	 * Creates a new SQL View internal frame for the passed session.
+	 *
+	 * @param	session		Session we are creating internal frame for.
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if ISession is passed as null.
+	 */
+	public synchronized SQLInternalFrame createSQLInternalFrame(ISession session)
+	{
+<span class="nc bnc" id="L405" title="All 2 branches missed.">		if (session == null)</span>
+		{
+<span class="nc" id="L407">			throw new IllegalArgumentException(&quot;ISession == null&quot;);</span>
+		}
+<span class="nc" id="L409">		final SQLInternalFrame sif = new SQLInternalFrame(session);</span>
+<span class="nc" id="L410">		getMainFrame().addWidget(sif);</span>
+
+		// If we don't invokeLater here no Short-Cut-Key is sent
+		// to the internal frame
+		// seen under java version &quot;1.4.1_01&quot; and Linux
+<span class="nc" id="L415">		SwingUtilities.invokeLater(new Runnable()</span>
+<span class="nc" id="L416">		{</span>
+			public void run()
+			{
+<span class="nc" id="L419">				sif.setVisible(true);</span>
+<span class="nc" id="L420">            sif.requestFocus();</span>
+<span class="nc" id="L421">			}</span>
+		});
+
+<span class="nc" id="L424">		return sif;</span>
+	}
+
+	/**
+	 * Creates a new Object Tree internal frame for the passed session.
+	 *
+	 * @param	session		Session we are creating internal frame for.
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if ISession is passed as null.
+	 */
+	public synchronized ObjectTreeInternalFrame createObjectTreeInternalFrame(ISession session)
+	{
+<span class="nc bnc" id="L437" title="All 2 branches missed.">		if (session == null)</span>
+		{
+<span class="nc" id="L439">			throw new IllegalArgumentException(&quot;ISession == null&quot;);</span>
+		}
+<span class="nc" id="L441">		final ObjectTreeInternalFrame oif = new ObjectTreeInternalFrame(session);</span>
+<span class="nc" id="L442">		getMainFrame().addWidget(oif);</span>
+
+		// If we don't invokeLater here no Short-Cut-Key is sent
+		// to the internal frame
+		// seen under java version &quot;1.4.1_01&quot; and Linux
+<span class="nc" id="L447">		SwingUtilities.invokeLater(new Runnable()</span>
+<span class="nc" id="L448">		{</span>
+			public void run()
+			{
+<span class="nc" id="L451">				oif.setVisible(true);</span>
+<span class="nc" id="L452">                oif.getObjectTreeAPI().selectRoot();</span>
+<span class="nc" id="L453">			}</span>
+		});
+
+<span class="nc" id="L456">		return oif;</span>
+	}
+
+	/**
+	 * Get a properties dialog for the passed session. If one already
+	 * exists it will be brought to the front. If one doesn't exist it will be
+	 * created.
+	 *
+	 * @param	session		The session that user has request property dialog for.
+    * @param tabNameToSelect The name (title) of the Tab to select. First Tab will be selected
+    * if tabNameToSelect is null or doesnt match any tab.
+    *
+    * @param tabNameToSelect
+    * @throws	IllegalArgumentException
+    *			Thrown if a &lt;TT&gt;null&lt;/TT&gt; &lt;TT&gt;ISession&lt;/TT&gt; passed.
+	 */
+	public synchronized void showSessionPropertiesDialog(ISession session, int tabIndexToSelect)
+	{
+<span class="nc bnc" id="L474" title="All 2 branches missed.">		if (session == null)</span>
+		{
+<span class="nc" id="L476">			throw new IllegalArgumentException(&quot;ISession == null&quot;);</span>
+		}
+
+<span class="nc" id="L479">		SessionPropertiesSheet propsSheet = getSessionPropertiesDialog(session);</span>
+<span class="nc bnc" id="L480" title="All 2 branches missed.">		if (propsSheet == null)</span>
+		{
+<span class="nc" id="L482">			propsSheet = new SessionPropertiesSheet(session);</span>
+<span class="nc" id="L483">			_app.getMainFrame().addWidget(propsSheet);</span>
+<span class="nc" id="L484">			positionSheet(propsSheet);</span>
+		}
+		else
+		{
+<span class="nc" id="L488">			propsSheet.moveToFront();</span>
+		}
+
+<span class="nc" id="L491">      propsSheet.selectTabIndex(tabIndexToSelect);</span>
+<span class="nc" id="L492">   }</span>
+
+	/**
+	 * Get an SQL Filter sheet for the passed data. If one already exists it
+	 * will be brought to the front. If one doesn't exist it will be created.
+	 *
+	 * @param	objectTree
+	 * @param	objectInfo	An instance of a class containing information about
+	 * 						the database metadata.
+	 *
+	 * @return	The filter dialog.
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if &lt;tt&gt;null&lt;/tt&gt; &lt;tt&gt;ContentsTab&lt;/tt&gt;,
+	 *			&lt;tt&gt;IObjectTreeAPI&lt;/tt&gt;, or &lt;tt&gt;IDatabaseObjectInfo&lt;/tt&gt; passed.
+	 */
+	public synchronized SQLFilterSheet showSQLFilterDialog(IObjectTreeAPI objectTree,
+											IDatabaseObjectInfo objectInfo)
+	{
+<span class="nc bnc" id="L511" title="All 2 branches missed.">		if (objectTree == null)</span>
+		{
+<span class="nc" id="L513">			throw new IllegalArgumentException(&quot;IObjectTree == null&quot;);</span>
+		}
+<span class="nc bnc" id="L515" title="All 2 branches missed.">		if (objectInfo == null)</span>
+		{
+<span class="nc" id="L517">			throw new IllegalArgumentException(&quot;IDatabaseObjectInfo == null&quot;);</span>
+		}
+
+<span class="nc" id="L520">		SQLFilterSheet sqlFilterSheet = getSQLFilterSheet(objectTree, objectInfo);</span>
+<span class="nc bnc" id="L521" title="All 2 branches missed.">		if (sqlFilterSheet == null)</span>
+		{
+<span class="nc" id="L523">			sqlFilterSheet = new SQLFilterSheet(objectTree, objectInfo);</span>
+<span class="nc" id="L524">			_app.getMainFrame().addWidget(sqlFilterSheet);</span>
+<span class="nc" id="L525">			positionSheet(sqlFilterSheet);</span>
+		}
+		else
+		{
+<span class="nc" id="L529">			sqlFilterSheet.moveToFront();</span>
+		}
+
+<span class="nc" id="L532">		return sqlFilterSheet;</span>
+	}
+
+	/**
+	 * Get a EditWhereCols sheet for the passed session. If one already exists it
+	 * will be brought to the front. If one doesn't exist it will be created.
+	 *
+	 * @param	tree		Object tree containing the table.
+	 * @param	objectInfo	An instance of a class containing information about
+	 * 						the database metadata.
+	 *
+	 * @return	The maintenance sheet for the passed session.
+	 */
+	public synchronized EditWhereColsSheet showEditWhereColsDialog(IObjectTreeAPI tree,
+											IDatabaseObjectInfo objectInfo)
+	{
+<span class="nc bnc" id="L548" title="All 2 branches missed.">		if (tree == null)</span>
+		{
+<span class="nc" id="L550">			throw new IllegalArgumentException(&quot;IObjectTreeAPI == null&quot;);</span>
+		}
+<span class="nc bnc" id="L552" title="All 2 branches missed.">		if (objectInfo == null)</span>
+		{
+<span class="nc" id="L554">			throw new IllegalArgumentException(&quot;IDatabaseObjectInfo == null&quot;);</span>
+		}
+
+<span class="nc" id="L557">		ISession session = tree.getSession();</span>
+<span class="nc" id="L558">		EditWhereColsSheet editWhereColsSheet = getEditWhereColsSheet(session, objectInfo);</span>
+<span class="nc bnc" id="L559" title="All 2 branches missed.">		if (editWhereColsSheet == null)</span>
+		{
+<span class="nc" id="L561">			editWhereColsSheet = new EditWhereColsSheet(session, objectInfo);</span>
+<span class="nc" id="L562">			_app.getMainFrame().addWidget(editWhereColsSheet);</span>
+<span class="nc" id="L563">			positionSheet(editWhereColsSheet);</span>
+		}
+		else
+		{
+<span class="nc" id="L567">			editWhereColsSheet.moveToFront();</span>
+		}
+
+<span class="nc" id="L570">		return editWhereColsSheet;</span>
+	}
+
+	public void moveToFront(final Window win)
+	{
+<span class="nc bnc" id="L575" title="All 2 branches missed.">		if (win != null)</span>
+		{
+<span class="nc" id="L577">			GUIUtils.processOnSwingEventThread(new Runnable()</span>
+<span class="nc" id="L578">			{</span>
+				public void run()
+				{
+<span class="nc" id="L581">					win.toFront();</span>
+<span class="nc" id="L582">					win.setVisible(true);</span>
+<span class="nc" id="L583">				}</span>
+			});
+		}
+<span class="nc" id="L586">	}</span>
+
+	public void moveToFront(final JInternalFrame fr)
+	{
+<span class="nc bnc" id="L590" title="All 2 branches missed.">		if (fr != null)</span>
+		{
+<span class="nc" id="L592">			GUIUtils.processOnSwingEventThread(new Runnable()</span>
+<span class="nc" id="L593">			{</span>
+				public void run()
+				{
+<span class="nc" id="L596">					fr.moveToFront();</span>
+<span class="nc" id="L597">					fr.setVisible(true);</span>
+					try
+					{
+<span class="nc" id="L600">						fr.setSelected(true);</span>
+					}
+<span class="nc" id="L602">					catch (PropertyVetoException ex)</span>
+					{
+                        // i18n[WindowManager.error.bringtofront=Error bringing internal frame to the front]
+<span class="nc" id="L605">						s_log.error(s_stringMgr.getString(&quot;WindowManager.error.bringtofront&quot;), ex);</span>
+<span class="nc" id="L606">					}</span>
+<span class="nc" id="L607">				}</span>
+			});
+		}
+<span class="nc" id="L610">	}</span>
+
+	public void activateNextSessionWindow()
+	{
+<span class="nc" id="L614">		final SessionManager sessMgr = _app.getSessionManager();</span>
+<span class="nc" id="L615">		final ISession sess = sessMgr.getActiveSession();</span>
+
+<span class="nc bnc" id="L617" title="All 2 branches missed.">		if (sess == null)</span>
+		{
+<span class="nc" id="L619">         return;</span>
+		}
+
+<span class="nc" id="L622">      ISessionWidget activeSessionWindow = sess.getActiveSessionWindow();</span>
+
+<span class="nc bnc" id="L624" title="All 2 branches missed.">      if(null == activeSessionWindow)</span>
+      {
+<span class="nc" id="L626">         throw new IllegalStateException(&quot;Active Session with no active window ???&quot;);</span>
+      }
+
+
+<span class="nc" id="L630">      ISessionWidget nextSessionWindow = _sessionWindows.getNextSessionWindow(activeSessionWindow);</span>
+
+<span class="nc bnc" id="L632" title="All 2 branches missed.">		if (false == activeSessionWindow.equals(nextSessionWindow))</span>
+		{
+<span class="nc" id="L634">			new SelectWidgetCommand(nextSessionWindow).execute();</span>
+		}
+<span class="nc" id="L636">	}</span>
+
+	public void activatePreviousSessionWindow()
+	{
+<span class="nc" id="L640">      final SessionManager sessMgr = _app.getSessionManager();</span>
+<span class="nc" id="L641">      final ISession sess = sessMgr.getActiveSession();</span>
+
+<span class="nc bnc" id="L643" title="All 2 branches missed.">      if (sess == null)</span>
+      {
+<span class="nc" id="L645">         return;</span>
+      }
+
+<span class="nc" id="L648">      ISessionWidget activeSessionWindow = sess.getActiveSessionWindow();</span>
+
+<span class="nc bnc" id="L650" title="All 2 branches missed.">      if(null == activeSessionWindow)</span>
+      {
+<span class="nc" id="L652">         throw new IllegalStateException(&quot;Active Session with no active window ???&quot;);</span>
+      }
+
+<span class="nc" id="L655">      ISessionWidget previousSessionWindow = _sessionWindows.getPreviousSessionWindow(activeSessionWindow);</span>
+
+<span class="nc bnc" id="L657" title="All 2 branches missed.">      if (false == activeSessionWindow.equals(previousSessionWindow))</span>
+      {
+<span class="nc" id="L659">         new SelectWidgetCommand(previousSessionWindow).execute();</span>
+      }
+<span class="nc" id="L661">	}</span>
+
+	protected void refireSessionSheetOpened(WidgetEvent evt)
+	{
+		// Guaranteed to return a non-null array
+<span class="nc" id="L666">		Object[] listeners = _listenerList.getListenerList();</span>
+		// Process the listeners last to first, notifying
+		// those that are interested in this event
+<span class="nc bnc" id="L669" title="All 2 branches missed.">		for (int i = listeners.length - 2; i &gt;= 0; i -= 2)</span>
+		{
+<span class="nc bnc" id="L671" title="All 2 branches missed.">			if (listeners[i] == WidgetListener.class)</span>
+			{
+<span class="nc" id="L673">				((WidgetListener)listeners[i + 1]).widgetOpened(evt);</span>
+			}
+		}
+<span class="nc" id="L676">	}</span>
+
+	protected void refireSessionSheetClosing(WidgetEvent evt)
+	{
+		// Guaranteed to return a non-null array
+<span class="nc" id="L681">		Object[] listeners = _listenerList.getListenerList();</span>
+		// Process the listeners last to first, notifying
+		// those that are interested in this event
+<span class="nc bnc" id="L684" title="All 2 branches missed.">      for (int i = listeners.length - 2; i &gt;= 0; i -= 2)</span>
+      {
+<span class="nc bnc" id="L686" title="All 2 branches missed.">         if (listeners[i] == WidgetListener.class)</span>
+         {
+<span class="nc" id="L688">            ((WidgetListener)listeners[i + 1]).widgetClosing(evt);</span>
+         }
+      }
+<span class="nc" id="L691">	}</span>
+
+	protected void refireSessionSheetClosed(WidgetEvent evt)
+	{
+		// Guaranteed to return a non-null array
+<span class="nc" id="L696">		Object[] listeners = _listenerList.getListenerList();</span>
+		// Process the listeners last to first, notifying
+		// those that are interested in this event
+<span class="nc bnc" id="L699" title="All 2 branches missed.">      for (int i = listeners.length - 2; i &gt;= 0; i -= 2)</span>
+      {
+<span class="nc bnc" id="L701" title="All 2 branches missed.">         if (listeners[i] == WidgetListener.class)</span>
+         {
+<span class="nc" id="L703">            ((WidgetListener)listeners[i + 1]).widgetClosed(evt);</span>
+         }
+      }
+<span class="nc" id="L706">	}</span>
+
+	protected void refireSessionSheetIconified(WidgetEvent evt)
+	{
+		// Guaranteed to return a non-null array
+<span class="nc" id="L711">		Object[] listeners = _listenerList.getListenerList();</span>
+		// Process the listeners last to first, notifying
+		// those that are interested in this event
+<span class="nc bnc" id="L714" title="All 2 branches missed.">		for (int i = listeners.length - 2; i &gt;= 0; i -= 2)</span>
+		{
+<span class="nc bnc" id="L716" title="All 2 branches missed.">			if (listeners[i] == WidgetListener.class)</span>
+			{
+<span class="nc" id="L718">				((WidgetListener)listeners[i + 1]).widgetIconified(evt);</span>
+			}
+		}
+<span class="nc" id="L721">	}</span>
+
+	protected void refireSessionSheetDeiconified(WidgetEvent evt)
+	{
+		// Guaranteed to return a non-null array
+<span class="nc" id="L726">		Object[] listeners = _listenerList.getListenerList();</span>
+		// Process the listeners last to first, notifying
+		// those that are interested in this event
+<span class="nc bnc" id="L729" title="All 2 branches missed.">		for (int i = listeners.length - 2; i &gt;= 0; i -= 2)</span>
+		{
+<span class="nc bnc" id="L731" title="All 2 branches missed.">			if (listeners[i] == WidgetListener.class)</span>
+			{
+<span class="nc" id="L733">				((WidgetListener)listeners[i + 1]).widgetDeiconified(evt);</span>
+			}
+		}
+<span class="nc" id="L736">	}</span>
+
+	protected void refireSessionSheetActivated(WidgetEvent evt)
+	{
+		// Guaranteed to return a non-null array
+<span class="nc" id="L741">		Object[] listeners = _listenerList.getListenerList();</span>
+		// Process the listeners last to first, notifying
+		// those that are interested in this event
+<span class="nc bnc" id="L744" title="All 2 branches missed.">		for (int i = listeners.length - 2; i &gt;= 0; i -= 2)</span>
+		{
+<span class="nc bnc" id="L746" title="All 2 branches missed.">			if (listeners[i] == WidgetListener.class)</span>
+			{
+<span class="nc" id="L748">				((WidgetListener)listeners[i + 1]).widgetActivated(evt);</span>
+			}
+		}
+<span class="nc" id="L751">	}</span>
+
+	protected void refireSessionSheetDeactivated(WidgetEvent evt)
+	{
+		// Guaranteed to return a non-null array
+<span class="nc" id="L756">		Object[] listeners = _listenerList.getListenerList();</span>
+		// Process the listeners last to first, notifying
+		// those that are interested in this event
+<span class="nc bnc" id="L759" title="All 2 branches missed.">		for (int i = listeners.length - 2; i &gt;= 0; i -= 2)</span>
+		{
+<span class="nc bnc" id="L761" title="All 2 branches missed.">			if (listeners[i] == WidgetListener.class)</span>
+			{
+<span class="nc" id="L763">				((WidgetListener)listeners[i + 1]).widgetDeactivated(evt);</span>
+			}
+		}
+<span class="nc" id="L766">	}</span>
+
+	private SessionPropertiesSheet getSessionPropertiesDialog(ISession session)
+	{
+
+<span class="nc" id="L771">      ISessionWidget[] framesOfSession = _sessionWindows.getFramesOfSession(session.getIdentifier());</span>
+
+<span class="nc bnc" id="L773" title="All 2 branches missed.">      for (int i = 0; i &lt; framesOfSession.length; i++)</span>
+      {
+<span class="nc bnc" id="L775" title="All 2 branches missed.">         if (framesOfSession[i] instanceof SessionPropertiesSheet)</span>
+         {
+<span class="nc" id="L777">            return (SessionPropertiesSheet)framesOfSession[i];</span>
+         }
+      }
+<span class="nc" id="L780">		return null;</span>
+	}
+
+	private SQLFilterSheet getSQLFilterSheet(IObjectTreeAPI tree,
+												IDatabaseObjectInfo objectInfo)
+	{
+<span class="nc" id="L786">		final ISession session = tree.getSession();</span>
+
+<span class="nc" id="L788">      ISessionWidget[] framesOfSession = _sessionWindows.getFramesOfSession(session.getIdentifier());</span>
+
+<span class="nc bnc" id="L790" title="All 2 branches missed.">      for (int i = 0; i &lt; framesOfSession.length; i++)</span>
+      {
+<span class="nc bnc" id="L792" title="All 2 branches missed.">         if (framesOfSession[i] instanceof SQLFilterSheet)</span>
+         {
+<span class="nc" id="L794">            final SQLFilterSheet sfs = (SQLFilterSheet)framesOfSession[i];</span>
+<span class="nc bnc" id="L795" title="All 2 branches missed.">            if (sfs.getObjectTree() == tree &amp;&amp;</span>
+<span class="nc bnc" id="L796" title="All 2 branches missed.">                  objectInfo.equals(sfs.getDatabaseObjectInfo()))</span>
+            {
+<span class="nc" id="L798">               return sfs;</span>
+            }
+         }
+      }
+
+<span class="nc" id="L803">		return null;</span>
+	}
+
+	private EditWhereColsSheet getEditWhereColsSheet(ISession session,
+											IDatabaseObjectInfo objectInfo)
+	{
+//		final Map map = getAllEditWhereColsSheets(tree);
+//		return (EditWhereColsSheet)map.get(objectInfo.getQualifiedName());
+
+<span class="nc" id="L812">      ISessionWidget[] framesOfSession = _sessionWindows.getFramesOfSession(session.getIdentifier());</span>
+
+<span class="nc bnc" id="L814" title="All 2 branches missed.">      for (int i = 0; i &lt; framesOfSession.length; i++)</span>
+      {
+<span class="nc bnc" id="L816" title="All 2 branches missed.">         if (framesOfSession[i] instanceof EditWhereColsSheet)</span>
+         {
+<span class="nc" id="L818">            final EditWhereColsSheet sfs = (EditWhereColsSheet)framesOfSession[i];</span>
+//					if (sfs.getObjectTree() == tree &amp;&amp;
+//							objectInfo.equals(sfs.getDatabaseObjectInfo()))
+<span class="nc bnc" id="L821" title="All 2 branches missed.">            if (objectInfo.equals(sfs.getDatabaseObjectInfo()))</span>
+            {
+<span class="nc" id="L823">               return sfs;</span>
+            }
+         }
+      }
+<span class="nc" id="L827">		return null;</span>
+	}
+
+
+	private void positionSheet(SessionDialogWidget sfs)
+	{
+<span class="nc" id="L833">		DialogWidget.centerWithinDesktop(sfs);</span>
+<span class="nc" id="L834">		sfs.moveToFront();</span>
+<span class="nc" id="L835">	}</span>
+
+	private void selectFrontWindow()
+	{
+<span class="nc bnc" id="L839" title="All 2 branches missed.">      if(false == _app.getDesktopStyle().isInternalFrameStyle())</span>
+      {
+         // This is a funny functionality anyway and
+         // leads to problems with the DockTabStyle.
+         // E.g. when SessionProperties is closed first tab gets selected.
+<span class="nc" id="L844">         return;</span>
+      }
+
+
+<span class="nc" id="L848">		final IDesktopContainer desktop = _app.getMainFrame().getDesktopContainer();</span>
+<span class="nc bnc" id="L849" title="All 2 branches missed.">		if (desktop != null)</span>
+		{
+<span class="nc" id="L851">			final IWidget[] jifs = desktop.getAllWidgets();</span>
+<span class="nc bnc" id="L852" title="All 4 branches missed.">			if (jifs != null &amp;&amp; jifs.length &gt; 0)</span>
+			{
+<span class="nc" id="L854">				jifs[0].moveToFront();</span>
+			}
+		}
+<span class="nc" id="L857">	}</span>
+
+	private void initialize()
+	{
+<span class="nc" id="L861">		createAliasesListUI();</span>
+<span class="nc" id="L862">		createDriversListUI();</span>
+<span class="nc" id="L863">		preLoadActions();</span>
+<span class="nc" id="L864">		_app.getSessionManager().addSessionListener(_sessionListener);</span>
+<span class="nc" id="L865">		createMainFrame();</span>
+<span class="nc" id="L866">		setupFromPreferences();</span>
+<span class="nc" id="L867">	}</span>
+
+	private void createMainFrame()
+	{
+<span class="nc" id="L871">		_mainFrame = new MainFrame(_app);</span>
+<span class="nc" id="L872">      GUIUtils.setMainFrame(_mainFrame);</span>
+<span class="nc" id="L873">   }</span>
+
+	private void createAliasesListUI()
+	{
+<span class="nc" id="L877">		final IToogleableAliasesList al = new AliasesList(_app);</span>
+
+<span class="nc" id="L879">		final ActionCollection actions = _app.getActionCollection();</span>
+<span class="nc" id="L880">		actions.add(new ModifyAliasAction(_app, al));</span>
+<span class="nc" id="L881">		actions.add(new DeleteAliasAction(_app, al));</span>
+<span class="nc" id="L882">		actions.add(new CopyAliasAction(_app, al));</span>
+<span class="nc" id="L883">		actions.add(new ConnectToAliasAction(_app, al));</span>
+<span class="nc" id="L884">		actions.add(new CreateAliasAction(_app));</span>
+<span class="nc" id="L885">		actions.add(new SortAliasesAction(_app, al));</span>
+<span class="nc" id="L886">		actions.add(new AliasPropertiesAction(_app, al));</span>
+<span class="nc" id="L887">		actions.add(new ToggleTreeViewAction(_app, al));</span>
+<span class="nc" id="L888">		actions.add(new NewAliasFolderAction(_app, al));</span>
+<span class="nc" id="L889">      actions.add(new CopyToPasteAliasFolderAction(_app, al));</span>
+<span class="nc" id="L890">		actions.add(new CutAliasFolderAction(_app, al));</span>
+<span class="nc" id="L891">		actions.add(new PasteAliasFolderAction(_app, al));</span>
+<span class="nc" id="L892">		actions.add(new CollapseAllAliasFolderAction(_app, al));</span>
+<span class="nc" id="L893">		actions.add(new ExpandAllAliasFolderAction(_app, al));</span>
+
+<span class="nc" id="L895">      _aliasesListWindow = new AliasesListInternalFrame(_app, al);</span>
+
+<span class="nc" id="L897">   }</span>
+
+	private void createDriversListUI()
+	{
+<span class="nc" id="L901">		final DriversList dl = new DriversList(_app);</span>
+
+<span class="nc" id="L903">		final ActionCollection actions = _app.getActionCollection();</span>
+<span class="nc" id="L904">		actions.add(new ModifyDriverAction(_app, dl));</span>
+<span class="nc" id="L905">		actions.add(new DeleteDriverAction(_app, dl));</span>
+<span class="nc" id="L906">		actions.add(new CopyDriverAction(_app, dl));</span>
+<span class="nc" id="L907">		actions.add(new CreateDriverAction(_app));</span>
+<span class="nc" id="L908">        actions.add(new ShowDriverWebsiteAction(_app, dl));</span>
+
+<span class="nc" id="L910">		_driversListWindow = new DriversListInternalFrame(_app, dl);</span>
+<span class="nc" id="L911">	}</span>
+
+	private void preLoadActions()
+	{
+<span class="nc" id="L915">		final ActionCollection actions = _app.getActionCollection();</span>
+<span class="nc bnc" id="L916" title="All 2 branches missed.">		if (actions == null)</span>
+		{
+<span class="nc" id="L918">			throw new IllegalStateException(&quot;ActionCollection hasn't been created.&quot;);</span>
+		}
+
+<span class="nc" id="L921">		actions.add(new ViewAliasesAction(_app, getAliasesListInternalFrame()));</span>
+<span class="nc" id="L922">		actions.add(new ViewDriversAction(_app, getDriversListInternalFrame()));</span>
+
+//		IAliasesList al = getAliasesListInternalFrame().getAliasesList();
+<span class="nc" id="L925">	}</span>
+
+	private void setupFromPreferences()
+	{
+<span class="nc" id="L929">		final SquirrelPreferences prefs = _app.getSquirrelPreferences();</span>
+<span class="nc" id="L930">		final MainFrameWindowState ws = prefs.getMainFrameWindowState();</span>
+
+<span class="nc" id="L932">      prepareAliasWindow(ws);</span>
+<span class="nc" id="L933">      prepareDriversWindow(ws);</span>
+<span class="nc" id="L934">		prefs.setMainFrameWindowState(new MainFrameWindowState(this));</span>
+<span class="nc" id="L935">	}</span>
+
+   private void prepareDriversWindow(MainFrameWindowState ws)
+   {
+<span class="nc" id="L939">      _mainFrame.addWidget(_driversListWindow);</span>
+<span class="nc" id="L940">      WindowState toolWs = ws.getDriversWindowState();</span>
+<span class="nc" id="L941">      _driversListWindow.setBounds(toolWs.getBounds().createRectangle());</span>
+
+<span class="nc bnc" id="L943" title="All 4 branches missed.">      if (toolWs.isVisible() &amp;&amp; _app.getDesktopStyle().isInternalFrameStyle())</span>
+      {
+<span class="nc" id="L945">         _driversListWindow.setVisible(true);</span>
+
+         // Has to be done directly on the main frame because of racing condition at start up.
+<span class="nc" id="L948">         _mainFrame.setEnabledDriversMenu(true);</span>
+         //_driversListWindow.nowVisible(true);
+
+         try
+         {
+<span class="nc" id="L953">            _driversListWindow.setSelected(true);</span>
+         }
+<span class="nc" id="L955">         catch (PropertyVetoException ex)</span>
+         {
+            // i18n[WindowManager.errorselectingwindow=Error selecting window]
+<span class="nc" id="L958">            s_log.error(s_stringMgr.getString(&quot;WindowManager.errorselectingwindow&quot;), ex);</span>
+<span class="nc" id="L959">         }</span>
+      }
+      else
+      {
+<span class="nc" id="L963">         _driversListWindow.setVisible(false);</span>
+
+         // Has to be done directly on the main frame because of racing condition at start up.
+<span class="nc" id="L966">         _mainFrame.setEnabledDriversMenu(false);</span>
+         //_driversListWindow.nowVisible(false);
+      }
+<span class="nc" id="L969">   }</span>
+
+   private void prepareAliasWindow(MainFrameWindowState ws)
+   {
+      WindowState toolWs;
+<span class="nc" id="L974">      _mainFrame.addWidget(_aliasesListWindow);</span>
+<span class="nc" id="L975">      toolWs = ws.getAliasesWindowState();</span>
+<span class="nc" id="L976">      _aliasesListWindow.setBounds(toolWs.getBounds().createRectangle());</span>
+<span class="nc" id="L977">      if (</span>
+<span class="nc bnc" id="L978" title="All 4 branches missed.">              (toolWs.isVisible() &amp;&amp; _app.getDesktopStyle().isInternalFrameStyle())</span>
+<span class="nc bnc" id="L979" title="All 4 branches missed.">           || (false == _app.getDesktopStyle().isInternalFrameStyle() &amp;&amp; false == _aliasesListWindow.isEmpty())</span>
+         )
+      {
+<span class="nc" id="L982">         _aliasesListWindow.setVisible(true);</span>
+
+         // Has to be done directly on the main frame because of racing condition at start up.
+         //_aliasesListWindow.nowVisible(true);
+<span class="nc" id="L986">         _mainFrame.setEnabledAliasesMenu(true);</span>
+
+         try
+         {
+<span class="nc" id="L990">            _aliasesListWindow.setSelected(true);</span>
+         }
+<span class="nc" id="L992">         catch (PropertyVetoException ex)</span>
+         {
+            // i18n[WindowManager.errorselectingwindow=Error selecting window]
+<span class="nc" id="L995">            s_log.error(s_stringMgr.getString(&quot;WindowManager.errorselectingwindow&quot;), ex);</span>
+<span class="nc" id="L996">         }</span>
+      }
+<span class="nc bnc" id="L998" title="All 2 branches missed.">      else if(false == _app.getDesktopStyle().isInternalFrameStyle())</span>
+      {
+<span class="nc" id="L1000">         _aliasesListWindow.setVisible(false);</span>
+
+         // Has to be done directly on the main frame because of racing condition at start up.
+         //_aliasesListWindow.nowVisible(false);
+<span class="nc" id="L1004">         _mainFrame.setEnabledAliasesMenu(false);</span>
+      }
+<span class="nc" id="L1006">   }</span>
+
+   /**
+	 * Retrieve an internal frame for the passed session. Can be &lt;TT&gt;null&lt;/TT&gt;
+	 *
+	 * @return	an internal frame for the passed session. Can be &lt;TT&gt;null&lt;/TT&gt;.
+	 *
+	 * @throws	IllegalArgumentException
+	 *			Thrown if ISession is passed as null.
+	 */
+	private IWidget getWidgetForSession(ISession session)
+	{
+<span class="nc bnc" id="L1018" title="All 2 branches missed.">		if (session == null)</span>
+		{
+<span class="nc" id="L1020">			throw new IllegalArgumentException(&quot;ISession == null&quot;);</span>
+		}
+
+<span class="nc" id="L1023">		IWidget firstWindow = null;</span>
+
+<span class="nc" id="L1025">      ISessionWidget[] framesOfSession = _sessionWindows.getFramesOfSession(session.getIdentifier());</span>
+<span class="nc bnc" id="L1026" title="All 2 branches missed.">      for (int i = 0; i &lt; framesOfSession.length; i++)</span>
+      {
+<span class="nc bnc" id="L1028" title="All 2 branches missed.">         if (framesOfSession[i] instanceof ISessionWidget)</span>
+         {
+<span class="nc" id="L1030">            firstWindow = framesOfSession[i];</span>
+         }
+<span class="nc bnc" id="L1032" title="All 2 branches missed.">         if (framesOfSession[i] instanceof SessionInternalFrame)</span>
+         {
+<span class="nc" id="L1034">            final SessionInternalFrame sif = (SessionInternalFrame)framesOfSession[i];</span>
+<span class="nc bnc" id="L1035" title="All 2 branches missed.">            if (sif.getSession().equals(session))</span>
+            {
+<span class="nc" id="L1037">               return sif;</span>
+            }
+         }
+      }
+<span class="nc" id="L1041">		return firstWindow;</span>
+	}
+
+   public ISessionWidget[] getAllFramesOfSession(IIdentifier sessionIdentifier)
+   {
+<span class="nc" id="L1046">      return _sessionWindows.getFramesOfSession(sessionIdentifier);</span>
+   }
+
+   public void disableSessionMenu()
+   {
+<span class="nc" id="L1051">      getMainFrame().getSessionMenu().setEnabled(false);</span>
+<span class="nc" id="L1052">   }</span>
+
+
+<span class="nc" id="L1055">   private final class SessionWindowListener implements WidgetListener</span>
+	{
+		public void widgetOpened(WidgetEvent evt)
+		{
+<span class="nc" id="L1059">			final IWidget widget = evt.getWidget();</span>
+
+			// JASON: Make menu smarter. When second window for the same
+			// session is added create a hierarchical menu for all windows
+			// for the session.
+
+			// Add an item to the Windows menu for this window and
+			// store the menu item back in the internal frame.
+<span class="nc" id="L1067">			final JMenu menu = getMainFrame().getWindowsMenu();</span>
+
+<span class="nc" id="L1069">			final Action action = new SelectWidgetAction(widget);</span>
+
+<span class="nc" id="L1071">         final JMenuItem menuItem = menu.add(action);</span>
+<span class="nc" id="L1072">			widget.putClientProperty(MENU, menuItem);</span>
+
+			// Enable/Disable actions that require open session frames.
+<span class="nc" id="L1075">			IWidget[] frames = WidgetUtils.getOpenNonToolWindows(getMainFrame().getDesktopContainer().getAllWidgets());</span>
+<span class="nc" id="L1076">			_app.getActionCollection().internalFrameOpenedOrClosed(frames.length);</span>
+
+<span class="nc" id="L1078">			refireSessionSheetOpened(evt);</span>
+<span class="nc" id="L1079">		}</span>
+
+		public void widgetClosing(WidgetEvent evt)
+		{
+<span class="nc" id="L1083">			refireSessionSheetClosing(evt);</span>
+<span class="nc" id="L1084">		}</span>
+
+		public void widgetClosed(WidgetEvent evt)
+		{
+<span class="nc" id="L1088">			final IWidget widget = evt.getWidget();</span>
+
+			// Only remove the frame if the entire session is not closing
+<span class="nc bnc" id="L1091" title="All 2 branches missed.">			if (!_sessionClosing)</span>
+			{
+				// Find the internal Frame in the list of internal frames
+				// and remove it.
+<span class="nc bnc" id="L1095" title="All 2 branches missed.">				if (widget instanceof ISessionWidget)</span>
+				{
+<span class="nc" id="L1097">					final ISessionWidget sessionWidget = (ISessionWidget)widget;</span>
+<span class="nc" id="L1098">					final IIdentifier sessionID = sessionWidget.getSession().getIdentifier();</span>
+<span class="nc" id="L1099">               ISessionWidget[] sessionSheets = _sessionWindows.getFramesOfSession(sessionID);</span>
+
+<span class="nc bnc" id="L1101" title="All 2 branches missed.">               for (int i = 0; i &lt; sessionSheets.length; i++)</span>
+               {
+<span class="nc bnc" id="L1103" title="All 2 branches missed.">                  if (sessionSheets[i] == sessionWidget)</span>
+                  {
+<span class="nc" id="L1105">                     _sessionWindows.removeWindow(sessionSheets[i]);</span>
+<span class="nc" id="L1106">                     WindowManager.this.selectFrontWindow();</span>
+<span class="nc" id="L1107">                     break;</span>
+                  }
+               }
+				}
+			}
+
+			// Remove menu item from Windows menu that relates to this
+			// internal frame.
+<span class="nc" id="L1115">			final JMenuItem menuItem = (JMenuItem)widget.getClientProperty(MENU);</span>
+<span class="nc bnc" id="L1116" title="All 2 branches missed.">			if (menuItem != null)</span>
+			{
+<span class="nc" id="L1118">				final JMenu menu = getMainFrame().getWindowsMenu();</span>
+<span class="nc bnc" id="L1119" title="All 2 branches missed.">				if (menu != null)</span>
+				{
+<span class="nc" id="L1121">					menu.remove(menuItem);</span>
+				}
+			}
+
+			// Enable/Disable actions that require open session frames.
+<span class="nc" id="L1126">			IWidget[] frames = WidgetUtils.getOpenNonToolWindows(getMainFrame().getDesktopContainer().getAllWidgets());</span>
+
+<span class="nc" id="L1128">			_app.getActionCollection().internalFrameOpenedOrClosed(frames.length);</span>
+
+<span class="nc" id="L1130">			refireSessionSheetClosed(evt);</span>
+<span class="nc" id="L1131">		}</span>
+
+		public void widgetIconified(WidgetEvent e)
+		{
+<span class="nc" id="L1135">			refireSessionSheetIconified(e);</span>
+<span class="nc" id="L1136">		}</span>
+
+		public void widgetDeiconified(WidgetEvent e)
+		{
+<span class="nc" id="L1140">			refireSessionSheetDeiconified(e);</span>
+<span class="nc" id="L1141">		}</span>
+
+		public void widgetActivated(WidgetEvent e)
+		{
+<span class="nc" id="L1145">			refireSessionSheetActivated(e);</span>
+<span class="nc" id="L1146">		}</span>
+
+		public void widgetDeactivated(WidgetEvent e)
+		{
+<span class="nc" id="L1150">			refireSessionSheetDeactivated(e);</span>
+<span class="nc" id="L1151">		}</span>
+	}
+
+	/**
+	 * Used to update the UI depending on various session events.
+	 */
+<span class="nc" id="L1157">	private final class SessionListener extends SessionAdapter</span>
+	{
+		/**
+		 * Session has been connected to a database.
+		 */
+		public void sessionConnected(SessionEvent evt)
+		{
+			// Add the message handler to the session
+<span class="nc" id="L1165">			evt.getSession().setMessageHandler(_app.getMessageHandler());</span>
+<span class="nc" id="L1166">		}</span>
+
+		/**
+		 * A session has been activated.
+		 */
+		public void sessionActivated(SessionEvent evt)
+		{
+<span class="nc" id="L1173">			final ISession newSession = evt.getSession();</span>
+
+			// Allocate the current session to the actions.
+<span class="nc" id="L1176">			_app.getActionCollection().setCurrentSession(newSession);</span>
+
+			// If the active window isn't for the currently selected session
+			// then select the main window for the session.
+<span class="nc" id="L1180">			ISession currSession = null;</span>
+<span class="nc" id="L1181">			IWidget sif = getMainFrame().getDesktopContainer().getSelectedWidget();</span>
+<span class="nc bnc" id="L1182" title="All 2 branches missed.">			if (sif instanceof ISessionWidget)</span>
+			{
+<span class="nc" id="L1184">				currSession = ((ISessionWidget)sif).getSession();</span>
+			}
+<span class="nc bnc" id="L1186" title="All 2 branches missed.">			if (currSession != newSession)</span>
+			{
+<span class="nc" id="L1188">				sif = getWidgetForSession(newSession);</span>
+<span class="nc bnc" id="L1189" title="All 2 branches missed.">				if (sif != null)</span>
+				{
+<span class="nc" id="L1191">					sif.moveToFront();</span>
+				}
+			}
+
+			// Make sure that the session menu is enabled.
+<span class="nc" id="L1196">			GUIUtils.processOnSwingEventThread(new Runnable()</span>
+<span class="nc" id="L1197">			{</span>
+				public void run()
+				{
+<span class="nc" id="L1200">					getMainFrame().getSessionMenu().setEnabled(true);</span>
+<span class="nc" id="L1201">				}</span>
+			});
+<span class="nc" id="L1203">		}</span>
+
+		/**
+		 * A session is being closed.
+		 *
+		 * @param	evt		Current event.
+		 */
+		public void sessionClosing(SessionEvent evt)
+		{
+<span class="nc" id="L1212">			getMainFrame().getSessionMenu().setEnabled(false);</span>
+
+			// Clear session info from all actions.
+<span class="nc" id="L1215">			_app.getActionCollection().setCurrentSession(null);</span>
+
+			try
+			{
+<span class="nc bnc" id="L1219" title="All 2 branches missed.">				if(_sessionClosing)</span>
+				{
+<span class="nc" id="L1221">					return;</span>
+				}
+
+<span class="nc" id="L1224">				_sessionClosing = true;</span>
+<span class="nc" id="L1225">				IIdentifier sessionId = evt.getSession().getIdentifier();</span>
+
+<span class="nc" id="L1227">				ISessionWidget[] framesOfSession = _sessionWindows.getFramesOfSession(sessionId);</span>
+<span class="nc bnc" id="L1228" title="All 2 branches missed.">				for (int i = 0; i &lt; framesOfSession.length; i++)</span>
+				{
+<span class="nc bnc" id="L1230" title="All 2 branches missed.">					if(framesOfSession[i] instanceof SessionTabWidget)</span>
+					{
+						// We are in the closing event of the Session main window.
+						// We don't want to send this event again therefore
+						// we pass withEvents = false.
+<span class="nc" id="L1235">						framesOfSession[i].closeFrame(false);</span>
+					}
+					else
+					{
+<span class="nc" id="L1239">						framesOfSession[i].closeFrame(true);</span>
+					}
+				}
+
+<span class="nc" id="L1243">				_sessionWindows.removeAllWindows(sessionId);</span>
+
+<span class="nc" id="L1245">				selectFrontWindow();</span>
+			}
+			finally
+			{
+<span class="nc" id="L1249">				_sessionClosing = false;</span>
+			}
+<span class="nc" id="L1251">		}</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

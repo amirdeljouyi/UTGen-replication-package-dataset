@@ -1,0 +1,260 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IndexedFastqFileDataStore.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.trace.fastq</a> &gt; <span class="el_source">IndexedFastqFileDataStore.java</span></div><h1>IndexedFastqFileDataStore.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+package org.jcvi.jillion.trace.fastq;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import org.jcvi.jillion.core.datastore.DataStoreClosedException;
+import org.jcvi.jillion.core.datastore.DataStoreException;
+import org.jcvi.jillion.core.datastore.DataStoreFilter;
+import org.jcvi.jillion.core.datastore.DataStoreFilters;
+import org.jcvi.jillion.core.util.iter.StreamingIterator;
+import org.jcvi.jillion.internal.core.datastore.DataStoreStreamingIterator;
+import org.jcvi.jillion.trace.fastq.FastqVisitor.FastqVisitorCallback.FastqVisitorMemento;
+
+/**
+ * {@code IndexedFastqFileDataStore} is an implementation of 
+ * {@link FastqDataStore} that only stores an index containing
+ * file offsets to the various {@link FastqRecord}s contained
+ * inside the fastq file.  This implementation provides random access
+ * to large files taking up much memory.  The downside is each fastq record
+ * must be seeked to and then re-parsed each time and the fastq file must exist and not
+ * get altered during the entire lifetime of this object.
+ * @author dkatzel
+ */
+<span class="nc" id="L47">final class IndexedFastqFileDataStore{</span>
+
+    /**
+	 * Creates a new {@link IndexedFastqFileDataStore}
+	 * instance using the given fastqFile which uses has its quality
+	 * values encoded in a manner that can be decoded by the given
+	 * {@link FastqQualityCodec}.
+	 * @param file the fastq file to create an {@link IndexedFastqFileDataStore}
+	 * for.
+	 * @param qualityCodec the {@link FastqQualityCodec} that should
+	 * be used to decode the encoded qualities of each record in the file.
+	 * @return a new instance of {@link FastqDataStore};
+	 * never null.
+	 * @throws IOException if the input fastq file does not exist or 
+	 * if there is a problem parsing the file.
+	 * @throws NullPointerException if the input fastq file or the {@link FastqQualityCodec} is null.
+	 */
+    public static FastqDataStore create(File file,FastqQualityCodec qualityCodec) throws IOException{
+<span class="nc" id="L65">    	return create(file, qualityCodec, DataStoreFilters.alwaysAccept());</span>
+    }
+    
+    /**
+   	 * Creates a new {@link IndexedFastqFileDataStore}
+   	 * instance using the given fastqFile which uses has its quality
+   	 * values encoded in a manner that can be decoded by the given
+   	 * {@link FastqQualityCodec} which only contains the records
+   	 * in the file that are accepted by the given filter.
+   	 * @param file the fastq file to create an {@link IndexedFastqFileDataStore}
+   	 * for.
+   	 * @param qualityCodec the {@link FastqQualityCodec} that should
+	 * be used to decode the encoded qualities of each record in the file.
+	 * @param filter a {@link DataStoreFilter} that will be used
+	 * to filter out some (possibly all or none) of the records from
+	 * the fastq file so they will not be included in the {@link FastqDataStore}.
+	 * Only records which cause {@link DataStoreFilter#accept(String)}
+	 * to return {@code true} will be added to this datastore.
+   	 * @return a new instance of {@link FastqDataStore};
+   	 * never null.
+   	 * @throws IOException if the input fastq file does not exist or 
+   	 * if there is a problem parsing the file.
+   	 * @throws NullPointerException if the input fastq file or the {@link FastqQualityCodec} is null.
+   	 */
+    public static FastqDataStore create(File file,FastqQualityCodec qualityCodec,DataStoreFilter filter) throws IOException{
+<span class="nc" id="L90">    	IndexedFastqFileDataStoreBuilderVisitor2 visitor = new IndexedFastqFileDataStoreBuilderVisitor2(file, qualityCodec, filter);</span>
+<span class="nc" id="L91">    	FastqFileParser parser = FastqFileParser.create(file);</span>
+<span class="nc" id="L92">    	parser.accept(visitor);</span>
+<span class="nc" id="L93">    	return visitor.build(parser);</span>
+    }
+
+    
+    
+    
+    
+    private static final class IndexedFastqFileDataStoreBuilderVisitor2 implements FastqVisitor{
+<span class="nc" id="L101">    	private final Map&lt;String, FastqVisitorMemento&gt; mementos = new LinkedHashMap&lt;String,FastqVisitorMemento&gt;();</span>
+    	private final FastqQualityCodec qualityCodec;
+    	 private final File file;
+    	 private final DataStoreFilter filter;
+    	 
+    	 
+		public IndexedFastqFileDataStoreBuilderVisitor2(File file,
+<span class="nc" id="L108">				FastqQualityCodec qualityCodec, DataStoreFilter filter) {</span>
+<span class="nc" id="L109">			this.file = file;</span>
+<span class="nc" id="L110">			this.qualityCodec = qualityCodec;</span>
+<span class="nc" id="L111">			this.filter = filter;</span>
+<span class="nc" id="L112">		}</span>
+		public FastqDataStore build(FastqFileParser parser) {
+<span class="nc" id="L114">			return new IndexedFastqFileDataStore2(file, qualityCodec, parser, filter, mementos);</span>
+		}
+		@Override
+		public FastqRecordVisitor visitDefline(FastqVisitorCallback callback,
+				String id, String optionalComment) {
+<span class="nc bnc" id="L119" title="All 2 branches missed.">			if(filter.accept(id)){</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">				if(!callback.canCreateMemento()){</span>
+<span class="nc" id="L121">					throw new IllegalStateException(&quot;can not create memento for &quot; + id);</span>
+				}
+<span class="nc" id="L123">				FastqVisitorMemento createMemento = callback.createMemento();</span>
+<span class="nc" id="L124">				mementos.put(id, createMemento);</span>
+			}
+			//always skip record bodies
+<span class="nc" id="L127">			return null;</span>
+		}
+		@Override
+		public void visitEnd() {
+			//no-op			
+<span class="nc" id="L132">		}</span>
+		@Override
+		public void halted(){
+			//no-op
+<span class="nc" id="L136">    	}</span>
+    }
+    
+    private static final class IndexedFastqFileDataStore2 implements FastqDataStore{
+    	private final Map&lt;String, FastqVisitorMemento&gt; mementos;
+    	private final FastqQualityCodec qualityCodec;
+    	 private final File file;
+    	 private final FastqFileParser parser;
+    	 private final DataStoreFilter filter;
+    	 private volatile boolean closed;
+    	 
+    	 
+    	public IndexedFastqFileDataStore2(File file,
+				FastqQualityCodec qualityCodec,
+				FastqFileParser parser,
+				DataStoreFilter filter,
+<span class="nc" id="L152">				Map&lt;String, FastqVisitorMemento&gt; mementos) {</span>
+<span class="nc" id="L153">			this.file = file;</span>
+<span class="nc" id="L154">			this.qualityCodec = qualityCodec;</span>
+<span class="nc" id="L155">			this.parser = parser;</span>
+<span class="nc" id="L156">			this.mementos = mementos;</span>
+<span class="nc" id="L157">			this.filter=filter;</span>
+<span class="nc" id="L158">		}</span>
+		@Override
+        public StreamingIterator&lt;String&gt; idIterator() throws DataStoreException {
+<span class="nc" id="L161">        	throwExceptionIfClosed();</span>
+<span class="nc" id="L162">            return DataStoreStreamingIterator.create(this,mementos.keySet().iterator());</span>
+        }
+        @Override
+        public FastqRecord get(String id) throws DataStoreException {
+<span class="nc" id="L166">        	throwExceptionIfClosed();</span>
+<span class="nc" id="L167">        	FastqVisitorMemento memento =mementos.get(id);</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">            if(memento ==null){</span>
+            	//not in datastore
+<span class="nc" id="L170">            	return null;</span>
+            }
+<span class="nc" id="L172">            SingleFastqRecordVistior visitor = new SingleFastqRecordVistior();</span>
+            try {
+<span class="nc" id="L174">				parser.accept(visitor, memento);</span>
+<span class="nc" id="L175">			} catch (IOException e) {</span>
+<span class="nc" id="L176">				 throw new DataStoreException(&quot;error reading fastq file&quot;,e);</span>
+<span class="nc" id="L177">			}</span>
+<span class="nc" id="L178">           return visitor.getRecord();            </span>
+        }
+        @Override
+        public boolean contains(String id) throws DataStoreException {
+<span class="nc" id="L182">        	throwExceptionIfClosed();</span>
+<span class="nc" id="L183">            return mementos.containsKey(id);</span>
+        }
+        @Override
+        public long getNumberOfRecords() throws DataStoreException {
+<span class="nc" id="L187">        	throwExceptionIfClosed();</span>
+<span class="nc" id="L188">            return mementos.size();</span>
+        }
+        @Override
+        public void close(){
+<span class="nc" id="L192">        	closed=true;</span>
+<span class="nc" id="L193">        	mementos.clear();</span>
+            
+<span class="nc" id="L195">        }</span>
+        
+        private void throwExceptionIfClosed(){
+<span class="nc bnc" id="L198" title="All 2 branches missed.">        	if(closed){</span>
+<span class="nc" id="L199">        		throw new DataStoreClosedException(&quot;datastore is closed&quot;);</span>
+        	}
+<span class="nc" id="L201">        }</span>
+        @Override
+        public StreamingIterator&lt;FastqRecord&gt; iterator() throws DataStoreException {
+<span class="nc" id="L204">        	throwExceptionIfClosed();</span>
+        	try {
+<span class="nc" id="L206">        		StreamingIterator&lt;FastqRecord&gt; iter = LargeFastqFileDataStore.create(file, filter, qualityCodec)</span>
+<span class="nc" id="L207">    					.iterator();</span>
+        		//iter has a different lifecylce than this datastore
+        		//so wrap it
+<span class="nc" id="L210">        		return DataStoreStreamingIterator.create(this,iter);</span>
+<span class="nc" id="L211">    		} catch (FileNotFoundException e) {</span>
+<span class="nc" id="L212">    			throw new IllegalStateException(&quot;fastq file no longer exists! : &quot;+ file.getAbsolutePath());</span>
+    		}
+           
+            
+        }
+        /**
+        * {@inheritDoc}
+        */
+        @Override
+        public boolean isClosed() {
+<span class="nc" id="L222">            return closed;</span>
+        }
+        
+<span class="nc" id="L225">        private class SingleFastqRecordVistior implements FastqVisitor{</span>
+        	private FastqRecord record;
+    		@Override
+    		public FastqRecordVisitor visitDefline(final FastqVisitorCallback callback,
+    				String id, String optionalComment) {
+    			//we assume the first record we get to
+    			//is the one we want.
+<span class="nc" id="L232">    			return new AbstractFastqRecordVisitor(id,optionalComment,qualityCodec) {</span>
+    				
+    				@Override
+    				protected void visitRecord(FastqRecord record) {
+<span class="nc" id="L236">    					setRecord(record);</span>
+<span class="nc" id="L237">    					callback.haltParsing();    					</span>
+<span class="nc" id="L238">    				}</span>
+    			};
+    		}
+
+    		@Override
+    		public void visitEnd() {
+    			//no-op			
+<span class="nc" id="L245">    		}</span>
+    		@Override
+    		public void halted(){
+    			//no-op
+<span class="nc" id="L249">    		}</span>
+			public final FastqRecord getRecord() {
+<span class="nc" id="L251">				return record;</span>
+			}
+
+			public final void setRecord(FastqRecord record) {
+<span class="nc" id="L255">				this.record = record;</span>
+<span class="nc" id="L256">			}        	</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

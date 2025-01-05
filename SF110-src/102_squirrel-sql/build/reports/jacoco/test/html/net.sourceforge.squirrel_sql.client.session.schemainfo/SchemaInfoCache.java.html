@@ -1,0 +1,677 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SchemaInfoCache.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.session.schemainfo</a> &gt; <span class="el_source">SchemaInfoCache.java</span></div><h1>SchemaInfoCache.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.session.schemainfo;
+
+import java.io.Serializable;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.Hashtable;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+
+import net.sourceforge.squirrel_sql.client.gui.db.SQLAliasSchemaProperties;
+import net.sourceforge.squirrel_sql.client.gui.db.SchemaLoadInfo;
+import net.sourceforge.squirrel_sql.client.gui.db.SchemaNameLoadInfo;
+import net.sourceforge.squirrel_sql.client.gui.db.SchemaTableTypeCombination;
+import net.sourceforge.squirrel_sql.client.session.ExtendedColumnInfo;
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.client.session.SessionManager;
+import net.sourceforge.squirrel_sql.fw.sql.*;
+import net.sourceforge.squirrel_sql.fw.util.Utilities;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+/**
+ * This class is Serializable and yet doesn't declare serialVersionUID.  This is done intentionally so that 
+ * the SchemaInfoCacheSerializer can detect incompatible class changes (by catching Exception when attempting
+ * to read the serialized file).  This was deemed to be a less error-prone way of handling changes to this
+ * class file's definition, then having to remember to consider whether or not serialVersionUID should be 
+ * incremented for any given change.  Therefore, it is very important to not introduce a serialVersionUID
+ * class member, as forgetting to update it might lead to undetected incompatible class changes that don't 
+ * manifest themselves during de-serialization, but occur later in the application when missing members are
+ * invoked (for example).  This more conservative approach can lead to the serialized file being removed upon
+ * installing a newer version of SQuirreL more often than necessary, but it seemed to us to be better than the 
+ * alternative.
+ */
+@SuppressWarnings(&quot;serial&quot;)
+<span class="nc" id="L41">public class SchemaInfoCache implements Serializable</span>
+{
+<span class="nc" id="L43">   private static final ILogger s_log =</span>
+<span class="nc" id="L44">       LoggerController.createLogger(SchemaInfoCache.class);</span>
+
+<span class="nc" id="L46">   private List&lt;String&gt; _catalogs = new ArrayList&lt;String&gt;();</span>
+<span class="nc" id="L47">   private List&lt;String&gt; _schemas = new ArrayList&lt;String&gt;();</span>
+
+<span class="nc" id="L49">   private TreeMap&lt;CaseInsensitiveString, String&gt; _keywords = </span>
+       new TreeMap&lt;CaseInsensitiveString, String&gt;();
+<span class="nc" id="L51">   private TreeMap&lt;CaseInsensitiveString, String&gt; _dataTypes = </span>
+       new TreeMap&lt;CaseInsensitiveString, String&gt;();
+<span class="nc" id="L53">   private Map&lt;CaseInsensitiveString, String&gt; _functions = </span>
+<span class="nc" id="L54">       Collections.synchronizedMap(new TreeMap&lt;CaseInsensitiveString, String&gt;());</span>
+
+   /////////////////////////////////////////////////////////////////////////////
+   // Schema dependent data.
+   // Are changed only in this class
+   //
+<span class="nc" id="L60">   private TreeMap&lt;CaseInsensitiveString, String&gt; _internalTableNameTreeMap =</span>
+       new TreeMap&lt;CaseInsensitiveString, String&gt;();
+   
+<span class="nc" id="L63">   private Map&lt;CaseInsensitiveString, String&gt; _tableNames = </span>
+<span class="nc" id="L64">       Collections.synchronizedMap(_internalTableNameTreeMap);</span>
+   
+
+   /** 
+    * This data structure can be accessed by multiple concurrent threads.  
+    * Traversal via iterators is fast and cannot encounter interference from 
+    * other threads otherwise ConcurrentModificationExceptions may 
+    * result (Bug #1752089)
+    * 
+    * One other thing: it must maintain the order in which items were inserted
+    * so that traversal yeilds insertion order (Bug 1805954).
+    */
+<span class="nc" id="L76">   private CopyOnWriteArrayList&lt;ITableInfo&gt; _iTableInfos =</span>
+       new CopyOnWriteArrayList&lt;ITableInfo&gt;();
+   
+<span class="nc" id="L79">   private Hashtable&lt;CaseInsensitiveString, List&lt;ITableInfo&gt;&gt; _tableInfosBySimpleName = </span>
+       new Hashtable&lt;CaseInsensitiveString, List&lt;ITableInfo&gt;&gt;();
+
+<span class="nc" id="L82">   private SchemaInfoColumnCache _schemaInfoColumnCache = new SchemaInfoColumnCache();</span>
+
+
+<span class="nc" id="L85">   private Map&lt;CaseInsensitiveString, String&gt; _procedureNames = </span>
+<span class="nc" id="L86">       Collections.synchronizedMap(new TreeMap&lt;CaseInsensitiveString, String&gt;());</span>
+   
+<span class="nc" id="L88">   private Map&lt;IProcedureInfo, IProcedureInfo&gt; _iProcedureInfos = </span>
+<span class="nc" id="L89">       Collections.synchronizedMap(new TreeMap&lt;IProcedureInfo, IProcedureInfo&gt;());</span>
+   
+<span class="nc" id="L91">   private Hashtable&lt;CaseInsensitiveString, List&lt;IProcedureInfo&gt;&gt; _procedureInfosBySimpleName = </span>
+       new Hashtable&lt;CaseInsensitiveString, List&lt;IProcedureInfo&gt;&gt;();
+   //
+   ///////////////////////////////////////////////////////////////////////////
+
+   private SQLAliasSchemaProperties _schemaPropsCacheIsBasedOn;
+
+   private transient String[] _viewTableTypesCacheable;
+   private transient String[] _tabelTableTypesCacheable;
+   //private transient String[] availableTypesInDataBase;
+
+<span class="nc" id="L102">   private transient ISession _session = null;</span>
+
+
+   void setSession(ISession session)
+   {
+<span class="nc" id="L107">      _session = session;</span>
+<span class="nc" id="L108">      initTypes();</span>
+<span class="nc" id="L109">   }</span>
+
+
+   boolean loadSchemaIndependentMetaData()
+   {
+<span class="nc" id="L114">      return _session.getAlias().getSchemaProperties().loadSchemaIndependentMetaData(_schemaPropsCacheIsBasedOn);</span>
+   }
+
+   private SchemaLoadInfo[] getAllSchemaLoadInfos()
+   {
+<span class="nc" id="L119">      SQLAliasSchemaProperties schemaProps =  </span>
+<span class="nc" id="L120">          _session.getAlias().getSchemaProperties();</span>
+<span class="nc" id="L121">      SchemaLoadInfo[] schemaLoadInfos = </span>
+<span class="nc" id="L122">          schemaProps.getSchemaLoadInfos(_schemaPropsCacheIsBasedOn, </span>
+                                         _tabelTableTypesCacheable, 
+                                         _viewTableTypesCacheable);
+<span class="nc" id="L125">      SessionManager sessionMgr = _session.getApplication().getSessionManager();</span>
+<span class="nc" id="L126">      boolean allSchemasAllowed = sessionMgr.areAllSchemasAllowed(_session);</span>
+      
+<span class="nc bnc" id="L128" title="All 6 branches missed.">      if(   1 == schemaLoadInfos.length</span>
+         &amp;&amp; null == schemaLoadInfos[0].schemaName
+         &amp;&amp; false == allSchemasAllowed)
+      {
+<span class="nc bnc" id="L132" title="All 2 branches missed.">         if(false == allSchemasAllowed)</span>
+         {
+<span class="nc" id="L134">            String[] allowedSchemas = sessionMgr.getAllowedSchemas(_session);</span>
+
+<span class="nc" id="L136">            ArrayList&lt;SchemaLoadInfo&gt; ret = new ArrayList&lt;SchemaLoadInfo&gt;();</span>
+
+<span class="nc bnc" id="L138" title="All 2 branches missed.">            for (int i = 0; i &lt; allowedSchemas.length; i++)</span>
+            {
+<span class="nc" id="L140">               SchemaLoadInfo buf = (SchemaLoadInfo) Utilities.cloneObject(</span>
+<span class="nc" id="L141">                     schemaLoadInfos[0], getClass().getClassLoader());</span>
+<span class="nc" id="L142">               buf.schemaName = allowedSchemas[i];</span>
+               
+<span class="nc" id="L144">               ret.add(buf);</span>
+            }
+<span class="nc" id="L146">            schemaLoadInfos = ret.toArray(new SchemaLoadInfo[ret.size()]);</span>
+         }
+      }
+<span class="nc" id="L149">      return schemaLoadInfos;</span>
+   }
+
+   SchemaLoadInfo[] getMatchingSchemaLoadInfos(String schemaName)
+   {
+<span class="nc" id="L154">      return getMatchingSchemaLoadInfos(schemaName, null);</span>
+   }
+
+   SchemaLoadInfo[] getMatchingSchemaLoadInfos(String schemaName, String[] tableTypes)
+   {
+<span class="nc bnc" id="L159" title="All 2 branches missed.">      if(null == schemaName)</span>
+      {
+<span class="nc" id="L161">         return getAllSchemaLoadInfos();</span>
+      }
+
+<span class="nc" id="L164">      SchemaLoadInfo[] schemaLoadInfos = getAllSchemaLoadInfos();</span>
+<span class="nc bnc" id="L165" title="All 2 branches missed.">      for (int i = 0; i &lt; schemaLoadInfos.length; i++)</span>
+      {
+<span class="nc bnc" id="L167" title="All 4 branches missed.">         if(null == schemaLoadInfos[i].schemaName || schemaLoadInfos[i].schemaName.equals(schemaName))</span>
+         {
+            
+            // null == schemaLoadInfos[0].schemaName is the case when there are no _schemas specified
+            // schemaLoadInfos.length will then be 1.
+<span class="nc" id="L172">            schemaLoadInfos[i].schemaName = schemaName;</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">            if(null != tableTypes)</span>
+            {
+<span class="nc" id="L175">               SchemaLoadInfo buf = (SchemaLoadInfo) Utilities.cloneObject(</span>
+<span class="nc" id="L176">                     schemaLoadInfos[i], getClass().getClassLoader());</span>
+<span class="nc" id="L177">               buf.tableTypes = tableTypes;</span>
+<span class="nc" id="L178">               return new SchemaLoadInfo[]{buf};</span>
+            }
+
+<span class="nc" id="L181">            return new SchemaLoadInfo[]{schemaLoadInfos[i]};</span>
+         }
+      }
+<span class="nc" id="L184">      throw new IllegalArgumentException(&quot;Unknown Schema &quot; + schemaName);</span>
+   }
+
+   private void initTypes()
+   {
+<span class="nc" id="L189">      ArrayList&lt;String&gt; tableTypeCandidates = new ArrayList&lt;String&gt;();</span>
+<span class="nc" id="L190">      tableTypeCandidates.add(&quot;TABLE&quot;);</span>
+<span class="nc" id="L191">      tableTypeCandidates.add(&quot;SYSTEM TABLE&quot;);</span>
+
+<span class="nc" id="L193">      ArrayList&lt;String&gt; viewTypeCandidates = new ArrayList&lt;String&gt;();</span>
+<span class="nc" id="L194">      viewTypeCandidates.add(&quot;VIEW&quot;);</span>
+
+      try
+      {
+<span class="nc" id="L198">         ArrayList&lt;String&gt; availableBuf = new ArrayList&lt;String&gt;();</span>
+<span class="nc" id="L199">         String[] buf = _session.getSQLConnection().getSQLMetaData().getTableTypes();</span>
+<span class="nc" id="L200">         availableBuf.addAll(Arrays.asList(buf));</span>
+
+<span class="nc bnc" id="L202" title="All 2 branches missed.">         for(Iterator&lt;String&gt; i=tableTypeCandidates.iterator();i.hasNext();)</span>
+         {
+<span class="nc bnc" id="L204" title="All 2 branches missed.">            if(false == availableBuf.contains(i.next()))</span>
+            {
+<span class="nc" id="L206">               i.remove();</span>
+            }
+         }
+
+<span class="nc bnc" id="L210" title="All 2 branches missed.">         for(Iterator&lt;String&gt; i=viewTypeCandidates.iterator();i.hasNext();)</span>
+         {
+<span class="nc bnc" id="L212" title="All 2 branches missed.">            if(false == availableBuf.contains(i.next()))</span>
+            {
+<span class="nc" id="L214">               i.remove();</span>
+            }
+         }
+      }
+<span class="nc" id="L218">      catch (SQLException e)</span>
+      {
+<span class="nc" id="L220">         s_log.error(&quot;Could not get table types&quot;, e);</span>
+<span class="nc" id="L221">      }</span>
+
+<span class="nc" id="L223">      _tabelTableTypesCacheable = tableTypeCandidates.toArray(new String[tableTypeCandidates.size()]);</span>
+<span class="nc" id="L224">      _viewTableTypesCacheable = viewTypeCandidates.toArray(new String[viewTypeCandidates.size()]);</span>
+<span class="nc" id="L225">   }</span>
+
+   public boolean isCachedTableType(String type)
+   {
+<span class="nc" id="L229">      boolean found = false;</span>
+
+<span class="nc bnc" id="L231" title="All 2 branches missed.">      for (int i = 0; i &lt; _viewTableTypesCacheable.length; i++)</span>
+      {
+<span class="nc bnc" id="L233" title="All 2 branches missed.">         if(_viewTableTypesCacheable[i].equals(type))</span>
+         {
+<span class="nc" id="L235">            found = true;</span>
+<span class="nc" id="L236">            break;</span>
+         }
+      }
+
+<span class="nc bnc" id="L240" title="All 2 branches missed.">      for (int i = 0; i &lt; _tabelTableTypesCacheable.length; i++)</span>
+      {
+<span class="nc bnc" id="L242" title="All 2 branches missed.">         if(_tabelTableTypesCacheable[i].equals(type))</span>
+         {
+<span class="nc" id="L244">            found = true;</span>
+<span class="nc" id="L245">            break;</span>
+         }
+      }
+
+<span class="nc" id="L249">      return found;</span>
+   }
+
+   static boolean containsType(String[] types, String type)
+   {
+<span class="nc bnc" id="L254" title="All 2 branches missed.">      if(null == types)</span>
+      {
+<span class="nc" id="L256">         return true;</span>
+      }
+
+<span class="nc bnc" id="L259" title="All 2 branches missed.">      for (int i = 0; i &lt; types.length; i++)</span>
+      {
+<span class="nc bnc" id="L261" title="All 2 branches missed.">         if(type.trim().equalsIgnoreCase(types[i]))</span>
+         {
+<span class="nc" id="L263">            return true;</span>
+         }
+      }
+<span class="nc" id="L266">      return false;</span>
+   }
+
+   /**
+    * Adds the specified array of ITableInfos to the internal list(s), and sorts
+    * the combination.
+    *  
+    * @param infos the array of ITableInfos to add.
+    */
+   public void writeToTableCache(ITableInfo[] infos) {
+<span class="nc bnc" id="L276" title="All 2 branches missed.">      for (ITableInfo info : infos) {</span>
+<span class="nc" id="L277">         String tableName = info.getSimpleName();</span>
+<span class="nc" id="L278">         CaseInsensitiveString ciTableName = new CaseInsensitiveString(tableName);</span>
+<span class="nc" id="L279">         _tableNames.put(ciTableName, tableName);</span>
+         
+<span class="nc" id="L281">         List&lt;ITableInfo&gt; aITabInfos = _tableInfosBySimpleName.get(ciTableName);</span>
+<span class="nc bnc" id="L282" title="All 2 branches missed.">         if(null == aITabInfos)</span>
+         {
+<span class="nc" id="L284">            aITabInfos = new ArrayList&lt;ITableInfo&gt;();</span>
+<span class="nc" id="L285">            _tableInfosBySimpleName.put(ciTableName, aITabInfos);</span>
+         }
+<span class="nc" id="L287">         aITabInfos.add(info);         </span>
+      }
+      // CopyOnWriteArrayList is unfortunately not sort-able as a List.  So this
+      // will throw an UnsupportedOperationException:
+      //
+      // Collections.sort(_iTableInfos, new TableInfoSimpleNameComparator());
+      //
+      // The following is the best approach according to concurrency master 
+      // Doug Lea, in this post: 
+      // http://osdir.com/ml/java.jsr.166-concurrency/2004-06/msg00001.html
+      //
+      // Here we copy the existing internal array into a new array that
+      // is large enough to hold the original and new elements.  Then sort it.  
+      // And finally, create a new CopyOnWriteArrayList with the sorted array.
+      
+      /* Now, create an array large enough to hold the original and the new */
+<span class="nc" id="L303">      int currSize = _iTableInfos.size();</span>
+<span class="nc" id="L304">      ITableInfo[] tableArr = </span>
+<span class="nc" id="L305">         _iTableInfos.toArray(new ITableInfo[currSize+infos.length]);</span>
+      /* 
+       * Append the new tables to the new array, starting at the end of the 
+       * original 
+       */
+<span class="nc bnc" id="L310" title="All 2 branches missed.">      for (int i = 0; i &lt; infos.length; i++) {</span>
+<span class="nc" id="L311">         tableArr[currSize + i] = infos[i];</span>
+      }
+      
+      /* Sort it and store in a new CopyOnWriteArrayList */
+<span class="nc" id="L315">      Arrays.sort(tableArr, new TableInfoSimpleNameComparator());</span>
+<span class="nc" id="L316">      _iTableInfos = new CopyOnWriteArrayList&lt;ITableInfo&gt;(tableArr);</span>
+<span class="nc" id="L317">   }</span>
+   
+   /**
+    * Adds a single ITableInfo to the internal list(s) and re-sorts.  This 
+    * should not be called in a tight loop iterating over a list of ITableInfos.
+    * If the caller is looping over an array of ITableInfo objects, please use 
+    * the version that accepts the ITableInfo array instead.
+    * 
+    * @param info the ITableInfo to add.
+    */
+   public void writeToTableCache(ITableInfo info)
+   {
+<span class="nc" id="L329">      writeToTableCache(new ITableInfo[] { info });      </span>
+<span class="nc" id="L330">   }</span>
+
+
+   public void writeToProcedureCache(IProcedureInfo procedure)
+   {
+<span class="nc" id="L335">      String proc = procedure.getSimpleName();</span>
+<span class="nc bnc" id="L336" title="All 2 branches missed.">      if (proc.length() &gt; 0)</span>
+      {
+<span class="nc" id="L338">         CaseInsensitiveString ciProc = new CaseInsensitiveString(proc);</span>
+<span class="nc" id="L339">         _procedureNames.put(ciProc ,proc);</span>
+
+<span class="nc" id="L341">         List&lt;IProcedureInfo&gt; aIProcInfos = _procedureInfosBySimpleName.get(ciProc);</span>
+<span class="nc bnc" id="L342" title="All 2 branches missed.">         if(null == aIProcInfos)</span>
+         {
+<span class="nc" id="L344">            aIProcInfos = new ArrayList&lt;IProcedureInfo&gt;();</span>
+<span class="nc" id="L345">            _procedureInfosBySimpleName.put(ciProc, aIProcInfos);</span>
+         }
+<span class="nc" id="L347">         aIProcInfos.add(procedure);</span>
+      }
+<span class="nc" id="L349">      _iProcedureInfos.put(procedure, procedure);</span>
+<span class="nc" id="L350">   }</span>
+
+
+   public void writeColumsToCache(TableColumnInfo[] infos, CaseInsensitiveString simpleTableName)
+   {
+<span class="nc" id="L355">      _schemaInfoColumnCache.writeColumsToCache(infos, simpleTableName);</span>
+<span class="nc" id="L356">   }</span>
+
+   public void writeColumsNotAccessible(Throwable th, CaseInsensitiveString tableName)
+   {
+<span class="nc" id="L360">      _schemaInfoColumnCache.writeColumsNotAccessible(th, tableName);</span>
+<span class="nc" id="L361">   }</span>
+
+
+
+   void initialLoadDone()
+   {
+      /**
+       * When _schemaPropsCacheIsBasedOn is null all loading will be done like there was no cache.
+       *
+       * This will make sure loading only heeds the cache during initial loading.
+       *
+       * Any further loading (via Object tree or tool bar) will be treated as a Cache refresh.
+       */
+<span class="nc" id="L374">      _schemaPropsCacheIsBasedOn = null;</span>
+<span class="nc" id="L375">   }</span>
+
+   void prepareSerialization()
+   {
+<span class="nc" id="L379">      _schemaPropsCacheIsBasedOn = _session.getAlias().getSchemaProperties();</span>
+
+<span class="nc bnc" id="L381" title="All 2 branches missed.">      if(false == _schemaPropsCacheIsBasedOn.isCacheSchemaIndependentMetaData())</span>
+      {
+<span class="nc" id="L383">         clearSchemaIndependentData();</span>
+      }
+
+<span class="nc bnc" id="L386" title="All 2 branches missed.">      if(SQLAliasSchemaProperties.GLOBAL_STATE_LOAD_ALL_CACHE_NONE == _schemaPropsCacheIsBasedOn.getGlobalState())</span>
+      {
+<span class="nc" id="L388">         clearAllSchemaDependentData();</span>
+      }
+<span class="nc bnc" id="L390" title="All 2 branches missed.">      else if(SQLAliasSchemaProperties.GLOBAL_STATE_SPECIFY_SCHEMAS == _schemaPropsCacheIsBasedOn.getGlobalState())</span>
+      {
+<span class="nc" id="L392">         SchemaTableTypeCombination[] tableTypeCombis =</span>
+<span class="nc" id="L393">            _schemaPropsCacheIsBasedOn.getAllSchemaTableTypeCombinationsNotToBeCached(_tabelTableTypesCacheable, _viewTableTypesCacheable);</span>
+
+<span class="nc bnc" id="L395" title="All 2 branches missed.">         for (int i = 0; i &lt; tableTypeCombis.length; i++)</span>
+         {
+<span class="nc" id="L397">            clearTables(null, tableTypeCombis[i].schemaName, null, tableTypeCombis[i].types);</span>
+         }
+
+<span class="nc" id="L400">         String[] procedureSchemas = _schemaPropsCacheIsBasedOn.getAllSchemaProceduresNotToBeCached();</span>
+<span class="nc bnc" id="L401" title="All 2 branches missed.">         for (int i = 0; i &lt; procedureSchemas.length; i++)</span>
+         {
+<span class="nc" id="L403">            clearStoredProcedures(null, procedureSchemas[i], null);</span>
+         }
+
+
+      }
+
+<span class="nc" id="L409">   }</span>
+
+   private void clearAllSchemaDependentData()
+   {
+<span class="nc" id="L413">      _tableNames.clear();</span>
+
+<span class="nc" id="L415">      _internalTableNameTreeMap.clear();</span>
+
+<span class="nc" id="L417">      synchronized(_iTableInfos) {</span>
+<span class="nc" id="L418">          _iTableInfos.clear();</span>
+<span class="nc" id="L419">      }</span>
+<span class="nc" id="L420">      _tableInfosBySimpleName.clear();</span>
+
+<span class="nc" id="L422">      _schemaInfoColumnCache.clearColumns();</span>
+
+
+<span class="nc" id="L425">      _procedureNames.clear();</span>
+<span class="nc" id="L426">      _iProcedureInfos.clear();</span>
+<span class="nc" id="L427">      _procedureInfosBySimpleName.clear();</span>
+
+<span class="nc" id="L429">      _schemas.clear();</span>
+
+<span class="nc" id="L431">   }</span>
+
+   private void clearSchemaIndependentData()
+   {
+<span class="nc" id="L435">      _catalogs.clear();</span>
+
+<span class="nc" id="L437">      _keywords.clear();</span>
+<span class="nc" id="L438">      _dataTypes.clear();</span>
+<span class="nc" id="L439">      _functions.clear();</span>
+<span class="nc" id="L440">   }</span>
+
+   void clearAllTableData() {
+<span class="nc" id="L443">   	_iTableInfos = new CopyOnWriteArrayList&lt;ITableInfo&gt;();</span>
+<span class="nc" id="L444">   	_tableInfosBySimpleName = new Hashtable&lt;CaseInsensitiveString, List&lt;ITableInfo&gt;&gt;();</span>
+<span class="nc" id="L445">   	_tableNames = Collections.synchronizedMap(_internalTableNameTreeMap);</span>
+<span class="nc" id="L446">   }</span>
+   
+   void clearTables(String catalogName, String schemaName, String simpleName, String[] types)
+   {
+<span class="nc bnc" id="L450" title="All 2 branches missed.">      for(Iterator&lt;ITableInfo&gt; i = _iTableInfos.iterator(); i.hasNext();)</span>
+      {
+<span class="nc" id="L452">         ITableInfo ti = i.next();</span>
+
+<span class="nc" id="L454">         boolean matches = matchesMetaString(ti.getCatalogName(), catalogName);</span>
+<span class="nc" id="L455">         matches &amp;= matchesMetaString(ti.getSchemaName(), schemaName);</span>
+<span class="nc" id="L456">         matches &amp;= matchesMetaString(ti.getSimpleName(), simpleName);</span>
+
+<span class="nc bnc" id="L458" title="All 2 branches missed.">         if(null != types)</span>
+         {
+<span class="nc" id="L460">            boolean found = false;</span>
+<span class="nc bnc" id="L461" title="All 2 branches missed.">            for (int j = 0; j &lt; types.length; j++)</span>
+            {
+<span class="nc bnc" id="L463" title="All 2 branches missed.">               if(types[j].equals(ti.getType()))</span>
+               {
+<span class="nc" id="L465">                  found = true;</span>
+<span class="nc" id="L466">                  break;</span>
+               }
+            }
+
+<span class="nc" id="L470">            matches &amp;= found;</span>
+         }
+
+<span class="nc bnc" id="L473" title="All 2 branches missed.">         if(matches)</span>
+         {
+             // CopyOnWriteArrayList has snapshot iterators that don't support 
+             // iterator.remove()
+<span class="nc" id="L477">             _iTableInfos.remove(ti);</span>
+
+<span class="nc" id="L479">            CaseInsensitiveString ciSimpleTableName = new CaseInsensitiveString(ti.getSimpleName());</span>
+<span class="nc" id="L480">            List&lt;ITableInfo&gt; tableInfos = _tableInfosBySimpleName.get(ciSimpleTableName);</span>
+<span class="nc" id="L481">            tableInfos.remove(ti);</span>
+<span class="nc bnc" id="L482" title="All 2 branches missed.">            if(0 == tableInfos.size())</span>
+            {
+<span class="nc" id="L484">               _tableInfosBySimpleName.remove(ciSimpleTableName);</span>
+<span class="nc" id="L485">               _tableNames.remove(ciSimpleTableName);</span>
+            }
+
+<span class="nc" id="L488">            _schemaInfoColumnCache.clearColumns(ciSimpleTableName);</span>
+         }
+<span class="nc" id="L490">      }</span>
+
+<span class="nc" id="L492">   }</span>
+
+   void clearStoredProcedures(String catalogName, String schemaName, String simpleName)
+   {
+<span class="nc bnc" id="L496" title="All 2 branches missed.">      for(Iterator&lt;IProcedureInfo&gt; i = _iProcedureInfos.keySet().iterator(); i.hasNext();)</span>
+      {
+<span class="nc" id="L498">         IProcedureInfo pi = i.next();</span>
+
+
+<span class="nc" id="L501">         boolean matches = matchesMetaString(pi.getCatalogName(), catalogName);</span>
+<span class="nc" id="L502">         matches &amp;= matchesMetaString(pi.getSchemaName(), schemaName);</span>
+<span class="nc" id="L503">         matches &amp;= matchesMetaString(pi.getSimpleName(), simpleName);</span>
+
+
+<span class="nc bnc" id="L506" title="All 2 branches missed.">         if(matches)</span>
+         {
+<span class="nc" id="L508">            i.remove();</span>
+
+<span class="nc" id="L510">            CaseInsensitiveString ciSimpleName = new CaseInsensitiveString(pi.getSimpleName());</span>
+<span class="nc" id="L511">            List&lt;IProcedureInfo&gt; procedureInfos = _procedureInfosBySimpleName.get(ciSimpleName);</span>
+<span class="nc" id="L512">            procedureInfos.remove(pi);</span>
+<span class="nc bnc" id="L513" title="All 2 branches missed.">            if(0 == procedureInfos.size())</span>
+            {
+<span class="nc" id="L515">               _procedureInfosBySimpleName.remove(ciSimpleName);</span>
+<span class="nc" id="L516">               _procedureNames.remove(ciSimpleName);</span>
+            }
+
+         }
+<span class="nc" id="L520">      }</span>
+<span class="nc" id="L521">   }</span>
+
+
+   private boolean matchesMetaString(String s, String toCheck)
+   {
+<span class="nc bnc" id="L526" title="All 4 branches missed.">      if(null == s || null == toCheck)</span>
+      {
+<span class="nc" id="L528">         return true;</span>
+      }
+
+<span class="nc" id="L531">      return s.equals(toCheck);</span>
+   }
+
+   SchemaNameLoadInfo getSchemaNameLoadInfo()
+   {
+<span class="nc" id="L536">      return _session.getAlias().getSchemaProperties().getSchemaNameLoadInfo(_schemaPropsCacheIsBasedOn);</span>
+   }
+
+   void writeCatalogs(String[] catalogs)
+   {
+<span class="nc" id="L541">      this._catalogs.clear();</span>
+<span class="nc" id="L542">      this._catalogs.addAll(Arrays.asList(catalogs));</span>
+<span class="nc" id="L543">   }</span>
+
+   void writeSchemas(String[] schemasToWrite)
+   {
+<span class="nc" id="L547">      _schemas.clear();</span>
+<span class="nc" id="L548">      _schemas.addAll(Arrays.asList(schemasToWrite));</span>
+<span class="nc" id="L549">   }</span>
+
+
+   void writeKeywords(Hashtable&lt;CaseInsensitiveString, String&gt; keywordsBuf)
+   {
+<span class="nc" id="L554">      _keywords.clear();</span>
+<span class="nc" id="L555">      _keywords.putAll(keywordsBuf);</span>
+<span class="nc" id="L556">   }</span>
+
+
+   void writeDataTypes(Hashtable&lt;CaseInsensitiveString, String&gt; dataTypesBuf)
+   {
+<span class="nc" id="L561">      _dataTypes.clear();</span>
+<span class="nc" id="L562">      _dataTypes.putAll(dataTypesBuf);</span>
+<span class="nc" id="L563">   }</span>
+
+   void writeFunctions(Hashtable&lt;CaseInsensitiveString, String&gt; functionsBuf)
+   {
+<span class="nc" id="L567">      _functions.clear();</span>
+<span class="nc" id="L568">      _functions.putAll(functionsBuf);</span>
+<span class="nc" id="L569">   }</span>
+
+   List&lt;String&gt; getCatalogsForReadOnly()
+   {
+<span class="nc" id="L573">      return _catalogs;</span>
+   }
+
+   List&lt;String&gt; getSchemasForReadOnly()
+   {
+<span class="nc" id="L578">      return _schemas;</span>
+   }
+
+   TreeMap&lt;CaseInsensitiveString, String&gt; getKeywordsForReadOnly()
+   {
+<span class="nc" id="L583">      return _keywords;</span>
+   }
+
+   TreeMap&lt;CaseInsensitiveString, String&gt; getDataTypesForReadOnly()
+   {
+<span class="nc" id="L588">      return _dataTypes;</span>
+   }
+
+   Map&lt;CaseInsensitiveString, String&gt; getFunctionsForReadOnly()
+   {
+<span class="nc" id="L593">      return _functions;</span>
+   }
+
+   Map&lt;CaseInsensitiveString, String&gt; getTableNamesForReadOnly()
+   {
+<span class="nc" id="L598">      return _internalTableNameTreeMap;</span>
+   }
+
+   List&lt;ITableInfo&gt; getITableInfosForReadOnly()
+   {
+<span class="nc" id="L603">      return _iTableInfos;</span>
+   }
+
+   Hashtable&lt;CaseInsensitiveString, List&lt;ITableInfo&gt;&gt; getTableInfosBySimpleNameForReadOnly()
+   {
+<span class="nc" id="L608">      return _tableInfosBySimpleName;</span>
+   }
+
+
+   public boolean didTryLoadingColumns(CaseInsensitiveString tableName)
+   {
+<span class="nc" id="L614">      return _schemaInfoColumnCache.didTryLoadingColumns(tableName);</span>
+   }
+
+   public List&lt;ExtendedColumnInfo&gt; getExtendedColumnInfosForReadOnly(CaseInsensitiveString cissTableName)
+   {
+<span class="nc" id="L619">      return _schemaInfoColumnCache.getExtendedColumnInfosForReadOnly(cissTableName);</span>
+   }
+
+
+   Map&lt;CaseInsensitiveString, List&lt;ExtendedColumnInfo&gt;&gt; getExtColumnInfosByColumnNameForReadOnly()
+   {
+<span class="nc" id="L625">      return _schemaInfoColumnCache.getExtColumnInfosByColumnNameForReadOnly();</span>
+   }
+
+   Map&lt;CaseInsensitiveString, String&gt; getProcedureNamesForReadOnly()
+   {
+<span class="nc" id="L630">      return _procedureNames;</span>
+   }
+
+   Map&lt;IProcedureInfo, IProcedureInfo&gt; getIProcedureInfosForReadOnly()
+   {
+<span class="nc" id="L635">      return _iProcedureInfos;</span>
+   }
+
+   /**
+    * When SchemaInfoCache has been deserialized the the constants in DatabaseObjectType
+    * still come from the last serialisation. Thus the == operator won't work
+    * unless we replace the DatabaseObjectTypes
+    *
+    */
+   void replaceDatabaseObjectTypeConstantObjectsByConstantObjectsOfThisVM()
+   {
+<span class="nc bnc" id="L646" title="All 2 branches missed.">      for (ITableInfo iTableInfo : _iTableInfos)</span>
+      {
+<span class="nc bnc" id="L648" title="All 2 branches missed.">         if(iTableInfo instanceof TableInfo)</span>
+         {
+<span class="nc" id="L650">            ((TableInfo)iTableInfo).replaceDatabaseObjectTypeConstantObjectsByConstantObjectsOfThisVM();</span>
+         }
+<span class="nc" id="L652">      }</span>
+
+<span class="nc bnc" id="L654" title="All 2 branches missed.">      for (IProcedureInfo iProcedureInfo : _iProcedureInfos.keySet())</span>
+      {
+<span class="nc bnc" id="L656" title="All 2 branches missed.">         if(iProcedureInfo instanceof DatabaseObjectInfo)</span>
+         {
+<span class="nc" id="L658">            ((DatabaseObjectInfo)iProcedureInfo).replaceDatabaseObjectTypeConstantObjectsByConstantObjectsOfThisVM(DatabaseObjectType.PROCEDURE);</span>
+         }
+<span class="nc" id="L660">      }</span>
+
+<span class="nc" id="L662">   }</span>
+
+   /**
+    * A comparator for ITableInfos that compares them using their simple name.
+    * All other data (such as schema) is ignored, since it isn't likely that we 
+    * will need to compare tables in multiple schemas/catalogs in the same list.
+    */
+<span class="nc" id="L669">   private class TableInfoSimpleNameComparator implements</span>
+         Comparator&lt;ITableInfo&gt; {
+      public int compare(ITableInfo o1, ITableInfo o2) {
+<span class="nc" id="L672">         return o1.getSimpleName().compareTo(o2.getSimpleName());</span>
+      }
+   }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

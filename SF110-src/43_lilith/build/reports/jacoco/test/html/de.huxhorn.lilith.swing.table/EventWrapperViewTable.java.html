@@ -1,0 +1,556 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EventWrapperViewTable.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">43_lilith</a> &gt; <a href="index.source.html" class="el_package">de.huxhorn.lilith.swing.table</a> &gt; <span class="el_source">EventWrapperViewTable.java</span></div><h1>EventWrapperViewTable.java</h1><pre class="source lang-java linenums">/*
+ * Lilith - a log event viewer.
+ * Copyright (C) 2007-2009 Joern Huxhorn
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see &lt;http://www.gnu.org/licenses/&gt;.
+ */
+package de.huxhorn.lilith.swing.table;
+
+import de.huxhorn.lilith.data.eventsource.EventWrapper;
+import de.huxhorn.lilith.swing.MainFrame;
+import de.huxhorn.lilith.swing.ViewContainer;
+import de.huxhorn.lilith.swing.table.model.EventWrapperTableModel;
+import de.huxhorn.lilith.swing.table.model.PersistentTableColumnModel;
+import de.huxhorn.sulky.conditions.Condition;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.FocusEvent;
+import java.awt.event.FocusListener;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseEvent;
+import java.awt.event.MouseListener;
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import javax.swing.*;
+import javax.swing.event.TableModelEvent;
+import javax.swing.event.TableModelListener;
+import javax.swing.table.TableColumn;
+
+public abstract class EventWrapperViewTable&lt;T extends Serializable&gt;
+	extends JTable
+	implements ColorsProvider
+{
+	public static final String SCROLLING_TO_BOTTOM_PROPERTY = &quot;scrollingToBottom&quot;;
+	public static final String FILTER_CONDITION_PROPERTY = &quot;filterCondition&quot;;
+
+<span class="nc" id="L55">	private final Logger logger = LoggerFactory.getLogger(EventWrapperViewTable.class);</span>
+
+	protected EventWrapperTableModel&lt;T&gt; tableModel;
+	protected Map&lt;Object, TooltipGenerator&gt; tooltipGenerators;
+	protected Map&lt;Object, TableColumn&gt; tableColumns;
+	protected PersistentTableColumnModel tableColumnModel;
+	private boolean scrollingToBottom;
+	private Condition filterCondition;
+
+	// TODO: Move to ViewActions
+	private JPopupMenu popupMenu;
+	private JMenuItem columnsMenu;
+	private boolean global;
+	protected MainFrame mainFrame;
+
+	public EventWrapperViewTable(MainFrame mainFrame, EventWrapperTableModel&lt;T&gt; model, boolean global)
+	{
+<span class="nc" id="L72">		super();</span>
+<span class="nc" id="L73">		this.mainFrame = mainFrame;</span>
+<span class="nc" id="L74">		this.global = global;</span>
+<span class="nc" id="L75">		this.tableModel = model;</span>
+<span class="nc" id="L76">		this.tableModel.addTableModelListener(new ScrollToEventListener());</span>
+<span class="nc" id="L77">		setAutoCreateColumnsFromModel(false);</span>
+<span class="nc" id="L78">		setModel(tableModel);</span>
+<span class="nc" id="L79">		setSelectionMode(ListSelectionModel.SINGLE_SELECTION);</span>
+
+<span class="nc" id="L81">		addFocusListener(new RepaintFocusListener());</span>
+<span class="nc" id="L82">		initTableColumns();</span>
+<span class="nc" id="L83">		tableColumnModel = new PersistentTableColumnModel();</span>
+		//initColumnModel();
+<span class="nc" id="L85">		resetLayout();</span>
+<span class="nc" id="L86">		initTooltipGenerators();</span>
+<span class="nc" id="L87">		setShowHorizontalLines(false);</span>
+<span class="nc" id="L88">		setAutoResizeMode(AUTO_RESIZE_OFF);</span>
+<span class="nc" id="L89">		popupMenu = new JPopupMenu();</span>
+<span class="nc" id="L90">		columnsMenu = new JMenu(&quot;Columns&quot;);</span>
+<span class="nc" id="L91">		popupMenu.add(columnsMenu);</span>
+<span class="nc" id="L92">		popupMenu.addSeparator();</span>
+<span class="nc" id="L93">		popupMenu.add(new SaveLayoutAction());</span>
+<span class="nc" id="L94">		popupMenu.add(new ResetLayoutAction());</span>
+<span class="nc" id="L95">		getTableHeader().addMouseListener(new PopupListener());</span>
+<span class="nc" id="L96">	}</span>
+
+	public boolean isGlobal()
+	{
+<span class="nc" id="L100">		return global;</span>
+	}
+
+	protected abstract void initTooltipGenerators();
+
+	protected abstract void initTableColumns();
+//	protected abstract void initColumnModel();
+
+	// TODO: Move to ViewActions
+
+	private void updatePopupMenu()
+	{
+<span class="nc" id="L112">		columnsMenu.removeAll();</span>
+<span class="nc" id="L113">		List&lt;PersistentTableColumnModel.TableColumnLayoutInfo&gt; cli = tableColumnModel.getColumnLayoutInfos();</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">		for(PersistentTableColumnModel.TableColumnLayoutInfo current : cli)</span>
+		{
+<span class="nc" id="L116">			boolean visible = current.isVisible();</span>
+<span class="nc" id="L117">			JCheckBoxMenuItem cbmi = new JCheckBoxMenuItem(new ShowHideAction(current.getColumnName(), visible));</span>
+<span class="nc" id="L118">			cbmi.setSelected(visible);</span>
+<span class="nc" id="L119">			columnsMenu.add(cbmi);</span>
+<span class="nc" id="L120">		}</span>
+<span class="nc" id="L121">	}</span>
+
+	public PersistentTableColumnModel getTableColumnModel()
+	{
+<span class="nc" id="L125">		return tableColumnModel;</span>
+	}
+
+	public Condition getFilterCondition()
+	{
+<span class="nc" id="L130">		return filterCondition;</span>
+	}
+
+	public void setFilterCondition(Condition filterCondition)
+	{
+<span class="nc" id="L135">		Object oldValue = this.filterCondition;</span>
+<span class="nc" id="L136">		this.filterCondition = filterCondition;</span>
+<span class="nc" id="L137">		repaint();</span>
+<span class="nc" id="L138">		firePropertyChange(FILTER_CONDITION_PROPERTY, oldValue, filterCondition);</span>
+<span class="nc" id="L139">	}</span>
+
+	public void scrollToBottom()
+	{
+		//System.out.println(&quot;Scrolling to bottom...&quot;);
+		//new Throwable().printStackTrace(System.out);
+
+<span class="nc" id="L146">		int row = getRowCount();</span>
+<span class="nc" id="L147">		row--;</span>
+
+<span class="nc" id="L149">		selectRow(row);</span>
+<span class="nc" id="L150">	}</span>
+
+	public void scrollToFirst()
+	{
+<span class="nc bnc" id="L154" title="All 2 branches missed.">		if(getRowCount() &gt; 0)</span>
+		{
+<span class="nc" id="L156">			selectRow(0);</span>
+		}
+<span class="nc" id="L158">	}</span>
+
+	public void selectRow(int row)
+	{
+<span class="nc bnc" id="L162" title="All 4 branches missed.">		if(row &gt;= 0 &amp;&amp; row &lt; getRowCount())</span>
+		{
+<span class="nc bnc" id="L164" title="All 2 branches missed.">			if(logger.isDebugEnabled()) logger.debug(&quot;Selecting row {}.&quot;, row);</span>
+<span class="nc" id="L165">			getSelectionModel().setSelectionInterval(0, row);</span>
+			// scrollpane adjustment
+<span class="nc" id="L167">			scrollRectToVisible(getCellRect(row, 0, true));</span>
+		}
+<span class="nc" id="L169">	}</span>
+
+	public boolean isScrollingToBottom()
+	{
+<span class="nc" id="L173">		return scrollingToBottom;</span>
+	}
+
+	public void setScrollingToBottom(boolean scrollingToBottom)
+	{
+<span class="nc bnc" id="L178" title="All 2 branches missed.">		if(this.scrollingToBottom != scrollingToBottom)</span>
+		{
+<span class="nc" id="L180">			Object oldValue = this.scrollingToBottom;</span>
+<span class="nc" id="L181">			this.scrollingToBottom = scrollingToBottom;</span>
+<span class="nc bnc" id="L182" title="All 2 branches missed.">			if(scrollingToBottom)</span>
+			{
+<span class="nc" id="L184">				scrollToBottom();</span>
+			}
+<span class="nc" id="L186">			firePropertyChange(SCROLLING_TO_BOTTOM_PROPERTY, oldValue, scrollingToBottom);</span>
+		}
+<span class="nc" id="L188">	}</span>
+
+	protected boolean processKeyBinding(KeyStroke ks, KeyEvent e, int condition, boolean pressed)
+	{
+<span class="nc bnc" id="L192" title="All 2 branches missed.">		if(logger.isDebugEnabled())</span>
+		{
+<span class="nc" id="L194">			Object[] args = new Object[]{ks, e, condition, pressed};</span>
+<span class="nc" id="L195">			logger.debug(&quot;Processing KeyBinding:\n&quot; +</span>
+				&quot;\tKeyStroke: {}\n&quot; +
+				&quot;\nEvent    : {}\n&quot; +
+				&quot;\tcondition: {}\n&quot; +
+				&quot;\tpressed  : {}\n&quot;, args);
+		}
+<span class="nc" id="L201">		InputMap inputMap = getInputMap(condition);</span>
+<span class="nc" id="L202">		Object key = inputMap.get(ks);</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">		if(key != null)</span>
+		{
+<span class="nc" id="L205">			String keyStr = &quot;&quot; + key;</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">			if(keyStr.startsWith(&quot;select&quot;))</span>
+			{
+<span class="nc bnc" id="L208" title="All 2 branches missed.">				if(isScrollingToBottom())</span>
+				{
+<span class="nc" id="L210">					setScrollingToBottom(false);</span>
+				}
+<span class="nc bnc" id="L212" title="All 2 branches missed.">				if(logger.isDebugEnabled()) logger.debug(&quot;select detected! {}&quot;, keyStr);</span>
+			}
+<span class="nc bnc" id="L214" title="All 2 branches missed.">			if(logger.isDebugEnabled()) logger.debug(&quot;ActionKey: {}&quot;, keyStr);</span>
+		}
+<span class="nc" id="L216">		return super.processKeyBinding(ks, e, condition, pressed);</span>
+	}
+
+	public String getToolTipText(MouseEvent event)
+	{
+<span class="nc bnc" id="L221" title="All 2 branches missed.">		if(tooltipGenerators == null)</span>
+		{
+<span class="nc" id="L223">			return null;</span>
+		}
+<span class="nc" id="L225">		Point p = event.getPoint();</span>
+<span class="nc" id="L226">		int row = rowAtPoint(p);</span>
+<span class="nc" id="L227">		int column = columnAtPoint(p); // This is the view column!</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">		if(column &gt; -1)</span>
+		{
+<span class="nc" id="L230">			TableColumn tableColumn = getColumnModel().getColumn(column);</span>
+<span class="nc bnc" id="L231" title="All 2 branches missed.">			if(tableColumn != null)</span>
+			{
+<span class="nc" id="L233">				TooltipGenerator generator = tooltipGenerators.get(tableColumn.getIdentifier());</span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">				if(generator != null)</span>
+				{
+<span class="nc" id="L236">					return generator.createTooltipText(this, row);</span>
+				}
+			}
+		}
+<span class="nc" id="L240">		return null;</span>
+	}
+
+	public abstract void saveLayout();
+
+	protected abstract List&lt;PersistentTableColumnModel.TableColumnLayoutInfo&gt; getDefaultLayout();
+
+	protected abstract List&lt;PersistentTableColumnModel.TableColumnLayoutInfo&gt; loadLayout();
+
+	protected void fireViewContainerChange()
+	{
+<span class="nc" id="L251">		ViewContainer viewContainer = resolveViewContainer();</span>
+<span class="nc bnc" id="L252" title="All 2 branches missed.">		if(viewContainer != null)</span>
+		{
+<span class="nc" id="L254">			viewContainer.fireChange();</span>
+<span class="nc bnc" id="L255" title="All 2 branches missed.">			if(logger.isDebugEnabled()) logger.debug(&quot;Fired change on ViewContainer!&quot;);</span>
+		}
+<span class="nc" id="L257">	}</span>
+
+	public void resetLayout()
+	{
+<span class="nc" id="L261">		List&lt;PersistentTableColumnModel.TableColumnLayoutInfo&gt; loadedInfos = loadLayout();</span>
+<span class="nc" id="L262">		List&lt;PersistentTableColumnModel.TableColumnLayoutInfo&gt; defaults = getDefaultLayout();</span>
+		List&lt;PersistentTableColumnModel.TableColumnLayoutInfo&gt; infos;
+<span class="nc bnc" id="L264" title="All 2 branches missed.">		if(loadedInfos == null)</span>
+		{
+<span class="nc" id="L266">			infos = getDefaultLayout();</span>
+		}
+		else
+		{
+<span class="nc" id="L270">			infos = new ArrayList&lt;PersistentTableColumnModel.TableColumnLayoutInfo&gt;();</span>
+
+			// lets make sure that all columns exist.
+<span class="nc bnc" id="L273" title="All 2 branches missed.">			for(PersistentTableColumnModel.TableColumnLayoutInfo current : loadedInfos)</span>
+			{
+<span class="nc bnc" id="L275" title="All 2 branches missed.">				if(current != null)</span>
+				{
+<span class="nc" id="L277">					String currentName = current.getColumnName();</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">					if(currentName != null)</span>
+					{
+<span class="nc bnc" id="L280" title="All 2 branches missed.">						for(PersistentTableColumnModel.TableColumnLayoutInfo other : defaults)</span>
+						{
+<span class="nc bnc" id="L282" title="All 2 branches missed.">							if(currentName.equals(other.getColumnName()))</span>
+							{
+<span class="nc" id="L284">								infos.add(current);</span>
+<span class="nc" id="L285">								break;</span>
+							}
+<span class="nc" id="L287">						}</span>
+					}
+				}
+<span class="nc" id="L290">			}</span>
+
+			// lets add missing columns
+<span class="nc bnc" id="L293" title="All 2 branches missed.">			for(PersistentTableColumnModel.TableColumnLayoutInfo current : defaults)</span>
+			{
+<span class="nc" id="L295">				String currentName = current.getColumnName();</span>
+<span class="nc bnc" id="L296" title="All 2 branches missed.">				if(currentName != null)</span>
+				{
+<span class="nc" id="L298">					boolean found = false;</span>
+<span class="nc bnc" id="L299" title="All 2 branches missed.">					for(PersistentTableColumnModel.TableColumnLayoutInfo other : infos)</span>
+					{
+<span class="nc" id="L301">						String otherName = other.getColumnName();</span>
+<span class="nc bnc" id="L302" title="All 2 branches missed.">						if(currentName.equals(otherName))</span>
+						{
+<span class="nc" id="L304">							found = true;</span>
+						}
+<span class="nc" id="L306">					}</span>
+<span class="nc bnc" id="L307" title="All 2 branches missed.">					if(!found)</span>
+					{
+<span class="nc" id="L309">						infos.add(current);</span>
+					}
+				}
+<span class="nc" id="L312">			}</span>
+		}
+<span class="nc" id="L314">		PersistentTableColumnModel newModel = new PersistentTableColumnModel();</span>
+<span class="nc bnc" id="L315" title="All 2 branches missed.">		for(PersistentTableColumnModel.TableColumnLayoutInfo current : infos)</span>
+		{
+<span class="nc" id="L317">			String name = current.getColumnName();</span>
+<span class="nc" id="L318">			TableColumn col = tableColumns.get(name);</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">			if(col != null)</span>
+			{
+<span class="nc" id="L321">				col.setPreferredWidth(current.getWidth());</span>
+<span class="nc" id="L322">				newModel.addColumn(col);</span>
+<span class="nc" id="L323">				newModel.setColumnVisible(col, current.isVisible());</span>
+			}
+<span class="nc" id="L325">		}</span>
+<span class="nc" id="L326">		setColumnModel(newModel);</span>
+<span class="nc" id="L327">		tableColumnModel = newModel;</span>
+<span class="nc" id="L328">		fireViewContainerChange();</span>
+<span class="nc" id="L329">	}</span>
+
+	public void changeSelection(int rowIndex, int columnIndex, boolean toggle, boolean extend)
+	{
+<span class="nc bnc" id="L333" title="All 2 branches missed.">		if(logger.isDebugEnabled())</span>
+		{
+<span class="nc" id="L335">			logger.debug(&quot;changeSelection({}, {}, {}, {})&quot;, new Object[]{rowIndex, columnIndex, toggle, extend});</span>
+			//noinspection ThrowableInstanceNeverThrown
+<span class="nc" id="L337">			logger.debug(&quot;changeSelection-Stacktrace&quot;, new Throwable());</span>
+		}
+<span class="nc bnc" id="L339" title="All 2 branches missed.">		if(isScrollingToBottom())</span>
+		{
+<span class="nc" id="L341">			setScrollingToBottom(false);</span>
+		}
+<span class="nc" id="L343">		super.changeSelection(rowIndex, columnIndex, toggle, extend);</span>
+<span class="nc" id="L344">	}</span>
+
+<span class="nc" id="L346">	private static final Colors NOT_MATCHING_COLORS = new Colors(new Color(192, 192, 192), new Color(245, 245, 245), true);</span>
+<span class="nc" id="L347">	private static final Colors EVEN_ROW_COLORS = new Colors(new Color(0, 0, 0), new Color(255, 255, 255));</span>
+<span class="nc" id="L348">	private static final Colors ODD_ROW_COLORS = new Colors(new Color(0, 0, 0), new Color(0xE9, 0xED, 0xF2));</span>
+
+	public Colors resolveColors(Object object, int row, int column)
+	{
+<span class="nc bnc" id="L352" title="All 2 branches missed.">		if(object instanceof EventWrapper)</span>
+		{
+<span class="nc bnc" id="L354" title="All 4 branches missed.">			if(filterCondition != null &amp;&amp; !filterCondition.isTrue(object))</span>
+			{
+<span class="nc" id="L356">				return NOT_MATCHING_COLORS;</span>
+			}
+			// check active conditions...
+<span class="nc" id="L359">			Colors colors = mainFrame.getColors((EventWrapper) object);</span>
+<span class="nc bnc" id="L360" title="All 2 branches missed.">			if(colors != null)</span>
+			{
+<span class="nc" id="L362">				return colors;</span>
+			}
+			// if none match...
+<span class="nc bnc" id="L365" title="All 2 branches missed.">			if(row % 2 == 0)</span>
+			{
+<span class="nc" id="L367">				return EVEN_ROW_COLORS;</span>
+			}
+<span class="nc" id="L369">			return ODD_ROW_COLORS;</span>
+		}
+<span class="nc" id="L371">		return null;</span>
+	}
+
+
+	/**
+	 * This is part one of &quot;scroll to bottom&quot; functionality and selects the first event otherwise if no event was
+	 * previously selected.
+	 * &lt;p/&gt;
+	 * It selects the last row of the table.
+	 * Be aware that this listener *must* be added to the table model *before* the
+	 * model is assigned to a table!
+	 */
+<span class="nc" id="L383">	private class ScrollToEventListener</span>
+		implements TableModelListener
+	{
+		public void tableChanged(TableModelEvent e)
+		{
+<span class="nc bnc" id="L388" title="All 2 branches missed.">			if(scrollingToBottom)</span>
+			{
+<span class="nc" id="L390">				scrollToBottom();</span>
+			}
+<span class="nc bnc" id="L392" title="All 2 branches missed.">			else if(getSelectedRow() &lt; 0)</span>
+			{
+<span class="nc" id="L394">				scrollToFirst();</span>
+			}
+<span class="nc" id="L396">		}</span>
+	}
+
+<span class="nc" id="L399">	private class RepaintFocusListener</span>
+		implements FocusListener
+	{
+
+		public void focusGained(FocusEvent e)
+		{
+<span class="nc" id="L405">			repaint();</span>
+<span class="nc" id="L406">		}</span>
+
+		public void focusLost(FocusEvent e)
+		{
+<span class="nc" id="L410">			repaint();</span>
+<span class="nc" id="L411">		}</span>
+	}
+
+<span class="nc" id="L414">	private class PopupListener</span>
+		implements MouseListener
+	{
+
+		public void mouseClicked(MouseEvent e)
+		{
+<span class="nc bnc" id="L420" title="All 2 branches missed.">			if(e.isPopupTrigger())</span>
+			{
+<span class="nc" id="L422">				showPopup(e.getPoint());</span>
+			}
+<span class="nc" id="L424">		}</span>
+
+		public void mousePressed(MouseEvent e)
+		{
+<span class="nc bnc" id="L428" title="All 2 branches missed.">			if(e.isPopupTrigger())</span>
+			{
+<span class="nc" id="L430">				showPopup(e.getPoint());</span>
+			}
+<span class="nc" id="L432">		}</span>
+
+		public void mouseReleased(MouseEvent e)
+		{
+<span class="nc bnc" id="L436" title="All 2 branches missed.">			if(e.isPopupTrigger())</span>
+			{
+<span class="nc" id="L438">				showPopup(e.getPoint());</span>
+			}
+<span class="nc" id="L440">		}</span>
+
+		public void mouseEntered(MouseEvent e)
+		{
+<span class="nc" id="L444">		}</span>
+
+		public void mouseExited(MouseEvent e)
+		{
+<span class="nc" id="L448">		}</span>
+
+		private void showPopup(Point p)
+		{
+			// TODO: call ViewActions
+<span class="nc bnc" id="L453" title="All 2 branches missed.">			if(logger.isDebugEnabled()) logger.debug(&quot;Showing popup at {}.&quot;, p);</span>
+<span class="nc" id="L454">			updatePopupMenu();</span>
+<span class="nc" id="L455">			popupMenu.show(EventWrapperViewTable.this.getTableHeader(), p.x, p.y);</span>
+<span class="nc" id="L456">		}</span>
+	}
+
+	// TODO: Move to ViewActions
+	private class SaveLayoutAction
+		extends AbstractAction
+	{
+		private static final long serialVersionUID = 1154654992206760884L;
+
+		private SaveLayoutAction()
+<span class="nc" id="L466">		{</span>
+<span class="nc" id="L467">			super(&quot;Save layout&quot;);</span>
+<span class="nc" id="L468">		}</span>
+
+		public void actionPerformed(ActionEvent e)
+		{
+<span class="nc bnc" id="L472" title="All 2 branches missed.">			if(logger.isDebugEnabled()) logger.debug(&quot;Save layout&quot;);</span>
+<span class="nc" id="L473">			saveLayout();</span>
+<span class="nc" id="L474">		}</span>
+	}
+
+	// TODO: Move to ViewActions
+	private class ResetLayoutAction
+		extends AbstractAction
+	{
+		private static final long serialVersionUID = 8635210294474124660L;
+
+		private ResetLayoutAction()
+<span class="nc" id="L484">		{</span>
+<span class="nc" id="L485">			super(&quot;Reset layout&quot;);</span>
+<span class="nc" id="L486">		}</span>
+
+		public void actionPerformed(ActionEvent e)
+		{
+<span class="nc bnc" id="L490" title="All 2 branches missed.">			if(logger.isDebugEnabled()) logger.debug(&quot;Reset layout&quot;);</span>
+<span class="nc" id="L491">			resetLayout();</span>
+<span class="nc" id="L492">		}</span>
+	}
+
+	// TODO: Move to ViewActions
+	protected ViewContainer resolveViewContainer()
+	{
+<span class="nc" id="L498">		ViewContainer result = null;</span>
+<span class="nc" id="L499">		Container parentContainer = getParent();</span>
+		for(; ;)
+		{
+<span class="nc bnc" id="L502" title="All 2 branches missed.">			if(parentContainer instanceof ViewContainer)</span>
+			{
+<span class="nc" id="L504">				result = (ViewContainer) parentContainer;</span>
+<span class="nc" id="L505">				break;</span>
+			}
+<span class="nc bnc" id="L507" title="All 2 branches missed.">			if(parentContainer == null)</span>
+			{
+<span class="nc" id="L509">				break;</span>
+			}
+<span class="nc" id="L511">			parentContainer = parentContainer.getParent();</span>
+		}
+<span class="nc" id="L513">		return result;</span>
+	}
+
+	// TODO: Move to ViewActions
+	private class ShowHideAction
+		extends AbstractAction
+	{
+		private static final long serialVersionUID = 2845939134245819103L;
+
+		private boolean visible;
+		private String columnName;
+
+		private ShowHideAction(String columnName, boolean visible)
+<span class="nc" id="L526">		{</span>
+<span class="nc" id="L527">			super(columnName);</span>
+<span class="nc" id="L528">			this.columnName = columnName;</span>
+<span class="nc" id="L529">			this.visible = visible;</span>
+			//putValue(EventWrapperViewTable.SELECTED_KEY, visible);
+<span class="nc" id="L531">		}</span>
+
+		public void actionPerformed(ActionEvent e)
+		{
+<span class="nc bnc" id="L535" title="All 2 branches missed.">			visible = !visible;</span>
+<span class="nc" id="L536">			Iterator&lt;TableColumn&gt; iter = tableColumnModel.getColumns(false);</span>
+<span class="nc" id="L537">			TableColumn found = null;</span>
+<span class="nc bnc" id="L538" title="All 2 branches missed.">			while(iter.hasNext())</span>
+			{
+<span class="nc" id="L540">				TableColumn current = iter.next();</span>
+<span class="nc bnc" id="L541" title="All 2 branches missed.">				if(columnName.equals(current.getIdentifier()))</span>
+				{
+<span class="nc" id="L543">					found = current;</span>
+<span class="nc" id="L544">					break;</span>
+				}
+<span class="nc" id="L546">			}</span>
+<span class="nc bnc" id="L547" title="All 2 branches missed.">			if(found != null)</span>
+			{
+<span class="nc" id="L549">				tableColumnModel.setColumnVisible(found, visible);</span>
+<span class="nc" id="L550">				fireViewContainerChange();</span>
+			}
+<span class="nc" id="L552">		}</span>
+	}
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

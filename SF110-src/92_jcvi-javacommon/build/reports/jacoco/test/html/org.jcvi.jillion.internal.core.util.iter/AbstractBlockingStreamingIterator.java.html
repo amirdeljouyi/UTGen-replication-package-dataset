@@ -1,0 +1,292 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractBlockingStreamingIterator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.internal.core.util.iter</a> &gt; <span class="el_source">AbstractBlockingStreamingIterator.java</span></div><h1>AbstractBlockingStreamingIterator.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+package org.jcvi.jillion.internal.core.util.iter;
+
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.util.Iterator;
+import java.util.NoSuchElementException;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+
+import org.jcvi.jillion.core.io.IOUtil;
+import org.jcvi.jillion.core.util.iter.StreamingIterator;
+
+/**
+ * {@code AbstractBlockingStreamingIterator}
+ * is a {@link StreamingIterator} that is
+ * meant be used to iterate over a large computationally intensive
+ * or memory intensive process.  Only 1 record (the next record
+ * to be returned by {@link Iterator#next()}) will be referenced by this class.
+ * This class will perform the intensive computation in a background Thread
+ * and will block that Thread until the next item to be iterated 
+ * is required.  Elements to be iterated over are placed onto the blocking
+ * iterator by {@link #blockingPut(Object)}.
+ * &lt;strong&gt;WARNING:&lt;/strong&gt; Client code must be very careful
+ * to always make sure that this iterator is closed when finished.
+ * If the iterator does not reach the end or
+ * if the iterator is not explicitly closed via the {@link #close()}
+ * method, then the background thread will block forever. This is 
+ * especially true in situations when Exceptions are thrown by other objects.
+ * Please make sure {@link StreamingIterator}s are closed in finally blocks.
+ * &lt;p/&gt;
+ * The background thread is not started until the {@link #start()}
+ * method is called.  This allows for subclasses to set up
+ * and initialize themselves in either the constructor
+ * or other pre-process steps.
+ * &lt;p/&gt;
+ * Example:
+ * &lt;pre&gt; 
+
+     //Example implementation 
+     //will compute the approximate value of &amp;pi;.
+     //Each {@link BigDecimal} returned by this iterator
+     //will be a more accurate approximation.
+    //This class computes the value of &amp;pi; using the Madhava-Leibniz series:
+    //&amp;pi; = 4 &amp;sum; ( (-1)&lt;sup&gt;k&lt;/sup&gt; / (2k + 1) )
+     
+    class ApproximatePiIterator extends AbstractBlockingStreamingIterator&amp;lt;BigDecimal&amp;gt;{
+        private final int numOfIterations;
+        
+        public ApproximatePiIterator(int numOfIterations) {
+            this.numOfIterations = numOfIterations;
+        }
+        
+         
+        protected void backgroundThreadRunMethod() throws RuntimeException {
+           
+            this.blockingPut(FOUR);
+            
+            BigDecimal currentValue = BigDecimal.valueOf(1);
+            for(int i=1; i&amp;lt;numOfIterations; i++){
+                BigDecimal x = BigDecimal.valueOf(1D/(2*i+1));
+                if(i%2==0){
+                    currentValue = currentValue.add(x);
+                }else{
+                    currentValue = currentValue.subtract(x);
+                }
+                this.blockingPut(currentValue.multiply(FOUR));
+            }
+        }
+        
+    }
+    
+    public static void main(String[] args){
+        ApproximatePiIterator approxPi = new ApproximatePiIterator(1_000_000);
+        approxPi.start();
+        try{
+           while(approxPi.hasNext()){
+              System.out.println(approxPi.next());
+           }
+        }finally{
+           IOUtil.closeAndIgnoreErrors(approxPi.close());
+        }
+    }
+ * &lt;/pre&gt;
+ * 
+ * @author dkatzel
+ *
+ * @param &lt;T&gt; the type of elements being iterated over.
+ */
+<span class="nc" id="L109">public abstract class AbstractBlockingStreamingIterator&lt;T&gt; implements StreamingIterator&lt;T&gt;{</span>
+
+<span class="nc" id="L111">	private final Object endOfFileToken = new Object();</span>
+<span class="nc" id="L112">    private final BlockingQueue&lt;Object&gt; queue = new LinkedBlockingQueue&lt;Object&gt;(1);</span>
+<span class="nc" id="L113">    private Object nextRecord=null;</span>
+<span class="nc" id="L114">    private volatile boolean isClosed=false;</span>
+    
+    private volatile RuntimeException uncaughtException;
+
+    /**
+     * @throws InterruptedException 
+     * 
+     */
+    private void blockingGetNextRecord(){
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        if(!isClosed){</span>
+            try {
+<span class="nc" id="L125">				nextRecord = queue.take();</span>
+<span class="nc" id="L126">			} catch (InterruptedException e) {</span>
+				//assume interrupted is closed?
+<span class="nc" id="L128">				IOUtil.closeAndIgnoreErrors(this);</span>
+<span class="nc" id="L129">			}     </span>
+        }
+<span class="nc" id="L131">    }</span>
+    /**
+     * This starts the visiting in a separate thread.
+     * This method must be called before a client may call
+     * {@link #hasNext()} or {@link #next()}.
+     */
+    public void start(){
+<span class="nc" id="L138">      final IteratorThread iteratorThread =new IteratorThread();</span>
+<span class="nc" id="L139">        iteratorThread.start();</span>
+        //if the vm exits while we are still blocking
+        //we will run forever...
+        //add shutdown hook to try to kill ourselves
+<span class="nc" id="L143">        Runtime.getRuntime().addShutdownHook(new Thread(){</span>
+            @Override
+            public void run() {
+<span class="nc" id="L146">                iteratorThread.kill();</span>
+<span class="nc" id="L147">            }</span>
+        });
+<span class="nc" id="L149">        blockingGetNextRecord();</span>
+		
+<span class="nc" id="L151">    }</span>
+    /**
+     * This is the method that is called by the {@link Thread#run()}
+     * instance in the background thread created and started 
+     * in {@link #start()}.  Please set up and start the items
+     * being iterated over.  Make sure
+     * to call
+     * {@link #blockingPut(Object)} when appropriate. 
+     * Any uncaught exceptions will be thrown by the 
+     * thread using the iterator the next time
+     * {@link #next()} or {@link #hasNext()}
+     * is used.
+     * @throws RuntimeException - any exception not caught or handled by this background
+     * thread should throw a RunTimeException which will be thrown
+     * on the next call to {@link #next()} or {@link #hasNext()}.
+     * 
+     */
+    protected abstract void backgroundThreadRunMethod() throws RuntimeException;
+	/**
+	 * This method must be called when the visitor has finished
+	 * visiting in order to let the iterator know that there
+	 * are no more records left to block for.
+	 */
+    private void finishedIterating(){
+<span class="nc" id="L175">    	blockingPut(endOfFileToken);</span>
+<span class="nc" id="L176">    }</span>
+    /**
+     * Put the given object onto the queue to be iterated over
+     * and block until there is room for it in the queue.
+     * @param obj the object to put.
+     */
+    public final void blockingPut(Object obj){
+<span class="nc bnc" id="L183" title="All 2 branches missed.">        if(!isClosed){</span>
+	        try {
+<span class="nc" id="L185">	            queue.put(obj);</span>
+<span class="nc" id="L186">	        } catch (InterruptedException e) {</span>
+<span class="nc" id="L187">	            throw new IllegalStateException(e);</span>
+<span class="nc" id="L188">	        }</span>
+	    }
+<span class="nc" id="L190">    }</span>
+    /**
+     * 
+    * {@inheritDoc}
+    * &lt;p/&gt;
+    * Not supported.
+    * @throws UnsupportedOperationException always.
+     */
+	@Override
+	public final void remove() {
+<span class="nc" id="L200">		throw new UnsupportedOperationException();		</span>
+	}
+
+	/**
+    * {@inheritDoc}
+    */
+    @Override
+    public final void close() throws IOException {
+<span class="nc" id="L208">        isClosed=true;</span>
+<span class="nc" id="L209">        nextRecord=endOfFileToken;</span>
+<span class="nc" id="L210">        queue.clear();	        </span>
+<span class="nc" id="L211">    }</span>
+	    
+	/**
+	 * Safety-net to close the iterator
+	 * in case it hasn't been closed already.
+	 * Client code should always explicitly
+	 * close a {@link StreamingIterator}
+	 * but this finalizer is used just in case.
+	 * This method can not be relied upon 
+	 * since an object is not guaranteed to 
+	 * get finalized by the garbage collector.
+	 */
+    @Override
+	protected void finalize() throws IOException {
+<span class="nc bnc" id="L225" title="All 2 branches missed.">    	if(!isClosed){</span>
+<span class="nc" id="L226">    		close();</span>
+    	}
+<span class="nc" id="L228">	}</span>
+		/**
+	    * {@inheritDoc}
+	    */
+	    @Override
+	    public final T next() {
+<span class="nc bnc" id="L234" title="All 4 branches missed.">	        if(!isClosed &amp;&amp; uncaughtException !=null){</span>
+<span class="nc" id="L235">	            throw uncaughtException;</span>
+	        }
+<span class="nc bnc" id="L237" title="All 2 branches missed.">	        if(!hasNext()){</span>
+<span class="nc" id="L238">	            throw new NoSuchElementException(&quot;no records&quot;);</span>
+	        }
+	        //if we are here then nextRecord must
+	        //be type T so we can safely cast
+	        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L243">			T next = (T)nextRecord;</span>
+<span class="nc" id="L244">            blockingGetNextRecord();</span>
+	        
+<span class="nc" id="L246">	        return next;</span>
+	    }
+
+	     @Override
+	     public final boolean hasNext() {
+<span class="nc bnc" id="L251" title="All 4 branches missed.">	         if(!isClosed &amp;&amp; uncaughtException !=null){</span>
+<span class="nc" id="L252">                throw uncaughtException;</span>
+             }
+	         
+<span class="nc bnc" id="L255" title="All 4 branches missed.">	        return !isClosed &amp;&amp; nextRecord !=endOfFileToken;</span>
+	     }
+	    
+	     
+	     /**
+	 	 * @return the isClosed
+	 	 */
+	     public final boolean isClosed() {
+<span class="nc" id="L263">	 		return isClosed;</span>
+	 	}
+
+	     /**
+	      * Background thread that runs this iterator
+	      * and can be killed
+	      * @author dkatzel
+	      *
+	      *
+	      */
+<span class="nc" id="L273">	     private class IteratorThread extends Thread{</span>
+	         /**
+	          * closes the blocked iterator.
+	          */
+	         public void kill(){
+<span class="nc" id="L278">	             IOUtil.closeAndIgnoreErrors(AbstractBlockingStreamingIterator.this);                </span>
+<span class="nc" id="L279">	         }</span>
+	         @Override
+	         public void run() {
+	             try{
+<span class="nc" id="L283">	                 backgroundThreadRunMethod();</span>
+<span class="nc" id="L284">	             }catch(RuntimeException e){</span>
+<span class="nc" id="L285">	                 AbstractBlockingStreamingIterator.this.uncaughtException = e;	                 </span>
+	             }finally{
+<span class="nc" id="L287">	                 finishedIterating();</span>
+	             }
+<span class="nc" id="L289">	         }</span>
+	     }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FTPSender.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">83_xbus</a> &gt; <a href="index.source.html" class="el_package">net.sf.xbus.technical.ftp</a> &gt; <span class="el_source">FTPSender.java</span></div><h1>FTPSender.java</h1><pre class="source lang-java linenums">package net.sf.xbus.technical.ftp;
+
+import java.util.Vector;
+
+import net.sf.xbus.base.core.Constants;
+import net.sf.xbus.base.core.TAManager;
+import net.sf.xbus.base.core.TAResource;
+import net.sf.xbus.base.core.XException;
+import net.sf.xbus.base.core.config.Configuration;
+import net.sf.xbus.base.xbussystem.XBUSSystem;
+import net.sf.xbus.technical.Sender;
+import net.sf.xbus.technical.TextSender;
+import net.sf.xbus.technical.file.FileSenderConfiguration;
+
+/**
+ * &lt;code&gt;FTPSender&lt;/code&gt; sends data to neighbor systems by accessing a FTP
+ * server and writing the data onto this server.
+ */
+public class FTPSender implements Sender, TextSender, TAResource
+{
+<span class="nc" id="L21">	private XBUSSystem mDestination = null;</span>
+<span class="nc" id="L22">	private FTPConnection mFTPConnection = null;</span>
+<span class="nc" id="L23">	private FileSenderConfiguration mConfiguration = null;</span>
+
+<span class="nc" id="L25">	private String mWorkDir = null;</span>
+<span class="nc" id="L26">	private String mFileName = null;</span>
+<span class="nc" id="L27">	private String mTmpFileName = null;</span>
+<span class="nc" id="L28">	private String mRenameFileName = null;</span>
+
+	/**
+	 * Indicates wether execute has been called, used in commit and rollback
+	 */
+<span class="nc" id="L33">	private boolean senderExecuted = false;</span>
+
+	/**
+	 * The constructor stores the destination, registers the
+	 * &lt;code&gt;FTPSender&lt;/code&gt; at the {@link net.sf.xbus.base.core.TAManager}
+	 * and opens the connection to the FTP server.
+	 * 
+	 * @param destination where the data shall be send to
+	 * @throws XException if something goes wrong
+	 */
+	public FTPSender(XBUSSystem destination) throws XException
+<span class="nc" id="L44">	{</span>
+<span class="nc" id="L45">		mDestination = destination;</span>
+<span class="nc" id="L46">		TAManager.getInstance().registerResource(this);</span>
+<span class="nc" id="L47">		open();</span>
+<span class="nc" id="L48">	}</span>
+
+	/**
+	 * Writes the data to the FTP server. A simple transaction logic is
+	 * implemented: The data will be written to a temporary file. It will be
+	 * moved to the original file name during {@link #commit}.
+	 * 
+	 * @param function ignored
+	 * @param callData data to be written
+	 * @return &lt;code&gt;null&lt;/code&gt;
+	 * @throws XException if something goes wrong
+	 */
+	public String execute(String function, String callData) throws XException
+	{
+<span class="nc" id="L62">		senderExecuted = true;</span>
+		/*
+		 * Read configuration and initialize variables
+		 */
+<span class="nc" id="L66">		mConfiguration = new FileSenderConfiguration(mDestination);</span>
+
+		/*
+		 * The FileName may contain a directory. It is split up into the name of
+		 * the directory and the name of the file itself.
+		 */
+<span class="nc" id="L72">		mWorkDir = FTPConnection.getWorkingDirectory(mConfiguration</span>
+<span class="nc" id="L73">				.getFileNames()[0]);</span>
+<span class="nc" id="L74">		mFileName = FTPConnection.getFileName(mConfiguration.getFileNames()[0]);</span>
+
+<span class="nc" id="L76">		mTmpFileName = mFileName + &quot;.&quot; + Constants.TEMP_SUFFIX;</span>
+<span class="nc" id="L77">		mRenameFileName = mFileName + Constants.getDateAsString();</span>
+
+		/*
+		 * if resolution is WRITE_ERROR then stop if the file is already there
+		 */
+<span class="nc bnc" id="L82" title="All 2 branches missed.">		if ((mConfiguration.getResolution().equals(Constants.WRITE_ERROR))</span>
+<span class="nc bnc" id="L83" title="All 2 branches missed.">				&amp;&amp; (mFTPConnection.existsFile(mWorkDir, mFileName)))</span>
+		{
+<span class="nc" id="L85">			Vector params = new Vector(1);</span>
+<span class="nc" id="L86">			params.add(mConfiguration.getFileNames());</span>
+<span class="nc" id="L87">			throw new XException(Constants.LOCATION_EXTERN,</span>
+					Constants.LAYER_TECHNICAL, Constants.PACKAGE_TECHNICAL_FTP,
+					&quot;10&quot;, params);
+		}
+
+		/*
+		 * Delete tmpFile if it exists
+		 */
+<span class="nc bnc" id="L95" title="All 2 branches missed.">		if (mFTPConnection.existsFile(mWorkDir, mTmpFileName))</span>
+		{
+<span class="nc" id="L97">			mFTPConnection.delete(mWorkDir, mTmpFileName);</span>
+		}
+
+		/*
+		 * if resolution is WRITE_APPEND and file exists, data will be appended
+		 */
+<span class="nc bnc" id="L103" title="All 2 branches missed.">		if ((mConfiguration.getResolution().equals(Constants.WRITE_APPEND))</span>
+<span class="nc bnc" id="L104" title="All 2 branches missed.">				&amp;&amp; (mFTPConnection.existsFile(mWorkDir, mFileName)))</span>
+		{
+			// get current data
+<span class="nc" id="L107">			StringBuffer currentData = new StringBuffer(mFTPConnection</span>
+<span class="nc" id="L108">					.retrieveFile(mWorkDir, mFileName, mConfiguration</span>
+<span class="nc" id="L109">							.getEncoding()));</span>
+
+			// append linebreak if necessary
+<span class="nc bnc" id="L112" title="All 2 branches missed.">			if ((currentData.length() &gt; 0)</span>
+<span class="nc" id="L113">					&amp;&amp; (currentData.substring(currentData.length() - 1)</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">							.getBytes()[0] != Constants.NEWLINE))</span>
+			{
+<span class="nc" id="L116">				currentData.append(Constants.LINE_SEPERATOR);</span>
+			}
+
+			// append new data to current data and write to server as tmpFile
+<span class="nc" id="L120">			currentData.append(callData);</span>
+<span class="nc" id="L121">			mFTPConnection.storeFile(currentData.toString(), mWorkDir,</span>
+<span class="nc" id="L122">					mTmpFileName, mConfiguration.getEncoding());</span>
+<span class="nc" id="L123">		}</span>
+		else
+		{
+			// write callData to server as tmpFile
+<span class="nc" id="L127">			mFTPConnection.storeFile(callData, mWorkDir, mTmpFileName,</span>
+<span class="nc" id="L128">					mConfiguration.getEncoding());</span>
+
+		}
+
+<span class="nc" id="L132">		return null;</span>
+	}
+
+	/**
+	 * Opens the connection to a FTP server, using the
+	 * {@link net.sf.xbus.technical.ftp.FTPConnection}.
+	 */
+	public void open() throws XException
+	{
+<span class="nc" id="L141">		String ftpName = Configuration.getInstance().getValue(</span>
+<span class="nc" id="L142">				Constants.CHAPTER_SYSTEM, mDestination.getName(),</span>
+				&quot;FTPConnection&quot;);
+<span class="nc" id="L144">		mFTPConnection = FTPConnection.getInstance(ftpName);</span>
+<span class="nc" id="L145">	}</span>
+
+	/**
+	 * Closes the connection to the FTP server.
+	 */
+	public void close()
+	{
+<span class="nc bnc" id="L152" title="All 2 branches missed.">		if (mFTPConnection != null)</span>
+		{
+<span class="nc" id="L154">			mFTPConnection.close();</span>
+		}
+<span class="nc" id="L156">	}</span>
+
+	/**
+	 * Renames the temporary file to the original file name. If the file already
+	 * exists, it will be either deleted or renamed, depending on the
+	 * &lt;code&gt;ConflictResolution&lt;/code&gt;.
+	 * 
+	 * @throws XException if something goes wrong
+	 */
+	public void commit() throws XException
+	{
+<span class="nc" id="L167">		TAManager.getInstance().removeResource(this);</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">		if (senderExecuted)</span>
+		{
+			/*
+			 * Rename the file if it exists
+			 */
+<span class="nc bnc" id="L173" title="All 2 branches missed.">			if (mFTPConnection.existsFile(mWorkDir, mFileName))</span>
+			{
+<span class="nc" id="L175">				mFTPConnection.rename(mWorkDir, mFileName, mRenameFileName);</span>
+			}
+
+			/*
+			 * Rename tmpFile to original file
+			 */
+<span class="nc" id="L181">			mFTPConnection.rename(mWorkDir, mTmpFileName, mFileName);</span>
+
+			/*
+			 * Remove renamed file if resolution is not WRITE_RENAME
+			 */
+<span class="nc bnc" id="L186" title="All 2 branches missed.">			if ((!mConfiguration.getResolution().equals(Constants.WRITE_RENAME))</span>
+<span class="nc bnc" id="L187" title="All 2 branches missed.">					&amp;&amp; (mFTPConnection.existsFile(mWorkDir, mRenameFileName)))</span>
+			{
+<span class="nc" id="L189">				mFTPConnection.delete(mWorkDir, mRenameFileName);</span>
+			}
+		}
+<span class="nc" id="L192">	}</span>
+
+	/**
+	 * Deletes the temporary file.
+	 * 
+	 * @throws XException if something goes wrong
+	 */
+	public void rollback() throws XException
+	{
+<span class="nc" id="L201">		TAManager.getInstance().removeResource(this);</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">		if (senderExecuted)</span>
+		{
+			/*
+			 * delete tmpFile
+			 */
+<span class="nc" id="L207">			mFTPConnection.delete(mWorkDir, mTmpFileName);</span>
+		}
+<span class="nc" id="L209">	}</span>
+
+	/**
+	 * @see net.sf.xbus.technical.Sender#getType()
+	 * @return &lt;code&gt;Constants.TYPE_TEXT&lt;/code&gt;
+	 */
+	public String getType()
+	{
+<span class="nc" id="L217">		return Constants.TYPE_TEXT;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

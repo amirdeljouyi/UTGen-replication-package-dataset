@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FastaConsedPhdAdaptedIterator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.assembly.clc.cas.consed</a> &gt; <span class="el_source">FastaConsedPhdAdaptedIterator.java</span></div><h1>FastaConsedPhdAdaptedIterator.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+package org.jcvi.jillion.assembly.clc.cas.consed;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Date;
+import java.util.Map;
+import java.util.Properties;
+
+import org.jcvi.jillion.assembly.consed.ConsedUtil;
+import org.jcvi.jillion.assembly.consed.ace.PhdInfo;
+import org.jcvi.jillion.assembly.consed.phd.Phd;
+import org.jcvi.jillion.assembly.consed.phd.PhdBuilder;
+import org.jcvi.jillion.assembly.consed.phd.PhdUtil;
+import org.jcvi.jillion.core.qual.PhredQuality;
+import org.jcvi.jillion.core.qual.QualitySequence;
+import org.jcvi.jillion.core.qual.QualitySequenceBuilder;
+import org.jcvi.jillion.core.util.iter.StreamingIterator;
+import org.jcvi.jillion.fasta.nt.NucleotideFastaRecord;
+/**
+ * {@code FastaConsedPhdAdaptedIterator} is a PhdReadRecord generator
+ * for chromatograms.  Since CLC's reference mappers don't handle chromatograms,
+ * they have to be passed in as fasta files.  This class will find the chromatogram in the 
+ * chromat_dir folder with the same name as the current read id in the fasta and create a {@link PhdReadRecord}
+ * with the correct sequence, qualities and postions from the chromatogram as well
+ * as a correctly formatted {@link PhdInfo} so consed can correctly display the chromatogram
+ * wave forms.
+ * @author dkatzel
+ *
+ */
+public class FastaConsedPhdAdaptedIterator implements StreamingIterator&lt;PhdReadRecord&gt;{
+	
+	private final StreamingIterator&lt;NucleotideFastaRecord&gt; fastaIterator;
+	private final Map&lt;String,String&gt; requiredComments;
+	private final byte defaultQualityValue;
+	private final Date phdDate;
+	private final File fastaFile;
+	
+	public FastaConsedPhdAdaptedIterator(
+			StreamingIterator&lt;NucleotideFastaRecord&gt; fastaIterator,
+			File fastaFile,
+			Date phdDate,
+<span class="nc" id="L64">			PhredQuality defaultQualityValue){</span>
+<span class="nc" id="L65">		this.requiredComments = PhdUtil.createPhdTimeStampCommentFor(phdDate);</span>
+<span class="nc" id="L66">		this.fastaIterator = fastaIterator;	</span>
+<span class="nc" id="L67">		this.defaultQualityValue = defaultQualityValue.getQualityScore();</span>
+<span class="nc" id="L68">		this.fastaFile = fastaFile;</span>
+<span class="nc" id="L69">		this.phdDate = new Date(phdDate.getTime());</span>
+<span class="nc" id="L70">	}</span>
+	@Override
+	public boolean hasNext() {
+<span class="nc" id="L73">		return fastaIterator.hasNext();</span>
+	}
+
+	@Override
+	public PhdReadRecord next() {
+<span class="nc" id="L78">		NucleotideFastaRecord nextFasta = fastaIterator.next();</span>
+<span class="nc" id="L79">		String id = nextFasta.getId();</span>
+		//Properties constructor &quot;new Properties(Properties)&quot;
+		//doesn't actually put those values in the map,
+		//they are only used for &quot;defaults&quot; 
+		//so we have to manually add them using put methods.
+<span class="nc" id="L84">		Properties comments = new Properties();</span>
+<span class="nc" id="L85">		comments.putAll(requiredComments);</span>
+<span class="nc" id="L86">		requiredComments.putAll( createAdditionalCommentsFor(id));</span>
+
+<span class="nc" id="L88">		Phd phd =createPhdRecordFor(nextFasta, requiredComments);</span>
+		
+<span class="nc" id="L90">		PhdInfo info = ConsedUtil.generateDefaultPhdInfoFor(fastaFile, id, phdDate);</span>
+<span class="nc" id="L91">		return new PhdReadRecord(phd, info);</span>
+	}
+	
+	/**
+     * Add any additional comments if needed.
+     * By default this method does not add
+     * any more comments.  Subclasses
+     * may override this method to add new values.
+     * @param id the id of this sequence
+     * @return a {@link Properties} object which contains
+     * any new comments to be included for the current read with the given id;
+     * can not be null but may be empty.
+     */
+    protected  Map&lt;String,String&gt; createAdditionalCommentsFor(String id) {
+<span class="nc" id="L105">        return Collections.emptyMap();</span>
+    }
+    protected Phd createPhdRecordFor(NucleotideFastaRecord nextFasta,  Map&lt;String,String&gt; requiredComments ){
+<span class="nc" id="L108">	    String id = nextFasta.getId();</span>
+<span class="nc" id="L109">        QualitySequence qualities = getQualitiesFor(nextFasta);</span>
+<span class="nc" id="L110">        return new PhdBuilder(id, nextFasta.getSequence(), qualities)</span>
+<span class="nc" id="L111">        				.comments(requiredComments)</span>
+<span class="nc" id="L112">        				.fakePeaks()</span>
+<span class="nc" id="L113">        				.build();</span>
+	}
+	
+    protected QualitySequence getQualitiesFor(
+    		NucleotideFastaRecord nextFasta) {
+<span class="nc" id="L118">        int numberOfQualities =(int) nextFasta.getSequence().getLength();</span>
+<span class="nc" id="L119">		byte[] qualities = new byte[numberOfQualities];</span>
+<span class="nc" id="L120">		Arrays.fill(qualities, defaultQualityValue);</span>
+<span class="nc" id="L121">        return new QualitySequenceBuilder(qualities).build();</span>
+    }
+
+	@Override
+	public void remove() {
+<span class="nc" id="L126">		fastaIterator.remove();</span>
+		
+<span class="nc" id="L128">	}</span>
+	@Override
+	public void close() throws IOException {
+<span class="nc" id="L131">		fastaIterator.close();</span>
+		
+<span class="nc" id="L133">	}</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

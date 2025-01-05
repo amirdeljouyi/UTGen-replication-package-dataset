@@ -1,0 +1,743 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EngineImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">80_wheelwebtool</a> &gt; <a href="index.source.html" class="el_package">wheel</a> &gt; <span class="el_source">EngineImpl.java</span></div><h1>EngineImpl.java</h1><pre class="source lang-java linenums">/*
+Copyright (c) 2007-2008, Henri Frilund
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+    * Neither the name of the &lt;ORGANIZATION&gt; nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+&quot;AS IS&quot; AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+package wheel;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.xmlpull.v1.XmlPullParserException;
+import org.xmlpull.v1.XmlPullParserFactory;
+import org.xmlpull.v1.XmlSerializer;
+import wheel.components.*;
+import wheel.persistence.IObjectStore;
+import wheel.persistence.SessionStore;
+import wheel.util.WheelURL;
+import wheel.util.WrappedException;
+
+import javax.servlet.ServletContext;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+import java.io.*;
+import java.net.SocketException;
+import java.util.*;
+import java.lang.reflect.Constructor;
+
+/**
+ * &quot;main loop&quot; for Wheel. Handles all the request processing.
+ *
+ * TODO move common functionality to AbstractEngine
+ * @author Henri Frilund
+ */
+public class EngineImpl extends AbstractEngine {
+<span class="nc" id="L53">    private final Logger log = LoggerFactory.getLogger(EngineImpl.class);</span>
+    private HttpServletRequest request;
+    private HttpServletResponse response;
+    private HttpSession session;
+    private String basePackage;
+    private String startPage ;
+    private String cssPath;
+    private String jsPath;
+    private OutputStream out;
+    private XmlSerializer serializer;
+<span class="nc" id="L63">    private String encoding = &quot;UTF-8&quot;;</span>
+
+    private ServletContext context;
+    private IObjectStore objectStore;
+    private Throwable error;
+    private Map&lt;String,String&gt; errorMap;
+    private StandaloneComponent errorPage;
+    private IMessagesSource messagesSource;
+    private Locale locale;
+<span class="nc" id="L72">    private boolean ajax = false;</span>
+    private WheelURL wheelURL;
+    private boolean unitTestMode;
+    private IResourceManager resourceManager;
+    private boolean developmentMode;
+    private StandaloneComponent page;
+    private Map&lt;String,String&gt; componentTypes;
+
+<span class="nc" id="L80">    public EngineImpl(HttpServletRequest request, HttpServletResponse response, ServletContext context) {</span>
+<span class="nc" id="L81">        this.request = request;</span>
+<span class="nc" id="L82">        this.response = response;</span>
+<span class="nc" id="L83">        this.context = context;</span>
+<span class="nc" id="L84">        basePackage = (String)context.getAttribute(&quot;basePackageForPages&quot;);</span>
+
+<span class="nc" id="L86">        startPage = (String)context.getAttribute(&quot;wheelStartPage&quot;);</span>
+<span class="nc" id="L87">        cssPath = (String)context.getAttribute(&quot;wheelCssPath&quot;);</span>
+<span class="nc" id="L88">        jsPath = (String)context.getAttribute(&quot;wheelJsPath&quot;);</span>
+
+<span class="nc bnc" id="L90" title="All 2 branches missed.">        if (context.getAttribute(&quot;wheelUnitTestMode&quot;) != null)</span>
+<span class="nc" id="L91">            unitTestMode = true;</span>
+
+<span class="nc bnc" id="L93" title="All 2 branches missed.">        if (context.getAttribute(&quot;wheelDevelopmentMode&quot;) != null) {</span>
+<span class="nc" id="L94">            developmentMode = true;</span>
+<span class="nc" id="L95">            resourceManager = new DevelopmentResourceManager(context);</span>
+        }
+        else
+<span class="nc" id="L98">            resourceManager = new DefaultResourceManager(context);</span>
+
+<span class="nc" id="L100">        session = request.getSession(false);</span>
+
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        if (session == null)</span>
+<span class="nc" id="L103">            session = request.getSession(true);</span>
+
+<span class="nc" id="L105">        messagesSource = new MessageSourceResourceBundleImpl();</span>
+<span class="nc" id="L106">        locale = request.getLocale();</span>
+<span class="nc" id="L107">        componentTypes = (Map&lt;String,String&gt;)session.getAttribute(&quot;wheel.componentTypes&quot;);</span>
+
+<span class="nc bnc" id="L109" title="All 2 branches missed.">        if (componentTypes == null)</span>
+<span class="nc" id="L110">            componentTypes = new HashMap&lt;String,String&gt;();</span>
+
+<span class="nc" id="L112">    }</span>
+
+    public void processRequestInternal() {
+        try {
+<span class="nc" id="L116">            Map parameters = readRequestParameters(request);</span>
+<span class="nc" id="L117">            String path = request.getPathInfo();</span>
+
+<span class="nc bnc" id="L119" title="All 4 branches missed.">            if (path == null || path.length() == 0) {</span>
+                try {
+<span class="nc" id="L121">                    response.sendRedirect(request.getContextPath() + request.getServletPath() + &quot;/&quot; + startPage);</span>
+<span class="nc" id="L122">                    return;</span>
+<span class="nc" id="L123">                } catch (IOException e) {</span>
+<span class="nc" id="L124">                    log.error(&quot;Could not redirect to '/&quot; + request.getContextPath() + &quot;/&quot; + request.getServletPath() + &quot;/&quot; + startPage + &quot;'.&quot;);</span>
+<span class="nc" id="L125">                }</span>
+            }
+<span class="nc bnc" id="L127" title="All 2 branches missed.">            else if (path.equals(&quot;/&quot;))</span>
+<span class="nc" id="L128">                path = startPage;</span>
+            else
+<span class="nc" id="L130">                path = path.substring(1, path.length());</span>
+
+            try {
+<span class="nc" id="L133">                wheelURL = new WheelURL(path, parameters, this);</span>
+<span class="nc" id="L134">            } catch (UnsupportedEncodingException e) {</span>
+<span class="nc" id="L135">                log.error(&quot;Could not decode URL.&quot;, e);</span>
+<span class="nc" id="L136">            }</span>
+
+<span class="nc bnc" id="L138" title="All 2 branches missed.">            if (wheelURL.isAssetUrl()) {</span>
+<span class="nc" id="L139">                processAssetRequest(path);</span>
+<span class="nc" id="L140">                return;</span>
+            }
+
+<span class="nc" id="L143">            String updateTargetId = wheelURL.getUpdateTargetId();</span>
+
+<span class="nc" id="L145">            ajax = wheelURL.isAjaxUrl();</span>
+
+<span class="nc" id="L147">            evictPageScope(wheelURL.getPage());</span>
+
+<span class="nc" id="L149">            RenderableComponent renderThis = null;</span>
+
+            try {
+<span class="nc" id="L152">                renderThis = buildRenderable(wheelURL.getPage(), new ElExpression(wheelURL.getMethod()), wheelURL.getComponent(), parameters, ajax);</span>
+<span class="nc" id="L153">            } catch (RedirectException redirectException) {</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">                if (redirectException.getPage() != null) {</span>
+<span class="nc" id="L155">                    StandaloneComponent redirectedPage = redirectException.getPage();</span>
+<span class="nc" id="L156">                    response.setContentType(redirectedPage.config().getContentType());</span>
+
+                    try {
+<span class="nc" id="L159">                        response.reset();</span>
+<span class="nc" id="L160">                        evictPageScope(redirectedPage.getPagePath());</span>
+<span class="nc" id="L161">                        redirectedPage.preBuild();</span>
+<span class="nc" id="L162">                        redirectedPage.buildComponent();</span>
+<span class="nc" id="L163">                        redirectedPage.postBuild();</span>
+<span class="nc" id="L164">                        redirectedPage._render(_getXmlSerializer());</span>
+<span class="nc" id="L165">                        return;</span>
+<span class="nc" id="L166">                    } catch (Exception e) {</span>
+<span class="nc" id="L167">                        log.error(&quot;Failed to build redirected page '&quot; + redirectedPage.getPagePath() + &quot;'.&quot;, e);</span>
+<span class="nc" id="L168">                        setError(e);</span>
+<span class="nc" id="L169">                        renderErrorPage();</span>
+<span class="nc" id="L170">                        return;</span>
+                    }
+                }
+<span class="nc bnc" id="L173" title="All 2 branches missed.">                else if (redirectException.getUrl() != null) {</span>
+                    try {
+<span class="nc" id="L175">                        response.reset();</span>
+<span class="nc" id="L176">                        response.sendRedirect(redirectException.getUrl());</span>
+<span class="nc" id="L177">                        return;</span>
+<span class="nc" id="L178">                    } catch (IOException e) {</span>
+<span class="nc" id="L179">                        log.error(&quot;Failed to send redirect to url '&quot; + redirectException.getUrl() + &quot;'.&quot;, e);</span>
+<span class="nc" id="L180">                        return;</span>
+                    }
+                }
+<span class="nc" id="L183">            } catch (AbortProcessingException abortException) {</span>
+<span class="nc" id="L184">                return;</span>
+<span class="nc" id="L185">            } catch(WrappedException wrappedException) {</span>
+<span class="nc" id="L186">                setError(wrappedException.getCause());</span>
+<span class="nc" id="L187">                renderErrorPage();</span>
+<span class="nc" id="L188">                return;</span>
+<span class="nc" id="L189">            } catch(Throwable e) {</span>
+<span class="nc" id="L190">                setError(e);</span>
+<span class="nc" id="L191">                log.error(&quot;Failed to build renderable page or component.&quot;, e);</span>
+
+<span class="nc" id="L193">                renderErrorPage();</span>
+
+<span class="nc" id="L195">                return;</span>
+            } finally{
+<span class="nc bnc" id="L197" title="All 2 branches missed.">                if (objectStore != null)</span>
+<span class="nc" id="L198">                    objectStore.cleanup();</span>
+            }
+
+
+<span class="nc" id="L202">            StandaloneComponent page = null;</span>
+
+<span class="nc bnc" id="L204" title="All 2 branches missed.">            if (parameters.containsKey(&quot;xml&quot;))</span>
+<span class="nc" id="L205">                response.setContentType(&quot;text/xml&quot;);</span>
+
+            try {
+<span class="nc bnc" id="L208" title="All 2 branches missed.">                if (ajax) {</span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">                    if (updateTargetId.length() &gt; 0)</span>
+<span class="nc" id="L210">                        renderThis = (RenderableComponent)renderThis.getPage().find(updateTargetId);</span>
+
+<span class="nc bnc" id="L212" title="All 2 branches missed.">                    if (renderThis instanceof StandaloneComponent) {</span>
+<span class="nc" id="L213">                        StandaloneComponent standaloneComponent = (StandaloneComponent)renderThis;</span>
+
+<span class="nc bnc" id="L215" title="All 2 branches missed.">                        if (!standaloneComponent.isPage())</span>
+<span class="nc" id="L216">                            response.setContentType(((StandaloneComponent)renderThis).config().getContentType());</span>
+                        else
+<span class="nc" id="L218">                            response.setContentType(renderThis.getPage().config().getContentType());</span>
+                    }
+
+<span class="nc" id="L221">                    XmlSerializer serializer = _getXmlSerializer();</span>
+<span class="nc" id="L222">                    serializer.startDocument(getEncoding(), null);</span>
+<span class="nc" id="L223">                    renderThis._render(serializer);</span>
+<span class="nc" id="L224">                    serializer.endDocument();</span>
+<span class="nc" id="L225">                    serializer.flush();</span>
+<span class="nc" id="L226">                }</span>
+                else {
+<span class="nc" id="L228">                    page = (StandaloneComponent)renderThis;</span>
+<span class="nc" id="L229">                    response.setContentType(page.config().getContentType());</span>
+
+<span class="nc" id="L231">                    page._render(_getXmlSerializer());</span>
+<span class="nc" id="L232">                    page._getComponentStore().clear();</span>
+                }
+<span class="nc" id="L234">            } catch (Exception e) {</span>
+<span class="nc" id="L235">                log.error(&quot;Failed to render page or component with id '&quot; + renderThis.getComponentId() + &quot;'.&quot;, e);</span>
+
+<span class="nc bnc" id="L237" title="All 2 branches missed.">                if (!(e instanceof SocketException)) {</span>
+<span class="nc" id="L238">                    setError(e);</span>
+<span class="nc" id="L239">                    renderErrorPage();</span>
+                }
+<span class="nc" id="L241">            }</span>
+
+
+        } finally {
+<span class="nc bnc" id="L245" title="All 2 branches missed.">            if (out != null) {</span>
+                try {
+<span class="nc" id="L247">                    out.close();</span>
+<span class="nc" id="L248">                } catch (IOException e) {</span>
+<span class="nc" id="L249">                    log.error(&quot;Failed to close output stream.&quot; , e);</span>
+<span class="nc" id="L250">                }</span>
+            }
+<span class="nc" id="L252">            session.setAttribute(&quot;wheel.componentTypes&quot;, componentTypes);</span>
+        }
+<span class="nc" id="L254">    }</span>
+
+    void setServletContext(ServletContext servletContext) {
+<span class="nc" id="L257">        context = servletContext;</span>
+<span class="nc" id="L258">    }</span>
+
+    public Set _getAvailableCssFiles() {
+<span class="nc" id="L261">        return resourceManager.getResourcesFromPath(cssPath);</span>
+    }
+
+    public Set _getAvailableJsFiles() {
+<span class="nc" id="L265">        return resourceManager.getResourcesFromPath(jsPath);</span>
+    }
+
+    public String getBasePackage() {
+<span class="nc" id="L269">        return basePackage;</span>
+    }
+
+    private RenderableComponent buildRenderable(String pagePath, ElExpression targetMethod, String targetComponent, Map parameters, boolean ajax) {
+<span class="nc" id="L273">        page = loadPage(pagePath);</span>
+<span class="nc" id="L274">        Component component = null;</span>
+<span class="nc" id="L275">        boolean rebuildPage = false;</span>
+
+<span class="nc" id="L277">        page.preBuild();</span>
+
+<span class="nc bnc" id="L279" title="All 2 branches missed.">        if (parameters.containsKey(&quot;wheelSubmitId&quot;)) {</span>
+<span class="nc" id="L280">            page._setPageRewinding(false);</span>
+<span class="nc" id="L281">            page.buildComponent();</span>
+<span class="nc" id="L282">            page._postBuildPage();</span>
+
+<span class="nc" id="L284">            Form form = (Form)page.find(((String[])parameters.get(&quot;wheelSubmitId&quot;))[0]);</span>
+
+<span class="nc bnc" id="L286" title="All 2 branches missed.">            if (form == null) {</span>
+<span class="nc" id="L287">                error = new WheelException(&quot;Could not find a Form component that matches the recieved submit.&quot;, null);</span>
+<span class="nc" id="L288">                renderErrorPage();</span>
+            }
+
+<span class="nc" id="L291">            StandaloneComponent formContainer = form._getTopLevelComponent(true);</span>
+<span class="nc" id="L292">            page._setSubmittedForm(form);</span>
+<span class="nc" id="L293">            page._setSubmitTarget(formContainer.getComponentId());</span>
+
+
+<span class="nc bnc" id="L296" title="All 2 branches missed.">            for (FormElement element : form.getFormElements()) {</span>
+<span class="nc bnc" id="L297" title="All 4 branches missed.">                if (!parameters.containsKey(element.getFormElementName()) &amp;&amp; !(element instanceof Checkbox)) {</span>
+<span class="nc" id="L298">                    continue;</span>
+                }
+
+<span class="nc bnc" id="L301" title="All 2 branches missed.">                if (element instanceof Checkbox) {</span>
+<span class="nc bnc" id="L302" title="All 2 branches missed.">                    if (!parameters.containsKey(element.getFormElementName()))</span>
+<span class="nc" id="L303">                        element._setSubmitValue(new String[]{&quot;false&quot;});</span>
+                    else
+<span class="nc" id="L305">                        element._setSubmitValue(new String[]{&quot;true&quot;});</span>
+
+<span class="nc" id="L307">                    continue;</span>
+                }
+
+<span class="nc" id="L310">                element._setSubmitValue((String[])parameters.get(element.getFormElementName()));</span>
+<span class="nc" id="L311">            }</span>
+
+<span class="nc bnc" id="L313" title="All 2 branches missed.">            if (!form.config().isRenderSelf()) {</span>
+<span class="nc bnc" id="L314" title="All 2 branches missed.">                for (FormElement element : form._getForm(false).getFormElements()) {</span>
+<span class="nc bnc" id="L315" title="All 4 branches missed.">                    if (!parameters.containsKey(element.getFormElementName()) &amp;&amp; !(element instanceof Checkbox)) {</span>
+<span class="nc" id="L316">                        continue;</span>
+                    }
+
+<span class="nc bnc" id="L319" title="All 2 branches missed.">                    if (element instanceof Checkbox) {</span>
+<span class="nc bnc" id="L320" title="All 2 branches missed.">                        if (!parameters.containsKey(element.getFormElementName()))</span>
+<span class="nc" id="L321">                            element._setSubmitValue(new String[]{&quot;false&quot;});</span>
+                        else
+<span class="nc" id="L323">                            element._setSubmitValue(new String[]{&quot;true&quot;});</span>
+
+<span class="nc" id="L325">                        continue;</span>
+                    }
+
+<span class="nc" id="L328">                    element._setSubmitValue((String[])parameters.get(element.getFormElementName()));</span>
+<span class="nc" id="L329">                }</span>
+            }
+
+<span class="nc bnc" id="L332" title="All 4 branches missed.">            if (form.isFormValid() &amp;&amp; targetMethod.length() &gt; 0) {</span>
+<span class="nc bnc" id="L333" title="All 4 branches missed.">                if (!resourceManager.getActionRegistry().isActionMethod(targetComponent.length() &gt; 0 ? page.find(targetComponent) : page, wheelURL.getMethodName())) {</span>
+<span class="nc" id="L334">                    error = new WheelException(&quot;Method '&quot; + targetMethod + &quot;' is not registered as an action. Add @ActionMethod annotation to all methods that are action methods.&quot;, null);</span>
+<span class="nc" id="L335">                    renderErrorPage();</span>
+                }
+
+<span class="nc" id="L338">                targetMethod.errorMessage(&quot;Form action &quot; + targetMethod + &quot; could not be executed. Make sure you've provided such a method.&quot;);</span>
+<span class="nc bnc" id="L339" title="All 2 branches missed.">                Object retVal = targetMethod.eval(targetComponent.length() &gt; 0 ? page.find(targetComponent) : formContainer, formContainer);</span>
+
+<span class="nc bnc" id="L341" title="All 2 branches missed.">                if (retVal instanceof StandaloneComponent) {</span>
+<span class="nc" id="L342">                    page = (StandaloneComponent)retVal;</span>
+<span class="nc" id="L343">                    evictPageScope(page.getPagePath());</span>
+<span class="nc" id="L344">                    page.preBuild();</span>
+                }
+<span class="nc bnc" id="L346" title="All 2 branches missed.">                else if (retVal instanceof String) {</span>
+<span class="nc" id="L347">                    page = loadPage((String)retVal);</span>
+<span class="nc" id="L348">                    evictPageScope(page.getPagePath());</span>
+<span class="nc" id="L349">                    page.preBuild();</span>
+                }
+<span class="nc bnc" id="L351" title="All 2 branches missed.">                else if (retVal instanceof Boolean) {</span>
+<span class="nc bnc" id="L352" title="All 2 branches missed.">                    if (!((Boolean)retVal).booleanValue())</span>
+<span class="nc" id="L353">                        throw new AbortProcessingException();</span>
+                }
+            }
+
+<span class="nc" id="L357">            rebuildPage = true;</span>
+<span class="nc" id="L358">            form._clear();</span>
+<span class="nc" id="L359">            page._setPageRewinding(true);</span>
+
+<span class="nc" id="L361">        }</span>
+        else {
+<span class="nc" id="L363">            page._setPageRewinding(false);</span>
+<span class="nc" id="L364">            rebuildPage = true;</span>
+<span class="nc" id="L365">            page._injectExposedFields();</span>
+
+<span class="nc bnc" id="L367" title="All 4 branches missed.">            if (targetMethod != null &amp;&amp; targetMethod.length() &gt; 0) {</span>
+<span class="nc bnc" id="L368" title="All 4 branches missed.">                if (targetComponent != null &amp;&amp; targetComponent.length() &gt; 0) {</span>
+
+<span class="nc" id="L370">                    boolean findFromPage = false;</span>
+
+<span class="nc bnc" id="L372" title="All 2 branches missed.">                    if (componentTypes.containsKey(pagePath + &quot;/&quot; + targetComponent)) {</span>
+                        try {
+<span class="nc" id="L374">                            Class componentClazz = resourceManager.loadClass(componentTypes.get(pagePath + &quot;/&quot; + targetComponent));</span>
+<span class="nc" id="L375">                            Constructor cons = componentClazz.getConstructor(String.class);</span>
+<span class="nc" id="L376">                            component = (Component)cons.newInstance(targetComponent);</span>
+<span class="nc" id="L377">                            component._setParent(page);</span>
+<span class="nc" id="L378">                        } catch (Exception e) {</span>
+<span class="nc" id="L379">                            findFromPage = true;</span>
+<span class="nc" id="L380">                        }</span>
+
+<span class="nc bnc" id="L382" title="All 4 branches missed.">                        if (!findFromPage &amp;&amp; resourceManager.getActionRegistry().needsRebuilding(component, wheelURL.getMethodName())) {</span>
+<span class="nc" id="L383">                            findFromPage = true;</span>
+                        }
+                    }
+
+<span class="nc bnc" id="L387" title="All 2 branches missed.">                    if (findFromPage) {</span>
+<span class="nc" id="L388">                        page.buildComponent();</span>
+<span class="nc" id="L389">                        page._postBuildPage();</span>
+<span class="nc" id="L390">                        component = page.find(targetComponent);</span>
+                    }
+                }
+
+<span class="nc bnc" id="L394" title="All 4 branches missed.">                if (!resourceManager.getActionRegistry().isActionMethod(component != null ? component : page, wheelURL.getMethodName())) {</span>
+<span class="nc" id="L395">                    throw new WheelException(&quot;Method '&quot; + targetMethod + &quot;' is not registered as an action. Add @ActionMethod annotation to all methods that are action methods.&quot;, null);</span>
+                }
+
+<span class="nc bnc" id="L398" title="All 2 branches missed.">                targetMethod.errorMessage(&quot;Failed to call method '&quot; + targetMethod + &quot;' in class &quot; + (component != null ? component : page).getClass().getName());</span>
+<span class="nc bnc" id="L399" title="All 4 branches missed.">                Object retVal = targetMethod.eval(component != null ? component : page, component != null ? component : page);</span>
+
+<span class="nc bnc" id="L401" title="All 2 branches missed.">                if (retVal instanceof StandaloneComponent) {</span>
+<span class="nc" id="L402">                    page = (StandaloneComponent)retVal;</span>
+<span class="nc" id="L403">                    evictPageScope(page.getPagePath());</span>
+<span class="nc" id="L404">                    page.preBuild();</span>
+                }
+<span class="nc bnc" id="L406" title="All 2 branches missed.">                else if (retVal instanceof String) {</span>
+<span class="nc" id="L407">                    page = loadPage((String)retVal);</span>
+<span class="nc" id="L408">                    evictPageScope(page.getPagePath());</span>
+<span class="nc" id="L409">                    page.preBuild();</span>
+                }
+<span class="nc bnc" id="L411" title="All 2 branches missed.">                else if (retVal instanceof Boolean) {</span>
+<span class="nc bnc" id="L412" title="All 2 branches missed.">                    if (!((Boolean)retVal).booleanValue())</span>
+<span class="nc" id="L413">                        throw new AbortProcessingException();</span>
+                }
+
+<span class="nc" id="L416">                rebuildPage = true;</span>
+            }
+        }
+
+<span class="nc bnc" id="L420" title="All 2 branches missed.">        if (rebuildPage) {</span>
+<span class="nc" id="L421">            page._clear();</span>
+<span class="nc" id="L422">            page.buildComponent();</span>
+<span class="nc" id="L423">            page._postBuildPage();</span>
+        }
+
+<span class="nc" id="L426">        page._postProcessRequest();</span>
+<span class="nc" id="L427">        page.postBuild();</span>
+
+<span class="nc bnc" id="L429" title="All 6 branches missed.">        if (targetMethod.length() == 0 &amp;&amp; targetComponent.length() &gt; 0 &amp;&amp; !parameters.containsKey(&quot;wheelSubmitId&quot;)) {</span>
+<span class="nc" id="L430">            component = page.find(targetComponent);</span>
+        }
+
+<span class="nc bnc" id="L433" title="All 4 branches missed.">        if (component != null &amp;&amp; ajax)</span>
+<span class="nc" id="L434">            return (RenderableComponent)component;</span>
+
+<span class="nc" id="L436">        return page;</span>
+    }
+
+    private void renderErrorPage() {
+        try {
+<span class="nc" id="L441">            response.reset();</span>
+<span class="nc" id="L442">            serializer = null;</span>
+
+<span class="nc" id="L444">            StandaloneComponent errorPage = getErrorPage();</span>
+
+<span class="nc bnc" id="L446" title="All 6 branches missed.">            if (errorPage == null &amp;&amp; errorMap != null &amp;&amp; errorMap.containsKey(error.getClass().getName()))</span>
+<span class="nc" id="L447">                errorPage = loadPage(errorMap.get(error.getClass().getName()));</span>
+
+<span class="nc bnc" id="L449" title="All 2 branches missed.">            if (errorPage == null) {</span>
+<span class="nc" id="L450">                errorPage = new ErrorPage();</span>
+            }
+
+<span class="nc bnc" id="L453" title="All 2 branches missed.">            if (unitTestMode)</span>
+<span class="nc" id="L454">                errorPage.config()._setRenderDoctype(false);</span>
+
+<span class="nc" id="L456">            errorPage.buildComponent();</span>
+<span class="nc" id="L457">            errorPage._render(_getXmlSerializer());</span>
+<span class="nc" id="L458">        } catch (Throwable e) {</span>
+<span class="nc" id="L459">            log.error(&quot;Failed to render error page.&quot;, e);</span>
+            try {
+<span class="nc" id="L461">                response.sendError(500, e.getMessage());</span>
+<span class="nc" id="L462">            } catch (IOException e1) {}</span>
+<span class="nc" id="L463">        }</span>
+<span class="nc" id="L464">    }</span>
+
+    private void processAssetRequest(String assetPath) {
+<span class="nc" id="L467">        assetPath = assetPath.substring(6, assetPath.length());</span>
+        //String[] assetSplit = assetPath.split(&quot;\\;&quot;);
+<span class="nc" id="L469">        String packageName = assetPath.substring(0, assetPath.lastIndexOf(&quot;/&quot;));</span>
+<span class="nc" id="L470">        String assetName = assetPath.replace(packageName, &quot;&quot;);</span>
+
+<span class="nc" id="L472">        String mimeType = context.getMimeType(assetName);</span>
+<span class="nc" id="L473">        response.setContentType(mimeType);</span>
+
+<span class="nc" id="L475">        boolean developmentMode = false;</span>
+
+<span class="nc bnc" id="L477" title="All 2 branches missed.">        if (context.getAttribute(&quot;wheelDevelopmentMode&quot;) != null)</span>
+<span class="nc" id="L478">            developmentMode = true;</span>
+
+<span class="nc" id="L480">        int expires = 0;</span>
+
+<span class="nc bnc" id="L482" title="All 2 branches missed.">        if (!developmentMode) {</span>
+<span class="nc" id="L483">            String expiresS = request.getParameter(&quot;expires&quot;);</span>
+
+            try {
+<span class="nc" id="L486">                expires = Integer.parseInt(expiresS);</span>
+<span class="nc" id="L487">            } catch (NumberFormatException e) {</span>
+<span class="nc" id="L488">                log.warn(&quot;Could not get a valid expiration time for an asset. Recieved value was '&quot; + expiresS + &quot;'.&quot;);</span>
+<span class="nc" id="L489">            }</span>
+
+<span class="nc bnc" id="L491" title="All 2 branches missed.">            if (expires &gt; 0) {</span>
+<span class="nc" id="L492">                Calendar cal = new GregorianCalendar();</span>
+<span class="nc" id="L493">                response.setDateHeader(&quot;Date&quot;, cal.getTimeInMillis());</span>
+
+<span class="nc" id="L495">                cal.add(Calendar.HOUR_OF_DAY, expires);</span>
+
+<span class="nc" id="L497">                response.setDateHeader(&quot;Expires&quot;, cal.getTimeInMillis());</span>
+<span class="nc" id="L498">                response.setHeader(&quot;Cache-Control&quot;, &quot;cache&quot;);</span>
+<span class="nc" id="L499">                response.setHeader(&quot;Pragma&quot;, &quot;cache&quot;);</span>
+            }
+        }
+
+<span class="nc" id="L503">        Map&lt;String,byte[]&gt; assetCache = (Map&lt;String,byte[]&gt;)context.getAttribute(&quot;wheelAssetCache&quot;);</span>
+
+<span class="nc bnc" id="L505" title="All 2 branches missed.">        if (assetCache == null)</span>
+<span class="nc" id="L506">            assetCache = new HashMap&lt;String,byte[]&gt;();</span>
+
+<span class="nc" id="L508">        InputStream is = null;</span>
+
+        try {
+<span class="nc bnc" id="L511" title="All 2 branches missed.">            if (assetCache.containsKey(assetPath)) {</span>
+<span class="nc" id="L512">                is = new ByteArrayInputStream(assetCache.get(assetPath));</span>
+
+<span class="nc" id="L514">                OutputStream out = response.getOutputStream();</span>
+
+<span class="nc" id="L516">                byte[] buffer = new byte[4096];</span>
+<span class="nc" id="L517">                int read = is.read(buffer);</span>
+
+<span class="nc bnc" id="L519" title="All 2 branches missed.">                while (read &gt; 0) {</span>
+<span class="nc" id="L520">                    out.write(buffer, 0, read);</span>
+<span class="nc" id="L521">                    read = is.read(buffer);</span>
+                }
+
+<span class="nc" id="L524">                out.flush();</span>
+<span class="nc" id="L525">                out.close();</span>
+
+<span class="nc" id="L527">            }</span>
+            else {
+<span class="nc" id="L529">                is = resourceManager.loadAsset(packageName + assetName);</span>
+
+<span class="nc bnc" id="L531" title="All 2 branches missed.">                if (!mimeType.equals(&quot;text/css&quot;)) {</span>
+<span class="nc" id="L532">                    ByteArrayOutputStream toCache = new ByteArrayOutputStream();</span>
+<span class="nc" id="L533">                    OutputStream out = response.getOutputStream();</span>
+
+<span class="nc" id="L535">                    byte[] buffer = new byte[4096];</span>
+<span class="nc" id="L536">                    int read = is.read(buffer);</span>
+
+<span class="nc bnc" id="L538" title="All 2 branches missed.">                    while (read &gt; 0) {</span>
+<span class="nc" id="L539">                        out.write(buffer, 0, read);</span>
+<span class="nc" id="L540">                        toCache.write(buffer, 0, read);</span>
+<span class="nc" id="L541">                        read = is.read(buffer);</span>
+                    }
+
+<span class="nc" id="L544">                    out.flush();</span>
+<span class="nc" id="L545">                    out.close();</span>
+
+<span class="nc" id="L547">                    assetCache.put(assetPath, toCache.toByteArray());</span>
+
+<span class="nc" id="L549">                } else {</span>
+<span class="nc" id="L550">                    OutputStream out = new ByteArrayOutputStream();</span>
+
+<span class="nc" id="L552">                    byte[] buffer = new byte[4096];</span>
+<span class="nc" id="L553">                    int read = is.read(buffer);</span>
+
+<span class="nc bnc" id="L555" title="All 2 branches missed.">                    while (read &gt; 0) {</span>
+<span class="nc" id="L556">                        out.write(buffer, 0, read);</span>
+<span class="nc" id="L557">                        read = is.read(buffer);</span>
+                    }
+
+<span class="nc" id="L560">                    String cssString = ((ByteArrayOutputStream)out).toString(encoding);</span>
+<span class="nc" id="L561">                    AssetProcessor assetProcessor = new AssetProcessor();</span>
+<span class="nc" id="L562">                    byte[] result = assetProcessor.replaceUrls(cssString,  request.getContextPath() + request.getServletPath() + &quot;/asset/&quot; + packageName, expires).getBytes();</span>
+<span class="nc" id="L563">                    assetCache.put(assetPath, result);</span>
+<span class="nc" id="L564">                    ByteArrayInputStream bin = new ByteArrayInputStream(result);</span>
+
+<span class="nc" id="L566">                    out = response.getOutputStream();</span>
+
+<span class="nc" id="L568">                    read = bin.read(buffer);</span>
+
+<span class="nc bnc" id="L570" title="All 2 branches missed.">                    while (read &gt; 0) {</span>
+<span class="nc" id="L571">                        out.write(buffer, 0, read);</span>
+<span class="nc" id="L572">                        read = bin.read(buffer);</span>
+                    }
+
+<span class="nc" id="L575">                    out.flush();</span>
+<span class="nc" id="L576">                    out.close();</span>
+                }
+            }
+
+<span class="nc" id="L580">        } catch (Exception e) {</span>
+<span class="nc" id="L581">            log.error(&quot;Failed to load asset '&quot; + assetPath + &quot;'.&quot;, e);</span>
+        } finally {
+            try {
+<span class="nc bnc" id="L584" title="All 2 branches missed.">                if (is != null)</span>
+<span class="nc" id="L585">                    is.close();</span>
+<span class="nc" id="L586">            } catch (IOException e) {}</span>
+
+<span class="nc" id="L588">            context.setAttribute(&quot;wheelAssetCache&quot;, assetCache);</span>
+        }
+<span class="nc" id="L590">    }</span>
+
+    public HttpServletResponse getResponse() {
+<span class="nc" id="L593">        return response;</span>
+    }
+
+
+    public HttpServletRequest getRequest() {
+<span class="nc" id="L598">        return request;</span>
+    }
+
+    public String getCssPath() {
+<span class="nc bnc" id="L602" title="All 2 branches missed.">        if (developmentMode)</span>
+<span class="nc" id="L603">            return &quot;asset/file/&quot; + cssPath + &quot;/&quot;;</span>
+
+<span class="nc" id="L605">        return request.getContextPath() + &quot;/&quot; + cssPath + &quot;/&quot;;</span>
+    }
+
+    public String getJsPath() {
+<span class="nc bnc" id="L609" title="All 2 branches missed.">        if (developmentMode)</span>
+<span class="nc" id="L610">            return &quot;asset/file/&quot; + jsPath + &quot;/&quot;;</span>
+
+<span class="nc" id="L612">        return request.getContextPath() + &quot;/&quot; + jsPath + &quot;/&quot;;</span>
+    }
+
+
+    public ServletContext getContext() {
+<span class="nc" id="L617">        return context;</span>
+    }
+
+    public synchronized XmlSerializer _getXmlSerializer() throws XmlPullParserException, IOException {
+<span class="nc bnc" id="L621" title="All 2 branches missed.">        if (serializer == null) {</span>
+<span class="nc bnc" id="L622" title="All 2 branches missed.">            if (out == null)</span>
+<span class="nc" id="L623">                out = response.getOutputStream();</span>
+
+<span class="nc" id="L625">            serializer = XmlPullParserFactory.newInstance().newSerializer();</span>
+<span class="nc" id="L626">            serializer.setOutput(out, encoding);</span>
+<span class="nc" id="L627">            serializer.setProperty(&quot;http://xmlpull.org/v1/doc/properties.html#serializer-indentation&quot;, &quot;  &quot;);</span>
+        }
+
+<span class="nc" id="L630">        return serializer;</span>
+    }
+
+
+    public String getEncoding() {
+<span class="nc" id="L635">        return encoding;</span>
+    }
+
+    public void setEncoding(String encoding) {
+<span class="nc" id="L639">        this.encoding = encoding;</span>
+<span class="nc" id="L640">    }</span>
+
+
+    public HttpSession getSession() {
+<span class="nc" id="L644">        return session;</span>
+    }
+
+    public IObjectStore getObjectStore() {
+<span class="nc bnc" id="L648" title="All 2 branches missed.">        if (objectStore == null)</span>
+<span class="nc" id="L649">            objectStore = new SessionStore(session);</span>
+
+<span class="nc" id="L651">        return objectStore;</span>
+    }
+
+    public StandaloneComponent loadPage(String pagePath) {
+<span class="nc" id="L655">        String className = &quot;/&quot; + pagePath;</span>
+<span class="nc" id="L656">        StandaloneComponent page = resourceManager.loadPage(basePackage + className.replace('/', '.'));</span>
+
+<span class="nc bnc" id="L658" title="All 2 branches missed.">        if (unitTestMode)</span>
+<span class="nc" id="L659">            page.config()._setRenderDoctype(false);</span>
+
+<span class="nc" id="L661">        return page;</span>
+    }
+
+
+    public void setError(Throwable error) {
+<span class="nc" id="L666">        this.error = error;</span>
+<span class="nc" id="L667">    }</span>
+
+    public Throwable getError() {
+<span class="nc" id="L670">        return error;</span>
+    }
+
+    public void addErrorMapping(String exceptionClassName, String errorPageName) {
+<span class="nc bnc" id="L674" title="All 2 branches missed.">        if (errorMap == null)</span>
+<span class="nc" id="L675">            errorMap = new HashMap&lt;String,String&gt;();</span>
+
+<span class="nc" id="L677">        errorMap.put(exceptionClassName, errorPageName);</span>
+<span class="nc" id="L678">    }</span>
+
+
+    public StandaloneComponent getErrorPage() {
+<span class="nc" id="L682">        return errorPage;</span>
+    }
+
+    public void setErrorPage(StandaloneComponent errorPage) {
+<span class="nc" id="L686">        this.errorPage = errorPage;</span>
+<span class="nc" id="L687">    }</span>
+
+
+    public Locale getLocale() {
+<span class="nc" id="L691">        return locale;</span>
+    }
+
+
+    public void setLocale(Locale locale) {
+<span class="nc" id="L696">        this.locale = locale;</span>
+<span class="nc" id="L697">    }</span>
+
+    public IMessagesSource _getMessagesSource() {
+<span class="nc" id="L700">        return messagesSource;</span>
+    }
+
+    public void _setMessagesSource(IMessagesSource messagesSource) {
+<span class="nc" id="L704">        this.messagesSource = messagesSource;</span>
+<span class="nc" id="L705">    }</span>
+
+    protected Map readRequestParameters(HttpServletRequest request) {
+<span class="nc" id="L708">        return request.getParameterMap();</span>
+    }
+
+    public boolean isAjaxRequest() {
+<span class="nc" id="L712">        return ajax;</span>
+    }
+
+    private void evictPageScope(String pageName) {
+<span class="nc" id="L716">        String previousPagename = (String)session.getAttribute(&quot;wheelPreviousPagename&quot;);</span>
+
+<span class="nc bnc" id="L718" title="All 4 branches missed.">        if (previousPagename != null &amp;&amp; !previousPagename.equals(pageName)) {</span>
+<span class="nc" id="L719">            SessionStore store = new SessionStore(session);</span>
+<span class="nc" id="L720">            store.evictPage(pageName);</span>
+        }
+
+<span class="nc" id="L723">        session.setAttribute(&quot;wheelPreviousPagename&quot;, pageName);</span>
+<span class="nc" id="L724">    }</span>
+
+    public IResourceManager getResourceManager() {
+<span class="nc" id="L727">        return resourceManager;</span>
+    }
+
+    public StandaloneComponent getpage() {
+<span class="nc" id="L731">        return page;</span>
+    }
+
+    public WheelURL getWheelURL() {
+<span class="nc" id="L735">        return wheelURL;</span>
+    }
+
+    public void _addComponentType(String key, String type) {
+<span class="nc" id="L739">        componentTypes.put(key, type);</span>
+<span class="nc" id="L740">    }</span>
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

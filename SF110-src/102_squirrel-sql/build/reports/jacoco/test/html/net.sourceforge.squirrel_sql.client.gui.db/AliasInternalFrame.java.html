@@ -1,0 +1,692 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AliasInternalFrame.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.gui.db</a> &gt; <span class="el_source">AliasInternalFrame.java</span></div><h1>AliasInternalFrame.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.gui.db;
+/*
+ * Copyright (C) 2001-2004 Colin Bell
+ * colbell@users.sourceforge.net
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+
+import static net.sourceforge.squirrel_sql.client.preferences.PreferenceType.ALIAS_DEFINITIONS;
+
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.Insets;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.event.ItemEvent;
+import java.awt.event.ItemListener;
+import java.awt.event.KeyEvent;
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import javax.swing.*;
+
+import net.sourceforge.squirrel_sql.client.IApplication;
+import net.sourceforge.squirrel_sql.client.gui.desktopcontainer.DialogWidget;
+import net.sourceforge.squirrel_sql.client.mainframe.action.AliasPropertiesCommand;
+import net.sourceforge.squirrel_sql.client.mainframe.action.ConnectToAliasCommand;
+import net.sourceforge.squirrel_sql.client.preferences.SquirrelPreferences;
+import net.sourceforge.squirrel_sql.client.resources.SquirrelResources;
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.client.util.IdentifierFactory;
+import net.sourceforge.squirrel_sql.fw.gui.GUIUtils;
+import net.sourceforge.squirrel_sql.fw.id.IIdentifier;
+import net.sourceforge.squirrel_sql.fw.id.IIdentifierFactory;
+import net.sourceforge.squirrel_sql.fw.persist.ValidationException;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLAlias;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLConnection;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLDriver;
+import net.sourceforge.squirrel_sql.fw.sql.SQLConnection;
+import net.sourceforge.squirrel_sql.fw.util.DuplicateObjectException;
+import net.sourceforge.squirrel_sql.fw.util.IObjectCacheChangeListener;
+import net.sourceforge.squirrel_sql.fw.util.ObjectCacheChangeEvent;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+/**
+ * This internal frame allows the maintenance of an database alias.
+ *
+ * @author	&lt;A HREF=&quot;mailto:colbell@users.sourceforge.net&quot;&gt;Colin Bell&lt;/A&gt;
+ */
+@SuppressWarnings(&quot;serial&quot;)
+public class AliasInternalFrame extends DialogWidget
+{
+   /**
+	 * Maintenance types.
+	 */
+	public interface IMaintenanceType
+	{
+		/** A new alias is being created. */
+		int NEW = 1;
+
+		/** An existing alias is being maintained. */
+		int MODIFY = 2;
+
+		/** A new alias is being created as a copy of an existing one. */
+		int COPY = 3;
+	}
+	/** Internationalized strings for this class. */
+<span class="nc" id="L88">	private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L89">		StringManagerFactory.getStringManager(AliasInternalFrame.class);</span>
+
+	/** Number of characters to show in text fields. */
+	private static final int COLUMN_COUNT = 25;
+
+	/** Logger for this class. */
+<span class="nc" id="L95">	private static final ILogger s_log =</span>
+<span class="nc" id="L96">		LoggerController.createLogger(AliasInternalFrame.class);</span>
+
+	/** Application API. */
+	transient private final IApplication _app;
+
+	/** The &lt;TT&gt;ISQLAlias&lt;/TT&gt; being maintained. */
+	private final ISQLAlias _sqlAlias;
+
+	/** Frame title. */
+<span class="nc" id="L105">	private final JLabel _titleLbl = new JLabel();</span>
+
+	/**
+	 * The requested type of maintenace.
+	 * @see IMaintenanceType
+	 */
+	private final int _maintType;
+
+	/** Listener to the drivers cache. */
+	transient private DriversCacheListener _driversCacheLis;
+
+	/** Alias name text field.. */
+<span class="nc" id="L117">	private final JTextField _aliasName = new JTextField();</span>
+
+	/** Dropdown of all the drivers in the system. */
+	private DriversCombo _drivers;
+
+	/** URL to the data source text field. */
+<span class="nc" id="L123">	private final JTextField _url = new JTextField();</span>
+
+	/** User name text field */
+<span class="nc" id="L126">	private final JTextField _userName = new JTextField();</span>
+
+	/** Password */
+<span class="nc" id="L129">	private final JPasswordField _password = new JPasswordField();</span>
+
+	/** Autologon checkbox. */
+<span class="nc" id="L132">	private final JCheckBox _autoLogonChk = new JCheckBox(s_stringMgr.getString(&quot;AliasInternalFrame.autologon&quot;));</span>
+
+	/** Connect at startup checkbox. */
+<span class="nc" id="L135">	private final JCheckBox _connectAtStartupChk = new JCheckBox(s_stringMgr.getString(&quot;AliasInternalFrame.connectatstartup&quot;));</span>
+
+//	/** If checked use the extended driver properties. */
+//	private final JCheckBox _useDriverPropsChk = new JCheckBox(s_stringMgr.getString(&quot;AliasInternalFrame.userdriverprops&quot;));
+
+	/** Button that brings up the driver properties dialog. */
+<span class="nc" id="L141">	private final JButton _aliasPropsBtn = new JButton(s_stringMgr.getString(&quot;AliasInternalFrame.props&quot;));</span>
+
+	/** Collection of the driver properties. */
+//	private SQLDriverPropertyCollection _sqlDriverProps;
+
+	/**
+	 * Ctor.
+	 *
+	 * @param	app			Application API.
+	 * @param	sqlAlias	The &lt;TT&gt;ISQLAlias&lt;/TT&gt; to be maintained.
+	 * @param	maintType	The maintenance type.
+	 *
+	 * @throws	IllegalArgumentException
+	 * 			Thrown if &lt;TT&gt;null&lt;/TT&gt; passed for &lt;TT&gt;app&lt;/TT&gt; or
+	 * 			&lt;TT&gt;ISQLAlias&lt;/TT&gt; or an invalid value passed for
+	 *			&lt;TT&gt;maintType&lt;/TT&gt;.
+	 */
+	AliasInternalFrame(IApplication app, ISQLAlias sqlAlias, int maintType)
+	{
+<span class="nc" id="L160">		super(&quot;&quot;, true, app);</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">		if (app == null)</span>
+		{
+<span class="nc" id="L163">			throw new IllegalArgumentException(&quot;IApplication == null&quot;);</span>
+		}
+<span class="nc bnc" id="L165" title="All 2 branches missed.">		if (sqlAlias == null)</span>
+		{
+<span class="nc" id="L167">			throw new IllegalArgumentException(&quot;ISQLAlias == null&quot;);</span>
+		}
+<span class="nc bnc" id="L169" title="All 4 branches missed.">		if (maintType &lt; IMaintenanceType.NEW</span>
+			|| maintType &gt; IMaintenanceType.COPY)
+		{
+            // i18n[AliasInternalFrame.illegalValue=Illegal value of {0} passed for Maintenance type]
+<span class="nc" id="L173">			final String msg =</span>
+<span class="nc" id="L174">                s_stringMgr.getString(&quot;AliasInternalFrame.illegalValue&quot;,</span>
+<span class="nc" id="L175">                                      Integer.valueOf(maintType));</span>
+<span class="nc" id="L176">			throw new IllegalArgumentException(msg);</span>
+		}
+
+<span class="nc" id="L179">		_app = app;</span>
+<span class="nc" id="L180">		_sqlAlias = sqlAlias;</span>
+<span class="nc" id="L181">		_maintType = maintType;</span>
+<span class="nc" id="L182">		createUserInterface();</span>
+<span class="nc" id="L183">		loadData();</span>
+<span class="nc" id="L184">		pack();</span>
+<span class="nc" id="L185">	}</span>
+
+	/**
+	 * Remove listeners and then dispose of this sheet.
+	 */
+	public void dispose()
+	{
+<span class="nc bnc" id="L192" title="All 2 branches missed.">		if (_driversCacheLis != null)</span>
+		{
+<span class="nc" id="L194">			_app.getDataCache().removeDriversListener(_driversCacheLis);</span>
+<span class="nc" id="L195">			_driversCacheLis = null;</span>
+		}
+<span class="nc" id="L197">		super.dispose();</span>
+<span class="nc" id="L198">	}</span>
+
+	/**
+	 * Set title of this frame. Ensure that the title label
+	 * matches the frame title.
+	 *
+	 * @param	title	New title text.
+	 */
+	public void setTitle(String title)
+	{
+<span class="nc" id="L208">		super.setTitle(title);</span>
+<span class="nc" id="L209">		_titleLbl.setText(title);</span>
+<span class="nc" id="L210">	}</span>
+
+	/**
+	 * Return the alias that is being maintained.
+	 *
+	 * @return	the alias that is being maintained.
+	 */
+	ISQLAlias getSQLAlias()
+	{
+<span class="nc" id="L219">		return _sqlAlias;</span>
+	}
+
+	/**
+	 * Load data from the alias into GUI controls.
+	 */
+	private void loadData()
+	{
+<span class="nc" id="L227">		_aliasName.setText(_sqlAlias.getName());</span>
+<span class="nc" id="L228">		_userName.setText(_sqlAlias.getUserName());</span>
+
+<span class="nc" id="L230">		_password.setText(_sqlAlias.getPassword());</span>
+
+<span class="nc" id="L232">		_autoLogonChk.setSelected(_sqlAlias.isAutoLogon());</span>
+<span class="nc" id="L233">		_connectAtStartupChk.setSelected(_sqlAlias.isConnectAtStartup());</span>
+		//_useDriverPropsChk.setSelected(_sqlAlias.getUseDriverProperties());
+
+<span class="nc bnc" id="L236" title="All 2 branches missed.">		if (_maintType != IMaintenanceType.NEW)</span>
+		{
+<span class="nc" id="L238">			_drivers.setSelectedItem(_sqlAlias.getDriverIdentifier());</span>
+<span class="nc" id="L239">			_url.setText(_sqlAlias.getUrl());</span>
+		}
+		else
+		{
+<span class="nc" id="L243">			final ISQLDriver driver = _drivers.getSelectedDriver();</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">			if (driver != null)</span>
+			{
+<span class="nc" id="L246">				_url.setText(driver.getUrl());</span>
+			}
+		}
+<span class="nc" id="L249">	}</span>
+
+	private void performClose()
+	{
+<span class="nc" id="L253">		dispose();</span>
+<span class="nc" id="L254">	}</span>
+
+	/**
+	 * OK button pressed. Edit data and if ok save to aliases model
+	 * and then close dialog.
+	 */
+	private void performOk()
+	{
+		try
+		{
+<span class="nc" id="L264">			applyFromDialog(_sqlAlias);</span>
+<span class="nc bnc" id="L265" title="All 4 branches missed.">			if (_maintType == IMaintenanceType.NEW</span>
+				|| _maintType == IMaintenanceType.COPY)
+			{
+<span class="nc" id="L268">				_app.getDataCache().addAlias(_sqlAlias);</span>
+			}
+<span class="nc" id="L270">         _app.savePreferences(ALIAS_DEFINITIONS);</span>
+<span class="nc" id="L271">			dispose();</span>
+		}
+<span class="nc" id="L273">		catch (ValidationException ex)</span>
+		{
+<span class="nc" id="L275">			_app.showErrorDialog(ex);</span>
+		}
+<span class="nc" id="L277">		catch (DuplicateObjectException ex)</span>
+		{
+<span class="nc" id="L279">			_app.showErrorDialog(ex);</span>
+<span class="nc" id="L280">		}</span>
+<span class="nc" id="L281">	}</span>
+
+	private void applyFromDialog(ISQLAlias alias) throws ValidationException
+	{
+<span class="nc" id="L285">		ISQLDriver driver = _drivers.getSelectedDriver();</span>
+<span class="nc bnc" id="L286" title="All 2 branches missed.">		if (driver == null)</span>
+		{
+<span class="nc" id="L288">			throw new ValidationException(s_stringMgr.getString(&quot;AliasInternalFrame.error.nodriver&quot;));</span>
+		}
+<span class="nc" id="L290">		alias.setName(_aliasName.getText().trim());</span>
+<span class="nc" id="L291">		alias.setDriverIdentifier(_drivers.getSelectedDriver().getIdentifier());</span>
+<span class="nc" id="L292">		alias.setUrl(_url.getText().trim());</span>
+<span class="nc" id="L293">		alias.setUserName(_userName.getText().trim());</span>
+
+<span class="nc" id="L295">		StringBuffer buf = new StringBuffer();</span>
+<span class="nc" id="L296">		buf.append(_password.getPassword());</span>
+<span class="nc" id="L297">		alias.setPassword(buf.toString());</span>
+
+<span class="nc" id="L299">		alias.setAutoLogon(_autoLogonChk.isSelected());</span>
+<span class="nc" id="L300">		alias.setConnectAtStartup(_connectAtStartupChk.isSelected());</span>
+//		alias.setUseDriverProperties(_useDriverPropsChk.isSelected());
+//		alias.setDriverProperties(_sqlDriverProps);
+<span class="nc" id="L303">	}</span>
+
+	private void showNewDriverDialog()
+	{
+<span class="nc" id="L307">		_app.getWindowManager().showNewDriverInternalFrame();</span>
+<span class="nc" id="L308">	}</span>
+
+	private void showDriverPropertiesDialog()
+	{
+		try
+		{
+<span class="nc" id="L314">         applyFromDialog(_sqlAlias);</span>
+<span class="nc" id="L315">         new AliasPropertiesCommand(_sqlAlias, _app).execute();</span>
+		}
+<span class="nc" id="L317">		catch (Exception ex)</span>
+		{
+<span class="nc" id="L319">			_app.showErrorDialog(ex);</span>
+<span class="nc" id="L320">		}</span>
+<span class="nc" id="L321">	}</span>
+
+	/**
+	 * Create user interface for this sheet.
+	 */
+	private void createUserInterface()
+	{
+<span class="nc" id="L328">		setDefaultCloseOperation(JInternalFrame.DISPOSE_ON_CLOSE);</span>
+
+		// This is a tool window.
+
+<span class="nc" id="L332">      makeToolWindow(true);</span>
+
+		String winTitle; 
+<span class="nc bnc" id="L335" title="All 2 branches missed.">		if (_maintType == IMaintenanceType.MODIFY)</span>
+		{
+<span class="nc" id="L337">			winTitle = s_stringMgr.getString(&quot;AliasInternalFrame.changealias&quot;,</span>
+<span class="nc" id="L338">											_sqlAlias.getName());</span>
+		}
+		else
+		{
+<span class="nc" id="L342">			winTitle = s_stringMgr.getString(&quot;AliasInternalFrame.addalias&quot;);</span>
+		}
+<span class="nc" id="L344">		setTitle(winTitle);</span>
+
+<span class="nc" id="L346">		_aliasName.setColumns(COLUMN_COUNT);</span>
+<span class="nc" id="L347">		_url.setColumns(COLUMN_COUNT);</span>
+<span class="nc" id="L348">		_userName.setColumns(COLUMN_COUNT);</span>
+<span class="nc" id="L349">		_password.setColumns(COLUMN_COUNT);</span>
+
+		// This seems to be necessary to get background colours
+		// correct. Without it labels added to the content pane
+		// have a dark background while those added to a JPanel
+		// in the content pane have a light background under
+		// the java look and feel. Similar effects occur for other
+		// look and feels.
+<span class="nc" id="L357">		final JPanel contentPane = new JPanel();</span>
+<span class="nc" id="L358">		contentPane.setBorder(BorderFactory.createEmptyBorder(5, 10, 5, 10));</span>
+<span class="nc" id="L359">		super.setContentPane(contentPane);</span>
+
+<span class="nc" id="L361">		GridBagConstraints gbc = new GridBagConstraints();</span>
+<span class="nc" id="L362">		contentPane.setLayout(new GridBagLayout());</span>
+
+<span class="nc" id="L364">		gbc.anchor = GridBagConstraints.NORTHWEST;</span>
+<span class="nc" id="L365">		gbc.gridwidth = GridBagConstraints.REMAINDER;</span>
+<span class="nc" id="L366">		gbc.weightx = 1;</span>
+
+		// Title label at top.
+<span class="nc" id="L369">		gbc.gridx = 0;</span>
+<span class="nc" id="L370">		gbc.gridy = 0;</span>
+<span class="nc" id="L371">		gbc.insets = new Insets(5, 10, 5, 10);</span>
+<span class="nc" id="L372">		gbc.fill = GridBagConstraints.HORIZONTAL;</span>
+<span class="nc" id="L373">		contentPane.add(_titleLbl, gbc);</span>
+
+		// Separated by a line.
+<span class="nc" id="L376">		++gbc.gridy;</span>
+<span class="nc" id="L377">		gbc.insets = new Insets(0, 10, 5, 10);</span>
+<span class="nc" id="L378">		contentPane.add(new JSeparator(), gbc);</span>
+
+<span class="nc" id="L380">		contentPane.add(createDataEntryPanel(), gbc);</span>
+
+		// Separated by a line.
+<span class="nc" id="L383">		gbc.weighty = 0;</span>
+<span class="nc" id="L384">		++gbc.gridy;</span>
+<span class="nc" id="L385">		gbc.fill = GridBagConstraints.HORIZONTAL;</span>
+<span class="nc" id="L386">		gbc.insets = new Insets(5, 10, 5, 10);</span>
+<span class="nc" id="L387">		contentPane.add(new JSeparator(), gbc);</span>
+
+<span class="nc" id="L389">		gbc.insets = new Insets(0, 0, 0, 0);</span>
+
+		// Next the buttons.
+<span class="nc" id="L392">		++gbc.gridy;</span>
+<span class="nc" id="L393">		contentPane.add(createButtonsPanel(), gbc);</span>
+
+<span class="nc" id="L395">		_driversCacheLis = new DriversCacheListener();</span>
+<span class="nc" id="L396">		_app.getDataCache().addDriversListener(_driversCacheLis);</span>
+
+<span class="nc" id="L398">      AbstractAction closeAction = new AbstractAction()</span>
+<span class="nc" id="L399">      {</span>
+         public void actionPerformed(ActionEvent actionEvent)
+         {
+<span class="nc" id="L402">            performClose();</span>
+<span class="nc" id="L403">         }</span>
+      };
+<span class="nc" id="L405">      KeyStroke escapeStroke = KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0);</span>
+<span class="nc" id="L406">      getRootPane().getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(escapeStroke, &quot;CloseAction&quot;);</span>
+<span class="nc" id="L407">      getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(escapeStroke, &quot;CloseAction&quot;);</span>
+<span class="nc" id="L408">      getRootPane().getInputMap(JComponent.WHEN_FOCUSED).put(escapeStroke, &quot;CloseAction&quot;);</span>
+<span class="nc" id="L409">      getRootPane().getActionMap().put(&quot;CloseAction&quot;, closeAction);</span>
+      
+
+<span class="nc" id="L412">   }</span>
+
+	private JPanel createDataEntryPanel()
+	{
+<span class="nc" id="L416">		_aliasPropsBtn.addActionListener(new ActionListener()</span>
+<span class="nc" id="L417">		{</span>
+			public void actionPerformed(ActionEvent evt)
+			{
+<span class="nc" id="L420">				showDriverPropertiesDialog();</span>
+<span class="nc" id="L421">			}</span>
+
+		});
+
+//		_useDriverPropsChk.addActionListener(new ActionListener()
+//		{
+//			public void actionPerformed(ActionEvent evt)
+//			{
+//				_aliasPropsBtn.setEnabled(_useDriverPropsChk.isSelected());
+//			}
+//
+//		});
+
+<span class="nc" id="L434">		JPanel pnl = new JPanel(new GridBagLayout());</span>
+
+		GridBagConstraints gbc;
+
+<span class="nc" id="L438">      gbc = new GridBagConstraints(0,0,1,1,0,0,GridBagConstraints.NORTHWEST, GridBagConstraints.NONE, new Insets(5,5,5,5), 0,0);</span>
+<span class="nc" id="L439">      pnl.add(new JLabel(s_stringMgr.getString(&quot;AliasInternalFrame.name&quot;), SwingConstants.RIGHT), gbc);</span>
+
+<span class="nc" id="L441">      gbc = new GridBagConstraints(1,0,1,1,0,0,GridBagConstraints.NORTHWEST, GridBagConstraints.HORIZONTAL, new Insets(5,5,5,5), 0,0);</span>
+<span class="nc" id="L442">		pnl.add(_aliasName, gbc);</span>
+
+
+<span class="nc" id="L445">      gbc = new GridBagConstraints(0,1,1,1,0,0,GridBagConstraints.NORTHWEST, GridBagConstraints.NONE, new Insets(5,5,5,5), 0,0);</span>
+<span class="nc" id="L446">      pnl.add(new JLabel(s_stringMgr.getString(&quot;AliasInternalFrame.driver&quot;), SwingConstants.RIGHT), gbc);</span>
+
+
+<span class="nc" id="L449">      _drivers = new DriversCombo();</span>
+<span class="nc" id="L450">		_drivers.addItemListener(new DriversComboItemListener());</span>
+
+<span class="nc" id="L452">		final Box driverPnl = Box.createHorizontalBox();</span>
+<span class="nc" id="L453">		driverPnl.add(_drivers);</span>
+<span class="nc" id="L454">		driverPnl.add(Box.createHorizontalStrut(5));</span>
+<span class="nc" id="L455">		JButton newDriverBtn = new JButton(s_stringMgr.getString(&quot;AliasInternalFrame.new&quot;));</span>
+<span class="nc" id="L456">		newDriverBtn.addActionListener(new ActionListener()</span>
+<span class="nc" id="L457">		{</span>
+			public void actionPerformed(ActionEvent evt)
+			{
+<span class="nc" id="L460">				showNewDriverDialog();</span>
+<span class="nc" id="L461">			}</span>
+		});
+<span class="nc" id="L463">		driverPnl.add(newDriverBtn);</span>
+
+<span class="nc" id="L465">      gbc = new GridBagConstraints(1,1,1,1,0,0,GridBagConstraints.NORTHWEST, GridBagConstraints.HORIZONTAL, new Insets(5,5,5,5), 0,0);</span>
+<span class="nc" id="L466">		pnl.add(driverPnl, gbc);</span>
+
+<span class="nc" id="L468">      gbc = new GridBagConstraints(0,2,1,1,0,0,GridBagConstraints.NORTHWEST, GridBagConstraints.NONE, new Insets(5,5,5,5), 0,0);</span>
+<span class="nc" id="L469">		pnl.add(new JLabel(s_stringMgr.getString(&quot;AliasInternalFrame.url&quot;), SwingConstants.RIGHT), gbc);</span>
+
+<span class="nc" id="L471">      gbc = new GridBagConstraints(1,2,1,1,0,0,GridBagConstraints.NORTHWEST, GridBagConstraints.HORIZONTAL, new Insets(5,5,5,5), 0,0);</span>
+<span class="nc" id="L472">		pnl.add(_url, gbc);</span>
+
+<span class="nc" id="L474">      gbc = new GridBagConstraints(0,3,1,1,0,0,GridBagConstraints.NORTHWEST, GridBagConstraints.NONE, new Insets(5,5,5,5), 0,0);</span>
+<span class="nc" id="L475">		pnl.add(new JLabel(s_stringMgr.getString(&quot;AliasInternalFrame.username&quot;), SwingConstants.RIGHT), gbc);</span>
+
+<span class="nc" id="L477">      gbc = new GridBagConstraints(1,3,1,1,0,0,GridBagConstraints.NORTHWEST, GridBagConstraints.HORIZONTAL, new Insets(5,5,5,5), 0,0);</span>
+<span class="nc" id="L478">		pnl.add(_userName, gbc);</span>
+
+<span class="nc" id="L480">      gbc = new GridBagConstraints(0,4,1,1,0,0,GridBagConstraints.NORTHWEST, GridBagConstraints.NONE, new Insets(5,5,5,5), 0,0);</span>
+<span class="nc" id="L481">		pnl.add(new JLabel(s_stringMgr.getString(&quot;AliasInternalFrame.password&quot;), SwingConstants.RIGHT), gbc);</span>
+
+<span class="nc" id="L483">      gbc = new GridBagConstraints(1,4,1,1,0,0,GridBagConstraints.NORTHWEST, GridBagConstraints.HORIZONTAL, new Insets(5,5,5,5), 0,0);</span>
+<span class="nc" id="L484">		pnl.add(_password, gbc);</span>
+
+<span class="nc" id="L486">      gbc = new GridBagConstraints(0,5,1,1,0,0,GridBagConstraints.NORTHWEST, GridBagConstraints.NONE, new Insets(5,5,5,5), 0,0);</span>
+<span class="nc" id="L487">		pnl.add(_autoLogonChk, gbc);</span>
+
+<span class="nc" id="L489">      gbc = new GridBagConstraints(1,5,1,1,0,0,GridBagConstraints.NORTHWEST, GridBagConstraints.NONE, new Insets(5,5,5,5), 0,0);</span>
+<span class="nc" id="L490">		pnl.add(_connectAtStartupChk, gbc);</span>
+
+
+<span class="nc" id="L493">      gbc = new GridBagConstraints(1,6,1,1,0,0,GridBagConstraints.NORTHWEST, GridBagConstraints.NONE, new Insets(5,5,5,5), 0,0);</span>
+<span class="nc" id="L494">      _aliasPropsBtn.setIcon(_app.getResources().getIcon(SquirrelResources.IImageNames.ALIAS_PROPERTIES));</span>
+<span class="nc" id="L495">      pnl.add(_aliasPropsBtn, gbc);</span>
+
+<span class="nc" id="L497">      gbc = new GridBagConstraints(0,7,2,1,0,0,GridBagConstraints.NORTHWEST, GridBagConstraints.HORIZONTAL, new Insets(5,5,5,5), 0,0);</span>
+<span class="nc" id="L498">		pnl.add(new JLabel(s_stringMgr.getString(&quot;AliasInternalFrame.cleartext&quot;)), gbc);</span>
+
+
+      // make it grow when added
+<span class="nc" id="L502">      gbc = new GridBagConstraints(0,8,2,1,1,1,GridBagConstraints.NORTHWEST, GridBagConstraints.BOTH, new Insets(5,5,5,5), 0,0);</span>
+<span class="nc" id="L503">		pnl.add(new JPanel(), gbc);</span>
+
+<span class="nc" id="L505">		return pnl;</span>
+	}
+
+	private JPanel createButtonsPanel()
+	{
+<span class="nc" id="L510">		JPanel pnl = new JPanel();</span>
+
+<span class="nc" id="L512">		JButton okBtn = new JButton(s_stringMgr.getString(&quot;AliasInternalFrame.ok&quot;));</span>
+<span class="nc" id="L513">		okBtn.addActionListener(new ActionListener()</span>
+<span class="nc" id="L514">		{</span>
+			public void actionPerformed(ActionEvent evt)
+			{
+<span class="nc" id="L517">				performOk();</span>
+<span class="nc" id="L518">			}</span>
+		});
+<span class="nc" id="L520">		JButton closeBtn = new JButton(s_stringMgr.getString(&quot;AliasInternalFrame.close&quot;));</span>
+<span class="nc" id="L521">		closeBtn.addActionListener(new ActionListener()</span>
+<span class="nc" id="L522">		{</span>
+			public void actionPerformed(ActionEvent evt)
+			{
+<span class="nc" id="L525">				performClose();</span>
+<span class="nc" id="L526">			}</span>
+		});
+
+<span class="nc" id="L529">		JButton testBtn = new JButton(s_stringMgr.getString(&quot;AliasInternalFrame.test&quot;));</span>
+<span class="nc" id="L530">		testBtn.addActionListener(new ActionListener()</span>
+<span class="nc" id="L531">		{</span>
+			public void actionPerformed(ActionEvent evt)
+			{
+<span class="nc" id="L534">				final DataCache cache = _app.getDataCache();</span>
+<span class="nc" id="L535">				final IIdentifierFactory factory = IdentifierFactory.getInstance();</span>
+<span class="nc" id="L536">				final SQLAlias testAlias = cache.createAlias(factory.createIdentifier());</span>
+				try
+				{
+<span class="nc" id="L539">					applyFromDialog(testAlias);</span>
+<span class="nc" id="L540">					ConnectionCallBack cb = new ConnectionCallBack(_app, testAlias);</span>
+<span class="nc" id="L541">					ConnectToAliasCommand cmd = new ConnectToAliasCommand(_app,</span>
+													testAlias, false, cb);
+<span class="nc" id="L543">					cmd.execute();</span>
+				}
+<span class="nc" id="L545">				catch (ValidationException ex)</span>
+				{
+<span class="nc" id="L547">					_app.showErrorDialog(ex);</span>
+<span class="nc" id="L548">				}</span>
+<span class="nc" id="L549">			}</span>
+		});
+
+<span class="nc" id="L552">		pnl.add(okBtn);</span>
+<span class="nc" id="L553">		pnl.add(closeBtn);</span>
+<span class="nc" id="L554">		pnl.add(testBtn);</span>
+
+<span class="nc" id="L556">		GUIUtils.setJButtonSizesTheSame(new JButton[] { okBtn, closeBtn, testBtn });</span>
+<span class="nc" id="L557">		getRootPane().setDefaultButton(okBtn);</span>
+
+<span class="nc" id="L559">		return pnl;</span>
+	}
+
+<span class="nc" id="L562">	private final class DriversComboItemListener implements ItemListener</span>
+	{
+		public void itemStateChanged(ItemEvent evt)
+		{
+<span class="nc" id="L566">			ISQLDriver driver = (ISQLDriver) evt.getItem();</span>
+<span class="nc bnc" id="L567" title="All 2 branches missed.">			if (driver != null)</span>
+			{
+<span class="nc" id="L569">				_url.setText(driver.getUrl());</span>
+			}
+<span class="nc" id="L571">		}</span>
+	}
+
+	/**
+	 * This combobox displays all the JDBC drivers defined in SQuirreL.
+	 */
+	private final class DriversCombo extends JComboBox
+	{
+<span class="nc" id="L579">		private Map&lt;IIdentifier, ISQLDriver&gt; _map = </span>
+            new HashMap&lt;IIdentifier, ISQLDriver&gt;();
+<span class="nc" id="L581">        SquirrelPreferences prefs = _app.getSquirrelPreferences();</span>
+		@SuppressWarnings(&quot;unchecked&quot;)
+        DriversCombo()
+<span class="nc" id="L584">		{</span>
+<span class="nc" id="L585">			super();</span>
+<span class="nc" id="L586">			SquirrelResources res = _app.getResources();</span>
+<span class="nc" id="L587">			setRenderer(new DriverListCellRenderer(res.getIcon(&quot;list.driver.found&quot;),</span>
+<span class="nc" id="L588">											res.getIcon(&quot;list.driver.notfound&quot;)));</span>
+<span class="nc" id="L589">			List&lt;ISQLDriver&gt; list = new ArrayList&lt;ISQLDriver&gt;();</span>
+<span class="nc" id="L590">			for (Iterator it = AliasInternalFrame.this._app.getDataCache().drivers();</span>
+<span class="nc bnc" id="L591" title="All 2 branches missed.">					it.hasNext();)</span>
+			{
+<span class="nc" id="L593">				ISQLDriver sqlDriver = ((ISQLDriver) it.next());</span>
+<span class="nc bnc" id="L594" title="All 2 branches missed.">                if (prefs.getShowLoadedDriversOnly() </span>
+<span class="nc bnc" id="L595" title="All 2 branches missed.">                        &amp;&amp; !sqlDriver.isJDBCDriverClassLoaded()) </span>
+                {
+<span class="nc" id="L597">                    continue;</span>
+                }
+<span class="nc" id="L599">                _map.put(sqlDriver.getIdentifier(), sqlDriver);</span>
+<span class="nc" id="L600">                list.add(sqlDriver);                    </span>
+<span class="nc" id="L601">			}</span>
+<span class="nc" id="L602">			Collections.sort(list, new DriverComparator());</span>
+<span class="nc bnc" id="L603" title="All 2 branches missed.">			for (Iterator it = list.iterator(); it.hasNext();)</span>
+			{
+<span class="nc" id="L605">				addItem(it.next());</span>
+			}
+<span class="nc" id="L607">		}</span>
+
+		void setSelectedItem(IIdentifier id)
+		{
+<span class="nc" id="L611">			super.setSelectedItem(_map.get(id));</span>
+<span class="nc" id="L612">		}</span>
+
+		ISQLDriver getSelectedDriver()
+		{
+<span class="nc" id="L616">			return (ISQLDriver) getSelectedItem();</span>
+		}
+
+<span class="nc" id="L619">		private class DriverComparator implements Comparator&lt;ISQLDriver&gt;,</span>
+		                                          Serializable
+		{
+			public int compare(ISQLDriver o1, ISQLDriver o2)
+			{
+<span class="nc" id="L624">				return o1.toString().compareToIgnoreCase(o2.toString());</span>
+			}
+
+		}
+	}
+
+	private final class ConnectionCallBack
+		extends ConnectToAliasCallBack
+	{
+		private ConnectionCallBack(IApplication app, SQLAlias alias)
+<span class="nc" id="L634">		{</span>
+<span class="nc" id="L635">			super(app, alias);</span>
+<span class="nc" id="L636">		}</span>
+
+		/**
+		 * @see CompletionCallback#connected(SQLConnection)
+		 */
+		public void connected(ISQLConnection conn)
+		{
+			try
+			{
+<span class="nc" id="L645">				conn.close();</span>
+			}
+<span class="nc" id="L647">			catch (Throwable th)</span>
+			{
+<span class="nc" id="L649">				String msg = s_stringMgr.getString(&quot;AliasInternalFrame.error.errorclosingconn&quot;);</span>
+<span class="nc" id="L650">				s_log.error(msg, th);</span>
+<span class="nc" id="L651">				_app.showErrorDialog(msg + &quot;: &quot; + th.toString());</span>
+<span class="nc" id="L652">			}</span>
+
+<span class="nc" id="L654">			AliasInternalFrame.this.showOk(s_stringMgr.getString(&quot;AliasInternalFrame.connsuccess&quot;));</span>
+
+<span class="nc bnc" id="L656" title="All 2 branches missed.">         if(getAlias().isAutoLogon())</span>
+         {
+            // If Auto Logon is true in ConnectToAliasCommand user name/password
+            // of the Alias definiton may have changed.
+            // Here we transfere this information back into the controls.
+<span class="nc" id="L661">            _userName.setText(getAlias().getUserName());</span>
+<span class="nc" id="L662">            _password.setText(getAlias().getPassword());</span>
+         }
+<span class="nc" id="L664">      }</span>
+
+		/**
+		 * @see CompletionCallback#sessionCreated(ISession)
+		 */
+		public void sessionCreated(ISession session)
+		{
+            // i18n[AliasInternalFrame.error.sessioncreation=Test Button has created a session, this is a programming error]
+<span class="nc" id="L672">			s_log.error(s_stringMgr.getString(&quot;AliasInternalFrame.error.sessioncreation&quot;));</span>
+<span class="nc" id="L673">		}</span>
+	}
+
+   /**
+	 * Listens to changes in the drivers cache and adds/removes drivers from the dropdown
+	 * as they are added/removed from the cache.
+	 */
+<span class="nc" id="L680">	private final class DriversCacheListener implements IObjectCacheChangeListener</span>
+	{
+		public void objectAdded(ObjectCacheChangeEvent evt)
+		{
+<span class="nc" id="L684">			_drivers.addItem(evt.getObject());</span>
+<span class="nc" id="L685">		}</span>
+		public void objectRemoved(ObjectCacheChangeEvent evt)
+		{
+<span class="nc" id="L688">			_drivers.removeItem(evt.getObject());</span>
+<span class="nc" id="L689">		}</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

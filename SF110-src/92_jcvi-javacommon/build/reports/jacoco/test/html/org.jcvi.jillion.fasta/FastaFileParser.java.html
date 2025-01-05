@@ -1,0 +1,329 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FastaFileParser.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.fasta</a> &gt; <span class="el_source">FastaFileParser.java</span></div><h1>FastaFileParser.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+package org.jcvi.jillion.fasta;
+
+import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.jcvi.jillion.core.io.IOUtil;
+import org.jcvi.jillion.fasta.FastaVisitorCallback.FastaVisitorMemento;
+import org.jcvi.jillion.internal.core.io.OpenAwareInputStream;
+import org.jcvi.jillion.internal.core.io.RandomAccessFileInputStream;
+import org.jcvi.jillion.internal.core.io.TextLineParser;
+/**
+ * {@code FastaFileParser} will parse a single 
+ * fasta encoded file and call the appropriate
+ * visitXXX methods on the given {@link FastaVisitor}.
+ * @author dkatzel
+ *
+ */
+<span class="nc" id="L45">public abstract class FastaFileParser {</span>
+	/**
+	 * Pattern to match to find the defline for each record in
+	 * the fasta file.  Group 1 is the id and Group 3 is the optional
+	 * comment which will return null if there is no comment. (Group 2 is not to be used)
+	 */
+<span class="nc" id="L51">	private static final Pattern DEFLINE_LINE_PATTERN = Pattern.compile(&quot;^&gt;(\\S+)(\\s+(.*))?&quot;);</span>
+
+	/**
+	 * Create a new {@link FastaFileParser} instance
+	 * that will parse the given fasta encoded
+	 * file.
+	 * @param fastaFile the file to parse.
+	 * @throws IOException if there is a problem opening the file.
+	 * @throws NullPointerException if fastaFile is null.
+	 */
+	public static FastaFileParser create(File fastaFile) throws IOException{
+<span class="nc" id="L62">		return new FileFastaParser(fastaFile);</span>
+	}
+	/**
+	 * Create a new {@link FastaFileParser} instance
+	 * that will parse the given fasta encoded
+	 * inputStream.  Please Note that inputStream implementations
+	 * of the FastaFileParser can not create {@link FastaVisitorMemento}s
+	 * or use {@link #accept(FastaVisitor, FastaVisitorMemento)}
+	 * method.
+	 * @param inputStream the {@link InputStream} to parse.
+	 * @throws NullPointerException if inputStream is null.
+	 */
+	public static FastaFileParser create(InputStream inputStream){
+<span class="nc" id="L75">		return new InputStreamFastaParser(inputStream);</span>
+	}
+	/**
+	 * Parse the fasta file starting from the beginning 
+	 * of the file (or {@link InputStream}) and call the appropriate
+	 * visit methods on the given {@link FastaVisitor}.
+	 * @param visitor the {@link FastaVisitor} instance to call
+	 * visit methods on; can not be null;
+	 * @throws IOException if there is a problem parsing the fasta file.
+	 * @throws NullPointerException if visitor is null.
+	 */
+	public void accept(FastaVisitor visitor) throws IOException{
+<span class="nc" id="L87">		checkNotNull(visitor);</span>
+<span class="nc" id="L88">		InputStream in = null;		</span>
+		try{
+<span class="nc" id="L90">			in = getInputStream();			</span>
+<span class="nc" id="L91">			TextLineParser parser = new TextLineParser(in);</span>
+<span class="nc" id="L92">			parseFile(parser, 0L, visitor);</span>
+		}finally{
+<span class="nc" id="L94">			IOUtil.closeAndIgnoreErrors(in);</span>
+		}
+<span class="nc" id="L96">	}</span>
+	/**
+	 * Create an inputStream that starts reading at the beginning
+	 * of the fasta file.
+	 * @return an {@link InputStream} can not be null.
+	 * @throws IOException if there is a problem creating the {@link InputStream}.
+	 */
+	protected abstract InputStream getInputStream()  throws IOException;
+	
+	protected void checkNotNull(FastaVisitor visitor) {
+<span class="nc bnc" id="L106" title="All 2 branches missed.">		if(visitor==null){</span>
+<span class="nc" id="L107">			throw new NullPointerException(&quot;visitor can not be null&quot;);</span>
+		}
+<span class="nc" id="L109">	}</span>
+	/**
+	 * Parse the fasta file starting from the beginning 
+	 * of the file (or {@link InputStream}) and call the appropriate
+	 * visit methods on the given {@link FastaVisitor}.
+	 * @param visitor the {@link FastaVisitor} instance to call
+	 * visit methods on; can not be null;
+	 * @param memento the {@link FastaVisitorMemento} instance
+	 * to tell the parser where to start parsing from;
+	 * can not be null.
+	 * @throws IOException if there is a problem parsing the fasta file.
+	 * @throws NullPointerException if either the visitor or memento are null.
+	 * @throws UnsupportedOperationException if mementos are not supported by this
+	 * parser implementation (for example when parsing an {@link InputStream}
+	 * instead of a {@link File}).
+	 */
+	public abstract void accept(FastaVisitor visitor, FastaVisitorMemento memento) throws IOException;
+	
+	protected final void parseFile(TextLineParser parser, long startOffset,
+			FastaVisitor visitor) throws IOException {
+<span class="nc" id="L129">		AtomicBoolean keepParsing=new AtomicBoolean(true);</span>
+<span class="nc" id="L130">		FastaRecordVisitor recordVisitor =null;</span>
+<span class="nc" id="L131">		AbstractFastaVisitorCallback callback = createNewCallback(startOffset, keepParsing);</span>
+<span class="nc" id="L132">		long currentOffset=startOffset;</span>
+<span class="nc bnc" id="L133" title="All 4 branches missed.">		while(keepParsing.get() &amp;&amp; parser.hasNextLine()){</span>
+<span class="nc" id="L134">			String line=parser.nextLine();</span>
+<span class="nc" id="L135">			String trimmedLine = line.trim();</span>
+<span class="nc bnc" id="L136" title="All 2 branches missed.">			if(!trimmedLine.isEmpty()){</span>
+<span class="nc" id="L137">				Matcher matcher = DEFLINE_LINE_PATTERN.matcher(trimmedLine);</span>
+<span class="nc bnc" id="L138" title="All 2 branches missed.">				if(matcher.find()){</span>
+<span class="nc bnc" id="L139" title="All 2 branches missed.">					if(recordVisitor !=null){</span>
+<span class="nc" id="L140">						recordVisitor.visitEnd();</span>
+						//need to check again the keep parsing flag 
+						//incase the callback was used to stop in the previous
+						//called to visitEnd()
+<span class="nc bnc" id="L144" title="All 2 branches missed.">						if(!keepParsing.get()){</span>
+							//need to set recordVisitor to null
+							//so we don't call visitEnd() again
+<span class="nc" id="L147">							recordVisitor=null;</span>
+<span class="nc" id="L148">							continue;</span>
+						}
+					}
+<span class="nc" id="L151">					String id = matcher.group(1);</span>
+<span class="nc" id="L152">		            String comment = matcher.group(3);		            </span>
+<span class="nc" id="L153">		            callback = createNewCallback(currentOffset, keepParsing);</span>
+<span class="nc" id="L154">		            recordVisitor = visitor.visitDefline(callback, id, comment);</span>
+<span class="nc" id="L155">				}else{</span>
+					//not a defline use current record visitor
+<span class="nc bnc" id="L157" title="All 2 branches missed.">					if(recordVisitor !=null){</span>
+<span class="nc" id="L158">						recordVisitor.visitBodyLine(line);</span>
+					}
+				}
+			}
+<span class="nc" id="L162">			currentOffset +=line.length();</span>
+<span class="nc" id="L163">		}</span>
+		
+<span class="nc" id="L165">		handleEndOfFile(visitor, keepParsing, recordVisitor);</span>
+
+<span class="nc" id="L167">	}</span>
+	protected void handleEndOfFile(FastaVisitor visitor,
+			AtomicBoolean keepParsing, FastaRecordVisitor recordVisitor) {
+<span class="nc bnc" id="L170" title="All 2 branches missed.">		if(recordVisitor !=null){</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">			if(keepParsing.get()){</span>
+<span class="nc" id="L172">				recordVisitor.visitEnd();</span>
+			}else{
+<span class="nc" id="L174">				recordVisitor.halted();</span>
+			}
+		}
+		//need to check keep parsing flag
+		//for record visitor and visitor
+		//separately in case the recordVisitor.visitEnd()
+		//calls haltParsing
+<span class="nc bnc" id="L181" title="All 2 branches missed.">		if(keepParsing.get()){</span>
+<span class="nc" id="L182">			visitor.visitEnd();</span>
+		}else{
+<span class="nc" id="L184">			visitor.halted();</span>
+		}
+<span class="nc" id="L186">	}</span>
+
+	protected abstract AbstractFastaVisitorCallback createNewCallback(long currentOffset, AtomicBoolean keepParsing);
+	
+	private abstract static class AbstractFastaVisitorCallback implements FastaVisitorCallback{
+		private final AtomicBoolean keepParsing;
+		
+<span class="nc" id="L193">		public AbstractFastaVisitorCallback(AtomicBoolean keepParsing) {</span>
+<span class="nc" id="L194">			this.keepParsing = keepParsing;</span>
+<span class="nc" id="L195">		}</span>
+
+		@Override
+		public void haltParsing() {
+<span class="nc" id="L199">			keepParsing.set(false);</span>
+			
+<span class="nc" id="L201">		}</span>
+
+	}
+	
+	private static class NoMementoCallback extends AbstractFastaVisitorCallback{
+
+		
+		
+		public NoMementoCallback(AtomicBoolean keepParsing) {
+<span class="nc" id="L210">			super(keepParsing);</span>
+<span class="nc" id="L211">		}</span>
+
+		@Override
+		public boolean canCreateMemento() {
+<span class="nc" id="L215">			return false;</span>
+		}
+
+		@Override
+		public FastaVisitorMemento createMemento() {
+<span class="nc" id="L220">			throw new UnsupportedOperationException(&quot;can not create memento&quot;);</span>
+		}
+		
+	}
+	
+	private static class MementoCallback extends AbstractFastaVisitorCallback{
+
+		private final long offset;
+		
+		public MementoCallback(long offset, AtomicBoolean keepParsing){
+<span class="nc" id="L230">			super(keepParsing);</span>
+<span class="nc" id="L231">			this.offset = offset;</span>
+<span class="nc" id="L232">		}</span>
+
+		@Override
+		public boolean canCreateMemento() {
+<span class="nc" id="L236">			return true;</span>
+		}
+
+		@Override
+		public FastaVisitorMemento createMemento() {
+<span class="nc" id="L241">			return new OffsetMemento(offset);</span>
+		}
+		
+	}
+	
+	private static class OffsetMemento implements FastaVisitorMemento{
+		private final long offset;
+
+<span class="nc" id="L249">		public OffsetMemento(long offset) {</span>
+<span class="nc" id="L250">			this.offset = offset;</span>
+<span class="nc" id="L251">		}</span>
+
+		public final long getOffset() {
+<span class="nc" id="L254">			return offset;</span>
+		}
+		
+	}
+	
+	private static class FileFastaParser extends FastaFileParser{
+		private final File fastaFile;
+		
+<span class="nc" id="L262">		public FileFastaParser(File fastaFile) throws FileNotFoundException{</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">			if(!fastaFile.exists()){</span>
+<span class="nc" id="L264">				throw new FileNotFoundException(</span>
+<span class="nc" id="L265">						String.format(&quot;fasta file %s does not exist&quot;, fastaFile.getAbsolutePath()));</span>
+			}
+<span class="nc" id="L267">			this.fastaFile = fastaFile;</span>
+<span class="nc" id="L268">		}</span>
+		protected AbstractFastaVisitorCallback createNewCallback(long currentOffset, AtomicBoolean keepParsing) {
+<span class="nc" id="L270">			return new MementoCallback(currentOffset, keepParsing);</span>
+		}
+		public void accept(FastaVisitor visitor, FastaVisitorMemento memento) throws IOException{
+<span class="nc bnc" id="L273" title="All 2 branches missed.">			if(!(memento instanceof OffsetMemento)){</span>
+<span class="nc" id="L274">				throw new IllegalStateException(&quot;unknown memento instance : &quot;+memento);</span>
+			}
+			
+<span class="nc" id="L277">			long startOffset = ((OffsetMemento)memento).getOffset();</span>
+<span class="nc" id="L278">			InputStream inputStream=null;</span>
+			
+			try{
+<span class="nc" id="L281">				inputStream = new BufferedInputStream(new RandomAccessFileInputStream(fastaFile, startOffset));</span>
+<span class="nc" id="L282">				TextLineParser parser = new TextLineParser(inputStream);</span>
+<span class="nc" id="L283">				parseFile(parser, startOffset, visitor);</span>
+			}finally{
+<span class="nc" id="L285">				IOUtil.closeAndIgnoreErrors(inputStream);</span>
+			}
+<span class="nc" id="L287">		}</span>
+		@Override
+		protected InputStream getInputStream() throws IOException {
+			//start parsing from beginning of file.
+<span class="nc" id="L291">			return new BufferedInputStream(new FileInputStream(fastaFile));</span>
+		}
+		
+		
+	}
+	private static class InputStreamFastaParser extends FastaFileParser{
+		private final OpenAwareInputStream inputStream;
+
+<span class="nc" id="L299">		public InputStreamFastaParser(InputStream inputStream) {</span>
+<span class="nc" id="L300">			this.inputStream = new OpenAwareInputStream(inputStream);</span>
+<span class="nc" id="L301">		}</span>
+		protected AbstractFastaVisitorCallback createNewCallback(long currentOffset, AtomicBoolean keepParsing) {
+<span class="nc" id="L303">			return new NoMementoCallback(keepParsing);</span>
+		}
+		@Override
+		public synchronized void accept(FastaVisitor visitor) throws IOException {
+			//wrap in synchronized block so we only
+			//can parse one visitor at a time (probably at all)
+<span class="nc" id="L309">			super.accept(visitor);</span>
+<span class="nc" id="L310">		}</span>
+
+		@Override
+		public void accept(FastaVisitor visitor, FastaVisitorMemento memento)
+				throws IOException {
+			//we probably will never see this in real usage
+			//since inputstream implementation can't make mementors...
+<span class="nc" id="L317">			throw new UnsupportedOperationException(&quot;can not use mementos with inputstream&quot;);</span>
+		}
+
+		@Override
+		protected InputStream getInputStream() throws IOException {
+<span class="nc bnc" id="L322" title="All 2 branches missed.">			if(inputStream.isOpen()){</span>
+<span class="nc" id="L323">				return inputStream;</span>
+			}
+<span class="nc" id="L325">			throw new IOException(&quot;inputstream is closed&quot;);			</span>
+		}
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

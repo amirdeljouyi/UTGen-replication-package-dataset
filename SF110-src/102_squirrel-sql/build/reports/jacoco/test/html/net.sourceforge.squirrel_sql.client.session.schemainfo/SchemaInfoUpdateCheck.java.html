@@ -1,0 +1,401 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SchemaInfoUpdateCheck.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.session.schemainfo</a> &gt; <span class="el_source">SchemaInfoUpdateCheck.java</span></div><h1>SchemaInfoUpdateCheck.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.session.schemainfo;
+
+import net.sourceforge.squirrel_sql.client.gui.desktopcontainer.ISessionWidget;
+import net.sourceforge.squirrel_sql.client.gui.session.SQLInternalFrame;
+import net.sourceforge.squirrel_sql.client.gui.session.SessionInternalFrame;
+import net.sourceforge.squirrel_sql.client.session.ISQLEntryPanel;
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.client.session.SQLExecutionInfo;
+import net.sourceforge.squirrel_sql.fw.sql.*;
+
+import javax.swing.*;
+import java.sql.DatabaseMetaData;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+
+/**
+ * This class tries to update SchemaInfo after standard CREATE/ALTER statements.
+ * This way Syntax highlighting and code completion are available just after
+ * CREATE/ALTER statements were send to the DB.
+ */
+public class SchemaInfoUpdateCheck
+{
+<span class="nc" id="L26">   private static final Pattern PATTERN_CREATE_TABLE = Pattern.compile(&quot;CREATE\\s+TABLE\\s+([A-Z0-9_\\.\&quot;]+)&quot;);</span>
+<span class="nc" id="L27">   private static final Pattern PATTERN_ALTER_TABLE = Pattern.compile(&quot;ALTER\\s+TABLE\\s+([A-Z0-9_\\.\&quot;]+)&quot;);</span>
+<span class="nc" id="L28">   private static final Pattern PATTERN_INSERT_INTO = Pattern.compile(&quot;SELECT\\s+INTO\\s+([A-Z0-9_\\.\&quot;]+)&quot;);</span>
+
+<span class="nc" id="L30">   private static final Pattern PATTERN_CREATE_VIEW = Pattern.compile(&quot;CREATE\\s+VIEW\\s+([A-Z0-9_\\.\&quot;]+)&quot;);</span>
+<span class="nc" id="L31">   private static final Pattern PATTERN_CREATE_MATERIALIZED_VIEW = Pattern.compile(&quot;CREATE\\s+MATERIALIZED\\s+VIEW\\s+([A-Z0-9_\\.\&quot;]+)&quot;);</span>
+<span class="nc" id="L32">   private static final Pattern PATTERN_CREATE_OR_REPLACE_VIEW = Pattern.compile(&quot;CREATE\\s+OR\\s+REPLACE\\s+VIEW\\s+([A-Z0-9_\\.\&quot;]+)&quot;);</span>
+<span class="nc" id="L33">   private static final Pattern PATTERN_ALTER_VIEW = Pattern.compile(&quot;ALTER\\s+VIEW\\s+([A-Z0-9_\\.\&quot;]+)&quot;);</span>
+
+<span class="nc" id="L35">   private static final Pattern PATTERN_CREATE_PROCEDURE = Pattern.compile(&quot;CREATE\\s+PROCEDURE\\s+([A-Z0-9_\\.\&quot;]+)&quot;);</span>
+<span class="nc" id="L36">   private static final Pattern PATTERN_CREATE_OR_REPLACE_PROCEDURE = Pattern.compile(&quot;CREATE\\s+OR\\s+REPLACE\\s+PROCEDURE\\s+([A-Z0-9_\\.\&quot;]+)&quot;);</span>
+<span class="nc" id="L37">   private static final Pattern PATTERN_ALTER_PROCEDURE = Pattern.compile(&quot;ALTER\\s+PROCEDURE\\s+([A-Z0-9_\\.\&quot;]+)&quot;);</span>
+
+<span class="nc" id="L39">   private static final Pattern PATTERN_CREATE_FUNCTION = Pattern.compile(&quot;CREATE\\s+FUNCTION\\s+([A-Z0-9_\\.\&quot;]+)&quot;);</span>
+<span class="nc" id="L40">   private static final Pattern PATTERN_CREATE_OR_REPLACE_FUNCTION = Pattern.compile(&quot;CREATE\\s+OR\\s+REPLACE\\s+FUNCTION\\s+([A-Z0-9_\\.\&quot;]+)&quot;);</span>
+<span class="nc" id="L41">   private static final Pattern PATTERN_ALTER_FUNCTION = Pattern.compile(&quot;ALTER\\s+FUNCTION\\s+([A-Z0-9_\\.\&quot;]+)&quot;);</span>
+
+
+<span class="nc" id="L44">   private static final Pattern PATTERN_DROP_TABLE = Pattern.compile(&quot;DROP\\s+TABLE\\s+([A-Z0-9_\\.\&quot;]+)&quot;);</span>
+<span class="nc" id="L45">   private static final Pattern PATTERN_DROP_VIEW = Pattern.compile(&quot;DROP\\s+VIEW\\s+([A-Z0-9_\\.\&quot;]+)&quot;);</span>
+<span class="nc" id="L46">   private static final Pattern PATTERN_DROP_MATERIALIZED_VIEW = Pattern.compile(&quot;DROP\\s+MATERIALIZED\\s+VIEW\\s+([A-Z0-9_\\.\&quot;]+)&quot;);   </span>
+
+<span class="nc" id="L48">   private static final Pattern PATTERN_DROP_PROCEDURE = Pattern.compile(&quot;DROP\\s+PROCEDURE\\s+([A-Z0-9_\\.\&quot;]+)&quot;);</span>
+<span class="nc" id="L49">   private static final Pattern PATTERN_DROP_FUNCTION = Pattern.compile(&quot;DROP\\s+FUNCTION\\s+([A-Z0-9_\\.\&quot;]+)&quot;);</span>
+
+
+<span class="nc" id="L52">   private Set&lt;IDatabaseObjectInfo&gt; _updateDatabaseObjectInfos = </span>
+       new HashSet&lt;IDatabaseObjectInfo&gt;();
+<span class="nc" id="L54">   private Set&lt;String&gt; _dropTableSimpleNames = new HashSet&lt;String&gt;();</span>
+<span class="nc" id="L55">   private Set&lt;String&gt; _dropProcedureSimpleNames = new HashSet&lt;String&gt;();</span>
+
+   private ISession _session;
+   private SQLDatabaseMetaData _dmd;
+
+   public SchemaInfoUpdateCheck(ISession session)
+<span class="nc" id="L61">   {</span>
+<span class="nc" id="L62">      _session = session;</span>
+<span class="nc" id="L63">      _dmd = _session.getSQLConnection().getSQLMetaData();</span>
+<span class="nc" id="L64">   }</span>
+
+   public void addExecutionInfo(SQLExecutionInfo exInfo)
+   {
+<span class="nc bnc" id="L68" title="All 4 branches missed.">      if(null == exInfo || null == exInfo.getSQL())</span>
+      {
+<span class="nc" id="L70">         return;</span>
+      }
+
+<span class="nc" id="L73">      TableInfo[] tis = getTableInfos(exInfo.getSQL());</span>
+<span class="nc bnc" id="L74" title="All 2 branches missed.">      for (int i = 0; i &lt; tis.length; i++)</span>
+      {
+<span class="nc" id="L76">         _updateDatabaseObjectInfos.add(tis[i]);</span>
+      }
+
+
+<span class="nc" id="L80">      ProcedureInfo[] pi = getProcedureInfos(exInfo.getSQL());</span>
+<span class="nc bnc" id="L81" title="All 2 branches missed.">      for (int i = 0; i &lt; pi.length; i++)</span>
+      {
+<span class="nc" id="L83">         _updateDatabaseObjectInfos.add(pi[i]);</span>
+      }
+
+<span class="nc" id="L86">      String dtsn = getDropTableSimpleName(exInfo.getSQL());</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">      if(null != dtsn)</span>
+      {
+<span class="nc" id="L89">         _dropTableSimpleNames.add(dtsn);</span>
+      }
+
+<span class="nc" id="L92">      String dpsn = getDropProcedureSimpleName(exInfo.getSQL());</span>
+<span class="nc bnc" id="L93" title="All 2 branches missed.">      if(null != dpsn)</span>
+      {
+<span class="nc" id="L95">         _dropProcedureSimpleNames.add(dpsn);</span>
+      }
+<span class="nc" id="L97">   }</span>
+
+   private String getDropProcedureSimpleName(String sql)
+   {
+<span class="nc" id="L101">      sql = sql.trim();</span>
+<span class="nc" id="L102">      String upperSql = sql.toUpperCase();</span>
+
+      Matcher matcher;
+
+<span class="nc" id="L106">      matcher = PATTERN_DROP_PROCEDURE.matcher(upperSql);</span>
+<span class="nc bnc" id="L107" title="All 2 branches missed.">      if(matcher.find())</span>
+      {
+<span class="nc" id="L109">         return createProcdureInfos(matcher, sql, true)[0].getSimpleName();</span>
+      }
+
+<span class="nc" id="L112">      matcher = PATTERN_DROP_FUNCTION.matcher(upperSql);</span>
+<span class="nc bnc" id="L113" title="All 2 branches missed.">      if(matcher.find())</span>
+      {
+<span class="nc" id="L115">         return createProcdureInfos(matcher, sql, true)[0].getSimpleName();</span>
+      }
+
+<span class="nc" id="L118">      return null;</span>
+   }
+
+   private String getDropTableSimpleName(String sql)
+   {
+<span class="nc" id="L123">      sql = sql.trim();</span>
+<span class="nc" id="L124">      String upperSql = sql.toUpperCase();</span>
+
+      Matcher matcher;
+
+<span class="nc" id="L128">      matcher = PATTERN_DROP_TABLE.matcher(upperSql);</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">      if(matcher.find())</span>
+      {
+<span class="nc" id="L131">         return createTableInfos(matcher, sql, &quot;TABLE&quot;, true)[0].getSimpleName();</span>
+      }
+
+<span class="nc" id="L134">      matcher = PATTERN_DROP_MATERIALIZED_VIEW.matcher(upperSql);</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">      if(matcher.find())</span>
+      {
+<span class="nc" id="L137">         return createTableInfos(matcher, sql, &quot;TABLE&quot;, true)[0].getSimpleName();</span>
+      }
+      
+<span class="nc" id="L140">      matcher = PATTERN_DROP_VIEW.matcher(upperSql);</span>
+<span class="nc bnc" id="L141" title="All 2 branches missed.">      if(matcher.find())</span>
+      {
+<span class="nc" id="L143">         return createTableInfos(matcher, sql, &quot;VIEW&quot;, true)[0].getSimpleName();</span>
+      }
+
+<span class="nc" id="L146">      return null;</span>
+
+   }
+
+   public void flush()
+   {
+<span class="nc bnc" id="L152" title="All 2 branches missed.">      if(60 &lt; _updateDatabaseObjectInfos.size() + _dropTableSimpleNames.size() + _dropProcedureSimpleNames.size())</span>
+      {
+         // reload complete SchemaInfo
+<span class="nc" id="L155">         SQLDatabaseMetaData dmd = _session.getSQLConnection().getSQLMetaData();</span>
+<span class="nc" id="L156">         DatabaseObjectInfo sessionOI = new DatabaseObjectInfo(null, null, &quot;SessionDummy&quot;, DatabaseObjectType.SESSION, dmd);</span>
+<span class="nc" id="L157">         _session.getSchemaInfo().reload(sessionOI, false);</span>
+
+
+<span class="nc" id="L160">      }</span>
+      else
+      {
+<span class="nc bnc" id="L163" title="All 2 branches missed.">          for (IDatabaseObjectInfo doi : _updateDatabaseObjectInfos) {</span>
+<span class="nc" id="L164">              _session.getSchemaInfo().reload(doi);</span>
+<span class="nc" id="L165">          }</span>
+
+<span class="nc bnc" id="L167" title="All 2 branches missed.">         for (String simpleTableName : _dropTableSimpleNames) {</span>
+<span class="nc" id="L168">             _session.getSchemaInfo().refershCacheForSimpleTableName(simpleTableName, false);</span>
+<span class="nc" id="L169">         }</span>
+         
+<span class="nc bnc" id="L171" title="All 2 branches missed.">         for (String simpleProcName : _dropProcedureSimpleNames) {</span>
+<span class="nc" id="L172">             _session.getSchemaInfo().refreshCacheForSimpleProcedureName(simpleProcName, false);</span>
+<span class="nc" id="L173">         }</span>
+      }
+
+<span class="nc bnc" id="L176" title="All 2 branches missed.">      if(0 &lt; _updateDatabaseObjectInfos.size()  + _dropTableSimpleNames.size() + _dropProcedureSimpleNames.size())</span>
+      {
+
+<span class="nc" id="L179">         _session.getSchemaInfo().fireSchemaInfoUpdate();</span>
+<span class="nc" id="L180">         SwingUtilities.invokeLater(new Runnable()</span>
+<span class="nc" id="L181">         {</span>
+            public void run()
+            {
+<span class="nc" id="L184">               repaintSqlEditor();</span>
+<span class="nc" id="L185">            }</span>
+         });
+      }
+
+<span class="nc" id="L189">      _updateDatabaseObjectInfos.clear();</span>
+<span class="nc" id="L190">      _dropTableSimpleNames.clear();</span>
+<span class="nc" id="L191">      _dropProcedureSimpleNames.clear();</span>
+
+<span class="nc" id="L193">   }</span>
+
+   private void repaintSqlEditor()
+   {
+<span class="nc" id="L197">      ISessionWidget activeSessionWidget = _session.getActiveSessionWindow();</span>
+
+<span class="nc bnc" id="L199" title="All 2 branches missed.">      if (activeSessionWidget instanceof SQLInternalFrame)</span>
+      {
+<span class="nc" id="L201">         ISQLEntryPanel sqlEntryPanel = ((SQLInternalFrame) activeSessionWidget).getSQLPanelAPI().getSQLEntryPanel();</span>
+<span class="nc" id="L202">         sqlEntryPanel.getTextComponent().repaint();</span>
+<span class="nc" id="L203">         _session.getParserEventsProcessor(sqlEntryPanel.getIdentifier()).triggerParser();</span>
+      }
+
+<span class="nc bnc" id="L206" title="All 2 branches missed.">      if (activeSessionWidget instanceof SessionInternalFrame)</span>
+      {
+<span class="nc" id="L208">         ISQLEntryPanel sqlEntryPanel = ((SessionInternalFrame) activeSessionWidget).getSQLPanelAPI().getSQLEntryPanel();</span>
+<span class="nc" id="L209">         sqlEntryPanel.getTextComponent().repaint();</span>
+<span class="nc" id="L210">         _session.getParserEventsProcessor(sqlEntryPanel.getIdentifier()).triggerParser();</span>
+      }
+
+<span class="nc" id="L213">   }</span>
+
+
+   private ProcedureInfo[] getProcedureInfos(String sql)
+   {
+<span class="nc" id="L218">      sql = sql.trim();</span>
+<span class="nc" id="L219">      String upperSql = sql.toUpperCase();</span>
+
+      Matcher matcher;
+
+<span class="nc" id="L223">      matcher = PATTERN_CREATE_OR_REPLACE_PROCEDURE.matcher(upperSql);</span>
+<span class="nc bnc" id="L224" title="All 2 branches missed.">      if(matcher.find())</span>
+      {
+<span class="nc" id="L226">         return createProcdureInfos(matcher, sql, false);</span>
+      }
+
+<span class="nc" id="L229">      matcher = PATTERN_CREATE_PROCEDURE.matcher(upperSql);</span>
+<span class="nc bnc" id="L230" title="All 2 branches missed.">      if(matcher.find())</span>
+      {
+<span class="nc" id="L232">         return createProcdureInfos(matcher, sql, false);</span>
+      }
+
+<span class="nc" id="L235">      matcher = PATTERN_ALTER_PROCEDURE.matcher(upperSql);</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">      if(matcher.find())</span>
+      {
+<span class="nc" id="L238">         return createProcdureInfos(matcher, sql, true);</span>
+      }
+
+<span class="nc" id="L241">      matcher = PATTERN_CREATE_OR_REPLACE_FUNCTION.matcher(upperSql);</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">      if(matcher.find())</span>
+      {
+<span class="nc" id="L244">         return createProcdureInfos(matcher, sql, false);</span>
+      }
+
+<span class="nc" id="L247">      matcher = PATTERN_CREATE_FUNCTION.matcher(upperSql);</span>
+<span class="nc bnc" id="L248" title="All 2 branches missed.">      if(matcher.find())</span>
+      {
+<span class="nc" id="L250">         return createProcdureInfos(matcher, sql, false);</span>
+      }
+
+<span class="nc" id="L253">      matcher = PATTERN_ALTER_FUNCTION.matcher(upperSql);</span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">      if(matcher.find())</span>
+      {
+<span class="nc" id="L256">         return createProcdureInfos(matcher, sql, true);</span>
+      }
+
+<span class="nc" id="L259">      return new ProcedureInfo[0];</span>
+
+
+   }
+
+   private ProcedureInfo[] createProcdureInfos(Matcher matcher, String sql, boolean isAlterOrDrop)
+   {
+<span class="nc" id="L266">      int endIx = matcher.end(1);</span>
+<span class="nc" id="L267">      int len = matcher.group(1).length();</span>
+<span class="nc" id="L268">      String proc = sql.substring(endIx - len, endIx);</span>
+<span class="nc" id="L269">      String[] splits = proc.split(&quot;\\.&quot;);</span>
+<span class="nc" id="L270">      String simpleName = splits[splits.length - 1];</span>
+<span class="nc" id="L271">      simpleName = removeQuotes(simpleName);</span>
+
+<span class="nc bnc" id="L273" title="All 2 branches missed.">      if(isAlterOrDrop)</span>
+      {
+<span class="nc" id="L275">         String buf = _session.getSchemaInfo().getCaseSensitiveProcedureName(simpleName);</span>
+<span class="nc bnc" id="L276" title="All 2 branches missed.">         if(null != buf)</span>
+         {
+<span class="nc" id="L278">            simpleName = buf;</span>
+         }
+<span class="nc" id="L280">         return new ProcedureInfo[]{new ProcedureInfo(null, null, simpleName, null, DatabaseMetaData.procedureResultUnknown, _dmd)};</span>
+      }
+      else
+      {
+         // DB2 stores all names in upper case.
+         // PostgreSQL stores all names in lower case.
+         // That's why we may not find proc as it was written in the create statement.
+         // So we try out the upper and lower case names too.
+<span class="nc" id="L288">         return new ProcedureInfo[]</span>
+            {
+               new ProcedureInfo(null, null, simpleName, null, DatabaseMetaData.procedureResultUnknown, _dmd),
+<span class="nc" id="L291">               new ProcedureInfo(null, null, simpleName.toUpperCase(), null, DatabaseMetaData.procedureResultUnknown, _dmd),</span>
+<span class="nc" id="L292">               new ProcedureInfo(null, null, simpleName.toLowerCase(), null, DatabaseMetaData.procedureResultUnknown, _dmd)</span>
+            };
+      }
+   }
+
+   private String removeQuotes(String simpleName)
+   {
+<span class="nc bnc" id="L299" title="All 2 branches missed.">      if(simpleName.startsWith(&quot;\&quot;&quot;))</span>
+      {
+<span class="nc" id="L301">         simpleName = simpleName.substring(1);</span>
+      }
+
+<span class="nc bnc" id="L304" title="All 2 branches missed.">      if(simpleName.endsWith(&quot;\&quot;&quot;))</span>
+      {
+<span class="nc" id="L306">         simpleName = simpleName.substring(0, simpleName.length() - 1);</span>
+      }
+
+<span class="nc" id="L309">      return simpleName;</span>
+   }
+
+
+   private TableInfo[] getTableInfos(String sql)
+   {
+<span class="nc" id="L315">      sql = sql.trim();</span>
+<span class="nc" id="L316">      String upperSql = sql.toUpperCase();</span>
+
+      Matcher matcher;
+
+<span class="nc" id="L320">      matcher = PATTERN_CREATE_TABLE.matcher(upperSql);</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">      if(matcher.find())</span>
+      {
+<span class="nc" id="L323">         return createTableInfos(matcher, sql, &quot;TABLE&quot;, false);</span>
+      }
+
+<span class="nc" id="L326">      matcher = PATTERN_ALTER_TABLE.matcher(upperSql);</span>
+<span class="nc bnc" id="L327" title="All 2 branches missed.">      if(matcher.find())</span>
+      {
+<span class="nc" id="L329">         return createTableInfos(matcher, sql, &quot;TABLE&quot;, true);</span>
+      }
+
+<span class="nc" id="L332">      matcher = PATTERN_INSERT_INTO.matcher(upperSql);</span>
+<span class="nc bnc" id="L333" title="All 2 branches missed.">      if(matcher.find())</span>
+      {
+<span class="nc" id="L335">         return createTableInfos(matcher, sql, &quot;TABLE&quot;, false);</span>
+      }
+
+<span class="nc" id="L338">      matcher = PATTERN_CREATE_OR_REPLACE_VIEW.matcher(upperSql);</span>
+<span class="nc bnc" id="L339" title="All 2 branches missed.">      if(matcher.find())</span>
+      {
+<span class="nc" id="L341">         return createTableInfos(matcher, sql, &quot;VIEW&quot;, false);</span>
+      }
+
+<span class="nc" id="L344">      matcher = PATTERN_CREATE_VIEW.matcher(upperSql);</span>
+<span class="nc bnc" id="L345" title="All 2 branches missed.">      if(matcher.find())</span>
+      {
+<span class="nc" id="L347">         return createTableInfos(matcher, sql, &quot;VIEW&quot;, false);</span>
+      }
+
+<span class="nc" id="L350">      matcher = PATTERN_CREATE_MATERIALIZED_VIEW.matcher(upperSql);</span>
+<span class="nc bnc" id="L351" title="All 2 branches missed.">      if(matcher.find())</span>
+      {
+<span class="nc" id="L353">         return createTableInfos(matcher, sql, &quot;TABLE&quot;, false);</span>
+      }
+      
+<span class="nc" id="L356">      matcher = PATTERN_ALTER_VIEW.matcher(upperSql);</span>
+<span class="nc bnc" id="L357" title="All 2 branches missed.">      if(matcher.find())</span>
+      {
+<span class="nc" id="L359">         return createTableInfos(matcher, sql, &quot;VIEW&quot;, true);</span>
+      }
+
+<span class="nc" id="L362">      return new TableInfo[0];</span>
+
+
+   }
+
+   private TableInfo[] createTableInfos(Matcher matcher, String sql, String type, boolean isAlterOrDrop)
+   {
+<span class="nc" id="L369">      int endIx = matcher.end(1);</span>
+<span class="nc" id="L370">      int len = matcher.group(1).length();</span>
+<span class="nc" id="L371">      String table = sql.substring(endIx - len, endIx);</span>
+<span class="nc" id="L372">      String[] splits = table.split(&quot;\\.&quot;);</span>
+<span class="nc" id="L373">      String simpleName = splits[splits.length - 1];</span>
+<span class="nc" id="L374">      simpleName = removeQuotes(simpleName);</span>
+
+<span class="nc bnc" id="L376" title="All 2 branches missed.">      if(isAlterOrDrop)</span>
+      {
+<span class="nc" id="L378">         String buf = _session.getSchemaInfo().getCaseSensitiveTableName(simpleName);</span>
+<span class="nc bnc" id="L379" title="All 2 branches missed.">         if(null != buf)</span>
+         {
+<span class="nc" id="L381">            simpleName = buf;</span>
+         }
+<span class="nc" id="L383">         return new TableInfo[]{new TableInfo(null, null, simpleName, type, null, _dmd)};</span>
+      }
+      else
+      {
+         // DB2 stores all names in upper case.
+         // PostgreSQL stores table names in lower case.
+         // That's why we may not find table as it was written in the create statement.
+         // So we try out the upper and lower case names too.
+<span class="nc" id="L391">         return new TableInfo[]</span>
+            {
+               new TableInfo(null, null, simpleName, type, null, _dmd),
+<span class="nc" id="L394">               new TableInfo(null, null, simpleName.toUpperCase(), type, null, _dmd),</span>
+<span class="nc" id="L395">               new TableInfo(null, null, simpleName.toLowerCase(), type, null, _dmd)</span>
+            };
+      }
+   }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

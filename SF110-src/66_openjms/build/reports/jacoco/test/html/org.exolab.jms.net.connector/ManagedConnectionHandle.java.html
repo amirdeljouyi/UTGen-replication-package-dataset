@@ -1,0 +1,375 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ManagedConnectionHandle.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">66_openjms</a> &gt; <a href="index.source.html" class="el_package">org.exolab.jms.net.connector</a> &gt; <span class="el_source">ManagedConnectionHandle.java</span></div><h1>ManagedConnectionHandle.java</h1><pre class="source lang-java linenums">/**
+ * Redistribution and use of this software and associated documentation
+ * (&quot;Software&quot;), with or without modification, are permitted provided
+ * that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain copyright
+ *    statements and notices.  Redistributions must also contain a
+ *    copy of this document.
+ *
+ * 2. Redistributions in binary form must reproduce the
+ *    above copyright notice, this list of conditions and the
+ *    following disclaimer in the documentation and/or other
+ *    materials provided with the distribution.
+ *
+ * 3. The name &quot;Exolab&quot; must not be used to endorse or promote
+ *    products derived from this Software without prior written
+ *    permission of Exoffice Technologies.  For written permission,
+ *    please contact info@exolab.org.
+ *
+ * 4. Products derived from this Software may not be called &quot;Exolab&quot;
+ *    nor may &quot;Exolab&quot; appear in their names without prior written
+ *    permission of Exoffice Technologies. Exolab is a registered
+ *    trademark of Exoffice Technologies.
+ *
+ * 5. Due credit should be given to the Exolab Project
+ *    (http://www.exolab.org/).
+ *
+ * THIS SOFTWARE IS PROVIDED BY EXOFFICE TECHNOLOGIES AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT
+ * NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+ * EXOFFICE TECHNOLOGIES OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Copyright 2004-2005 (C) Exoffice Technologies Inc. All Rights Reserved.
+ *
+ * $Id: ManagedConnectionHandle.java,v 1.9 2008/01/07 13:00:16 tanderson Exp $
+ */
+package org.exolab.jms.net.connector;
+
+import org.exolab.jms.net.uri.URI;
+
+import java.security.Principal;
+
+
+/**
+ * A handle to a {@link ManagedConnection} that tracks its utilisation.
+ *
+ * @author &lt;a href=&quot;mailto:tma@netspace.net.au&quot;&gt;Tim Anderson&lt;/a&gt;
+ * @version $Revision: 1.9 $ $Date: 2008/01/07 13:00:16 $
+ */
+final class ManagedConnectionHandle implements ManagedConnection {
+
+    /**
+     * The connection pool that owns this.
+     */
+    private final DefaultConnectionPool _pool;
+
+    /**
+     * The connection to delegate all requests to.
+     */
+    private final ManagedConnection _connection;
+
+    /**
+     * The connection factory for resolving connections via their URI.
+     */
+    private final ConnectionFactory _resolver;
+
+    /**
+     * The no. of active ConnectionHandle instances.
+     */
+<span class="nc" id="L78">    private int _connectionCount = 0;</span>
+
+    /**
+     * Determines if the connection has been since {@link #clearUsed} was
+     * last invoked.
+     */
+<span class="nc" id="L84">    private boolean _used = false;</span>
+
+    /**
+     * Determines if a ping is in progress.
+     */
+<span class="nc" id="L89">    private boolean _pinging = false;</span>
+
+    /**
+     * The no. of times {@link #incPingWaits} has been invoked since the last
+     * {@link #ping}.
+     */
+    private int _pingWaits;
+
+
+    /**
+     * Construct a new &lt;code&gt;ManagedConnectionHandle&lt;/code&gt;.
+     *
+     * @param pool       the pool that owns this
+     * @param connection the connection to delegate requests to
+     * @param resolver   the connection factory for resolving connections via
+     *                   their URI.
+     */
+    public ManagedConnectionHandle(DefaultConnectionPool pool,
+                                   ManagedConnection connection,
+<span class="nc" id="L108">                                   ConnectionFactory resolver) {</span>
+<span class="nc" id="L109">        _pool = pool;</span>
+<span class="nc" id="L110">        _connection = connection;</span>
+<span class="nc" id="L111">        _resolver = resolver;</span>
+<span class="nc" id="L112">    }</span>
+
+    /**
+     * Registers a handler for handling invocations on objects exported via this
+     * connection. Once a handler is registered, it cannot be de-registered.
+     *
+     * @param handler the invocation handler
+     * @throws IllegalStateException if a handler is already registered
+     * @throws ResourceException     for any error
+     */
+    public void setInvocationHandler(InvocationHandler handler)
+            throws ResourceException {
+<span class="nc" id="L124">        _connection.setInvocationHandler(handler);</span>
+<span class="nc" id="L125">    }</span>
+
+    /**
+     * Registers a connection event listener.
+     *
+     * @param listener the connection event listener
+     * @throws ResourceException for any error
+     */
+    public void setConnectionEventListener(ManagedConnectionListener listener)
+            throws ResourceException {
+<span class="nc" id="L135">        _connection.setConnectionEventListener(listener);</span>
+<span class="nc" id="L136">    }</span>
+
+    /**
+     * Creates a new connection handle for the underlying physical connection.
+     *
+     * @return a new connection handle
+     * @throws IllegalStateException if an &lt;code&gt;InvocationHandler&lt;/code&gt; hasn't
+     *                               been registered
+     * @throws ResourceException     for any error
+     */
+    public Connection getConnection() throws ResourceException {
+<span class="nc" id="L147">        Connection connection = _connection.getConnection();</span>
+<span class="nc" id="L148">        return new ConnectionHandle(connection);</span>
+    }
+
+    /**
+     * Ping the connection. The connection event listener will be notified
+     * if the ping succeeds.
+     *
+     * @throws ResourceException for any error
+     */
+    public synchronized void ping() throws ResourceException {
+        try {
+<span class="nc" id="L159">            _pinging = true;</span>
+<span class="nc" id="L160">            _pingWaits = 0;</span>
+<span class="nc" id="L161">            _connection.ping();</span>
+<span class="nc" id="L162">        } catch (ResourceException exception) {</span>
+<span class="nc" id="L163">            _pinging = false;</span>
+<span class="nc" id="L164">            throw exception;</span>
+<span class="nc" id="L165">        }</span>
+<span class="nc" id="L166">    }</span>
+
+    /**
+     * Determines if a ping has been sent.
+     *
+     * @return &lt;code&gt;true&lt;/code&gt; if a ping has been sent
+     */
+    public synchronized boolean pinging() {
+<span class="nc" id="L174">        return _pinging;</span>
+    }
+
+    /**
+     * Notifies of a ping response.
+     * Clears the ping status, and resets the ping wait to &lt;code&gt;0&lt;/code&gt;.
+     */
+    public synchronized void pinged() {
+<span class="nc" id="L182">        _pinging = false;</span>
+<span class="nc" id="L183">        _pingWaits = 0;</span>
+<span class="nc" id="L184">    }</span>
+
+    /**
+     * Increments the no. of times this connection has waited for a ping
+     * response.
+     *
+     * @return the no. of times this connection has waited for a ping response
+     */
+    public synchronized int incPingWaits() {
+<span class="nc" id="L193">        return ++_pingWaits;</span>
+    }
+
+    /**
+     * Returns the remote address to which this is connected.
+     *
+     * @return the remote address to which this is connected
+     * @throws ResourceException for any error
+     */
+    public URI getRemoteURI() throws ResourceException {
+<span class="nc" id="L203">        return _connection.getRemoteURI();</span>
+    }
+
+    /**
+     * Returns the local address that this connection is bound to.
+     *
+     * @return the local address that this connection is bound to
+     * @throws ResourceException for any error
+     */
+    public URI getLocalURI() throws ResourceException {
+<span class="nc" id="L213">        return _connection.getLocalURI();</span>
+    }
+
+    /**
+     * Returns the principal associated with this connection.
+     *
+     * @return the principal associated with this connection,
+     *         or &lt;code&gt;null&lt;code&gt; if none is set
+     * @throws ResourceException for any error
+     */
+    public Principal getPrincipal() throws ResourceException {
+<span class="nc" id="L224">        return _connection.getPrincipal();</span>
+    }
+
+    /**
+     * Destroys the physical connection.
+     *
+     * @throws ResourceException for any error
+     */
+    public void destroy() throws ResourceException {
+<span class="nc" id="L233">        _connection.destroy();</span>
+<span class="nc" id="L234">    }</span>
+
+    /**
+     * Marks the connection as being used.
+     */
+    public synchronized void setUsed() {
+<span class="nc" id="L240">        _used = true;</span>
+<span class="nc" id="L241">    }</span>
+
+    /**
+     * Determines if the connection has been used since {@link #clearUsed}
+     * was last invoked.
+     */
+    public synchronized boolean used() {
+<span class="nc" id="L248">        return _used;</span>
+    }
+
+    /**
+     * Marks the connection as being unused.
+     */
+    public synchronized void clearUsed() {
+<span class="nc" id="L255">        _used = false;</span>
+<span class="nc" id="L256">    }</span>
+
+    /**
+     * Determines if the connection can be destroyed. The connection
+     * can be destroyed if there are no associated {@link Connection} instances,
+     * and it has been used since {@link #clearUsed} was invoked.
+     *
+     * @return &lt;code&gt;true&lt;/code&gt; if the connection may be destroyed
+     */
+    public synchronized boolean canDestroy() {
+<span class="nc bnc" id="L266" title="All 4 branches missed.">        return (_connectionCount == 0) &amp;&amp; (!_used);</span>
+    }
+
+    /**
+     * Increment the no. of references to this connection.
+     */
+    private synchronized void incActiveConnections() {
+<span class="nc" id="L273">        ++_connectionCount;</span>
+<span class="nc" id="L274">    }</span>
+
+    /**
+     * Decrement the no. of references to this connection.
+     */
+    private synchronized void decActiveConnections() {
+<span class="nc" id="L280">        --_connectionCount;</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">        if (_connectionCount &lt;= 0) {</span>
+<span class="nc" id="L282">            _pool.idle(this);</span>
+        }
+<span class="nc" id="L284">    }</span>
+
+    public boolean usedSinceLastPing() {
+<span class="nc" id="L287">        return false;</span>
+    }
+
+    /**
+     * Helper class reference count a {@link Connection} instance.
+     */
+    private class ConnectionHandle implements Connection {
+
+        /**
+         * The connection to delegate all requests to.
+         */
+        private Connection _connection;
+
+        /**
+         * Construct a new &lt;code&gt;ConnectionHandle&lt;/code&gt;.
+         *
+         * @param connection the connection to delegate requests to
+         */
+<span class="nc" id="L305">        public ConnectionHandle(Connection connection) {</span>
+<span class="nc" id="L306">            _connection = connection;</span>
+<span class="nc" id="L307">            incActiveConnections();</span>
+<span class="nc" id="L308">        }</span>
+
+        /**
+         * Invoke a method on a remote object.
+         *
+         * @param request the request
+         * @return the result of the invocation
+         * @throws Throwable for any transport error
+         */
+        public Response invoke(Request request) throws Throwable {
+<span class="nc" id="L318">            Response response = null;</span>
+<span class="nc" id="L319">            setUsed();</span>
+            try {
+<span class="nc" id="L321">                ConnectionContext.push(getPrincipal(), _resolver);</span>
+<span class="nc" id="L322">                response = _connection.invoke(request);</span>
+            } finally {
+<span class="nc" id="L324">                ConnectionContext.pop();</span>
+            }
+<span class="nc" id="L326">            return response;</span>
+        }
+
+        /**
+         * Returns the remote address to which this is connected.
+         *
+         * @return the remote address to which this is connected
+         * @throws ResourceException for any error
+         */
+        public URI getRemoteURI() throws ResourceException {
+<span class="nc" id="L336">            return _connection.getRemoteURI();</span>
+        }
+
+        /**
+         * Returns the local address that this connection is bound to.
+         *
+         * @return the local address that this connection is bound to
+         * @throws ResourceException for any error
+         */
+        public URI getLocalURI() throws ResourceException {
+<span class="nc" id="L346">            return _connection.getLocalURI();</span>
+        }
+
+        /**
+         * Close this connection, releasing any allocated resources.
+         *
+         * @throws ResourceException for any error.
+         */
+        public void close() throws ResourceException {
+            try {
+<span class="nc" id="L356">                _connection.close();</span>
+            } finally {
+<span class="nc" id="L358">                _connection = null;</span>
+<span class="nc" id="L359">                decActiveConnections();</span>
+            }
+<span class="nc" id="L361">        }</span>
+
+        /**
+         * Called by the garbage collector when there are no more references to
+         * the object.
+         */
+        protected void finalize() throws Throwable {
+<span class="nc bnc" id="L368" title="All 2 branches missed.">            if (_connection != null) {</span>
+<span class="nc" id="L369">                decActiveConnections();</span>
+            }
+<span class="nc" id="L371">            super.finalize();</span>
+<span class="nc" id="L372">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

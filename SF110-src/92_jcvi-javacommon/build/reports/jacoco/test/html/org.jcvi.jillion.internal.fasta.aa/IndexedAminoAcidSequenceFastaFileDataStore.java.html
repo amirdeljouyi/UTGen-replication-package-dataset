@@ -1,0 +1,274 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IndexedAminoAcidSequenceFastaFileDataStore.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">92_jcvi-javacommon</a> &gt; <a href="index.source.html" class="el_package">org.jcvi.jillion.internal.fasta.aa</a> &gt; <span class="el_source">IndexedAminoAcidSequenceFastaFileDataStore.java</span></div><h1>IndexedAminoAcidSequenceFastaFileDataStore.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ * Copyright (c) 2013 J. Craig Venter Institute.
+ * 	This file is part of Jillion
+ * 
+ * 	 Jillion is free software: you can redistribute it and/or modify
+ * 	it under the terms of the GNU General Public License as published by
+ * 	the Free Software Foundation, either version 3 of the License, or
+ * 	(at your option) any later version.
+ * 	
+ * 	 Jillion is distributed in the hope that it will be useful,
+ * 	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * 	GNU General Public License for more details.
+ * 	
+ * 	You should have received a copy of the GNU General Public License
+ * 	along with  Jillion.  If not, see http://www.gnu.org/licenses
+ * 
+ * Contributors:
+ *     Danny Katzel - initial API and implementation
+ ******************************************************************************/
+package org.jcvi.jillion.internal.fasta.aa;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import org.jcvi.jillion.core.datastore.DataStoreClosedException;
+import org.jcvi.jillion.core.datastore.DataStoreException;
+import org.jcvi.jillion.core.datastore.DataStoreFilter;
+import org.jcvi.jillion.core.datastore.DataStoreFilters;
+import org.jcvi.jillion.core.util.Builder;
+import org.jcvi.jillion.core.util.iter.StreamingIterator;
+import org.jcvi.jillion.fasta.FastaFileParser;
+import org.jcvi.jillion.fasta.FastaRecordVisitor;
+import org.jcvi.jillion.fasta.FastaVisitor;
+import org.jcvi.jillion.fasta.FastaVisitorCallback;
+import org.jcvi.jillion.fasta.FastaVisitorCallback.FastaVisitorMemento;
+import org.jcvi.jillion.fasta.aa.AbstractAminoAcidFastaRecordVisitor;
+import org.jcvi.jillion.fasta.aa.AminoAcidFastaDataStore;
+import org.jcvi.jillion.fasta.aa.AminoAcidFastaRecord;
+import org.jcvi.jillion.internal.core.datastore.DataStoreStreamingIterator;
+
+/**
+ * {@code IndexedAminoAcidSequenceFastaFileDataStore} is an implementation of 
+ * {@link AminoAcidSequenceFastaDataStore} that only stores an index containing
+ * file offsets to the various {@link FastaRecord}s contained
+ * inside the fasta file.  This implementation provides random access
+ * to large files taking up much memory.  The downside is each fasta record
+ * must be seeked to and then re-parsed each time and the fasta file must exist and not
+ * get altered during the entire lifetime of this object.
+ * @author dkatzel
+ */
+<span class="nc" id="L55">public final class IndexedAminoAcidSequenceFastaFileDataStore{</span>
+
+	/**
+	 * Creates a new {@link IndexedAminoAcidSequenceFastaFileDataStore}
+	 * instance using the given fastaFile.
+	 * @param fastaFile the fasta to create an {@link IndexedAminoAcidSequenceFastaFileDataStore}
+	 * for.
+	 * @return a new instance of {@link IndexedAminoAcidSequenceFastaFileDataStore};
+	 * never null.
+	 * @throws FileNotFoundException if the input fasta file does not exist.
+	 * @throws NullPointerException if the input fasta file is null.
+	 */
+	public static AminoAcidFastaDataStore create(File fastaFile) throws IOException{
+<span class="nc" id="L68">		return create(fastaFile, DataStoreFilters.alwaysAccept());</span>
+	}
+	
+	/**
+	 * Creates a new {@link IndexedAminoAcidSequenceFastaFileDataStore}
+	 * instance using the given fastaFile.
+	 * @param fastaFile the fasta to create an {@link IndexedAminoAcidSequenceFastaFileDataStore}
+	 * for.
+	 * @param filter the {@link DataStoreFilter} instance used to filter out the fasta records;
+	 * can not be null.
+	 * @return a new instance of {@link IndexedAminoAcidSequenceFastaFileDataStore};
+	 * never null.
+	 * @throws FileNotFoundException if the input fasta file does not exist.
+	 * @throws NullPointerException if the input fasta file is null.
+	 */
+	public static AminoAcidFastaDataStore create(File fastaFile, DataStoreFilter filter) throws IOException{
+<span class="nc" id="L84">		IndexedAminoAcidSequenceFastaDataStoreBuilderVisitor2 builder = createBuilder(fastaFile,filter);</span>
+<span class="nc" id="L85">		builder.initialize();</span>
+<span class="nc" id="L86">		return builder.build();</span>
+	}
+	
+	
+	/**
+	 * Creates a new {@link AminoAcidSequenceFastaDataStoreBuilderVisitor}
+	 * instance that will build an {@link IndexedAminoAcidSequenceFastaFileDataStore}
+	 * using the given fastaFile.  This implementation of {@link AminoAcidSequenceFastaDataStoreBuilderVisitor}
+	 * can only be used to parse a single fasta file (the one given) and does not support
+	 * {@link AminoAcidSequenceFastaDataStoreBuilderVisitor#addFastaRecord(AminoAcidSequenceFastaRecord)}.
+	 * This builder visitor can only build the datastore via the visitXXX methods in the {@link FastaVisitor}
+	 * interface.
+	 * @param fastaFile the fasta to create an {@link IndexedAminoAcidSequenceFastaFileDataStore}
+	 * for.
+	 * @return a new instance of {@link AminoAcidSequenceFastaDataStoreBuilderVisitor};
+	 * never null.
+	 * @throws IOException 
+	 * @throws NullPointerException if the input fasta file is null.
+	 */
+	private static IndexedAminoAcidSequenceFastaDataStoreBuilderVisitor2 createBuilder(File fastaFile, DataStoreFilter filter) throws IOException{
+<span class="nc bnc" id="L106" title="All 2 branches missed.">		if(fastaFile ==null){</span>
+<span class="nc" id="L107">			throw new NullPointerException(&quot;fasta file can not be null&quot;);</span>
+		}
+<span class="nc bnc" id="L109" title="All 2 branches missed.">		if(!fastaFile.exists()){</span>
+<span class="nc" id="L110">			throw new FileNotFoundException(fastaFile.getAbsolutePath());</span>
+		}
+<span class="nc bnc" id="L112" title="All 2 branches missed.">		if(filter==null){</span>
+<span class="nc" id="L113">			throw new NullPointerException(&quot;filter can not be null&quot;);</span>
+		}
+<span class="nc" id="L115">		return new IndexedAminoAcidSequenceFastaDataStoreBuilderVisitor2(fastaFile, filter);</span>
+	}
+	
+	
+	
+	
+	private static final class IndexedAminoAcidSequenceFastaDataStoreBuilderVisitor2 implements FastaVisitor, Builder&lt;AminoAcidFastaDataStore&gt; {
+	
+		private final DataStoreFilter filter;
+		private final FastaFileParser parser;
+		private final File fastaFile;
+		
+<span class="nc" id="L127">		private final Map&lt;String, FastaVisitorCallback.FastaVisitorMemento&gt; mementos = new LinkedHashMap&lt;String, FastaVisitorCallback.FastaVisitorMemento&gt;();</span>
+<span class="nc" id="L128">		private IndexedAminoAcidSequenceFastaDataStoreBuilderVisitor2(File fastaFile, DataStoreFilter filter) throws IOException {</span>
+<span class="nc" id="L129">			this.fastaFile = fastaFile;</span>
+<span class="nc" id="L130">			this.filter = filter;</span>
+<span class="nc" id="L131">			this.parser = FastaFileParser.create(fastaFile);</span>
+
+<span class="nc" id="L133">		}</span>
+
+		public void initialize() throws IOException {
+<span class="nc" id="L136">			parser.accept(this);</span>
+			
+<span class="nc" id="L138">		}</span>
+
+		@Override
+		public FastaRecordVisitor visitDefline(FastaVisitorCallback callback,
+				String id, String optionalComment) {
+<span class="nc bnc" id="L143" title="All 2 branches missed.">			if(filter.accept(id)){</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">				if(!callback.canCreateMemento()){</span>
+<span class="nc" id="L145">					throw new IllegalStateException(&quot;must be able to create memento&quot;);</span>
+				}
+<span class="nc" id="L147">				mementos.put(id, callback.createMemento());</span>
+			}
+			//always skip records since we don't care about the details of any records
+			//during the initial parse
+<span class="nc" id="L151">			return null;</span>
+		}
+
+		@Override
+		public void visitEnd() {
+			//no-op
+			
+<span class="nc" id="L158">		}</span>
+		@Override
+		public void halted() {
+			//no-op			
+<span class="nc" id="L162">		}</span>
+
+		@Override
+		public AminoAcidFastaDataStore build() {
+<span class="nc" id="L166">			return new IndexedAminoAcidSequenceFastaFileDataStore2(fastaFile,parser, filter,mementos);</span>
+		}
+	
+	}
+	
+	public static final class IndexedAminoAcidSequenceFastaFileDataStore2 implements AminoAcidFastaDataStore {
+<span class="nc" id="L172">		private volatile boolean closed =false;</span>
+		private final File fastaFile;
+		private final FastaFileParser parser;
+		private final DataStoreFilter filter;
+		private final Map&lt;String, FastaVisitorCallback.FastaVisitorMemento&gt; mementos;
+		
+		
+		public IndexedAminoAcidSequenceFastaFileDataStore2(File fastaFile,
+<span class="nc" id="L180">				FastaFileParser parser, DataStoreFilter filter, Map&lt;String, FastaVisitorMemento&gt; mementos) {</span>
+<span class="nc" id="L181">			this.fastaFile = fastaFile;</span>
+<span class="nc" id="L182">			this.parser = parser;</span>
+<span class="nc" id="L183">			this.mementos = mementos;</span>
+<span class="nc" id="L184">			this.filter = filter;</span>
+<span class="nc" id="L185">		}</span>
+
+		@Override
+		public StreamingIterator&lt;String&gt; idIterator() throws DataStoreException {
+<span class="nc" id="L189">			throwExceptionIfClosed();</span>
+<span class="nc" id="L190">			return DataStoreStreamingIterator.create(this,mementos.keySet().iterator());</span>
+		}
+
+		@Override
+		public AminoAcidFastaRecord get(String id)
+				throws DataStoreException {
+<span class="nc" id="L196">			throwExceptionIfClosed();</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">			if(!mementos.containsKey(id)){</span>
+<span class="nc" id="L198">				return null;</span>
+			}
+<span class="nc" id="L200">			SingleRecordVisitor visitor = new SingleRecordVisitor();</span>
+			try {
+<span class="nc" id="L202">				parser.accept(visitor, mementos.get(id));</span>
+<span class="nc" id="L203">				return visitor.fastaRecord;</span>
+<span class="nc" id="L204">			} catch (IOException e) {</span>
+<span class="nc" id="L205">				throw new DataStoreException(&quot;error reading fasta file&quot;,e);</span>
+			}
+		}
+
+		@Override
+		public StreamingIterator&lt;AminoAcidFastaRecord&gt; iterator() throws DataStoreException {
+<span class="nc" id="L211">			throwExceptionIfClosed();</span>
+<span class="nc" id="L212">			return DataStoreStreamingIterator.create(this,</span>
+<span class="nc" id="L213">					LargeAminoAcidSequenceFastaIterator.createNewIteratorFor(fastaFile,filter));</span>
+		}
+		private void throwExceptionIfClosed() throws DataStoreException{
+<span class="nc bnc" id="L216" title="All 2 branches missed.">			if(closed){</span>
+<span class="nc" id="L217">				throw new DataStoreClosedException(&quot;datastore is closed&quot;);</span>
+			}
+<span class="nc" id="L219">		}</span>
+		public boolean contains(String id) throws DataStoreException {
+<span class="nc" id="L221">			throwExceptionIfClosed();</span>
+<span class="nc" id="L222">			return mementos.containsKey(id);</span>
+		}
+
+		@Override
+		public long getNumberOfRecords() throws DataStoreException {
+<span class="nc" id="L227">			throwExceptionIfClosed();</span>
+<span class="nc" id="L228">			return mementos.size();</span>
+		}
+
+		@Override
+		public boolean isClosed(){
+<span class="nc" id="L233">			return closed;</span>
+		}
+
+		@Override
+		public void close() {
+<span class="nc" id="L238">			closed=true;</span>
+			
+<span class="nc" id="L240">		}</span>
+
+	}
+
+<span class="nc" id="L244">	private static class SingleRecordVisitor implements FastaVisitor{</span>
+<span class="nc" id="L245">		private AminoAcidFastaRecord fastaRecord=null;</span>
+		@Override
+		public FastaRecordVisitor visitDefline(final FastaVisitorCallback callback,
+				String id, String optionalComment) {
+<span class="nc bnc" id="L249" title="All 2 branches missed.">			if(fastaRecord !=null){</span>
+<span class="nc" id="L250">				callback.haltParsing();</span>
+<span class="nc" id="L251">				return null;</span>
+			}
+<span class="nc" id="L253">			return new AbstractAminoAcidFastaRecordVisitor(id, optionalComment) {</span>
+				
+				@Override
+				protected void visitRecord(AminoAcidFastaRecord fastaRecord) {
+<span class="nc" id="L257">					SingleRecordVisitor.this.fastaRecord = fastaRecord;</span>
+					
+<span class="nc" id="L259">				}</span>
+			};
+		}
+
+		@Override
+		public void visitEnd() {
+			//no-op			
+<span class="nc" id="L266">		}</span>
+		@Override
+		public void halted() {
+			//no-op			
+<span class="nc" id="L270">		}</span>
+	}
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

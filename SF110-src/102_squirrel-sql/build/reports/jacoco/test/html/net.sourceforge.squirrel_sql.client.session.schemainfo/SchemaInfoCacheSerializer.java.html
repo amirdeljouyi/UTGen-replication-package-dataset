@@ -1,0 +1,233 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SchemaInfoCacheSerializer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">102_squirrel-sql</a> &gt; <a href="index.source.html" class="el_package">net.sourceforge.squirrel_sql.client.session.schemainfo</a> &gt; <span class="el_source">SchemaInfoCacheSerializer.java</span></div><h1>SchemaInfoCacheSerializer.java</h1><pre class="source lang-java linenums">package net.sourceforge.squirrel_sql.client.session.schemainfo;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.ObjectStreamClass;
+import java.util.Hashtable;
+
+import net.sourceforge.squirrel_sql.client.IApplication;
+import net.sourceforge.squirrel_sql.client.gui.db.ISQLAliasExt;
+import net.sourceforge.squirrel_sql.client.gui.db.SQLAlias;
+import net.sourceforge.squirrel_sql.client.session.ISession;
+import net.sourceforge.squirrel_sql.client.util.ApplicationFiles;
+import net.sourceforge.squirrel_sql.fw.id.IIdentifier;
+import net.sourceforge.squirrel_sql.fw.sql.ISQLAlias;
+import net.sourceforge.squirrel_sql.fw.util.IMessageHandler;
+import net.sourceforge.squirrel_sql.fw.util.StringManager;
+import net.sourceforge.squirrel_sql.fw.util.StringManagerFactory;
+import net.sourceforge.squirrel_sql.fw.util.log.ILogger;
+import net.sourceforge.squirrel_sql.fw.util.log.LoggerController;
+
+<span class="nc" id="L25">public class SchemaInfoCacheSerializer</span>
+{
+<span class="nc" id="L27">   private static final StringManager s_stringMgr =</span>
+<span class="nc" id="L28">      StringManagerFactory.getStringManager(SchemaInfoCacheSerializer.class);</span>
+
+
+<span class="nc" id="L31">   private static final ILogger s_log = LoggerController.createLogger(SchemaInfoCacheSerializer.class);</span>
+<span class="nc" id="L32">   private static Hashtable&lt;IIdentifier, IIdentifier&gt; _storingSessionIDs = </span>
+       new Hashtable&lt;IIdentifier, IIdentifier&gt;();
+
+
+   public static SchemaInfoCache load(ISession session)
+   {
+<span class="nc" id="L38">      SchemaInfoCache ret = privateLoad(session);</span>
+<span class="nc" id="L39">      ret.setSession(session);</span>
+
+<span class="nc" id="L41">      return ret;</span>
+   }
+
+   private static SchemaInfoCache privateLoad(ISession session)
+   {
+<span class="nc" id="L46">      File schemaCacheFile = getSchemaCacheFile(session.getAlias());</span>
+
+<span class="nc bnc" id="L48" title="All 2 branches missed.">      if(false == session.getAlias().getSchemaProperties().getExpectsSomeCachedData())</span>
+      {
+         // Current Alias Schema properties dont want cache.
+         // so we don't cache.
+
+         try
+         {
+<span class="nc bnc" id="L55" title="All 4 branches missed.">            if(schemaCacheFile.exists() &amp;&amp; false == schemaCacheFile.delete())</span>
+            {
+<span class="nc" id="L57">               s_log.error(&quot;Failed to delete Schema cache file &quot; + schemaCacheFile.getPath());</span>
+            }
+         }
+<span class="nc" id="L60">         catch (Exception e)</span>
+         {
+<span class="nc" id="L62">            s_log.error(&quot;Could not delete Schema cache file &quot; + schemaCacheFile.getPath(), e);</span>
+<span class="nc" id="L63">         }</span>
+
+<span class="nc" id="L65">         return new SchemaInfoCache();</span>
+      }
+
+<span class="nc bnc" id="L68" title="All 2 branches missed.">      if(false == schemaCacheFile.exists())</span>
+      {
+<span class="nc" id="L70">         return new SchemaInfoCache();</span>
+      }
+
+      try
+      {
+<span class="nc" id="L75">         FileInputStream fis = new FileInputStream(schemaCacheFile);</span>
+<span class="nc" id="L76">         ObjectInputStream ois = new ObjectInputStream(fis)</span>
+<span class="nc" id="L77">         {</span>
+            protected Class&lt;?&gt; resolveClass(ObjectStreamClass desc) throws IOException, ClassNotFoundException
+            {
+<span class="nc" id="L80">               ClassLoader loader = SchemaInfoCache.class.getClassLoader();</span>
+<span class="nc" id="L81">               return Class.forName(desc.getName(), false, loader);</span>
+            }
+         };
+<span class="nc" id="L84">         SchemaInfoCache ret = (SchemaInfoCache) ois.readObject();</span>
+<span class="nc" id="L85">         ois.close();</span>
+<span class="nc" id="L86">         fis.close();</span>
+
+<span class="nc" id="L88">         ret.replaceDatabaseObjectTypeConstantObjectsByConstantObjectsOfThisVM();</span>
+
+<span class="nc" id="L90">         return ret;</span>
+      }
+<span class="nc" id="L92">      catch (Exception e)</span>
+      {
+<span class="nc" id="L94">         s_log.error(&quot;Failed to load Schema cache. Note: this can happen when the SQuirreL version changed&quot;, e);</span>
+<span class="nc" id="L95">         return new SchemaInfoCache();</span>
+      }
+   }
+
+   public static void store(final ISession session, final SchemaInfoCache schemaInfoCache)
+   {
+
+<span class="nc" id="L102">      _storingSessionIDs.put(session.getIdentifier(), session.getIdentifier());</span>
+<span class="nc" id="L103">      session.getApplication().getThreadPool().addTask(new Runnable()</span>
+<span class="nc" id="L104">      {</span>
+         public void run()
+         {
+<span class="nc" id="L107">            privateStore(schemaInfoCache, session);</span>
+<span class="nc" id="L108">         }</span>
+      });
+
+<span class="nc" id="L111">   }</span>
+
+   private static void privateStore(SchemaInfoCache schemaInfoCache, ISession session)
+   {
+      try
+      {
+<span class="nc bnc" id="L117" title="All 2 branches missed.">         if(false == session.getAlias().getSchemaProperties().getExpectsSomeCachedData())</span>
+         {
+<span class="nc" id="L119">            return;</span>
+         }
+
+<span class="nc" id="L122">         IMessageHandler msgHandler = session.getApplication().getMessageHandler();</span>
+<span class="nc" id="L123">         File schemaCacheFile = getSchemaCacheFile(session.getAlias());</span>
+
+
+<span class="nc" id="L126">         String params[] = {session.getAlias().getName(),  schemaCacheFile.getPath()};</span>
+         // i18n[SchemaInfoCacheSerializer.beginStore=Starting to write schema cache for Alias {0}. file: {1}]
+<span class="nc" id="L128">         msgHandler.showMessage(s_stringMgr.getString(&quot;SchemaInfoCacheSerializer.beginStore&quot;, params));</span>
+
+
+<span class="nc" id="L131">         schemaInfoCache.prepareSerialization();</span>
+
+<span class="nc" id="L133">         FileOutputStream fos = new FileOutputStream(schemaCacheFile);</span>
+<span class="nc" id="L134">         ObjectOutputStream oOut = new ObjectOutputStream(fos);</span>
+<span class="nc" id="L135">         oOut.writeObject(schemaInfoCache);</span>
+<span class="nc" id="L136">         oOut.close();</span>
+<span class="nc" id="L137">         fos.close();</span>
+
+         // i18n[SchemaInfoCacheSerializer.endStore=Finished writing schema cache for Alias{0}. file: {1}]
+<span class="nc" id="L140">         msgHandler.showMessage(s_stringMgr.getString(&quot;SchemaInfoCacheSerializer.endStore&quot;, params));</span>
+
+      }
+<span class="nc" id="L143">      catch (Exception e)</span>
+      {
+<span class="nc" id="L145">         s_log.error(&quot;Failed to write Schema cache file &quot;, e);</span>
+      }
+      finally
+      {
+<span class="nc" id="L149">         synchronized (SchemaInfoCacheSerializer.class)</span>
+         {
+<span class="nc" id="L151">            _storingSessionIDs.remove(session.getIdentifier());</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">            if(0 == _storingSessionIDs.size())</span>
+            {
+<span class="nc" id="L154">               SchemaInfoCacheSerializer.class.notifyAll();</span>
+            }
+<span class="nc" id="L156">         }</span>
+
+      }
+<span class="nc" id="L159">   }</span>
+
+   public static void waitTillStoringIsDone()
+   {
+      try
+      {
+<span class="nc" id="L165">         synchronized (SchemaInfoCacheSerializer.class)</span>
+         {
+<span class="nc bnc" id="L167" title="All 2 branches missed.">            if(0 &lt; _storingSessionIDs.size())</span>
+            {
+<span class="nc" id="L169">               SchemaInfoCacheSerializer.class.wait(30000);</span>
+            }
+<span class="nc" id="L171">         }</span>
+      }
+<span class="nc" id="L173">      catch (InterruptedException e)</span>
+      {
+<span class="nc" id="L175">         s_log.error(&quot;Error waiting for SchemaInfoCacheSerializer to finish storing&quot;, e);</span>
+<span class="nc" id="L176">      }</span>
+<span class="nc" id="L177">   }</span>
+
+
+   public static File getSchemaCacheFile(ISQLAliasExt alias)
+   {
+<span class="nc" id="L182">      String uniquePrefix = alias.getIdentifier().toString();</span>
+
+<span class="nc" id="L184">      uniquePrefix = uniquePrefix.replace(':', '_').replace(File.separatorChar, '-');</span>
+
+<span class="nc" id="L186">      String path = new ApplicationFiles().getUserSettingsDirectory().getPath() +</span>
+                    File.separator + &quot;schemacaches&quot; + File.separator + uniquePrefix + &quot;_schemacache.ser&quot;;
+
+<span class="nc" id="L189">      File ret = new File(path);</span>
+<span class="nc" id="L190">      ret.getParentFile().mkdirs();</span>
+
+<span class="nc" id="L192">      return ret;</span>
+
+   }
+
+   public static void aliasRemoved(SQLAlias alias)
+   {
+<span class="nc" id="L198">      File schemaCacheFile = getSchemaCacheFile(alias);</span>
+<span class="nc bnc" id="L199" title="All 2 branches missed.">      if(schemaCacheFile.exists())</span>
+      {
+<span class="nc" id="L201">         schemaCacheFile.delete();</span>
+      }
+<span class="nc" id="L203">   }</span>
+
+   public static void deleteCacheFile(IApplication app, ISQLAliasExt alias, boolean verbose)
+   {
+<span class="nc" id="L207">      File schemaCacheFile = SchemaInfoCacheSerializer.getSchemaCacheFile(alias);</span>
+
+<span class="nc bnc" id="L209" title="All 4 branches missed.">      String aliasName = null == alias.getName() || 0 == alias.getName().trim().length() ? &quot;&lt;unnamed&gt;&quot; : alias.getName();</span>
+
+<span class="nc bnc" id="L211" title="All 2 branches missed.">      if (schemaCacheFile.exists())</span>
+      {
+<span class="nc bnc" id="L213" title="All 2 branches missed.">         if (schemaCacheFile.delete())</span>
+         {
+            // i18n[SchemaPropertiesController.cacheDeleted=Deleted {0}]
+<span class="nc" id="L216">            app.getMessageHandler().showMessage(s_stringMgr.getString(&quot;SchemaInfoCacheSerializer.cacheDeleted&quot;, schemaCacheFile.getPath()));</span>
+         }
+         else
+         {
+            // i18n[SchemaPropertiesController.cacheDeleteFailed=Could not delete {0}]
+<span class="nc" id="L221">            app.getMessageHandler().showWarningMessage(s_stringMgr.getString(&quot;SchemaInfoCacheSerializer.cacheDeleteFailed&quot;, schemaCacheFile.getPath()));</span>
+         }
+
+      }
+<span class="nc bnc" id="L225" title="All 2 branches missed.">      else if(verbose)</span>
+      {
+         // i18n[SchemaPropertiesController.cacheToDelNotExists=Cache file for Alias &quot;{0}&quot; does not exist. No file was deleted]
+<span class="nc" id="L228">         app.getMessageHandler().showWarningMessage(s_stringMgr.getString(&quot;SchemaInfoCacheSerializer.cacheToDelNotExists&quot;, aliasName));</span>
+      }
+<span class="nc" id="L230">   }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>

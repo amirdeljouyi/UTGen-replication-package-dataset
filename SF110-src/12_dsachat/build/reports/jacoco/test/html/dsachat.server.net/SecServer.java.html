@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SecServer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">12_dsachat</a> &gt; <a href="index.source.html" class="el_package">dsachat.server.net</a> &gt; <span class="el_source">SecServer.java</span></div><h1>SecServer.java</h1><pre class="source lang-java linenums">package dsachat.server.net;
+
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.net.Socket;
+import java.security.GeneralSecurityException;
+import java.security.KeyFactory;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.PublicKey;
+import java.security.spec.X509EncodedKeySpec;
+import java.util.Vector;
+
+import javax.crypto.Cipher;
+import javax.crypto.CipherInputStream;
+import javax.crypto.CipherOutputStream;
+import javax.crypto.KeyAgreement;
+import javax.crypto.interfaces.DHPublicKey;
+import javax.crypto.spec.DHParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+
+import dsachat.server.Handler;
+import dsachat.share.ConnectionEndpoint;
+import dsachat.share.InputEvent;
+import dsachat.share.InputListener;
+import dsachat.share.KeyExc;
+
+/**
+ * This class represents the network connection fo the server.
+ * It contains a socket but does mor than a basic one
+ * When a connection begins the client sends a Diffie-Hellman (DH) key spec.
+ * From that key spec this server creates a new Dh keypair and sends the public part to
+ * the client.&lt;br&gt;
+ * He also receives the public key from the client. after that both create a shared secret
+ * and they are setting up a RC-4 cipher with a 128 bit key
+ * then the Streams are set. The basic stream is the in- and outputstream from the socket
+ * first wrapped by cipher streams and finnaly wrapped in Object streams to send serializable
+ * objects.
+ * &lt;br&gt;
+ * if the server receives an object it passes it to the listener, but only after the 
+ * exchange happened
+ * 
+ * @author bernshausen
+ *
+ */
+public class SecServer extends Thread implements ConnectionEndpoint{
+
+	private Socket s;
+	private ObjectInputStream in;
+	private ObjectOutputStream out;
+	KeyAgreement serverKeyAgree;
+	KeyPair serverKpair;
+<span class="nc" id="L54">	private Vector&lt;InputListener&gt; inpList = new Vector&lt;InputListener&gt;();</span>
+	private boolean connected;
+	
+	/**
+	 * create a new server
+	 * @param con the socket of that connection
+	 */
+<span class="nc" id="L61">	public SecServer(Socket con){</span>
+<span class="nc" id="L62">		s=con;</span>
+<span class="nc" id="L63">		connected = false;</span>
+<span class="nc" id="L64">	}</span>
+	
+	/**
+	 * this is done in a thread.
+	 * wait for objects to arrive (readObject blocks)
+	 * and pass the object to the listener if it is not for ey exchange
+	 */
+	public void run(){
+<span class="nc" id="L72">		System.out.println(&quot;connection from &quot; +s+&quot; accepted: &quot;+s.isConnected());</span>
+		try {
+<span class="nc" id="L74">			out=new ObjectOutputStream(s.getOutputStream());</span>
+<span class="nc" id="L75">			in=new ObjectInputStream(s.getInputStream());</span>
+<span class="nc" id="L76">		} catch (IOException e1) {</span>
+			// TODO Auto-generated catch block
+<span class="nc" id="L78">			e1.printStackTrace();</span>
+<span class="nc" id="L79">		}</span>
+<span class="nc bnc" id="L80" title="All 2 branches missed.">		while(s.isConnected()){</span>
+			try {
+				Object o;
+<span class="nc" id="L83">				o = in.readObject();</span>
+<span class="nc bnc" id="L84" title="All 2 branches missed.">				if(o==null)//that means input stream was closed</span>
+<span class="nc" id="L85">					throw new IOException(&quot;received object is null&quot;);</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">				if(o.getClass().equals(KeyExc.class)){</span>
+					/*
+					 * Server has received client public key
+					 * in encoded format.
+					 * He instantiates a DH public key from the encoded key material.
+					 */
+<span class="nc" id="L92">					KeyFactory serverKeyFac = KeyFactory.getInstance(&quot;DH&quot;);</span>
+					
+<span class="nc" id="L94">					X509EncodedKeySpec x509KeySpec = new X509EncodedKeySpec(</span>
+<span class="nc" id="L95">							((KeyExc)o).getKey());</span>
+<span class="nc" id="L96">					PublicKey alicePubKey = serverKeyFac.generatePublic(x509KeySpec);</span>
+					/*
+			         * Server gets the DH parameters associated with Alice's public key.
+			         * He must use the same parameters when he generates his own key
+			         * pair.
+			         */
+<span class="nc" id="L102">			        DHParameterSpec dhParamSpec = ((DHPublicKey)alicePubKey).getParams();</span>
+
+			        // Bob creates his own DH key pair
+<span class="nc" id="L105">			        KeyPairGenerator bobKpairGen = KeyPairGenerator.getInstance(&quot;DH&quot;);</span>
+<span class="nc" id="L106">			        bobKpairGen.initialize(dhParamSpec);</span>
+<span class="nc" id="L107">			        serverKpair = bobKpairGen.generateKeyPair();</span>
+
+			        // Bob creates and initializes his DH KeyAgreement object
+<span class="nc" id="L110">			        serverKeyAgree = KeyAgreement.getInstance(&quot;DH&quot;);</span>
+<span class="nc" id="L111">			        serverKeyAgree.init(serverKpair.getPrivate());</span>
+			        
+			        // Bob encodes his public key, and sends it over to Alice.
+<span class="nc" id="L114">			        byte[] bobPubKeyEnc = serverKpair.getPublic().getEncoded();</span>
+<span class="nc" id="L115">			        out.writeObject(new KeyExc(bobPubKeyEnc));</span>
+			        /*
+			         * Bob uses Alice's public key for the first (and only) phase
+			         * of his version of the DH
+			         * protocol.
+			         */
+<span class="nc" id="L121">			        serverKeyAgree.doPhase(alicePubKey, true);</span>
+			        /*
+					 * At this stage, both Alice and Bob have completed the DH key
+					 * agreement protocol.
+					 * Both generate the (same) shared secret.
+					 */
+<span class="nc" id="L127">			        byte[] bobSharedSecret  = serverKeyAgree.generateSecret();</span>
+			        
+<span class="nc" id="L129">			        byte[] srvSecKey = new byte[16];</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">			        for(int i=0;i&lt;16;i++){</span>
+<span class="nc" id="L131">						srvSecKey[i] = bobSharedSecret[i];</span>
+					}
+<span class="nc" id="L133">			        SecretKeySpec skeySpec =</span>
+			        	new SecretKeySpec(srvSecKey, &quot;RC4&quot;);
+			        //set up ciphers and streams
+<span class="nc" id="L136">			        Cipher serverDecCipher =</span>
+<span class="nc" id="L137">			        	Cipher.getInstance(&quot;RC4&quot;);</span>
+<span class="nc" id="L138">			        serverDecCipher.init(Cipher.DECRYPT_MODE, skeySpec);</span>
+<span class="nc" id="L139">			        in = new ObjectInputStream(</span>
+<span class="nc" id="L140">			        		new CipherInputStream(s.getInputStream(),serverDecCipher));</span>
+<span class="nc" id="L141">			        Cipher serverEncCipher =</span>
+<span class="nc" id="L142">			        	Cipher.getInstance(&quot;RC4&quot;);</span>
+<span class="nc" id="L143">			        serverEncCipher.init(Cipher.ENCRYPT_MODE, skeySpec);</span>
+<span class="nc" id="L144">			        out = new ObjectOutputStream(</span>
+<span class="nc" id="L145">			        		new CipherOutputStream(s.getOutputStream(),serverEncCipher));</span>
+<span class="nc" id="L146">			        out.flush();</span>
+<span class="nc" id="L147">			        System.out.println(&quot;Cipher established&quot;);</span>
+<span class="nc" id="L148">			        connected =true;</span>
+<span class="nc" id="L149">				}//finished key exchange</span>
+				else{
+<span class="nc" id="L151">					fireEvent(o);</span>
+				}
+<span class="nc" id="L153">			} catch (IOException e) {</span>
+				//if that exception is thrown the connection is closed
+<span class="nc" id="L155">				System.out.println(&quot;+++ end connection to &quot;+s);</span>
+<span class="nc bnc" id="L156" title="All 2 branches missed.">				for(int i=0; i&lt;inpList.size(); i++){//JUST for this chat</span>
+<span class="nc" id="L157">					((Handler)inpList.elementAt(i)).removeConnection(this);</span>
+				}
+<span class="nc" id="L159">				return;</span>
+<span class="nc" id="L160">			} catch (ClassNotFoundException e) {</span>
+				// TODO Auto-generated catch block
+<span class="nc" id="L162">				e.printStackTrace();</span>
+<span class="nc" id="L163">			} catch (GeneralSecurityException e) {</span>
+				// TODO Auto-generated catch block
+<span class="nc" id="L165">				e.printStackTrace();</span>
+<span class="nc" id="L166">			}</span>
+		}
+<span class="nc" id="L168">	}</span>
+	
+	/**
+	 * send an object
+	 */
+    public void send(Object o) throws IOException{
+<span class="nc" id="L174">    	out.writeObject(o);</span>
+<span class="nc" id="L175">    	out.flush();</span>
+<span class="nc" id="L176">    }</span>
+
+	public void addInputListener(InputListener l) {
+<span class="nc" id="L179">		inpList.addElement(l);</span>
+<span class="nc" id="L180">	}</span>
+
+	public void removeInputListener(InputListener l) {
+<span class="nc" id="L183">		inpList.removeElement(l);</span>
+<span class="nc" id="L184">	}</span>
+	
+	//send the object to listeners
+	private void fireEvent(Object o){
+<span class="nc" id="L188">		InputEvent e = new InputEvent(this,o);</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">		for(int i=0;i&lt;inpList.size(); i++){</span>
+<span class="nc" id="L190">			inpList.elementAt(i).handleInput(e);</span>
+		}
+<span class="nc" id="L192">	}</span>
+
+	public int getClientPort() {
+<span class="nc" id="L195">		return s.getPort();</span>
+	}
+
+	public boolean isConnected() {
+<span class="nc" id="L199">		return connected;</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.11.202310140853</span></div></body></html>
